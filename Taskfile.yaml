@@ -1,0 +1,115 @@
+version: "3"
+
+vars:
+  BINARY: aim
+  CMD: ./cmd/aim
+  VERSION:
+    sh: git describe --tags --always --dirty 2>/dev/null || echo dev
+
+tasks:
+  default:
+    desc: Build the binary
+    cmds:
+      - task: build
+
+  build:
+    desc: Build the aim binary for the current platform
+    cmds:
+      - go build -ldflags "-s -w -X main.version={{.VERSION}}" -o {{.BINARY}}{{exeExt}} {{.CMD}}
+    sources:
+      - "**/*.go"
+      - go.mod
+      - go.sum
+    generates:
+      - "{{.BINARY}}{{exeExt}}"
+
+  build:all:
+    desc: Cross-compile for all release targets
+    cmds:
+      - task: build:darwin-amd64
+      - task: build:darwin-arm64
+      - task: build:windows-amd64
+
+  build:darwin-amd64:
+    desc: Build for macOS (Intel)
+    env:
+      GOOS: darwin
+      GOARCH: amd64
+    cmds:
+      - go build -ldflags "-s -w -X main.version={{.VERSION}}" -o dist/{{.BINARY}}-darwin-amd64 {{.CMD}}
+
+  build:darwin-arm64:
+    desc: Build for macOS (Apple Silicon)
+    env:
+      GOOS: darwin
+      GOARCH: arm64
+    cmds:
+      - go build -ldflags "-s -w -X main.version={{.VERSION}}" -o dist/{{.BINARY}}-darwin-arm64 {{.CMD}}
+
+  build:windows-amd64:
+    desc: Build for Windows
+    env:
+      GOOS: windows
+      GOARCH: amd64
+    cmds:
+      - go build -ldflags "-s -w -X main.version={{.VERSION}}" -o dist/{{.BINARY}}-windows-amd64.exe {{.CMD}}
+
+  fmt:
+    desc: Format all Go source files with gofumpt
+    cmds:
+      - gofumpt -w .
+
+  lint:
+    desc: Run golangci-lint
+    cmds:
+      - golangci-lint run ./...
+
+  fix:
+    desc: Run go fix on all packages
+    cmds:
+      - go fix ./...
+
+  vet:
+    desc: Run go vet
+    cmds:
+      - go vet ./...
+
+  test:
+    desc: Run all tests
+    cmds:
+      - go test ./...
+
+  test:verbose:
+    desc: Run all tests with verbose output
+    cmds:
+      - go test -v ./...
+
+  test:race:
+    desc: Run tests with race detector
+    cmds:
+      - go test -race ./...
+
+  check:
+    desc: Run all quality checks (fmt, vet, lint, fix, test)
+    cmds:
+      - task: fmt
+      - task: vet
+      - task: fix
+      - task: lint
+      - task: test
+
+  tidy:
+    desc: Tidy go.mod and go.sum
+    cmds:
+      - go mod tidy
+
+  clean:
+    desc: Remove build artifacts
+    cmds:
+      - rm -f {{.BINARY}}{{exeExt}}
+      - rm -rf dist/
+
+  install:
+    desc: Install aim to $GOPATH/bin
+    cmds:
+      - go install -ldflags "-s -w -X main.version={{.VERSION}}" {{.CMD}}
