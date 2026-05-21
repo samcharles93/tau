@@ -11,35 +11,50 @@ import (
 const maxVisible = 10
 
 // SelectionMsg is sent when a completion is selected.
+// Text is the full replacement value to insert into the input.
 type SelectionMsg struct {
+	Text    string
 	Command CommandDef
+	IsArg   bool
 }
 
 // ClosedMsg is sent when the completions are closed.
 type ClosedMsg struct{}
 
-// Completions is a lightweight popup that shows matching slash commands.
+// Completions is a lightweight popup that shows matching slash commands
+// and argument-level sub-completions.
 type Completions struct {
 	open     bool
 	query    string
 	selected int
 	keyMap   KeyMap
 
-	commands []CommandDef
-	filtered []CommandDef
+	commands       []CommandDef
+	argCompletions map[string][]string
+	filtered       []completionEntry
 
 	normalStyle   lipgloss.Style
 	selectedStyle lipgloss.Style
 	descStyle     lipgloss.Style
 }
 
+// completionEntry is a display item in the filtered list.
+type completionEntry struct {
+	label       string
+	description string
+	replacement string
+	command     CommandDef
+	isArg       bool
+}
+
 // New creates a new completions component with the given styles.
 func New(normalStyle, selectedStyle, descStyle lipgloss.Style) *Completions {
 	return &Completions{
-		keyMap:        DefaultKeyMap(),
-		normalStyle:   normalStyle,
-		selectedStyle: selectedStyle,
-		descStyle:     descStyle,
+		keyMap:         DefaultKeyMap(),
+		normalStyle:    normalStyle,
+		selectedStyle:  selectedStyle,
+		descStyle:      descStyle,
+		argCompletions: make(map[string][]string),
 	}
 }
 
@@ -48,12 +63,17 @@ func (c *Completions) SetCommands(commands []CommandDef) {
 	c.commands = commands
 }
 
+// SetArgumentCompletions registers a list of valid argument values for a command.
+func (c *Completions) SetArgumentCompletions(command string, values []string) {
+	c.argCompletions[command] = values
+}
+
 // IsOpen returns whether the completions popup is visible.
 func (c *Completions) IsOpen() bool {
 	return c.open
 }
 
-// Selected returns the currently highlighted command, if any.
+// Selected returns the currently highlighted entry, if any.
 func (c *Completions) Selected() (CommandDef, bool) {
 	if !c.open || len(c.filtered) == 0 {
 		return CommandDef{}, false
@@ -61,13 +81,13 @@ func (c *Completions) Selected() (CommandDef, bool) {
 	if c.selected < 0 || c.selected >= len(c.filtered) {
 		return CommandDef{}, false
 	}
-	return c.filtered[c.selected], true
+	return c.filtered[c.selected].command, true
 }
 
 // Open shows the popup and applies the given filter query.
 func (c *Completions) Open(query string) {
 	c.open = true
-	c.applyFilter(query)
+	c.applyCommandFilter(query)
 }
 
 // Close hides the popup.
@@ -78,10 +98,11 @@ func (c *Completions) Close() {
 	c.filtered = nil
 }
 
-// Sync updates the filter from the current input text.
-// If the input starts with "/" it opens/filters; otherwise it closes.
+// Sync updates the popup state from the current input text.
+// It derives command vs argument mode from the input structure.
 func (c *Completions) Sync(input string) {
-	trimmed := strings.TrimSpace(input)
+	// Only trim leading whitespace to preserve trailing space detection.
+	trimmed := strings.TrimLeft(input, " \t")
 
 	if !strings.HasPrefix(trimmed, "/") {
 		if c.open {
@@ -90,24 +111,36 @@ func (c *Completions) Sync(input string) {
 		return
 	}
 
-	// Don't show completions if there's already a space (user is typing args).
-	if strings.Contains(trimmed, " ") {
-		if c.open {
-			c.Close()
+	// Split into command token and the rest.
+	parts := strings.SplitN(trimmed, " ", 2)
+	cmdToken := parts[0] // e.g. "/model"
+
+	if len(parts) == 2 {
+		// There's a space after the command — check for argument completions.
+		argValues, hasArgs := c.argCompletions[strings.ToLower(cmdToken)]
+		if !hasArgs {
+			// Command doesn't have registered arg completions (e.g. /system).
+			if c.open {
+				c.Close()
+			}
+			return
 		}
+		argQuery := parts[1]
+		c.open = true
+		c.applyArgFilter(cmdToken, argQuery, argValues)
 		return
 	}
 
+	// No space yet — command-level completions.
 	query := strings.TrimPrefix(trimmed, "/")
 	if !c.open {
 		c.Open(query)
 	} else {
-		c.applyFilter(query)
+		c.applyCommandFilter(query)
 	}
 }
 
 // Update handles key events when the popup is open.
-// Returns a SelectionMsg if a command was chosen, and whether the key was consumed.
 func (c *Completions) Update(msg tea.KeyPressMsg) (tea.Msg, bool) {
 	if !c.open {
 		return nil, false
@@ -126,9 +159,13 @@ func (c *Completions) Update(msg tea.KeyPressMsg) (tea.Msg, bool) {
 		if len(c.filtered) == 0 {
 			return nil, true
 		}
-		cmd := c.filtered[c.selected]
+		entry := c.filtered[c.selected]
 		c.Close()
-		return SelectionMsg{Command: cmd}, true
+		return SelectionMsg{
+			Text:    entry.replacement,
+			Command: entry.command,
+			IsArg:   entry.isArg,
+		}, true
 
 	case key.Matches(msg, c.keyMap.Cancel):
 		c.Close()
@@ -147,12 +184,15 @@ func (c *Completions) Render(width int) string {
 	visible := c.visibleItems()
 	var b strings.Builder
 
-	for i, cmd := range visible {
+	for i, entry := range visible {
 		if i > 0 {
 			b.WriteByte('\n')
 		}
-
-		line := c.renderLine(cmd, cmd.Name == c.filtered[c.selected].Name, width)
+		focused := i == c.selected
+		if c.selected >= maxVisible {
+			focused = false
+		}
+		line := c.renderLine(entry, focused, width)
 		b.WriteString(line)
 	}
 
@@ -167,23 +207,69 @@ func (c *Completions) Height() int {
 	return len(c.visibleItems())
 }
 
-func (c *Completions) applyFilter(query string) {
-	if query == c.query && c.filtered != nil {
+func (c *Completions) applyCommandFilter(query string) {
+	newQuery := "cmd:" + query
+	if newQuery == c.query && c.filtered != nil {
 		return
 	}
+	c.query = newQuery
 
-	c.query = query
 	queryLower := strings.ToLower(query)
-
 	c.filtered = c.filtered[:0]
 	for _, cmd := range c.commands {
 		nameLower := strings.ToLower(strings.TrimPrefix(cmd.Name, "/"))
 		if query == "" || strings.HasPrefix(nameLower, queryLower) || strings.Contains(nameLower, queryLower) {
-			c.filtered = append(c.filtered, cmd)
+			c.filtered = append(c.filtered, completionEntry{
+				label:       cmd.Name,
+				description: cmd.Description,
+				replacement: cmd.Name,
+				command:     cmd,
+				isArg:       false,
+			})
 		}
 	}
 
-	// Clamp selection.
+	c.clampSelection()
+}
+
+func (c *Completions) applyArgFilter(cmdToken, argQuery string, values []string) {
+	newQuery := "arg:" + cmdToken + ":" + argQuery
+	if newQuery == c.query && c.filtered != nil {
+		return
+	}
+	c.query = newQuery
+
+	queryLower := strings.ToLower(argQuery)
+	cmd := c.findCommand(cmdToken)
+
+	c.filtered = c.filtered[:0]
+	for _, val := range values {
+		valLower := strings.ToLower(val)
+		if argQuery == "" || strings.HasPrefix(valLower, queryLower) || strings.Contains(valLower, queryLower) {
+			c.filtered = append(c.filtered, completionEntry{
+				label:       val,
+				description: "",
+				replacement: cmdToken + " " + val,
+				command:     cmd,
+				isArg:       true,
+			})
+		}
+	}
+
+	c.clampSelection()
+}
+
+func (c *Completions) findCommand(name string) CommandDef {
+	nameLower := strings.ToLower(name)
+	for _, cmd := range c.commands {
+		if strings.ToLower(cmd.Name) == nameLower {
+			return cmd
+		}
+	}
+	return CommandDef{Name: name}
+}
+
+func (c *Completions) clampSelection() {
 	if c.selected >= len(c.filtered) {
 		c.selected = max(0, len(c.filtered)-1)
 	}
@@ -209,23 +295,24 @@ func (c *Completions) selectNext() {
 	}
 }
 
-func (c *Completions) visibleItems() []CommandDef {
+func (c *Completions) visibleItems() []completionEntry {
 	if len(c.filtered) <= maxVisible {
 		return c.filtered
 	}
 	return c.filtered[:maxVisible]
 }
 
-func (c *Completions) renderLine(cmd CommandDef, focused bool, width int) string {
+func (c *Completions) renderLine(entry completionEntry, focused bool, width int) string {
 	style := c.normalStyle
 	if focused {
 		style = c.selectedStyle
 	}
 
-	text := cmd.Name
-	if cmd.Description != "" {
-		text += "  " + c.descStyle.Render(cmd.Description)
+	text := entry.label
+	if entry.description != "" {
+		text += "  " + c.descStyle.Render(entry.description)
 	}
 
 	return style.Width(width).Render(text)
 }
+

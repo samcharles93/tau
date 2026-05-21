@@ -28,9 +28,10 @@ const (
 
 // Config holds parameters for constructing the TUI model.
 type Config struct {
-	SessionID string
-	ModelName string
-	Endpoint  string
+	SessionID       string
+	ModelName       string
+	Endpoint        string
+	AvailableModels []string
 }
 
 // Model is the root Bubble Tea model for the AIM chat TUI.
@@ -90,6 +91,9 @@ func New(runtime *aimchat.Runtime, sub *pubsub.Subscription[aimchat.ChatEvent], 
 
 	comp := completions.New(t.CompletionNormal, t.CompletionSelected, t.Dim)
 	comp.SetCommands(builtinCommands())
+	if len(cfg.AvailableModels) > 0 {
+		comp.SetArgumentCompletions("/model", cfg.AvailableModels)
+	}
 
 	return &Model{
 		runtime:     runtime,
@@ -273,12 +277,22 @@ func (m *Model) handleKeyPress(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 }
 
 // handleCtrlC implements cancel-on-first, quit-on-second semantics.
+// When idle: first press clears the input, second press quits.
+// When streaming: first press cancels the request.
 func (m *Model) handleCtrlC() (tea.Model, tea.Cmd) {
 	now := time.Now()
 
 	if m.status == aimchat.ChatSessionStreaming {
 		m.lastCtrlC = now
 		return m, m.sendCancel()
+	}
+
+	// If there's text in the input, clear it first.
+	if strings.TrimSpace(m.input.Value()) != "" {
+		m.input.Reset()
+		m.completions.Close()
+		m.lastCtrlC = now
+		return m, nil
 	}
 
 	if now.Sub(m.lastCtrlC) < ctrlCDebounceWindow {

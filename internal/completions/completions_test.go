@@ -17,6 +17,11 @@ func newTestCompletions() *Completions {
 		{Name: "/exit", Description: "Quit the app"},
 		{Name: "/quit", Description: "Quit the app"},
 	})
+	c.SetArgumentCompletions("/model", []string{
+		"nemotron-nano-9b",
+		"llama-3.1-70b",
+		"granite-13b",
+	})
 	return c
 }
 
@@ -39,15 +44,53 @@ func TestSync_ClosesOnNonSlash(t *testing.T) {
 	require.False(t, c.IsOpen())
 }
 
-func TestSync_ClosesWhenArgsTyped(t *testing.T) {
+func TestSync_ClosesWhenArgsTypedForNonArgCommand(t *testing.T) {
 	t.Parallel()
 	c := newTestCompletions()
 
 	c.Sync("/system")
 	require.True(t, c.IsOpen())
 
+	// /system has AcceptsArgs but no registered arg completions.
 	c.Sync("/system hello")
 	require.False(t, c.IsOpen())
+}
+
+func TestSync_OpensArgCompletionsForModel(t *testing.T) {
+	t.Parallel()
+	c := newTestCompletions()
+
+	c.Sync("/model ")
+	require.True(t, c.IsOpen())
+	require.Equal(t, 3, c.Height())
+}
+
+func TestSync_FiltersArgCompletions(t *testing.T) {
+	t.Parallel()
+	c := newTestCompletions()
+
+	c.Sync("/model nem")
+	require.True(t, c.IsOpen())
+	require.Equal(t, 1, c.Height())
+
+	sel, ok := c.Selected()
+	require.True(t, ok)
+	require.Equal(t, "/model", sel.Name)
+}
+
+func TestSync_ArgSelectionReturnsFullCommand(t *testing.T) {
+	t.Parallel()
+	c := newTestCompletions()
+
+	c.Sync("/model ")
+
+	msg, consumed := c.Update(tea.KeyPressMsg{Code: tea.KeyTab})
+	require.True(t, consumed)
+
+	selMsg, ok := msg.(SelectionMsg)
+	require.True(t, ok)
+	require.True(t, selMsg.IsArg)
+	require.Equal(t, "/model nemotron-nano-9b", selMsg.Text)
 }
 
 func TestFilter_PrefixMatch(t *testing.T) {
@@ -110,7 +153,8 @@ func TestUpdate_SelectReturnsMsg(t *testing.T) {
 
 	selMsg, ok := msg.(SelectionMsg)
 	require.True(t, ok)
-	require.Equal(t, "/new", selMsg.Command.Name)
+	require.Equal(t, "/new", selMsg.Text)
+	require.False(t, selMsg.IsArg)
 	require.False(t, c.IsOpen())
 }
 
@@ -183,3 +227,22 @@ func TestFilter_ClampsSelection(t *testing.T) {
 	require.True(t, ok)
 	require.Equal(t, "/new", sel.Name)
 }
+
+func TestSync_BackspaceFromArgToCommandMode(t *testing.T) {
+	t.Parallel()
+	c := newTestCompletions()
+
+	// Enter arg mode.
+	c.Sync("/model ")
+	require.True(t, c.IsOpen())
+	require.Equal(t, 3, c.Height()) // shows model args
+
+	// Backspace removes the space — back to command mode.
+	c.Sync("/model")
+	require.True(t, c.IsOpen())
+
+	sel, ok := c.Selected()
+	require.True(t, ok)
+	require.Equal(t, "/model", sel.Name) // back to command completions
+}
+
