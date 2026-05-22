@@ -2,11 +2,38 @@ package tui
 
 import (
 	"strings"
+	"sync"
 
+	"bitbucket.srv.westpac.com.au/m055731/aim/internal/theme"
 	"charm.land/glamour/v2"
 )
 
 const defaultMarkdownWidth = 80
+
+// mdCache memoizes glamour renderers per width so we avoid expensive
+// allocation on every render call. Invalidate via invalidateMarkdownCache
+// if the style changes at runtime.
+var (
+	mdCacheMu sync.Mutex
+	mdCache   = map[int]*glamour.TermRenderer{}
+)
+
+// markdownRenderer returns a cached glamour renderer for the given width.
+func markdownRenderer(width int) *glamour.TermRenderer {
+	mdCacheMu.Lock()
+	defer mdCacheMu.Unlock()
+
+	if r, ok := mdCache[width]; ok {
+		return r
+	}
+
+	r, _ := glamour.NewTermRenderer(
+		glamour.WithStyles(theme.MarkdownStyle()),
+		glamour.WithWordWrap(width),
+	)
+	mdCache[width] = r
+	return r
+}
 
 // renderMarkdown renders a markdown string using Glamour with the given width.
 // Falls back to the raw text if rendering fails.
@@ -15,11 +42,8 @@ func renderMarkdown(content string, width int) string {
 		width = defaultMarkdownWidth
 	}
 
-	renderer, err := glamour.NewTermRenderer(
-		glamour.WithStylePath("dark"),
-		glamour.WithWordWrap(width),
-	)
-	if err != nil {
+	renderer := markdownRenderer(width)
+	if renderer == nil {
 		return content
 	}
 

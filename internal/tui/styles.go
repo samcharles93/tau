@@ -1,29 +1,12 @@
 package tui
 
-import "charm.land/lipgloss/v2"
-
-// Westpac NOW theme palette.
-var (
-	colorDarkNavy   = lipgloss.Color("#181B25")
-	colorWhite      = lipgloss.Color("#FFFFFF")
-	colorWestpacRed = lipgloss.Color("#DA1710")
-	colorNavyBlue   = lipgloss.Color("#1F1B4F")
-	colorPurple     = lipgloss.Color("#9819D7")
-	colorLightGray  = lipgloss.Color("#E8E8ED")
-	colorDimGray    = lipgloss.Color("#a5a5b1")
+import (
+	"bitbucket.srv.westpac.com.au/m055731/aim/internal/theme"
+	"charm.land/lipgloss/v2"
 )
 
-// theme holds pre-computed styles derived from the Westpac NOW colour palette.
-type theme struct {
-	// Header bar at the top of the screen.
-	Header lipgloss.Style
-
-	// User message label.
-	UserLabel lipgloss.Style
-
-	// Assistant message label.
-	AssistantLabel lipgloss.Style
-
+// tuiTheme holds pre-computed styles derived from the brand colour palette.
+type tuiTheme struct {
 	// Streaming text (plain, no markdown rendering yet).
 	StreamingText lipgloss.Style
 
@@ -49,51 +32,31 @@ type theme struct {
 	CompletionSelected lipgloss.Style
 }
 
-func newTheme() theme {
-	return theme{
-		Header: lipgloss.NewStyle().
-			Bold(true).
-			Foreground(colorWhite).
-			Background(colorNavyBlue).
-			Padding(0, 1),
-
-		UserLabel: lipgloss.NewStyle().
-			Bold(true).
-			Foreground(colorNavyBlue),
-
-		AssistantLabel: lipgloss.NewStyle().
-			Bold(true).
-			Foreground(colorPurple),
-
+func newTheme() tuiTheme {
+	return tuiTheme{
 		StreamingText: lipgloss.NewStyle().
-			Foreground(colorLightGray),
+			Foreground(theme.ColorLightGray),
 
-		Error: lipgloss.NewStyle().
-			Bold(true).
-			Foreground(colorWestpacRed),
+		Error: theme.Error,
 
 		StatusBar: lipgloss.NewStyle().
-			Foreground(colorDimGray).
-			Background(colorLightGray).
-			Padding(0, 1),
+			Foreground(theme.ColorDimGray),
 
-		Help: lipgloss.NewStyle().
-			Foreground(colorDimGray),
+		Help: theme.Help,
 
 		Spinner: lipgloss.NewStyle().
-			Foreground(colorWestpacRed),
+			Foreground(theme.ColorWestpacRed),
 
-		Dim: lipgloss.NewStyle().
-			Foreground(colorDimGray),
+		Dim: theme.Dim,
 
 		CompletionNormal: lipgloss.NewStyle().
-			Foreground(colorWhite).
-			Background(colorDarkNavy).
+			Foreground(theme.ColorWhite).
+			Background(theme.ColorDarkNavy).
 			Padding(0, 1),
 
 		CompletionSelected: lipgloss.NewStyle().
-			Foreground(colorWhite).
-			Background(colorNavyBlue).
+			Foreground(theme.ColorWhite).
+			Background(theme.ColorNavyBlue).
 			Bold(true).
 			Padding(0, 1),
 	}

@@ -10,6 +10,7 @@ import (
 
 func TestRuntimeStreamsCompletion(t *testing.T) {
 	runtime, err := NewRuntime(
+		context.Background(),
 		func(ctx context.Context, endpoint platform.Endpoint) (string, error) { return "token", nil },
 		fakeStreamer{
 			deltas: []string{"Hello", " world"},
@@ -88,6 +89,7 @@ func TestRuntimeStreamsCompletion(t *testing.T) {
 func TestRuntimeCancelsActiveTurn(t *testing.T) {
 	streamer := &blockingStreamer{started: make(chan struct{})}
 	runtime, err := NewRuntime(
+		context.Background(),
 		func(ctx context.Context, endpoint platform.Endpoint) (string, error) { return "token", nil },
 		streamer,
 	)
@@ -160,6 +162,7 @@ func TestRuntimeCancelsActiveTurn(t *testing.T) {
 
 func TestRuntimeSubscribeEventsFanout(t *testing.T) {
 	runtime, err := NewRuntime(
+		context.Background(),
 		func(ctx context.Context, endpoint platform.Endpoint) (string, error) { return "token", nil },
 		fakeStreamer{},
 	)

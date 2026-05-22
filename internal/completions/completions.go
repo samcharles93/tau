@@ -182,16 +182,14 @@ func (c *Completions) Render(width int) string {
 	}
 
 	visible := c.visibleItems()
+	start := c.visibleStart()
 	var b strings.Builder
 
 	for i, entry := range visible {
 		if i > 0 {
 			b.WriteByte('\n')
 		}
-		focused := i == c.selected
-		if c.selected >= maxVisible {
-			focused = false
-		}
+		focused := (start + i) == c.selected
 		line := c.renderLine(entry, focused, width)
 		b.WriteString(line)
 	}
@@ -215,17 +213,28 @@ func (c *Completions) applyCommandFilter(query string) {
 	c.query = newQuery
 
 	queryLower := strings.ToLower(query)
+
 	c.filtered = c.filtered[:0]
+
+	// Two passes: prefix matches first so they rank above substring-only.
 	for _, cmd := range c.commands {
 		nameLower := strings.ToLower(strings.TrimPrefix(cmd.Name, "/"))
-		if query == "" || strings.HasPrefix(nameLower, queryLower) || strings.Contains(nameLower, queryLower) {
+		if query == "" || strings.HasPrefix(nameLower, queryLower) {
 			c.filtered = append(c.filtered, completionEntry{
-				label:       cmd.Name,
-				description: cmd.Description,
-				replacement: cmd.Name,
-				command:     cmd,
-				isArg:       false,
+				label: cmd.Name, description: cmd.Description,
+				replacement: cmd.Name, command: cmd,
 			})
+		}
+	}
+	if query != "" {
+		for _, cmd := range c.commands {
+			nameLower := strings.ToLower(strings.TrimPrefix(cmd.Name, "/"))
+			if !strings.HasPrefix(nameLower, queryLower) && strings.Contains(nameLower, queryLower) {
+				c.filtered = append(c.filtered, completionEntry{
+					label: cmd.Name, description: cmd.Description,
+					replacement: cmd.Name, command: cmd,
+				})
+			}
 		}
 	}
 
@@ -299,7 +308,21 @@ func (c *Completions) visibleItems() []completionEntry {
 	if len(c.filtered) <= maxVisible {
 		return c.filtered
 	}
-	return c.filtered[:maxVisible]
+	start := c.visibleStart()
+	return c.filtered[start : start+maxVisible]
+}
+
+// visibleStart returns the first index of the visible window, keeping
+// the selected item in view.
+func (c *Completions) visibleStart() int {
+	if len(c.filtered) <= maxVisible {
+		return 0
+	}
+	start := max(c.selected-maxVisible/2, 0)
+	if start+maxVisible > len(c.filtered) {
+		start = len(c.filtered) - maxVisible
+	}
+	return start
 }
 
 func (c *Completions) renderLine(entry completionEntry, focused bool, width int) string {
@@ -315,4 +338,3 @@ func (c *Completions) renderLine(entry completionEntry, focused bool, width int)
 
 	return style.Width(width).Render(text)
 }
-

@@ -228,6 +228,32 @@ func TestFilter_ClampsSelection(t *testing.T) {
 	require.Equal(t, "/new", sel.Name)
 }
 
+func TestFilter_PrefixMatchesRankAboveSubstring(t *testing.T) {
+	t.Parallel()
+	c := newTestCompletions()
+
+	// Typing "/m" should match /model (prefix) before /system (contains "m").
+	c.Sync("/m")
+	require.True(t, c.IsOpen())
+
+	sel, ok := c.Selected()
+	require.True(t, ok)
+	require.Equal(t, "/model", sel.Name, "prefix match should be first")
+}
+
+func TestFilter_TabSelectsPrefixMatch(t *testing.T) {
+	t.Parallel()
+	c := newTestCompletions()
+
+	c.Sync("/m")
+	msg, consumed := c.Update(tea.KeyPressMsg{Code: tea.KeyTab})
+	require.True(t, consumed)
+
+	selMsg, ok := msg.(SelectionMsg)
+	require.True(t, ok)
+	require.Equal(t, "/model", selMsg.Text)
+}
+
 func TestSync_BackspaceFromArgToCommandMode(t *testing.T) {
 	t.Parallel()
 	c := newTestCompletions()
@@ -245,4 +271,3 @@ func TestSync_BackspaceFromArgToCommandMode(t *testing.T) {
 	require.True(t, ok)
 	require.Equal(t, "/model", sel.Name) // back to command completions
 }
-

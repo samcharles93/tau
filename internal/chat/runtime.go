@@ -51,7 +51,7 @@ type runtimeSession struct {
 	cancel context.CancelFunc
 }
 
-func NewRuntime(tokenSource TokenSource, streamer CompletionStreamer) (*Runtime, error) {
+func NewRuntime(ctx context.Context, tokenSource TokenSource, streamer CompletionStreamer) (*Runtime, error) {
 	if tokenSource == nil {
 		return nil, errors.New("chat token source is required")
 	}
@@ -59,7 +59,7 @@ func NewRuntime(tokenSource TokenSource, streamer CompletionStreamer) (*Runtime,
 		return nil, errors.New("chat completion streamer is required")
 	}
 
-	ctx, cancel := context.WithCancel(context.Background())
+	ctx, cancel := context.WithCancel(ctx)
 	eventBus := pubsub.New[ChatEvent]()
 
 	runtime := &Runtime{
@@ -434,7 +434,7 @@ func (r *Runtime) completeActiveTurn(sessionID, requestID string, result Complet
 	snapshot := cloneChatSessionState(session.state)
 	r.mu.Unlock()
 
-	r.emit(ChatResponseCompletedEvent{
+	r.emitMustDeliver(ChatResponseCompletedEvent{
 		State:        snapshot,
 		RequestID:    requestID,
 		FinishReason: result.FinishReason,
@@ -455,7 +455,7 @@ func (r *Runtime) cancelActiveTurn(sessionID, requestID string, at time.Time) {
 	snapshot := cloneChatSessionState(session.state)
 	r.mu.Unlock()
 
-	r.emit(ChatResponseCancelledEvent{
+	r.emitMustDeliver(ChatResponseCancelledEvent{
 		State:       snapshot,
 		RequestID:   requestID,
 		CancelledAt: at,
@@ -474,8 +474,8 @@ func (r *Runtime) failActiveTurn(sessionID, requestID string, err error, at time
 	snapshot := cloneChatSessionState(session.state)
 	r.mu.Unlock()
 
-	r.emit(ChatSessionSnapshotEvent{State: snapshot})
-	r.emit(ChatRuntimeErrorEvent{
+	r.emitMustDeliver(ChatSessionSnapshotEvent{State: snapshot})
+	r.emitMustDeliver(ChatRuntimeErrorEvent{
 		SessionID:  sessionID,
 		RequestID:  requestID,
 		Message:    err.Error(),
@@ -500,6 +500,16 @@ func (r *Runtime) emit(event ChatEvent) {
 		return
 	}
 	_ = r.eventBus.Publish(r.ctx, runtimeEventTopic, event)
+}
+
+// emitMustDeliver publishes a terminal event (finish, error, cancel) using the
+// bounded-blocking delivery path so it cannot be silently dropped when the
+// subscriber buffer is saturated from high-frequency streaming deltas.
+func (r *Runtime) emitMustDeliver(event ChatEvent) {
+	if r.eventBus == nil {
+		return
+	}
+	_ = r.eventBus.PublishMustDeliver(runtimeEventTopic, event)
 }
 
 func cloneChatSessionState(state *ChatSessionState) ChatSessionState {
