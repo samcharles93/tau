@@ -2,7 +2,6 @@
 reference/
 
 # Build output
-aim
-aim.exe
 dist/
+/aim.exe
 .task/
