@@ -27,10 +27,13 @@ func markdownRenderer(width int) *glamour.TermRenderer {
 		return r
 	}
 
-	r, _ := glamour.NewTermRenderer(
+	r, err := glamour.NewTermRenderer(
 		glamour.WithStyles(theme.MarkdownStyle()),
 		glamour.WithWordWrap(width),
 	)
+	if err != nil {
+		return nil
+	}
 	mdCache[width] = r
 	return r
 }

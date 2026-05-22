@@ -5,6 +5,7 @@ import (
 	"crypto/rand"
 	"encoding/base64"
 	"fmt"
+	"log/slog"
 	"strings"
 	"time"
 
@@ -28,6 +29,19 @@ const (
 	chromeHeight    = statusBarHeight + inputHeight + 2 // borders/padding
 
 	ctrlCDebounceWindow = 1 * time.Second
+
+	// defaultViewportWidth and defaultViewportHeight are initial viewport
+	// dimensions before the first WindowSizeMsg arrives.
+	defaultViewportWidth  = 80
+	defaultViewportHeight = 24
+
+	// notifyBufferSize is the subscriber buffer for the notification bus.
+	notifyBufferSize = 16
+
+	// Notification display durations.
+	notifyDurationBrief = 3 * time.Second
+	notifyDurationError = 5 * time.Second
+	notifyDurationWarn  = 8 * time.Second
 )
 
 // ModelInfo holds discovery data for an available model.
@@ -45,12 +59,13 @@ type ModelRefresher func(ctx context.Context) ([]ModelInfo, error)
 
 // Config holds parameters for constructing the TUI model.
 type Config struct {
-	SessionID       string
-	ModelName       string
-	Endpoint        string
-	AvailableModels []ModelInfo
-	NotifyBus       *pubsub.Bus[notify.Notification]
-	RefreshModels   ModelRefresher
+	SessionID          string
+	ModelName          string
+	Endpoint           string
+	AvailableModels    []ModelInfo
+	AvailableEndpoints []string
+	NotifyBus          *pubsub.Bus[notify.Notification]
+	RefreshModels      ModelRefresher
 }
 
 // Model is the root Bubble Tea model for the AIM chat TUI.
@@ -58,6 +73,7 @@ type Config struct {
 // Bubble Tea lifecycle (matching the pattern used by Crush).
 type Model struct {
 	// Core dependencies.
+	ctx      context.Context
 	runtime  *aimchat.Runtime
 	eventSub *pubsub.Subscription[aimchat.ChatEvent]
 	config   Config
@@ -97,11 +113,15 @@ type Model struct {
 	// Notification queue (transient status bar messages).
 	notifications *notify.Queue
 	notifySub     *pubsub.Subscription[notify.Notification]
+
+	// Settings (user-configurable from /settings dialog).
+	thinking bool
+	effort   string // "low", "medium", "high"
 }
 
 // New creates a new TUI model wired to the given runtime.
 // The textarea is focused during construction so state persists.
-func New(runtime *aimchat.Runtime, sub *pubsub.Subscription[aimchat.ChatEvent], cfg Config) *Model {
+func New(ctx context.Context, runtime *aimchat.Runtime, sub *pubsub.Subscription[aimchat.ChatEvent], cfg Config) *Model {
 	ta := textarea.New()
 	ta.Placeholder = "Send a message…"
 	ta.SetHeight(inputHeight)
@@ -113,7 +133,7 @@ func New(runtime *aimchat.Runtime, sub *pubsub.Subscription[aimchat.ChatEvent], 
 	t := newTheme()
 	sp.Style = t.Spinner
 
-	vp := viewport.New(viewport.WithWidth(80), viewport.WithHeight(24))
+	vp := viewport.New(viewport.WithWidth(defaultViewportWidth), viewport.WithHeight(defaultViewportHeight))
 	vp.MouseWheelEnabled = true
 	vp.SoftWrap = true
 	vp.FillHeight = true
@@ -137,6 +157,7 @@ func New(runtime *aimchat.Runtime, sub *pubsub.Subscription[aimchat.ChatEvent], 
 	h.Styles.FullSeparator = lipgloss.NewStyle().Foreground(theme.ColorDimGray)
 
 	m := &Model{
+		ctx:           ctx,
 		runtime:       runtime,
 		eventSub:      sub,
 		config:        cfg,
@@ -150,11 +171,14 @@ func New(runtime *aimchat.Runtime, sub *pubsub.Subscription[aimchat.ChatEvent], 
 		tuiTheme:      t,
 		status:        aimchat.ChatSessionIdle,
 		notifications: notify.NewQueue(),
+		effort:        "medium",
 	}
 
 	if cfg.NotifyBus != nil {
-		nsub, err := cfg.NotifyBus.Subscribe("notifications", 16)
-		if err == nil {
+		nsub, err := cfg.NotifyBus.Subscribe("notifications", notifyBufferSize)
+		if err != nil {
+			slog.Warn("notification subscription failed", "err", err)
+		} else {
 			m.notifySub = nsub
 		}
 	}
@@ -444,7 +468,7 @@ func (m *Model) quitHintCmd() tea.Cmd {
 	return m.pushNotification(notify.Notification{
 		Message:  "Ctrl+C to quit",
 		Level:    notify.LevelWarn,
-		Duration: 3 * time.Second,
+		Duration: notifyDurationBrief,
 	})
 }
 
@@ -535,6 +559,11 @@ func (m *Model) handleSlashCommand(text string) (tea.Model, tea.Cmd) {
 		m.input.Reset()
 		return m, m.refreshModelsCmd()
 
+	case "/settings":
+		m.input.Reset()
+		m.openSettings()
+		return m, nil
+
 	default:
 		m.lastError = fmt.Sprintf("unknown command: %s", command)
 		m.input.Reset()
@@ -577,6 +606,7 @@ func (m *Model) openCommandPalette() {
 		{ID: "new", Label: "/new", Description: "Start a new conversation"},
 		{ID: "model", Label: "/model", Description: "Switch model"},
 		{ID: "system", Label: "/system", Description: "Set system prompt"},
+		{ID: "settings", Label: "/settings", Description: "View and edit settings"},
 		{ID: "exit", Label: "/exit", Description: "Quit the app"},
 	}
 	m.overlay.Open(dialog.NewPalette("Commands", items))
@@ -599,6 +629,83 @@ func (m *Model) openModelPicker() {
 	m.overlay.Open(dialog.NewModelPicker(items))
 }
 
+// openSettings shows the settings dialog with current values.
+func (m *Model) openSettings() {
+	currentEndpointIdx := 0
+	for i, key := range m.config.AvailableEndpoints {
+		if key == m.config.Endpoint {
+			currentEndpointIdx = i
+		}
+	}
+
+	entries := []dialog.SettingEntry{
+		{
+			Key:     "thinking",
+			Label:   "Thinking",
+			Kind:    dialog.SettingToggle,
+			BoolVal: m.thinking,
+			Value:   boolToOnOff(m.thinking),
+		},
+		{
+			Key:         "effort",
+			Label:       "Effort",
+			Kind:        dialog.SettingChoice,
+			Choices:     []string{"low", "medium", "high"},
+			ChoiceIndex: effortToIndex(m.effort),
+			Value:       m.effort,
+		},
+		{
+			Key:         "endpoint",
+			Label:       "Endpoint",
+			Kind:        dialog.SettingChoice,
+			Choices:     m.config.AvailableEndpoints,
+			ChoiceIndex: currentEndpointIdx,
+			Value:       m.config.Endpoint,
+		},
+	}
+
+	m.overlay.Open(dialog.NewSettings(entries))
+}
+
+// applySettings processes setting changes from the settings dialog.
+func (m *Model) applySettings(entries []dialog.SettingEntry) (tea.Model, tea.Cmd) {
+	for _, e := range entries {
+		switch e.Key {
+		case "thinking":
+			m.thinking = e.BoolVal
+		case "effort":
+			m.effort = e.Value
+		case "endpoint":
+			if e.Value != m.config.Endpoint {
+				m.config.Endpoint = e.Value
+				m.lastError = "endpoint changed — restart required for re-auth"
+			}
+		}
+	}
+	m.refreshViewport()
+	return m, nil
+}
+
+func boolToOnOff(b bool) string {
+	if b {
+		return "on"
+	}
+	return "off"
+}
+
+func effortToIndex(effort string) int {
+	switch effort {
+	case "low":
+		return 0
+	case "medium":
+		return 1
+	case "high":
+		return 2
+	default:
+		return 1
+	}
+}
+
 // handleDialogAction processes the result of a dialog interaction.
 func (m *Model) handleDialogAction(action dialog.Action) (tea.Model, tea.Cmd) {
 	switch a := action.(type) {
@@ -615,6 +722,8 @@ func (m *Model) handleDialogAction(action dialog.Action) (tea.Model, tea.Cmd) {
 		m.lastError = ""
 		m.refreshViewport()
 		return m, m.sendUpdateModel(aimchat.ChatModelRef{ID: a.ID, URL: a.URL})
+	case dialog.SettingsChangedAction:
+		return m.applySettings(a.Settings)
 	}
 	return m, nil
 }
@@ -638,6 +747,9 @@ func (m *Model) executePaletteAction(a dialog.SelectAction) (tea.Model, tea.Cmd)
 		m.input.CursorEnd()
 		m.completions.Sync(m.input.Value())
 		return m, nil
+	case "settings":
+		m.openSettings()
+		return m, nil
 	case "exit":
 		return m, tea.Quit
 	}
@@ -651,6 +763,7 @@ func builtinCommands() []completions.CommandDef {
 		{Name: "/system", Description: "Set system prompt", AcceptsArgs: true},
 		{Name: "/model", Description: "Switch model", AcceptsArgs: true},
 		{Name: "/refresh", Description: "Refresh app state (models, skills, etc.)"},
+		{Name: "/settings", Description: "View and edit settings"},
 		{Name: "/exit", Description: "Quit the app"},
 	}
 }
@@ -950,7 +1063,7 @@ func (m *Model) refreshModelsCmd() tea.Cmd {
 		}
 	}
 	return func() tea.Msg {
-		models, err := refresher(context.Background())
+		models, err := refresher(m.ctx)
 		return modelsRefreshedMsg{models: models, err: err}
 	}
 }
@@ -961,7 +1074,7 @@ func (m *Model) handleModelsRefreshed(msg modelsRefreshedMsg) (tea.Model, tea.Cm
 		return m, m.pushNotification(notify.Notification{
 			Message:  "Model refresh failed: " + msg.err.Error(),
 			Level:    notify.LevelError,
-			Duration: 5 * time.Second,
+			Duration: notifyDurationError,
 		})
 	}
 
@@ -978,6 +1091,6 @@ func (m *Model) handleModelsRefreshed(msg modelsRefreshedMsg) (tea.Model, tea.Cm
 	return m, m.pushNotification(notify.Notification{
 		Message:  fmt.Sprintf("Refreshed: %d models available", len(msg.models)),
 		Level:    notify.LevelInfo,
-		Duration: 3 * time.Second,
+		Duration: notifyDurationBrief,
 	})
 }

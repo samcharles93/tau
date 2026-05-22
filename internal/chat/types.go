@@ -435,6 +435,9 @@ func (s *ChatSessionState) CompleteTurn(finishReason string, usage ChatUsage, at
 	if !s.HasActiveRequest() {
 		return errors.New("no active request")
 	}
+	if s.Status != ChatSessionStreaming && s.Status != ChatSessionCancelling {
+		return fmt.Errorf("cannot complete turn while %s", s.Status)
+	}
 	if strings.TrimSpace(s.PendingAssistant) != "" {
 		s.Messages = append(s.Messages, ChatMessage{Role: ChatRoleAssistant, Content: s.PendingAssistant})
 	}
@@ -452,6 +455,9 @@ func (s *ChatSessionState) CancelTurn(at time.Time) error {
 	if !s.HasActiveRequest() {
 		return errors.New("no active request")
 	}
+	if s.Status != ChatSessionStreaming && s.Status != ChatSessionCancelling {
+		return fmt.Errorf("cannot cancel turn while %s", s.Status)
+	}
 	s.Status = ChatSessionIdle
 	s.PendingAssistant = ""
 	s.ActiveRequestID = ""
@@ -465,6 +471,9 @@ func (s *ChatSessionState) CancelTurn(at time.Time) error {
 func (s *ChatSessionState) FailTurn(err error, at time.Time) error {
 	if !s.HasActiveRequest() {
 		return errors.New("no active request")
+	}
+	if s.Status != ChatSessionStreaming && s.Status != ChatSessionCancelling {
+		return fmt.Errorf("cannot fail turn while %s", s.Status)
 	}
 	if err == nil {
 		return errors.New("turn error is required")

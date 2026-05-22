@@ -211,7 +211,7 @@ func isSafeBoundaryAt(content string, p int) bool {
 // countFenceLines counts lines that are triple-backtick fences.
 func countFenceLines(s string) int {
 	count := 0
-	for _, line := range strings.Split(s, "\n") {
+	for line := range strings.SplitSeq(s, "\n") {
 		trimmed := strings.TrimSpace(line)
 		if strings.HasPrefix(trimmed, "```") {
 			count++
@@ -233,7 +233,7 @@ func lastNonBlankLine(s string) string {
 
 // firstNonBlankLine returns the first non-blank line of s.
 func firstNonBlankLine(s string) string {
-	for _, line := range strings.Split(s, "\n") {
+	for line := range strings.SplitSeq(s, "\n") {
 		if strings.TrimSpace(line) != "" {
 			return line
 		}

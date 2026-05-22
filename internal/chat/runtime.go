@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"sync"
 	"time"
 
@@ -12,6 +13,11 @@ import (
 )
 
 const runtimeEventTopic = "chat.runtime.events"
+
+// commandBufferSize is the capacity of the commands channel. This must be
+// large enough to avoid blocking callers during normal usage but small
+// enough that back-pressure surfaces promptly if the loop stalls.
+const commandBufferSize = 16
 
 type TokenSource func(ctx context.Context, endpoint platform.Endpoint) (string, error)
 
@@ -67,7 +73,7 @@ func NewRuntime(ctx context.Context, tokenSource TokenSource, streamer Completio
 		cancel:      cancel,
 		tokenSource: tokenSource,
 		streamer:    streamer,
-		commands:    make(chan ChatCommand, 16),
+		commands:    make(chan ChatCommand, commandBufferSize),
 		eventBus:    eventBus,
 		sessions:    make(map[string]*runtimeSession),
 		done:        make(chan struct{}),
@@ -499,7 +505,9 @@ func (r *Runtime) emit(event ChatEvent) {
 	if r.eventBus == nil {
 		return
 	}
-	_ = r.eventBus.Publish(r.ctx, runtimeEventTopic, event)
+	if err := r.eventBus.Publish(r.ctx, runtimeEventTopic, event); err != nil {
+		slog.Debug("event publish failed", "err", err)
+	}
 }
 
 // emitMustDeliver publishes a terminal event (finish, error, cancel) using the
@@ -509,7 +517,9 @@ func (r *Runtime) emitMustDeliver(event ChatEvent) {
 	if r.eventBus == nil {
 		return
 	}
-	_ = r.eventBus.PublishMustDeliver(runtimeEventTopic, event)
+	if err := r.eventBus.PublishMustDeliver(runtimeEventTopic, event); err != nil {
+		slog.Debug("must-deliver publish failed", "err", err)
+	}
 }
 
 func cloneChatSessionState(state *ChatSessionState) ChatSessionState {

@@ -95,7 +95,10 @@ func exchangeMaaSToken(ctx context.Context, endpoint platform.Endpoint, ocpToken
 	}
 	defer resp.Body.Close()
 
-	respBody, _ := io.ReadAll(resp.Body)
+	respBody, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return "", fmt.Errorf("reading MaaS token response: %w", err)
+	}
 
 	switch resp.StatusCode {
 	case http.StatusOK, http.StatusCreated:

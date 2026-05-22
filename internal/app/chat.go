@@ -20,6 +20,11 @@ import (
 	"bitbucket.srv.westpac.com.au/m055731/aim/internal/tui/notify"
 )
 
+// oneShotEventBuffer is the subscriber buffer for runtime events in
+// non-interactive (one-shot) mode. Smaller than interactive because
+// only a single request/response cycle is processed.
+const oneShotEventBuffer = 64
+
 // ChatOptions holds the parameters for launching a chat session.
 type ChatOptions struct {
 	Endpoint     platform.Endpoint
@@ -77,15 +82,7 @@ func RunChat(ctx context.Context, opts ChatOptions) error {
 		return err
 	}
 
-	config := aimchat.ChatSessionConfig{
-		Endpoint:     opts.Endpoint,
-		Model:        model,
-		SystemPrompt: opts.SystemPrompt,
-		Parameters: aimchat.ChatParameters{
-			MaxTokens:   opts.MaxTokens,
-			Temperature: opts.Temperature,
-		},
-	}
+	config := buildSessionConfig(opts, model)
 
 	if err := runtime.Send(aimchat.StartChatSessionCommand{SessionID: sessionID, Config: config}); err != nil {
 		return err
@@ -101,12 +98,13 @@ func RunChat(ctx context.Context, opts ChatOptions) error {
 	refresher := buildModelRefresher(opts.Endpoint, maasToken, opts.Insecure)
 
 	tuiCfg := tui.Config{
-		SessionID:       sessionID,
-		ModelName:       model.ID,
-		Endpoint:        opts.Endpoint.Key(),
-		AvailableModels: available,
-		NotifyBus:       notifyBus,
-		RefreshModels:   refresher,
+		SessionID:          sessionID,
+		ModelName:          model.ID,
+		Endpoint:           opts.Endpoint.Key(),
+		AvailableModels:    available,
+		AvailableEndpoints: endpointKeys(),
+		NotifyBus:          notifyBus,
+		RefreshModels:      refresher,
 	}
 
 	// If model discovery failed at startup, notify the user in the TUI
@@ -115,11 +113,11 @@ func RunChat(ctx context.Context, opts ChatOptions) error {
 		_ = notifyBus.Publish(ctx, "notifications", notify.Notification{
 			Message:  "Model discovery failed: " + discoverErr.Error() + " (`/refresh` to retry)",
 			Level:    notify.LevelWarn,
-			Duration: 8 * time.Second,
+			Duration: 8 * time.Second, // longer for startup warnings
 		})
 	}
 
-	return tui.Run(runtime, tuiCfg)
+	return tui.Run(ctx, runtime, tuiCfg)
 }
 
 // runOneShotWithModel creates a runtime and runs a one-shot prompt with a
@@ -136,21 +134,13 @@ func runOneShotWithModel(ctx context.Context, opts ChatOptions, maasToken string
 		return err
 	}
 
-	config := aimchat.ChatSessionConfig{
-		Endpoint:     opts.Endpoint,
-		Model:        model,
-		SystemPrompt: opts.SystemPrompt,
-		Parameters: aimchat.ChatParameters{
-			MaxTokens:   opts.MaxTokens,
-			Temperature: opts.Temperature,
-		},
-	}
+	config := buildSessionConfig(opts, model)
 
 	if err := runtime.Send(aimchat.StartChatSessionCommand{SessionID: sessionID, Config: config}); err != nil {
 		return err
 	}
 
-	return runOneShotChat(runtime, sessionID, opts.Prompt)
+	return runOneShotChat(ctx, runtime, sessionID, opts.Prompt)
 }
 
 // buildModelRefresher returns a ModelRefresher closure that re-discovers
@@ -166,13 +156,25 @@ func buildModelRefresher(endpoint platform.Endpoint, maasToken string, insecure 
 	}
 }
 
-func runOneShotChat(runtime *aimchat.Runtime, sessionID, promptFlag string) error {
+func buildSessionConfig(opts ChatOptions, model aimchat.ChatModelRef) aimchat.ChatSessionConfig {
+	return aimchat.ChatSessionConfig{
+		Endpoint:     opts.Endpoint,
+		Model:        model,
+		SystemPrompt: opts.SystemPrompt,
+		Parameters: aimchat.ChatParameters{
+			MaxTokens:   opts.MaxTokens,
+			Temperature: opts.Temperature,
+		},
+	}
+}
+
+func runOneShotChat(ctx context.Context, runtime *aimchat.Runtime, sessionID, promptFlag string) error {
 	prompt, err := resolvePrompt(promptFlag)
 	if err != nil {
 		return err
 	}
 
-	sub, err := runtime.SubscribeEvents(64)
+	sub, err := runtime.SubscribeEvents(oneShotEventBuffer)
 	if err != nil {
 		return err
 	}
@@ -192,54 +194,63 @@ func runOneShotChat(runtime *aimchat.Runtime, sessionID, promptFlag string) erro
 		return err
 	}
 
-	return consumeOneShot(sub.Channel(), sessionID, requestID)
+	return consumeOneShot(ctx, sub.Channel(), sessionID, requestID)
 }
 
-func consumeOneShot(events <-chan aimchat.ChatEvent, sessionID, requestID string) error {
+func consumeOneShot(ctx context.Context, events <-chan aimchat.ChatEvent, sessionID, requestID string) error {
 	wroteOutput := false
 
-	for event := range events {
-		switch event := event.(type) {
-		case aimchat.ChatResponseDeltaEvent:
-			if event.SessionID != sessionID || event.RequestID != requestID {
-				continue
-			}
-			fmt.Print(event.Delta)
-			wroteOutput = true
-
-		case aimchat.ChatResponseCompletedEvent:
-			if event.State.SessionID != sessionID || event.RequestID != requestID {
-				continue
-			}
+	for {
+		select {
+		case <-ctx.Done():
 			if wroteOutput {
 				fmt.Println()
 			}
-			if event.FinishReason == "length" {
-				fmt.Fprintln(os.Stderr, "warning: response hit max_tokens and may be truncated")
+			return ctx.Err()
+		case event, ok := <-events:
+			if !ok {
+				return errors.New("chat runtime stopped before the request completed")
 			}
-			return nil
+			switch event := event.(type) {
+			case aimchat.ChatResponseDeltaEvent:
+				if event.SessionID != sessionID || event.RequestID != requestID {
+					continue
+				}
+				fmt.Print(event.Delta)
+				wroteOutput = true
 
-		case aimchat.ChatResponseCancelledEvent:
-			if event.State.SessionID != sessionID || event.RequestID != requestID {
-				continue
-			}
-			if wroteOutput {
-				fmt.Println()
-			}
-			return errors.New("chat request cancelled")
+			case aimchat.ChatResponseCompletedEvent:
+				if event.State.SessionID != sessionID || event.RequestID != requestID {
+					continue
+				}
+				if wroteOutput {
+					fmt.Println()
+				}
+				if event.FinishReason == "length" {
+					fmt.Fprintln(os.Stderr, "warning: response hit max_tokens and may be truncated")
+				}
+				return nil
 
-		case aimchat.ChatRuntimeErrorEvent:
-			if event.SessionID != sessionID {
-				continue
+			case aimchat.ChatResponseCancelledEvent:
+				if event.State.SessionID != sessionID || event.RequestID != requestID {
+					continue
+				}
+				if wroteOutput {
+					fmt.Println()
+				}
+				return errors.New("chat request cancelled")
+
+			case aimchat.ChatRuntimeErrorEvent:
+				if event.SessionID != sessionID {
+					continue
+				}
+				if event.RequestID != "" && event.RequestID != requestID {
+					continue
+				}
+				return errors.New(event.Message)
 			}
-			if event.RequestID != "" && event.RequestID != requestID {
-				continue
-			}
-			return errors.New(event.Message)
 		}
 	}
-
-	return errors.New("chat runtime stopped before the request completed")
 }
 
 func pickModel(models []maas.Model, requestedModel string) (aimchat.ChatModelRef, error) {
@@ -276,6 +287,14 @@ func buildModelRefs(models []maas.Model) []tui.ModelInfo {
 		})
 	}
 	return refs
+}
+
+func endpointKeys() []string {
+	keys := make([]string, len(platform.Endpoints))
+	for i, ep := range platform.Endpoints {
+		keys[i] = ep.Key()
+	}
+	return keys
 }
 
 func resolvePrompt(flagValue string) (string, error) {

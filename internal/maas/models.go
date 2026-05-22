@@ -38,7 +38,10 @@ func DiscoverModels(ctx context.Context, endpoint platform.Endpoint, maasToken s
 	}
 	defer resp.Body.Close()
 
-	body, _ := io.ReadAll(resp.Body)
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, fmt.Errorf("reading model discovery response: %w", err)
+	}
 
 	if resp.StatusCode == http.StatusUnauthorized {
 		return nil, fmt.Errorf("MaaS token is invalid or expired (401). Re-run 'aim token' to obtain a new one")
