@@ -38,6 +38,7 @@ func DefaultSources(workingDir string) []Source {
 }
 
 func SourcesFromConfig(workingDir string, cfg tauconfig.ExtensionConfig) []Source {
+	cfg = tauconfig.NormalizeExtensions(cfg)
 	if !cfg.Enabled {
 		return nil
 	}
