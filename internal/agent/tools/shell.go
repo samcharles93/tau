@@ -1,0 +1,129 @@
+package tools
+
+import (
+	"bytes"
+	"context"
+	"encoding/json"
+	"fmt"
+	"os/exec"
+	"runtime"
+	"strings"
+	"time"
+)
+
+const defaultShellTimeout = 120 * time.Second
+
+// ShellParams are the parameters for the shell tool.
+type ShellParams struct {
+	Command string `json:"command"`
+	Timeout int    `json:"timeout,omitempty"` // seconds, defaults to 120
+}
+
+var shellSchema = Schema{
+	Name:        "shell",
+	Description: "Execute a shell command. Uses PowerShell on Windows, bash on Linux/macOS. Returns stdout and stderr.",
+	Parameters: json.RawMessage(`{
+		"type": "object",
+		"properties": {
+			"command": {
+				"type": "string",
+				"description": "The shell command to execute"
+			},
+			"timeout": {
+				"type": "integer",
+				"description": "Timeout in seconds. Defaults to 120."
+			}
+		},
+		"required": ["command"]
+	}`),
+}
+
+// NewShellTool creates the built-in shell execution tool.
+func NewShellTool(cwd string) Tool {
+	return Tool{
+		Schema:  shellSchema,
+		Source:  "builtin",
+		Execute: makeShellExecutor(cwd),
+	}
+}
+
+func makeShellExecutor(cwd string) Executor {
+	return func(ctx context.Context, params json.RawMessage, _ UIBridge) (Result, error) {
+		var p ShellParams
+		if err := json.Unmarshal(params, &p); err != nil {
+			return Result{Content: fmt.Sprintf("invalid parameters: %v", err), IsError: true}, nil
+		}
+
+		if strings.TrimSpace(p.Command) == "" {
+			return Result{Content: "command is required", IsError: true}, nil
+		}
+
+		timeout := defaultShellTimeout
+		if p.Timeout > 0 {
+			timeout = time.Duration(p.Timeout) * time.Second
+		}
+
+		ctx, cancel := context.WithTimeout(ctx, timeout)
+		defer cancel()
+
+		shell, args := shellCommand(p.Command)
+		cmd := exec.CommandContext(ctx, shell, args...)
+		cmd.Dir = cwd
+
+		var stdout, stderr bytes.Buffer
+		cmd.Stdout = &stdout
+		cmd.Stderr = &stderr
+
+		err := cmd.Run()
+
+		var b strings.Builder
+		if stdout.Len() > 0 {
+			b.WriteString(stdout.String())
+		}
+		if stderr.Len() > 0 {
+			if b.Len() > 0 {
+				b.WriteString("\n")
+			}
+			b.WriteString("[stderr]\n")
+			b.WriteString(stderr.String())
+		}
+
+		exitCode := 0
+		if err != nil {
+			if exitErr, ok := err.(*exec.ExitError); ok {
+				exitCode = exitErr.ExitCode()
+			} else if ctx.Err() != nil {
+				return Result{
+					Content: fmt.Sprintf("command timed out after %s\n%s", timeout, b.String()),
+					IsError: true,
+				}, nil
+			} else {
+				return Result{Content: fmt.Sprintf("error executing command: %v", err), IsError: true}, nil
+			}
+		}
+
+		output := b.String()
+		if output == "" {
+			output = "(no output)"
+		}
+
+		tr := TruncateTail(output, DefaultMaxLines, DefaultMaxBytes)
+
+		if exitCode != 0 {
+			return Result{
+				Content: fmt.Sprintf("[exit code: %d]\n%s", exitCode, tr.Content),
+				IsError: true,
+			}, nil
+		}
+
+		return Result{Content: tr.Content}, nil
+	}
+}
+
+// shellCommand returns the shell binary and arguments for the current platform.
+func shellCommand(command string) (string, []string) {
+	if runtime.GOOS == "windows" {
+		return "powershell", []string{"-NoProfile", "-NonInteractive", "-Command", command}
+	}
+	return "bash", []string{"-c", command}
+}

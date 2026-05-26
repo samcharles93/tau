@@ -1,0 +1,169 @@
+// Package tools provides the tool registry and built-in tool implementations
+// for the AIM agent coordinator.
+package tools
+
+import (
+	"context"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"sync"
+)
+
+// Schema describes a tool's interface for LLM function-calling.
+type Schema struct {
+	Name        string          `json:"name"`
+	Description string          `json:"description"`
+	Parameters  json.RawMessage `json:"parameters"` // JSON Schema object
+}
+
+// Result is the output of a tool execution.
+type Result struct {
+	Content string `json:"content"`
+	Details any    `json:"details,omitempty"`
+	IsError bool   `json:"is_error,omitempty"`
+}
+
+// UIBridge allows tools to interact with the user through the TUI.
+// This interface is satisfied by the extension/ui bridge implementation.
+type UIBridge interface {
+	Confirm(ctx context.Context, title, description string) (bool, error)
+	Select(ctx context.Context, title string, options []string) (string, error)
+	Input(ctx context.Context, title, placeholder string) (string, error)
+	Notify(title, level string)
+}
+
+// Executor is a function that executes a tool with the given parameters.
+type Executor func(ctx context.Context, params json.RawMessage, ui UIBridge) (Result, error)
+
+// Tool is a registered tool comprising its schema and executor.
+type Tool struct {
+	Schema  Schema
+	Execute Executor
+	Source  string // "builtin", "extension:<name>"
+}
+
+// Registry holds all registered tools and provides thread-safe access.
+type Registry struct {
+	mu    sync.RWMutex
+	tools map[string]Tool
+	order []string // insertion order for deterministic iteration
+}
+
+// NewRegistry creates an empty tool registry.
+func NewRegistry() *Registry {
+	return &Registry{
+		tools: make(map[string]Tool),
+	}
+}
+
+// Register adds a tool to the registry. Returns an error if a tool with
+// the same name is already registered (use Replace for overrides).
+func (r *Registry) Register(tool Tool) error {
+	if tool.Schema.Name == "" {
+		return errors.New("tool name is required")
+	}
+	if tool.Execute == nil {
+		return errors.New("tool executor is required")
+	}
+
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	if _, exists := r.tools[tool.Schema.Name]; exists {
+		return fmt.Errorf("tool %q is already registered", tool.Schema.Name)
+	}
+
+	r.tools[tool.Schema.Name] = tool
+	r.order = append(r.order, tool.Schema.Name)
+	return nil
+}
+
+// Replace registers a tool, overriding any existing tool with the same name.
+func (r *Registry) Replace(tool Tool) error {
+	if tool.Schema.Name == "" {
+		return errors.New("tool name is required")
+	}
+	if tool.Execute == nil {
+		return errors.New("tool executor is required")
+	}
+
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	if _, exists := r.tools[tool.Schema.Name]; !exists {
+		r.order = append(r.order, tool.Schema.Name)
+	}
+	r.tools[tool.Schema.Name] = tool
+	return nil
+}
+
+// Unregister removes a tool from the registry.
+func (r *Registry) Unregister(name string) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	delete(r.tools, name)
+	for i, n := range r.order {
+		if n == name {
+			r.order = append(r.order[:i], r.order[i+1:]...)
+			break
+		}
+	}
+}
+
+// Get retrieves a tool by name.
+func (r *Registry) Get(name string) (Tool, bool) {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+
+	tool, ok := r.tools[name]
+	return tool, ok
+}
+
+// All returns all registered tools in insertion order.
+func (r *Registry) All() []Tool {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+
+	result := make([]Tool, 0, len(r.order))
+	for _, name := range r.order {
+		if tool, ok := r.tools[name]; ok {
+			result = append(result, tool)
+		}
+	}
+	return result
+}
+
+// Schemas returns the schemas of all registered tools in insertion order.
+// This is the slice sent to the LLM in the tools[] field.
+func (r *Registry) Schemas() []Schema {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+
+	result := make([]Schema, 0, len(r.order))
+	for _, name := range r.order {
+		if tool, ok := r.tools[name]; ok {
+			result = append(result, tool.Schema)
+		}
+	}
+	return result
+}
+
+// Names returns the names of all registered tools.
+func (r *Registry) Names() []string {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+
+	out := make([]string, len(r.order))
+	copy(out, r.order)
+	return out
+}
+
+// Count returns the number of registered tools.
+func (r *Registry) Count() int {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+
+	return len(r.tools)
+}
