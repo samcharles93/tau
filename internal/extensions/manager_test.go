@@ -175,6 +175,34 @@ end)
 	require.True(t, containsDiagnostic(manager.Snapshot().Diagnostics, "already registered"))
 }
 
+func TestManagerHonorsDisabledConfig(t *testing.T) {
+	t.Parallel()
+
+	root := t.TempDir()
+	writeFile(t, filepath.Join(root, "disabled.lua"), `tau.log("info", "nope")`)
+
+	registry := tools.NewRegistry()
+	manager, err := NewManager(Config{
+		Sources:  []Source{{Root: root, Scope: ScopeUser}},
+		Disabled: []string{"disabled"},
+		Registry: registry,
+	})
+	require.NoError(t, err)
+	require.NoError(t, manager.Load(context.Background()))
+
+	require.Empty(t, manager.Snapshot().Extensions)
+	require.True(t, containsDiagnostic(manager.Snapshot().Diagnostics, "disabled by config"))
+}
+
+func TestReloadIfIdleRejectsBusyRuntime(t *testing.T) {
+	t.Parallel()
+
+	manager := newTestManager(t, t.TempDir(), tools.NewRegistry())
+
+	require.ErrorIs(t, manager.ReloadIfIdle(context.Background(), false), ErrReloadWhileBusy)
+	require.NoError(t, manager.ReloadIfIdle(context.Background(), true))
+}
+
 func newTestManager(t *testing.T, root string, registry *tools.Registry) *Manager {
 	t.Helper()
 	manager, err := NewManager(Config{

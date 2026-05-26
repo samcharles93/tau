@@ -54,6 +54,34 @@ func TestCoordinatorDispatchesSessionLifecycleHooks(t *testing.T) {
 	require.Equal(t, "session_shutdown", receiveLifecycle(t, shutdown)["event"])
 }
 
+func TestCoordinatorPublishesStartupEventsOnSubscribe(t *testing.T) {
+	coordinator, err := NewCoordinator(context.Background(), CoordinatorConfig{
+		TokenSource: func(context.Context, config.ProviderConfig) (string, error) {
+			return "", nil
+		},
+		Streamer: noopStreamer{},
+		Registry: tools.NewRegistry(),
+		StartupEvents: []chat.ChatEvent{
+			chat.ChatRuntimeErrorEvent{Message: "extension failed", Fatal: false},
+		},
+	})
+	require.NoError(t, err)
+	defer coordinator.Close()
+
+	sub, err := coordinator.SubscribeEvents(1)
+	require.NoError(t, err)
+	defer sub.Unsubscribe()
+
+	select {
+	case event := <-sub.Channel():
+		runtimeErr, ok := event.(chat.ChatRuntimeErrorEvent)
+		require.True(t, ok)
+		require.Equal(t, "extension failed", runtimeErr.Message)
+	case <-time.After(time.Second):
+		t.Fatal("timed out waiting for startup event")
+	}
+}
+
 func receiveLifecycle(t *testing.T, ch <-chan map[string]any) map[string]any {
 	t.Helper()
 	select {
