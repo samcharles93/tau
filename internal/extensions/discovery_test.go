@@ -6,26 +6,23 @@ import (
 	"strings"
 	"testing"
 
+	tauconfig "github.com/samcharles93/tau/internal/config"
 	"github.com/stretchr/testify/require"
+	"gopkg.in/yaml.v3"
 )
 
 func TestDefaultSourcesHonorsEnvironment(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	t.Setenv("XDG_CONFIG_HOME", filepath.Join(t.TempDir(), "config"))
-	t.Setenv(EnableProjectExtensionsEnvVar, "")
 	t.Setenv(ExtensionPathsEnvVar, filepath.Join(t.TempDir(), "extra-a")+string(os.PathListSeparator)+filepath.Join(t.TempDir(), "extra-b"))
 
 	cwd := t.TempDir()
 	sources := DefaultSources(cwd)
 
-	require.Len(t, sources, 3)
+	require.Len(t, sources, 4)
 	require.Equal(t, filepath.Join(os.Getenv("XDG_CONFIG_HOME"), "tau", "extensions"), sources[0].Root)
-	require.NotContains(t, sourceRoots(sources), filepath.Join(cwd, ".tau", "extensions"))
-	require.Equal(t, ScopeExtra, sources[1].Scope)
-
-	t.Setenv(EnableProjectExtensionsEnvVar, "1")
-	sources = DefaultSources(cwd)
 	require.Contains(t, sourceRoots(sources), filepath.Join(cwd, ".tau", "extensions"))
+	require.Equal(t, ScopeExtra, sources[2].Scope)
 }
 
 func TestDiscoverLoadsSingleFileAndManifestExtensions(t *testing.T) {
@@ -48,18 +45,23 @@ entry: main.lua
 	require.Equal(t, "single", extensions[1].Name)
 }
 
-func TestDiscoverProjectRootDisabledByDefault(t *testing.T) {
+func TestSourcesFromConfigControlsProjectAndExtraRoots(t *testing.T) {
 	t.Setenv("XDG_CONFIG_HOME", filepath.Join(t.TempDir(), "config"))
-	t.Setenv(EnableProjectExtensionsEnvVar, "")
 	t.Setenv(ExtensionPathsEnvVar, "")
 
 	cwd := t.TempDir()
-	writeFile(t, filepath.Join(cwd, ".tau", "extensions", "project.lua"), ``)
+	extra := filepath.Join(t.TempDir(), "extra")
 
-	extensions, diagnostics := Discover(DefaultSources(cwd))
+	sources := SourcesFromConfig(cwd, tauconfig.ExtensionConfig{Paths: []string{extra}})
 
-	require.Empty(t, diagnostics)
-	require.Empty(t, extensions)
+	require.Contains(t, sourceRoots(sources), filepath.Join(cwd, ".tau", "extensions"))
+	require.Contains(t, sourceRoots(sources), extra)
+
+	sources = SourcesFromConfig(cwd, extensionConfigWithAllowProject(false))
+	require.NotContains(t, sourceRoots(sources), filepath.Join(cwd, ".tau", "extensions"))
+
+	sources = SourcesFromConfig(cwd, extensionConfigWithEnabled(false))
+	require.Empty(t, sources)
 }
 
 func TestDiscoverMissingRootsAndInvalidEntries(t *testing.T) {
@@ -133,4 +135,28 @@ func writeFile(t *testing.T, path, content string) {
 	t.Helper()
 	require.NoError(t, os.MkdirAll(filepath.Dir(path), 0o755))
 	require.NoError(t, os.WriteFile(path, []byte(content), 0o644))
+}
+
+func extensionConfigWithEnabled(enabled bool) tauconfig.ExtensionConfig {
+	var cfg tauconfig.Config
+	data := "extensions:\n  enabled: false\n"
+	if enabled {
+		data = "extensions:\n  enabled: true\n"
+	}
+	if err := yaml.Unmarshal([]byte(data), &cfg); err != nil {
+		panic(err)
+	}
+	return cfg.Extensions
+}
+
+func extensionConfigWithAllowProject(allow bool) tauconfig.ExtensionConfig {
+	var cfg tauconfig.Config
+	data := "extensions:\n  allow_project: false\n"
+	if allow {
+		data = "extensions:\n  allow_project: true\n"
+	}
+	if err := yaml.Unmarshal([]byte(data), &cfg); err != nil {
+		panic(err)
+	}
+	return cfg.Extensions
 }
