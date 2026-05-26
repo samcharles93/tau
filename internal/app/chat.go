@@ -327,6 +327,8 @@ func newCoordinator(ctx context.Context, opts ChatOptions, bearerToken string) (
 	}
 	extensionManager, err := extensions.NewManager(extensions.Config{
 		WorkingDir: cwd,
+		Sources:    extensions.SourcesFromConfig(cwd, opts.Config.Extensions),
+		Disabled:   opts.Config.Extensions.Disabled,
 		Registry:   registry,
 	})
 	if err != nil {
@@ -346,13 +348,34 @@ func newCoordinator(ctx context.Context, opts ChatOptions, bearerToken string) (
 		OnSessionShutdown: func(eventContext map[string]any) {
 			extensionManager.Dispatch(extensions.EventSessionShutdown, eventContext)
 		},
-		OnClose: extensionManager.Unload,
+		OnClose:       extensionManager.Unload,
+		StartupEvents: extensionStartupEvents(extensionManager.Snapshot().Diagnostics),
 	})
 	if err != nil {
 		extensionManager.Unload()
 		return nil, err
 	}
 	return coordinator, nil
+}
+
+func extensionStartupEvents(diagnostics []extensions.Diagnostic) []tauchat.ChatEvent {
+	events := make([]tauchat.ChatEvent, 0, len(diagnostics))
+	for _, diagnostic := range diagnostics {
+		if diagnostic.Severity != extensions.SeverityError {
+			continue
+		}
+		message := "Extension error"
+		if diagnostic.ExtensionName != "" {
+			message += " (" + diagnostic.ExtensionName + ")"
+		}
+		message += ": " + diagnostic.Message
+		events = append(events, tauchat.ChatRuntimeErrorEvent{
+			Message:    message,
+			Fatal:      false,
+			OccurredAt: time.Now().UTC(),
+		})
+	}
+	return events
 }
 
 func staticTokenSource(token string) platform.TokenSource {
