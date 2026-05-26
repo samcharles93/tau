@@ -280,6 +280,11 @@ func ProviderNames(cfg Config) []string {
 		if strings.TrimSpace(provider.Name) != "" {
 			names = append(names, provider.Name)
 		}
+
+		// NormalizeExtensions applies extension defaults to an ExtensionConfig value.
+		func NormalizeExtensions(cfg ExtensionConfig) ExtensionConfig {
+			return withDefaults(Config{Extensions: cfg}).Extensions
+		}
 	}
 	return names
 }
