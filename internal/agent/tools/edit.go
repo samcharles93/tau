@@ -75,6 +75,10 @@ func makeEditExecutor(cwd string, mq *MutationQueue) Executor {
 
 		path := resolvePath(cwd, p.Path)
 
+		if !isConfined(cwd, path) {
+			return Result{Content: "path escapes working directory", IsError: true}, nil
+		}
+
 		release := mq.Acquire(path)
 		defer release()
 
@@ -98,7 +102,7 @@ func makeEditExecutor(cwd string, mq *MutationQueue) Executor {
 			applied++
 		}
 
-		if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+		if err := writeFileAtomic(path, []byte(content), 0o644); err != nil {
 			return Result{Content: fmt.Sprintf("error writing file: %v", err), IsError: true}, nil
 		}
 

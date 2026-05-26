@@ -9,6 +9,7 @@ func RegisterBuiltins(reg *Registry, cwd string) error {
 		NewReadTool(cwd),
 		NewWriteTool(cwd, mq),
 		NewEditTool(cwd, mq),
+		NewPatchTool(cwd, mq),
 		NewShellTool(cwd),
 		NewGrepTool(cwd),
 		NewFindTool(cwd),

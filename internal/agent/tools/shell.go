@@ -5,13 +5,17 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"os"
 	"os/exec"
 	"runtime"
 	"strings"
 	"time"
 )
 
-const defaultShellTimeout = 120 * time.Second
+const (
+	defaultShellTimeout = 120 * time.Second
+	maxShellTimeout     = 10 * time.Minute
+)
 
 // ShellParams are the parameters for the shell tool.
 type ShellParams struct {
@@ -54,7 +58,8 @@ func makeShellExecutor(cwd string) Executor {
 			return Result{Content: fmt.Sprintf("invalid parameters: %v", err), IsError: true}, nil
 		}
 
-		if strings.TrimSpace(p.Command) == "" {
+		p.Command = strings.TrimSpace(p.Command)
+		if p.Command == "" {
 			return Result{Content: "command is required", IsError: true}, nil
 		}
 
@@ -62,13 +67,25 @@ func makeShellExecutor(cwd string) Executor {
 		if p.Timeout > 0 {
 			timeout = time.Duration(p.Timeout) * time.Second
 		}
+		if timeout > maxShellTimeout {
+			timeout = maxShellTimeout
+		}
+
+		if cwd != "" {
+			info, err := os.Stat(cwd)
+			if err != nil || !info.IsDir() {
+				return Result{Content: fmt.Sprintf("invalid cwd %q", cwd), IsError: true}, nil
+			}
+		}
 
 		ctx, cancel := context.WithTimeout(ctx, timeout)
 		defer cancel()
 
 		shell, args := shellCommand(p.Command)
 		cmd := exec.CommandContext(ctx, shell, args...)
-		cmd.Dir = cwd
+		if cwd != "" {
+			cmd.Dir = cwd
+		}
 
 		var stdout, stderr bytes.Buffer
 		cmd.Stdout = &stdout
@@ -88,20 +105,6 @@ func makeShellExecutor(cwd string) Executor {
 			b.WriteString(stderr.String())
 		}
 
-		exitCode := 0
-		if err != nil {
-			if exitErr, ok := err.(*exec.ExitError); ok {
-				exitCode = exitErr.ExitCode()
-			} else if ctx.Err() != nil {
-				return Result{
-					Content: fmt.Sprintf("command timed out after %s\n%s", timeout, b.String()),
-					IsError: true,
-				}, nil
-			} else {
-				return Result{Content: fmt.Sprintf("error executing command: %v", err), IsError: true}, nil
-			}
-		}
-
 		output := b.String()
 		if output == "" {
 			output = "(no output)"
@@ -109,11 +112,25 @@ func makeShellExecutor(cwd string) Executor {
 
 		tr := TruncateTail(output, DefaultMaxLines, DefaultMaxBytes)
 
-		if exitCode != 0 {
-			return Result{
-				Content: fmt.Sprintf("[exit code: %d]\n%s", exitCode, tr.Content),
-				IsError: true,
-			}, nil
+		if err != nil {
+			// Check context cancellation first — a process may exit with
+			// a non-zero code after the deadline, and we want to report
+			// timeout rather than a misleading exit code.
+			if ctx.Err() != nil {
+				return Result{
+					Content: fmt.Sprintf("[timeout after: %s]\n%s", timeout, tr.Content),
+					IsError: true,
+				}, nil
+			}
+
+			if exitErr, ok := err.(*exec.ExitError); ok {
+				return Result{
+					Content: fmt.Sprintf("[exit code: %d]\n%s", exitErr.ExitCode(), tr.Content),
+					IsError: true,
+				}, nil
+			}
+
+			return Result{Content: fmt.Sprintf("error executing command: %v", err), IsError: true}, nil
 		}
 
 		return Result{Content: tr.Content}, nil
@@ -123,7 +140,17 @@ func makeShellExecutor(cwd string) Executor {
 // shellCommand returns the shell binary and arguments for the current platform.
 func shellCommand(command string) (string, []string) {
 	if runtime.GOOS == "windows" {
-		return "powershell", []string{"-NoProfile", "-NonInteractive", "-Command", command}
+		// Prefer PowerShell 7 (pwsh), fall back to Windows PowerShell.
+		shell := "powershell.exe"
+		if _, err := exec.LookPath("pwsh"); err == nil {
+			shell = "pwsh"
+		}
+		return shell, []string{
+			"-NoProfile",
+			"-NonInteractive",
+			"-ExecutionPolicy", "Bypass",
+			"-Command", command,
+		}
 	}
 	return "bash", []string{"-c", command}
 }

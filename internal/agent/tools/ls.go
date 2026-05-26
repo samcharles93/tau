@@ -50,6 +50,10 @@ func makeLsExecutor(cwd string) Executor {
 			dirPath = resolvePath(cwd, p.Path)
 		}
 
+		if !isConfined(cwd, dirPath) {
+			return Result{Content: "error: path escapes working directory", IsError: true}, nil
+		}
+
 		entries, err := os.ReadDir(dirPath)
 		if err != nil {
 			return Result{Content: fmt.Sprintf("error listing directory: %v", err), IsError: true}, nil
@@ -90,6 +94,7 @@ func makeLsExecutor(cwd string) Executor {
 			b.WriteString("  (empty)\n")
 		}
 
-		return Result{Content: b.String()}, nil
+		tr := TruncateHead(b.String(), DefaultMaxLines, DefaultMaxBytes)
+		return Result{Content: tr.Content}, nil
 	}
 }

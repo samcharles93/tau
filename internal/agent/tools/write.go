@@ -49,7 +49,15 @@ func makeWriteExecutor(cwd string, mq *MutationQueue) Executor {
 			return Result{Content: fmt.Sprintf("invalid parameters: %v", err), IsError: true}, nil
 		}
 
+		if len(p.Content) > maxWriteBytes {
+			return Result{Content: fmt.Sprintf("content too large (%s > %s)", FormatSize(len(p.Content)), FormatSize(maxWriteBytes)), IsError: true}, nil
+		}
+
 		path := resolvePath(cwd, p.Path)
+
+		if !isConfined(cwd, path) {
+			return Result{Content: "path escapes working directory", IsError: true}, nil
+		}
 
 		release := mq.Acquire(path)
 		defer release()
@@ -59,7 +67,7 @@ func makeWriteExecutor(cwd string, mq *MutationQueue) Executor {
 			return Result{Content: fmt.Sprintf("error creating directory: %v", err), IsError: true}, nil
 		}
 
-		if err := os.WriteFile(path, []byte(p.Content), 0o644); err != nil {
+		if err := writeFileAtomic(path, []byte(p.Content), 0o644); err != nil {
 			return Result{Content: fmt.Sprintf("error writing file: %v", err), IsError: true}, nil
 		}
 

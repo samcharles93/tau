@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os/exec"
+	"path/filepath"
 	"runtime"
 	"strings"
 )
@@ -61,7 +62,14 @@ func makeFindExecutor(cwd string) Executor {
 			searchPath = resolvePath(cwd, p.Path)
 		}
 
-		binary := findBinary()
+		if !isConfined(cwd, searchPath) {
+			return Result{Content: "error: path escapes working directory", IsError: true}, nil
+		}
+
+		binary, err := findBinary()
+		if err != nil {
+			return Result{Content: err.Error(), IsError: true}, nil
+		}
 		args := buildFindArgs(binary, p, searchPath)
 
 		cmd := exec.CommandContext(ctx, binary, args...)
@@ -71,7 +79,7 @@ func makeFindExecutor(cwd string) Executor {
 		cmd.Stdout = &stdout
 		cmd.Stderr = &stderr
 
-		err := cmd.Run()
+		err = cmd.Run()
 
 		output := strings.TrimSpace(stdout.String())
 		if output == "" && err != nil {
@@ -91,9 +99,15 @@ func makeFindExecutor(cwd string) Executor {
 	}
 }
 
+func isFdBinary(binary string) bool {
+	base := filepath.Base(binary)
+	base = strings.TrimSuffix(base, filepath.Ext(base)) // strip .exe on Windows
+	return base == "fd" || base == "fd-find" || base == "fdfind"
+}
+
 func buildFindArgs(binary string, p FindParams, searchPath string) []string {
 	// fd (fd-find) style
-	if strings.Contains(binary, "fd") {
+	if isFdBinary(binary) {
 		args := []string{}
 		if p.Pattern != "" {
 			args = append(args, "--glob", p.Pattern)
@@ -120,14 +134,15 @@ func buildFindArgs(binary string, p FindParams, searchPath string) []string {
 	return args
 }
 
-func findBinary() string {
-	// Prefer fd, fall back to find.
-	if path, err := exec.LookPath("fd"); err == nil {
-		return path
+func findBinary() (string, error) {
+	// Prefer fd; fall back to POSIX find on Unix only.
+	for _, name := range []string{"fd", "fdfind", "fd-find"} {
+		if path, err := exec.LookPath(name); err == nil {
+			return path, nil
+		}
 	}
 	if runtime.GOOS == "windows" {
-		// Windows has no native find equivalent; use dir /s /b as fallback.
-		return "cmd"
+		return "", fmt.Errorf("fd is required on Windows but was not found in PATH")
 	}
-	return "find"
+	return "find", nil
 }

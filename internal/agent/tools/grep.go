@@ -75,9 +75,17 @@ func makeGrepExecutor(cwd string) Executor {
 		if p.Path != "" {
 			searchPath = resolvePath(cwd, p.Path)
 		}
+
+		if !isConfined(cwd, searchPath) {
+			return Result{Content: "error: path escapes working directory", IsError: true}, nil
+		}
+
 		args = append(args, searchPath)
 
-		binary := grepBinary()
+		binary, err := grepBinary()
+		if err != nil {
+			return Result{Content: err.Error(), IsError: true}, nil
+		}
 		cmd := exec.CommandContext(ctx, binary, args...)
 		cmd.Dir = cwd
 
@@ -85,7 +93,7 @@ func makeGrepExecutor(cwd string) Executor {
 		cmd.Stdout = &stdout
 		cmd.Stderr = &stderr
 
-		err := cmd.Run()
+		err = cmd.Run()
 
 		output := stdout.String()
 		if output == "" && err != nil {
@@ -125,13 +133,13 @@ func buildGrepArgs(p GrepParams) []string {
 	return args
 }
 
-func grepBinary() string {
-	// Prefer ripgrep, fall back to grep.
+func grepBinary() (string, error) {
+	// Prefer ripgrep; fall back to grep on Unix only.
 	if path, err := exec.LookPath("rg"); err == nil {
-		return path
+		return path, nil
 	}
 	if runtime.GOOS == "windows" {
-		return "findstr"
+		return "", fmt.Errorf("ripgrep (rg) is required on Windows but was not found in PATH")
 	}
-	return "grep"
+	return "grep", nil
 }

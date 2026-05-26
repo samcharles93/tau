@@ -25,7 +25,10 @@ type TruncationResult struct {
 // Good for file reads, search results.
 func TruncateHead(content string, maxLines, maxBytes int) TruncationResult {
 	originalSize := len(content)
-	originalLines := strings.Count(content, "\n") + 1
+	originalLines := 0
+	if content != "" {
+		originalLines = strings.Count(content, "\n") + 1
+	}
 
 	result := TruncationResult{
 		Content:      content,
@@ -67,7 +70,10 @@ func TruncateHead(content string, maxLines, maxBytes int) TruncationResult {
 // Good for logs, command output.
 func TruncateTail(content string, maxLines, maxBytes int) TruncationResult {
 	originalSize := len(content)
-	originalLines := strings.Count(content, "\n") + 1
+	originalLines := 0
+	if content != "" {
+		originalLines = strings.Count(content, "\n") + 1
+	}
 
 	result := TruncationResult{
 		Content:      content,

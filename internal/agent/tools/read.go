@@ -5,8 +5,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
-	"path/filepath"
 	"strings"
+	"unicode/utf8"
 )
 
 // ReadParams are the parameters for the read tool.
@@ -55,11 +55,37 @@ func makeReadExecutor(cwd string) Executor {
 			return Result{Content: fmt.Sprintf("invalid parameters: %v", err), IsError: true}, nil
 		}
 
+		if p.Offset < 0 {
+			return Result{Content: "offset must be >= 0", IsError: true}, nil
+		}
+		if p.Limit < 0 {
+			return Result{Content: "limit must be >= 0", IsError: true}, nil
+		}
+
 		path := resolvePath(cwd, p.Path)
+
+		if !isConfined(cwd, path) {
+			return Result{Content: "path escapes working directory", IsError: true}, nil
+		}
+
+		info, err := os.Stat(path)
+		if err != nil {
+			return Result{Content: fmt.Sprintf("error stating file: %v", err), IsError: true}, nil
+		}
+		if info.IsDir() {
+			return Result{Content: "path is a directory, not a file", IsError: true}, nil
+		}
+		if info.Size() > maxReadBytes {
+			return Result{Content: fmt.Sprintf("file too large (%s > %s)", FormatSize(int(info.Size())), FormatSize(maxReadBytes)), IsError: true}, nil
+		}
 
 		data, err := os.ReadFile(path)
 		if err != nil {
 			return Result{Content: fmt.Sprintf("error reading file: %v", err), IsError: true}, nil
+		}
+
+		if !utf8.Valid(data) {
+			return Result{Content: "file appears to be binary", IsError: true}, nil
 		}
 
 		content := string(data)
@@ -91,14 +117,4 @@ func makeReadExecutor(cwd string) Executor {
 
 		return Result{Content: tr.Content}, nil
 	}
-}
-
-// resolvePath resolves a potentially relative path against the working directory.
-// It also strips a leading @ (some LLMs include this).
-func resolvePath(cwd, path string) string {
-	path = strings.TrimPrefix(path, "@")
-	if filepath.IsAbs(path) {
-		return filepath.Clean(path)
-	}
-	return filepath.Clean(filepath.Join(cwd, path))
 }
