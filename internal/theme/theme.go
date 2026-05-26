@@ -1,5 +1,5 @@
 // Package theme provides the shared colour palette and pre-built styles for the
-// AIM application. It is a leaf dependency with zero internal imports so any
+// Tau application. It is a leaf dependency with zero internal imports so any
 // package may use it.
 package theme
 
@@ -8,30 +8,30 @@ import (
 	"charm.land/lipgloss/v2"
 )
 
-// --- Brand colours (Westpac NOW palette) ---
+// --- Brand colours ---
 
 // Hex constants for the brand palette. Used by both lipgloss Color definitions
 // and glamour markdown styles (which require *string hex values).
 const (
-	HexDarkNavy   = "#181B25"
-	HexWhite      = "#FFFFFF"
-	HexWestpacRed = "#DA1710"
-	HexNavyBlue   = "#1F1B4F"
-	HexPurple     = "#9819D7"
-	HexLightGray  = "#E8E8ED"
-	HexDimGray    = "#a5a5b1"
-	HexGreen      = "#00A300"
+	HexDarkNavy  = "#181B25"
+	HexWhite     = "#FFFFFF"
+	HexRed       = "#DA1710"
+	HexNavyBlue  = "#1F1B4F"
+	HexPurple    = "#9819D7"
+	HexLightGray = "#E8E8ED"
+	HexDimGray   = "#a5a5b1"
+	HexGreen     = "#00A300"
 )
 
 var (
-	ColorDarkNavy   = lipgloss.Color(HexDarkNavy)
-	ColorWhite      = lipgloss.Color(HexWhite)
-	ColorWestpacRed = lipgloss.Color(HexWestpacRed)
-	ColorNavyBlue   = lipgloss.Color(HexNavyBlue)
-	ColorPurple     = lipgloss.Color(HexPurple)
-	ColorLightGray  = lipgloss.Color(HexLightGray)
-	ColorDimGray    = lipgloss.Color(HexDimGray)
-	ColorGreen      = lipgloss.Color(HexGreen)
+	ColorDarkNavy  = lipgloss.Color(HexDarkNavy)
+	ColorWhite     = lipgloss.Color(HexWhite)
+	ColorRed       = lipgloss.Color(HexRed)
+	ColorNavyBlue  = lipgloss.Color(HexNavyBlue)
+	ColorPurple    = lipgloss.Color(HexPurple)
+	ColorLightGray = lipgloss.Color(HexLightGray)
+	ColorDimGray   = lipgloss.Color(HexDimGray)
+	ColorGreen     = lipgloss.Color(HexGreen)
 )
 
 // --- Pre-built semantic styles ---
@@ -40,7 +40,7 @@ var (
 	// Error is used for error messages and destructive highlights.
 	Error = lipgloss.NewStyle().
 		Bold(true).
-		Foreground(ColorWestpacRed)
+		Foreground(ColorRed)
 
 	// Dim is secondary/muted text.
 	Dim = lipgloss.NewStyle().
@@ -64,7 +64,7 @@ var (
 
 	// StatusNotReady indicates an unavailable resource.
 	StatusNotReady = lipgloss.NewStyle().
-			Foreground(ColorWestpacRed).
+			Foreground(ColorRed).
 			Faint(true)
 
 	// Accent is the brand accent (purple) for borders and highlights.

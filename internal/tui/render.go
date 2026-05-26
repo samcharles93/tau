@@ -3,14 +3,14 @@ package tui
 import (
 	"strings"
 
-	aimchat "bitbucket.srv.westpac.com.au/m055731/aim/internal/chat"
-	"bitbucket.srv.westpac.com.au/m055731/aim/internal/theme"
 	"charm.land/lipgloss/v2"
+	tauchat "github.com/samcharles93/tau/internal/chat"
+	"github.com/samcharles93/tau/internal/theme"
 )
 
 // turnBlock represents one rendered conversation turn for the viewport.
 type turnBlock struct {
-	role    aimchat.ChatRole
+	role    tauchat.ChatRole
 	content string
 	// rendered caches the styled output for completed turns.
 	rendered string
@@ -46,12 +46,12 @@ func renderConversation(turns []turnBlock, streamingContent string, streamMD *st
 }
 
 // renderTurn styles a completed turn with its role label and markdown content.
-func renderTurn(role aimchat.ChatRole, content string, width int, t tuiTheme) string {
+func renderTurn(role tauchat.ChatRole, content string, width int, t tuiTheme) string {
 	contentWidth := max(width-4, 20)
 
 	var rendered string
 	switch role {
-	case aimchat.ChatRoleAssistant:
+	case tauchat.ChatRoleAssistant:
 		rendered = renderAssistantContent(content, contentWidth, t)
 	default:
 		rendered = t.StreamingText.Width(contentWidth).Render(content)
@@ -65,7 +65,7 @@ func renderTurn(role aimchat.ChatRole, content string, width int, t tuiTheme) st
 // incremental markdown rendering for non-thinking segments.
 func renderStreamingTurn(content string, streamMD *streamingMarkdown, width int, t tuiTheme) string {
 	contentWidth := max(width-4, 20)
-	border := renderTurnBorder(aimchat.ChatRoleAssistant, contentWidth)
+	border := renderTurnBorder(tauchat.ChatRoleAssistant, contentWidth)
 	rendered := renderAssistantStreaming(content, streamMD, contentWidth, t)
 	return border + "\n" + rendered
 }
@@ -168,12 +168,12 @@ func splitThinkSegments(content string) []thinkSegment {
 }
 
 // renderTurnBorder returns a thin horizontal rule styled by role.
-func renderTurnBorder(role aimchat.ChatRole, width int) string {
+func renderTurnBorder(role tauchat.ChatRole, width int) string {
 	line := strings.Repeat("─", max(width, 1))
 	switch role {
-	case aimchat.ChatRoleUser:
+	case tauchat.ChatRoleUser:
 		return lipgloss.NewStyle().Foreground(theme.ColorNavyBlue).Render(line)
-	case aimchat.ChatRoleAssistant:
+	case tauchat.ChatRoleAssistant:
 		return lipgloss.NewStyle().Foreground(theme.ColorPurple).Render(line)
 	default:
 		return lipgloss.NewStyle().Foreground(theme.ColorDimGray).Render(line)

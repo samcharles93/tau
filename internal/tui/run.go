@@ -3,8 +3,8 @@ package tui
 import (
 	"context"
 
-	aimchat "bitbucket.srv.westpac.com.au/m055731/aim/internal/chat"
 	tea "charm.land/bubbletea/v2"
+	tauchat "github.com/samcharles93/tau/internal/chat"
 )
 
 // eventBufferSize is the subscriber buffer for runtime events in
@@ -13,7 +13,7 @@ import (
 const eventBufferSize = 128
 
 // Run launches the interactive chat TUI. It blocks until the user exits.
-func Run(ctx context.Context, runtime *aimchat.Runtime, cfg Config) error {
+func Run(ctx context.Context, runtime tauchat.ChatRuntime, cfg Config) error {
 	sub, err := runtime.SubscribeEvents(eventBufferSize)
 	if err != nil {
 		return err

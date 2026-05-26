@@ -6,18 +6,18 @@ import (
 	"fmt"
 	"os"
 
-	"bitbucket.srv.westpac.com.au/m055731/aim/internal/app"
-	aimchat "bitbucket.srv.westpac.com.au/m055731/aim/internal/chat"
-	"bitbucket.srv.westpac.com.au/m055731/aim/internal/platform"
+	"github.com/samcharles93/tau/internal/app"
+	tauchat "github.com/samcharles93/tau/internal/chat"
+	"github.com/samcharles93/tau/internal/config"
 	urfavecli "github.com/urfave/cli/v3"
 )
 
-var defaultChatParameters = aimchat.DefaultParameters()
+var defaultChatParameters = tauchat.DefaultParameters()
 
 func chatCmd() *urfavecli.Command {
 	return &urfavecli.Command{
 		Name:  "chat",
-		Usage: "Stream a prompt against a MaaS chat model",
+		Usage: "Stream a prompt against an OpenAI-compatible chat model",
 		Flags: []urfavecli.Flag{
 			&urfavecli.StringFlag{
 				Name:  "prompt",
@@ -41,26 +41,17 @@ func chatCmd() *urfavecli.Command {
 				Usage: "Sampling temperature for the model response",
 				Value: defaultChatParameters.Temperature,
 			},
-			&urfavecli.StringFlag{
-				Name:  "ocp-token",
-				Usage: "Skip OAuth and use a pre-existing OCP token",
-			},
-			&urfavecli.StringFlag{
-				Name:  "maas-token",
-				Usage: "Skip OAuth+exchange and use a pre-existing MaaS token",
-			},
 		},
 		Action: func(ctx context.Context, cmd *urfavecli.Command) error {
-			endpoint, err := platform.ResolveEndpoint(cmd.Root().String("endpoint"))
+			cfg, selectedProvider, err := loadProvider(cmd)
 			if err != nil {
 				return err
 			}
 
 			return app.RunChat(ctx, app.ChatOptions{
-				Endpoint:     endpoint,
+				Config:       cfg,
+				Provider:     selectedProvider,
 				Insecure:     cmd.Root().Bool("insecure"),
-				MaaSToken:    cmd.String("maas-token"),
-				OCPToken:     cmd.String("ocp-token"),
 				Model:        cmd.String("model"),
 				SystemPrompt: cmd.String("system-prompt"),
 				MaxTokens:    cmd.Int("max-tokens"),
@@ -74,28 +65,16 @@ func chatCmd() *urfavecli.Command {
 func tokenCmd() *urfavecli.Command {
 	return &urfavecli.Command{
 		Name:  "token",
-		Usage: "Print a fresh MaaS JWT to stdout (pipe-friendly)",
-		Flags: []urfavecli.Flag{
-			&urfavecli.StringFlag{
-				Name:  "ocp-token",
-				Usage: "Skip OAuth and exchange a pre-existing OCP token",
-			},
-			&urfavecli.StringFlag{
-				Name:  "expiry",
-				Usage: "MaaS token lifetime (e.g. 4h, 24h)",
-			},
-		},
+		Usage: "Print the resolved provider bearer token to stdout",
 		Action: func(ctx context.Context, cmd *urfavecli.Command) error {
-			endpoint, err := platform.ResolveEndpoint(cmd.Root().String("endpoint"))
+			_, selectedProvider, err := loadProvider(cmd)
 			if err != nil {
 				return err
 			}
 
-			token, err := app.MintToken(ctx, app.TokenOptions{
-				Endpoint: endpoint,
+			token, err := app.ResolveToken(ctx, app.TokenOptions{
+				Provider: selectedProvider,
 				Insecure: cmd.Root().Bool("insecure"),
-				OCPToken: cmd.String("ocp-token"),
-				Expiry:   cmd.String("expiry"),
 			})
 			if err != nil {
 				return err
@@ -110,32 +89,22 @@ func tokenCmd() *urfavecli.Command {
 func modelsCmd() *urfavecli.Command {
 	return &urfavecli.Command{
 		Name:  "models",
-		Usage: "List available models on the MaaS platform",
+		Usage: "List available models from the configured provider",
 		Flags: []urfavecli.Flag{
-			&urfavecli.StringFlag{
-				Name:  "ocp-token",
-				Usage: "Skip OAuth and use a pre-existing OCP token",
-			},
-			&urfavecli.StringFlag{
-				Name:  "maas-token",
-				Usage: "Skip OAuth+exchange and use a pre-existing MaaS token",
-			},
 			&urfavecli.BoolFlag{
 				Name:  "json",
 				Usage: "Output as JSON instead of a table",
 			},
 		},
 		Action: func(ctx context.Context, cmd *urfavecli.Command) error {
-			endpoint, err := platform.ResolveEndpoint(cmd.Root().String("endpoint"))
+			_, selectedProvider, err := loadProvider(cmd)
 			if err != nil {
 				return err
 			}
 
 			models, err := app.DiscoverModels(ctx, app.ModelsOptions{
-				Endpoint:  endpoint,
-				Insecure:  cmd.Root().Bool("insecure"),
-				MaaSToken: cmd.String("maas-token"),
-				OCPToken:  cmd.String("ocp-token"),
+				Provider: selectedProvider,
+				Insecure: cmd.Root().Bool("insecure"),
 			})
 			if err != nil {
 				return err
@@ -165,4 +134,16 @@ func modelsCmd() *urfavecli.Command {
 			return nil
 		},
 	}
+}
+
+func loadProvider(cmd *urfavecli.Command) (config.Config, config.ProviderConfig, error) {
+	cfg, err := config.LoadConfig()
+	if err != nil {
+		return config.Config{}, config.ProviderConfig{}, err
+	}
+	provider, err := config.ResolveProvider(cfg, cmd.Root().String("provider"))
+	if err != nil {
+		return config.Config{}, config.ProviderConfig{}, err
+	}
+	return cfg, provider, nil
 }

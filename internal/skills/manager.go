@@ -5,7 +5,7 @@ import (
 	"errors"
 	"sync"
 
-	"bitbucket.srv.westpac.com.au/m055731/aim/internal/pubsub"
+	"github.com/samcharles93/tau/internal/pubsub"
 )
 
 const managerEventTopic = "skills.manager.events"

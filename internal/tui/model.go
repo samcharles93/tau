@@ -9,18 +9,18 @@ import (
 	"strings"
 	"time"
 
-	aimchat "bitbucket.srv.westpac.com.au/m055731/aim/internal/chat"
-	"bitbucket.srv.westpac.com.au/m055731/aim/internal/completions"
-	"bitbucket.srv.westpac.com.au/m055731/aim/internal/pubsub"
-	"bitbucket.srv.westpac.com.au/m055731/aim/internal/theme"
-	"bitbucket.srv.westpac.com.au/m055731/aim/internal/tui/dialog"
-	"bitbucket.srv.westpac.com.au/m055731/aim/internal/tui/notify"
 	"charm.land/bubbles/v2/help"
 	"charm.land/bubbles/v2/spinner"
 	"charm.land/bubbles/v2/textarea"
 	"charm.land/bubbles/v2/viewport"
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
+	tauchat "github.com/samcharles93/tau/internal/chat"
+	"github.com/samcharles93/tau/internal/completions"
+	"github.com/samcharles93/tau/internal/pubsub"
+	"github.com/samcharles93/tau/internal/theme"
+	"github.com/samcharles93/tau/internal/tui/dialog"
+	"github.com/samcharles93/tau/internal/tui/notify"
 )
 
 const (
@@ -44,38 +44,31 @@ const (
 	notifyDurationWarn  = 8 * time.Second
 )
 
-// ModelInfo holds discovery data for an available model.
-type ModelInfo struct {
-	ID    string
-	URL   string
-	Ready bool
-}
-
 // ModelRefresher is a function the app layer provides that re-discovers
-// available models from MaaS. The TUI calls it asynchronously when the
-// user runs /refresh. This keeps the TUI decoupled from maas/platform
+// available models from the configured provider. The TUI calls it asynchronously when the
+// user runs /refresh. This keeps the TUI decoupled from provider
 // packages (per dependency rules).
-type ModelRefresher func(ctx context.Context) ([]ModelInfo, error)
+type ModelRefresher func(ctx context.Context) ([]tauchat.ChatModelRef, error)
 
 // Config holds parameters for constructing the TUI model.
 type Config struct {
 	SessionID          string
 	ModelName          string
-	Endpoint           string
-	AvailableModels    []ModelInfo
-	AvailableEndpoints []string
+	Provider           string
+	AvailableModels    []tauchat.ChatModelRef
+	AvailableProviders []string
 	NotifyBus          *pubsub.Bus[notify.Notification]
 	RefreshModels      ModelRefresher
 }
 
-// Model is the root Bubble Tea model for the AIM chat TUI.
+// Model is the root Bubble Tea model for the Tau chat TUI.
 // All methods use pointer receivers so mutations persist across the
 // Bubble Tea lifecycle (matching the pattern used by Crush).
 type Model struct {
 	// Core dependencies.
 	ctx      context.Context
-	runtime  *aimchat.Runtime
-	eventSub *pubsub.Subscription[aimchat.ChatEvent]
+	runtime  tauchat.ChatRuntime
+	eventSub *pubsub.Subscription[tauchat.ChatEvent]
 	config   Config
 
 	// Sub-models.
@@ -96,7 +89,7 @@ type Model struct {
 	turns            []turnBlock
 	streamingContent string
 	streamMD         streamingMarkdown
-	status           aimchat.ChatSessionStatus
+	status           tauchat.ChatSessionStatus
 	lastError        string
 
 	// Dimensions.
@@ -121,7 +114,7 @@ type Model struct {
 
 // New creates a new TUI model wired to the given runtime.
 // The textarea is focused during construction so state persists.
-func New(ctx context.Context, runtime *aimchat.Runtime, sub *pubsub.Subscription[aimchat.ChatEvent], cfg Config) *Model {
+func New(ctx context.Context, runtime tauchat.ChatRuntime, sub *pubsub.Subscription[tauchat.ChatEvent], cfg Config) *Model {
 	ta := textarea.New()
 	ta.Placeholder = "Send a message…"
 	ta.SetHeight(inputHeight)
@@ -169,7 +162,7 @@ func New(ctx context.Context, runtime *aimchat.Runtime, sub *pubsub.Subscription
 		help:          h,
 		keys:          newKeyMap(),
 		tuiTheme:      t,
-		status:        aimchat.ChatSessionIdle,
+		status:        tauchat.ChatSessionIdle,
 		notifications: notify.NewQueue(),
 		effort:        "medium",
 	}
@@ -485,13 +478,13 @@ func (m *Model) handleSubmit() (tea.Model, tea.Cmd) {
 	}
 
 	// Can't submit while streaming.
-	if m.status == aimchat.ChatSessionStreaming || m.status == aimchat.ChatSessionCancelling {
+	if m.status == tauchat.ChatSessionStreaming || m.status == tauchat.ChatSessionCancelling {
 		return m, nil
 	}
 
 	// Add the user turn immediately for responsiveness.
 	m.turns = append(m.turns, turnBlock{
-		role:     aimchat.ChatRoleUser,
+		role:     tauchat.ChatRoleUser,
 		content:  text,
 		finished: true,
 	})
@@ -542,7 +535,7 @@ func (m *Model) handleSlashCommand(text string) (tea.Model, tea.Cmd) {
 		m.config.ModelName = modelRef.ID
 		m.lastError = ""
 		m.refreshViewport()
-		return m, m.sendUpdateModel(aimchat.ChatModelRef{ID: modelRef.ID, URL: modelRef.URL})
+		return m, m.sendUpdateModel(tauchat.ChatModelRef{ID: modelRef.ID, URL: modelRef.URL})
 
 	case "/system":
 		m.input.Reset()
@@ -631,10 +624,10 @@ func (m *Model) openModelPicker() {
 
 // openSettings shows the settings dialog with current values.
 func (m *Model) openSettings() {
-	currentEndpointIdx := 0
-	for i, key := range m.config.AvailableEndpoints {
-		if key == m.config.Endpoint {
-			currentEndpointIdx = i
+	currentProviderIdx := 0
+	for i, key := range m.config.AvailableProviders {
+		if key == m.config.Provider {
+			currentProviderIdx = i
 		}
 	}
 
@@ -655,12 +648,12 @@ func (m *Model) openSettings() {
 			Value:       m.effort,
 		},
 		{
-			Key:         "endpoint",
-			Label:       "Endpoint",
+			Key:         "provider",
+			Label:       "Provider",
 			Kind:        dialog.SettingChoice,
-			Choices:     m.config.AvailableEndpoints,
-			ChoiceIndex: currentEndpointIdx,
-			Value:       m.config.Endpoint,
+			Choices:     m.config.AvailableProviders,
+			ChoiceIndex: currentProviderIdx,
+			Value:       m.config.Provider,
 		},
 	}
 
@@ -675,10 +668,10 @@ func (m *Model) applySettings(entries []dialog.SettingEntry) (tea.Model, tea.Cmd
 			m.thinking = e.BoolVal
 		case "effort":
 			m.effort = e.Value
-		case "endpoint":
-			if e.Value != m.config.Endpoint {
-				m.config.Endpoint = e.Value
-				m.lastError = "endpoint changed — restart required for re-auth"
+		case "provider":
+			if e.Value != m.config.Provider {
+				m.config.Provider = e.Value
+				m.lastError = "provider changed — restart required for new auth"
 			}
 		}
 	}
@@ -721,7 +714,7 @@ func (m *Model) handleDialogAction(action dialog.Action) (tea.Model, tea.Cmd) {
 		m.config.ModelName = a.ID
 		m.lastError = ""
 		m.refreshViewport()
-		return m, m.sendUpdateModel(aimchat.ChatModelRef{ID: a.ID, URL: a.URL})
+		return m, m.sendUpdateModel(tauchat.ChatModelRef{ID: a.ID, URL: a.URL})
 	case dialog.SettingsChangedAction:
 		return m.applySettings(a.Settings)
 	}
@@ -769,16 +762,16 @@ func builtinCommands() []completions.CommandDef {
 }
 
 // handleRuntimeEvent processes an event from the chat runtime.
-func (m *Model) handleRuntimeEvent(event aimchat.ChatEvent) {
+func (m *Model) handleRuntimeEvent(event tauchat.ChatEvent) {
 	switch ev := event.(type) {
-	case aimchat.ChatSessionSnapshotEvent:
+	case tauchat.ChatSessionSnapshotEvent:
 		m.status = ev.State.Status
-		if ev.State.Status == aimchat.ChatSessionIdle {
+		if ev.State.Status == tauchat.ChatSessionIdle {
 			// Safety net: if we have streaming content but state went idle
 			// (e.g., CompletedEvent was missed), finalize the turn.
 			if m.streamingContent != "" {
 				m.turns = append(m.turns, turnBlock{
-					role:     aimchat.ChatRoleAssistant,
+					role:     tauchat.ChatRoleAssistant,
 					content:  m.streamingContent,
 					finished: true,
 				})
@@ -789,21 +782,21 @@ func (m *Model) handleRuntimeEvent(event aimchat.ChatEvent) {
 			}
 		}
 
-	case aimchat.ChatResponseStartedEvent:
-		m.status = aimchat.ChatSessionStreaming
+	case tauchat.ChatResponseStartedEvent:
+		m.status = tauchat.ChatSessionStreaming
 		m.streamingContent = ""
 		m.streamMD.Reset()
 		m.lastError = ""
 		m.userScrolled = false
 
-	case aimchat.ChatResponseDeltaEvent:
+	case tauchat.ChatResponseDeltaEvent:
 		m.streamingContent = ev.Snapshot
 
-	case aimchat.ChatResponseCompletedEvent:
-		m.status = aimchat.ChatSessionIdle
+	case tauchat.ChatResponseCompletedEvent:
+		m.status = tauchat.ChatSessionIdle
 		if m.streamingContent != "" {
 			m.turns = append(m.turns, turnBlock{
-				role:     aimchat.ChatRoleAssistant,
+				role:     tauchat.ChatRoleAssistant,
 				content:  m.streamingContent,
 				finished: true,
 			})
@@ -811,11 +804,11 @@ func (m *Model) handleRuntimeEvent(event aimchat.ChatEvent) {
 		m.streamingContent = ""
 		m.streamMD.Reset()
 
-	case aimchat.ChatResponseCancelledEvent:
-		m.status = aimchat.ChatSessionIdle
+	case tauchat.ChatResponseCancelledEvent:
+		m.status = tauchat.ChatSessionIdle
 		if m.streamingContent != "" {
 			m.turns = append(m.turns, turnBlock{
-				role:     aimchat.ChatRoleAssistant,
+				role:     tauchat.ChatRoleAssistant,
 				content:  m.streamingContent + "\n\n[cancelled]",
 				finished: true,
 			})
@@ -823,10 +816,10 @@ func (m *Model) handleRuntimeEvent(event aimchat.ChatEvent) {
 		m.streamingContent = ""
 		m.streamMD.Reset()
 
-	case aimchat.ChatRuntimeErrorEvent:
+	case tauchat.ChatRuntimeErrorEvent:
 		m.lastError = ev.Message
-		if m.status == aimchat.ChatSessionStreaming || m.status == aimchat.ChatSessionCancelling {
-			m.status = aimchat.ChatSessionIdle
+		if m.status == tauchat.ChatSessionStreaming || m.status == tauchat.ChatSessionCancelling {
+			m.status = tauchat.ChatSessionIdle
 			m.streamingContent = ""
 			m.streamMD.Reset()
 		}
@@ -834,10 +827,10 @@ func (m *Model) handleRuntimeEvent(event aimchat.ChatEvent) {
 }
 
 // syncTurnsFromState rebuilds turns from the authoritative session state.
-func (m *Model) syncTurnsFromState(state aimchat.ChatSessionState) {
+func (m *Model) syncTurnsFromState(state tauchat.ChatSessionState) {
 	m.turns = make([]turnBlock, 0, len(state.Messages))
 	for _, msg := range state.Messages {
-		if msg.Role == aimchat.ChatRoleSystem {
+		if msg.Role == tauchat.ChatRoleSystem {
 			continue
 		}
 		m.turns = append(m.turns, turnBlock{
@@ -896,9 +889,9 @@ func (m *Model) recalculateLayout() {
 func (m *Model) renderStatusBar() string {
 	var left string
 	switch m.status {
-	case aimchat.ChatSessionStreaming:
+	case tauchat.ChatSessionStreaming:
 		left = m.spinner.View() + " streaming…"
-	case aimchat.ChatSessionCancelling:
+	case tauchat.ChatSessionCancelling:
 		left = m.tuiTheme.Dim.Render("cancelling…")
 	default:
 		left = m.help.View(m.keys)
@@ -915,7 +908,7 @@ func (m *Model) renderStatusBar() string {
 		}
 		right = style.Render(n.Message)
 	} else {
-		right = m.tuiTheme.Dim.Render(m.config.ModelName + " (" + m.config.Endpoint + ")")
+		right = m.tuiTheme.Dim.Render(m.config.ModelName + " (" + m.config.Provider + ")")
 	}
 
 	gap := max(m.width-lipgloss.Width(left)-lipgloss.Width(right), 1)
@@ -934,7 +927,7 @@ func (m *Model) sendPrompt(text string) tea.Cmd {
 		if err != nil {
 			return nil
 		}
-		_ = runtime.Send(aimchat.SubmitChatPromptCommand{
+		_ = runtime.Send(tauchat.SubmitChatPromptCommand{
 			SessionID:   sessionID,
 			RequestID:   requestID,
 			Prompt:      text,
@@ -949,7 +942,7 @@ func (m *Model) sendCancel() tea.Cmd {
 	sessionID := m.config.SessionID
 
 	return func() tea.Msg {
-		_ = runtime.Send(aimchat.CancelChatRequestCommand{
+		_ = runtime.Send(tauchat.CancelChatRequestCommand{
 			SessionID:   sessionID,
 			RequestedAt: time.Now().UTC(),
 		})
@@ -962,7 +955,7 @@ func (m *Model) sendReset() tea.Cmd {
 	sessionID := m.config.SessionID
 
 	return func() tea.Msg {
-		_ = runtime.Send(aimchat.ResetChatSessionCommand{
+		_ = runtime.Send(tauchat.ResetChatSessionCommand{
 			SessionID:   sessionID,
 			RequestedAt: time.Now().UTC(),
 		})
@@ -975,35 +968,35 @@ func (m *Model) sendUpdateSystem(prompt string) tea.Cmd {
 	sessionID := m.config.SessionID
 
 	return func() tea.Msg {
-		_ = runtime.Send(aimchat.UpdateChatSessionCommand{
+		_ = runtime.Send(tauchat.UpdateChatSessionCommand{
 			SessionID: sessionID,
-			Patch:     aimchat.ChatSessionPatch{SystemPrompt: &prompt},
+			Patch:     tauchat.ChatSessionPatch{SystemPrompt: &prompt},
 		})
 		return nil
 	}
 }
 
-func (m *Model) sendUpdateModel(ref aimchat.ChatModelRef) tea.Cmd {
+func (m *Model) sendUpdateModel(ref tauchat.ChatModelRef) tea.Cmd {
 	runtime := m.runtime
 	sessionID := m.config.SessionID
 
 	return func() tea.Msg {
-		_ = runtime.Send(aimchat.UpdateChatSessionCommand{
+		_ = runtime.Send(tauchat.UpdateChatSessionCommand{
 			SessionID: sessionID,
-			Patch:     aimchat.ChatSessionPatch{Model: &ref},
+			Patch:     tauchat.ChatSessionPatch{Model: &ref},
 		})
 		return nil
 	}
 }
 
-func (m *Model) findModel(name string) (ModelInfo, bool) {
+func (m *Model) findModel(name string) (tauchat.ChatModelRef, bool) {
 	nameLower := strings.ToLower(name)
 	for _, mi := range m.config.AvailableModels {
 		if strings.ToLower(mi.ID) == nameLower {
 			return mi, true
 		}
 	}
-	return ModelInfo{}, false
+	return tauchat.ChatModelRef{}, false
 }
 
 // deleteWordBackward removes the word before the cursor in the textarea.

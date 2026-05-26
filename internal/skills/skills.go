@@ -11,7 +11,7 @@ import (
 	"slices"
 	"strings"
 
-	aimconfig "bitbucket.srv.westpac.com.au/m055731/aim/internal/config"
+	tauconfig "github.com/samcharles93/tau/internal/config"
 	"gopkg.in/yaml.v3"
 )
 
@@ -81,11 +81,11 @@ type Skill struct {
 	Priority               int               `yaml:"-" json:"priority"`
 }
 
-// UserSources returns the user-level skill roots AIM should scan.
+// UserSources returns the user-level skill roots Tau should scan.
 func UserSources() []Source {
 	sources := []Source{
 		{
-			Root:     filepath.Join(aimconfig.Dir(), "skills"),
+			Root:     filepath.Join(tauconfig.Dir(), "skills"),
 			Scope:    ScopeUser,
 			Priority: userNativePriority,
 		},
@@ -97,14 +97,14 @@ func UserSources() []Source {
 	}
 
 	sources = append(sources,
-		Source{Root: filepath.Join(homeDir, ".aim", "skills"), Scope: ScopeUser, Priority: userLegacyPriority},
+		Source{Root: filepath.Join(homeDir, ".tau", "skills"), Scope: ScopeUser, Priority: userLegacyPriority},
 		Source{Root: filepath.Join(homeDir, ".agents", "skills"), Scope: ScopeUser, Priority: userInteropPriority},
 	)
 
 	return sources
 }
 
-// ProjectSources returns the project-level skill roots AIM should scan.
+// ProjectSources returns the project-level skill roots Tau should scan.
 func ProjectSources(workingDir string) []Source {
 	trimmed := strings.TrimSpace(workingDir)
 	if trimmed == "" {
@@ -114,11 +114,11 @@ func ProjectSources(workingDir string) []Source {
 	return []Source{
 		{Root: filepath.Join(trimmed, ".agents", "skills"), Scope: ScopeProject, Priority: projectInteropPriority},
 		{Root: filepath.Join(trimmed, ".claude", "skills"), Scope: ScopeProject, Priority: projectClaudePriority},
-		{Root: filepath.Join(trimmed, ".aim", "skills"), Scope: ScopeProject, Priority: projectNativePriority},
+		{Root: filepath.Join(trimmed, ".tau", "skills"), Scope: ScopeProject, Priority: projectNativePriority},
 	}
 }
 
-// DefaultSources returns the standard AIM skill discovery roots.
+// DefaultSources returns the standard Tau skill discovery roots.
 func DefaultSources(workingDir string) []Source {
 	sources := append([]Source{}, UserSources()...)
 	sources = append(sources, ProjectSources(workingDir)...)

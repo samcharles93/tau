@@ -3,10 +3,10 @@ package dialog
 import (
 	"strings"
 
-	"bitbucket.srv.westpac.com.au/m055731/aim/internal/theme"
 	"charm.land/bubbles/v2/key"
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
+	"github.com/samcharles93/tau/internal/theme"
 )
 
 // Action is the result of handling a message in a dialog.

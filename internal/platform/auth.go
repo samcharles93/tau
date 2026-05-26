@@ -18,33 +18,57 @@ import (
 	"strings"
 	"time"
 
-	aimconfig "bitbucket.srv.westpac.com.au/m055731/aim/internal/config"
 	"github.com/pkg/browser"
+	"github.com/samcharles93/tau/internal/config"
 )
 
-const (
-	oauthClientID = "openshift-cli-client"
-	oauthIDP      = "oneaccess"
-	authTimeout   = 5 * time.Minute
-)
+const authTimeout = 5 * time.Minute
 
-// tokenCache stores cached OCP tokens on disk.
+// tokenCache stores cached OAuth tokens on disk.
 type tokenCache struct {
 	AccessToken  string    `json:"access_token"`
 	RefreshToken string    `json:"refresh_token,omitempty"`
 	Expiry       time.Time `json:"expiry"`
 }
 
-// cacheFilePath returns the path to the token cache file for a given endpoint.
-func cacheFilePath(ocpAPI string) string {
-	hash := sha256.Sum256([]byte(ocpAPI))
-	name := hex.EncodeToString(hash[:16]) + ".json"
-	return filepath.Join(aimconfig.Dir(), "cache", name)
+// ResolveBearerToken returns a bearer token for the provider auth configuration.
+func ResolveBearerToken(ctx context.Context, provider config.ProviderConfig, insecure bool) (string, error) {
+	switch strings.TrimSpace(provider.Auth.Type) {
+	case config.AuthTypeAPIKey:
+		return apiKeyToken(provider)
+	case config.AuthTypeNone:
+		return "", nil
+	case config.AuthTypeOAuthPKCE:
+		return GetOAuthToken(ctx, provider, insecure)
+	default:
+		return "", fmt.Errorf("provider %q has unsupported auth type %q", provider.Name, provider.Auth.Type)
+	}
 }
 
-// loadCachedToken attempts to load a cached OCP token.
-func loadCachedToken(ocpAPI string) (*tokenCache, error) {
-	data, err := os.ReadFile(cacheFilePath(ocpAPI))
+func apiKeyToken(provider config.ProviderConfig) (string, error) {
+	if envName := strings.TrimSpace(provider.Auth.APIKeyEnv); envName != "" {
+		if token := strings.TrimSpace(os.Getenv(envName)); token != "" {
+			return token, nil
+		}
+		if strings.TrimSpace(provider.Auth.APIKey) == "" {
+			return "", fmt.Errorf("provider %q api key environment variable %s is not set", provider.Name, envName)
+		}
+	}
+	if token := strings.TrimSpace(provider.Auth.APIKey); token != "" {
+		return token, nil
+	}
+	return "", fmt.Errorf("provider %q api_key auth requires api_key_env or api_key", provider.Name)
+}
+
+func cacheFilePath(provider config.ProviderConfig) string {
+	key := provider.Name + "\x00" + provider.Auth.AuthorizeURL + "\x00" + provider.Auth.TokenURL + "\x00" + provider.Auth.ClientID
+	hash := sha256.Sum256([]byte(key))
+	name := hex.EncodeToString(hash[:16]) + ".json"
+	return filepath.Join(config.Dir(), "cache", name)
+}
+
+func loadCachedToken(provider config.ProviderConfig) (*tokenCache, error) {
+	data, err := os.ReadFile(cacheFilePath(provider))
 	if err != nil {
 		return nil, err
 	}
@@ -53,13 +77,11 @@ func loadCachedToken(ocpAPI string) (*tokenCache, error) {
 	if err := json.Unmarshal(data, &cache); err != nil {
 		return nil, err
 	}
-
 	return &cache, nil
 }
 
-// saveCachedToken persists an OCP token to disk.
-func saveCachedToken(ocpAPI string, cache *tokenCache) error {
-	dir := filepath.Join(aimconfig.Dir(), "cache")
+func saveCachedToken(provider config.ProviderConfig, cache *tokenCache) error {
+	dir := filepath.Join(config.Dir(), "cache")
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return err
 	}
@@ -68,11 +90,9 @@ func saveCachedToken(ocpAPI string, cache *tokenCache) error {
 	if err != nil {
 		return err
 	}
-
-	return os.WriteFile(cacheFilePath(ocpAPI), data, 0o600)
+	return os.WriteFile(cacheFilePath(provider), data, 0o600)
 }
 
-// randomURLSafe generates a URL-safe base64 random string.
 func randomURLSafe(n int) (string, error) {
 	bytes := make([]byte, n)
 	if _, err := rand.Read(bytes); err != nil {
@@ -81,13 +101,11 @@ func randomURLSafe(n int) (string, error) {
 	return base64.RawURLEncoding.EncodeToString(bytes), nil
 }
 
-// pkcePair holds a PKCE verifier and its S256 challenge.
 type pkcePair struct {
 	Verifier  string
 	Challenge string
 }
 
-// newPKCE generates a PKCE verifier/challenge pair (matching the PS1 script).
 func newPKCE() (*pkcePair, error) {
 	verifier, err := randomURLSafe(32)
 	if err != nil {
@@ -98,41 +116,25 @@ func newPKCE() (*pkcePair, error) {
 	return &pkcePair{Verifier: verifier, Challenge: challenge}, nil
 }
 
-// GetOCPToken obtains an OCP access token via cache or browser PKCE flow.
-// Implements the same OAuth flow as the PowerShell oc-login.ps1 script:
-// 1. Bind localhost callback server on 127.0.0.1:<random>/callback
-// 2. Open browser to authorize endpoint with PKCE + IDP hint
-// 3. Capture auth code from callback
-// 4. Exchange code for token with HTTP Basic auth (client_id: empty password)
-func GetOCPToken(ctx context.Context, endpoint Endpoint, insecure bool) (string, error) {
-	// 1. Check cache
-	cached, err := loadCachedToken(endpoint.OCPAPI)
+// GetOAuthToken obtains an access token via cache or browser PKCE flow.
+func GetOAuthToken(ctx context.Context, provider config.ProviderConfig, insecure bool) (string, error) {
+	cached, err := loadCachedToken(provider)
 	if err == nil && cached.AccessToken != "" && time.Now().Before(cached.Expiry) {
-		slog.Debug("using cached OCP token", "expires", cached.Expiry.Format(time.RFC3339))
+		slog.Debug("using cached OAuth token", "provider", provider.Name, "expires", cached.Expiry.Format(time.RFC3339))
 		return cached.AccessToken, nil
 	}
-
-	return runBrowserAuthFlow(ctx, endpoint, insecure)
+	return runBrowserAuthFlow(ctx, provider, insecure)
 }
 
-// GetFreshOCPToken forces a new browser auth flow, bypassing the cache.
-// Call this when a cached token was rejected (e.g. 401 from MaaS gateway).
-func GetFreshOCPToken(ctx context.Context, endpoint Endpoint, insecure bool) (string, error) {
-	InvalidateCache(endpoint.OCPAPI)
-	return runBrowserAuthFlow(ctx, endpoint, insecure)
-}
-
-// InvalidateCache removes the cached token file for the given endpoint.
-func InvalidateCache(ocpAPI string) {
-	path := cacheFilePath(ocpAPI)
+// InvalidateCache removes the cached token file for the given provider.
+func InvalidateCache(provider config.ProviderConfig) {
+	path := cacheFilePath(provider)
 	if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
 		slog.Warn("could not remove token cache", "path", path, "err", err)
 	}
 }
 
-// runBrowserAuthFlow performs the full OAuth PKCE browser login.
-func runBrowserAuthFlow(ctx context.Context, endpoint Endpoint, insecure bool) (string, error) {
-	// 2. Generate PKCE pair and state
+func runBrowserAuthFlow(ctx context.Context, provider config.ProviderConfig, insecure bool) (string, error) {
 	pkce, err := newPKCE()
 	if err != nil {
 		return "", fmt.Errorf("generating PKCE: %w", err)
@@ -142,7 +144,6 @@ func runBrowserAuthFlow(ctx context.Context, endpoint Endpoint, insecure bool) (
 		return "", fmt.Errorf("generating state: %w", err)
 	}
 
-	// 3. Start local callback server on 127.0.0.1:0 (random port)
 	var listenConfig net.ListenConfig
 	listener, err := listenConfig.Listen(ctx, "tcp", "127.0.0.1:0")
 	if err != nil {
@@ -151,28 +152,26 @@ func runBrowserAuthFlow(ctx context.Context, endpoint Endpoint, insecure bool) (
 	defer listener.Close()
 
 	port := listener.Addr().(*net.TCPAddr).Port
-	// OCP's openshift-cli-client requires redirect_uri starting with http://127.0.0.1
 	redirectURI := fmt.Sprintf("http://127.0.0.1:%d/callback", port)
 
-	// 4. Build authorize URL (matching PowerShell script exactly)
 	params := url.Values{
-		"client_id":             {oauthClientID},
+		"client_id":             {provider.Auth.ClientID},
 		"response_type":         {"code"},
 		"code_challenge":        {pkce.Challenge},
 		"code_challenge_method": {"S256"},
 		"redirect_uri":          {redirectURI},
 		"state":                 {state},
-		"idp":                   {oauthIDP},
 	}
-	authURL := endpoint.OAuthAuthorizeURL() + "?" + params.Encode()
+	if idp := strings.TrimSpace(provider.Auth.IDP); idp != "" {
+		params.Set("idp", idp)
+	}
+	authURL := strings.TrimSpace(provider.Auth.AuthorizeURL) + "?" + params.Encode()
 
-	// 5. Open browser
-	slog.Debug("opening browser for OAuth login", "idp", oauthIDP)
+	slog.Debug("opening browser for OAuth login", "provider", provider.Name)
 	if err := browser.OpenURL(authURL); err != nil {
 		fmt.Fprintf(os.Stderr, "Could not open browser. Visit:\n  %s\n", authURL)
 	}
 
-	// 6. Wait for callback with auth code
 	type callbackResult struct {
 		code string
 		err  error
@@ -213,7 +212,6 @@ func runBrowserAuthFlow(ctx context.Context, endpoint Endpoint, insecure bool) (
 		}
 	}()
 
-	// Wait for result or timeout
 	ctx, cancel := context.WithTimeout(ctx, authTimeout)
 	defer cancel()
 
@@ -229,53 +227,49 @@ func runBrowserAuthFlow(ctx context.Context, endpoint Endpoint, insecure bool) (
 		return "", result.err
 	}
 
-	// 7. Exchange code for token (HTTP Basic auth with empty password, matching PS1)
-	accessToken, err := exchangeCodeForToken(ctx, endpoint, result.code, redirectURI, pkce.Verifier, insecure)
+	accessToken, err := exchangeCodeForToken(ctx, provider, result.code, redirectURI, pkce.Verifier, insecure)
 	if err != nil {
 		return "", err
 	}
 
-	// 8. Cache the token (OCP tokens are valid for ~24h by default)
 	cache := &tokenCache{
 		AccessToken: accessToken,
 		Expiry:      time.Now().Add(23 * time.Hour),
 	}
-	if err := saveCachedToken(endpoint.OCPAPI, cache); err != nil {
+	if err := saveCachedToken(provider, cache); err != nil {
 		slog.Warn("could not cache token", "err", err)
 	}
 
-	slog.Debug("OCP token obtained")
+	slog.Debug("OAuth token obtained", "provider", provider.Name)
 	return accessToken, nil
 }
 
-// exchangeCodeForToken exchanges an authorization code for an access token.
-// Uses HTTP Basic auth (client_id with empty password) as required by OCP OAuth.
-func exchangeCodeForToken(ctx context.Context, endpoint Endpoint, code, redirectURI, codeVerifier string, insecure bool) (string, error) {
+func exchangeCodeForToken(ctx context.Context, provider config.ProviderConfig, code, redirectURI, codeVerifier string, insecure bool) (string, error) {
 	form := url.Values{
 		"grant_type":    {"authorization_code"},
 		"code":          {code},
 		"redirect_uri":  {redirectURI},
 		"code_verifier": {codeVerifier},
+		"client_id":     {provider.Auth.ClientID},
 	}
 
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint.OAuthTokenURL(), strings.NewReader(form.Encode()))
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, provider.Auth.TokenURL, strings.NewReader(form.Encode()))
 	if err != nil {
 		return "", err
 	}
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	req.Header.Set("Accept", "application/json")
-	// HTTP Basic: base64("openshift-cli-client:") — empty password, required by OCP
-	req.SetBasicAuth(oauthClientID, "")
 
 	client := NewHTTPClient(insecure)
 	resp, err := client.Do(req)
 	if err != nil {
-		return "", fmt.Errorf("token exchange request failed: %w", err)
+		return "", fmt.Errorf("token exchange request: %w", err)
 	}
 	defer resp.Body.Close()
 
 	var tokenResp struct {
 		AccessToken string `json:"access_token"`
+		ExpiresIn   int    `json:"expires_in"`
 		Error       string `json:"error"`
 		ErrorDesc   string `json:"error_description"`
 	}
@@ -284,10 +278,10 @@ func exchangeCodeForToken(ctx context.Context, endpoint Endpoint, code, redirect
 	}
 
 	if tokenResp.Error != "" {
-		return "", fmt.Errorf("token exchange failed: %s — %s", tokenResp.Error, tokenResp.ErrorDesc)
+		return "", fmt.Errorf("token exchange returned %s: %s", tokenResp.Error, tokenResp.ErrorDesc)
 	}
 	if tokenResp.AccessToken == "" {
-		return "", fmt.Errorf("token exchange returned no access_token")
+		return "", errors.New("token exchange returned no access_token")
 	}
 
 	return tokenResp.AccessToken, nil

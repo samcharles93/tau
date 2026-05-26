@@ -3,10 +3,10 @@ package dialog
 import (
 	"strings"
 
-	"bitbucket.srv.westpac.com.au/m055731/aim/internal/theme"
 	"charm.land/bubbles/v2/key"
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
+	"github.com/samcharles93/tau/internal/theme"
 )
 
 const modelsID = "model-picker"
@@ -53,11 +53,11 @@ func NewModelPicker(models []ModelItem) *ModelPicker {
 		selectedStyle: lipgloss.NewStyle().
 			PaddingLeft(1).
 			Bold(true).
-			Foreground(theme.ColorWestpacRed),
+			Foreground(theme.ColorRed),
 		readyStyle: lipgloss.NewStyle().
 			Foreground(theme.ColorGreen),
 		notReadyStyle: lipgloss.NewStyle().
-			Foreground(theme.ColorWestpacRed).
+			Foreground(theme.ColorRed).
 			Faint(true),
 		queryStyle: lipgloss.NewStyle().
 			Bold(true).

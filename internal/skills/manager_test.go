@@ -10,7 +10,7 @@ import (
 func TestManagerRefreshPublishesSnapshot(t *testing.T) {
 	configDir := t.TempDir()
 	homeDir := t.TempDir()
-	t.Setenv("AIM_CONFIG_DIR", configDir)
+	t.Setenv("TAU_CONFIG_DIR", configDir)
 	t.Setenv("HOME", homeDir)
 	t.Setenv("USERPROFILE", homeDir)
 	workingDir := t.TempDir()
@@ -23,7 +23,7 @@ user-invocable: true
 
 PDF instructions.
 `)
-	writeSkillFile(t, filepath.Join(workingDir, ".aim", "skills"), "code-review", `---
+	writeSkillFile(t, filepath.Join(workingDir, ".tau", "skills"), "code-review", `---
 name: code-review
 description: Review code. Use when the user asks for a review.
 ---

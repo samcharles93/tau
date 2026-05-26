@@ -4,8 +4,8 @@ import (
 	"strings"
 	"sync"
 
-	"bitbucket.srv.westpac.com.au/m055731/aim/internal/theme"
 	"charm.land/glamour/v2"
+	"github.com/samcharles93/tau/internal/theme"
 )
 
 const defaultMarkdownWidth = 80

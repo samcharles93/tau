@@ -3,10 +3,10 @@ package dialog
 import (
 	"strings"
 
-	"bitbucket.srv.westpac.com.au/m055731/aim/internal/theme"
 	"charm.land/bubbles/v2/key"
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
+	"github.com/samcharles93/tau/internal/theme"
 )
 
 const paletteID = "command-palette"
@@ -52,7 +52,7 @@ func NewPalette(title string, items []PaletteItem) *Palette {
 		selectedStyle: lipgloss.NewStyle().
 			PaddingLeft(1).
 			Bold(true).
-			Foreground(theme.ColorWestpacRed),
+			Foreground(theme.ColorRed),
 		queryStyle: lipgloss.NewStyle().
 			Bold(true).
 			Foreground(theme.ColorNavyBlue),

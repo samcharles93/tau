@@ -6,11 +6,9 @@ import (
 	"time"
 )
 
-// NewHTTPClient returns an *http.Client configured for the AIM platform.
+// NewHTTPClient returns an *http.Client configured for Tau providers.
 // It respects the insecure flag for TLS verification and sets sensible timeouts.
-// Proxy is disabled — AIM endpoints must be reached directly, not via Zscaler
-// proxy (per AIM troubleshooting: "Connection reset by peer → prefix with
-// HTTPS_PROXY="" HTTP_PROXY=""").
+// Proxy is disabled so provider requests use direct connections by default.
 func NewHTTPClient(insecure bool) *http.Client {
 	return NewHTTPClientWithTimeout(insecure, 30*time.Second)
 }
