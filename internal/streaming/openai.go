@@ -1,0 +1,162 @@
+// Package streaming provides HTTP-based streaming implementations for
+// LLM chat completions. It is infrastructure — the agent coordinator
+// depends on the Streamer interface and this package satisfies it.
+package streaming
+
+import (
+	"bufio"
+	"bytes"
+	"context"
+	"encoding/json"
+	"fmt"
+	"io"
+	"net/http"
+	"strings"
+	"time"
+
+	"github.com/samcharles93/tau/internal/chat"
+	"github.com/samcharles93/tau/internal/platform"
+)
+
+const defaultStreamTimeout = 120 * time.Second
+
+// OpenAIStreamer makes streaming chat completion requests to an
+// OpenAI-compatible endpoint.
+type OpenAIStreamer struct {
+	Insecure bool
+	Timeout  time.Duration
+}
+
+// StreamChatCompletionFull streams a chat completion with full callbacks
+// including tool-call deltas. Satisfies the agent.Streamer interface.
+func (s OpenAIStreamer) StreamChatCompletionFull(
+	ctx context.Context,
+	session chat.ChatSessionState,
+	bearerToken string,
+	cb chat.StreamCallbacks,
+) (chat.CompletionResult, error) {
+	requestBody, err := json.Marshal(session.CompletionRequest())
+	if err != nil {
+		return chat.CompletionResult{}, fmt.Errorf("encoding chat request: %w", err)
+	}
+
+	url := strings.TrimRight(session.Model.URL, "/") + "/v1/chat/completions"
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(requestBody))
+	if err != nil {
+		return chat.CompletionResult{}, fmt.Errorf("creating chat request: %w", err)
+	}
+	req.Header.Set("Authorization", "Bearer "+bearerToken)
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Accept", "text/event-stream")
+
+	client := platform.NewHTTPClientWithTimeout(s.Insecure, s.timeout())
+	resp, err := client.Do(req)
+	if err != nil {
+		return chat.CompletionResult{}, fmt.Errorf("chat request failed: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+		return chat.CompletionResult{}, fmt.Errorf("chat endpoint returned %d: %s", resp.StatusCode, strings.TrimSpace(string(body)))
+	}
+
+	return s.readStream(ctx, resp.Body, cb)
+}
+
+func (s OpenAIStreamer) timeout() time.Duration {
+	if s.Timeout <= 0 {
+		return defaultStreamTimeout
+	}
+	return s.Timeout
+}
+
+func (s OpenAIStreamer) readStream(
+	ctx context.Context,
+	body io.Reader,
+	cb chat.StreamCallbacks,
+) (chat.CompletionResult, error) {
+	result := chat.CompletionResult{}
+	scanner := bufio.NewScanner(body)
+	scanner.Buffer(make([]byte, 0, 64*1024), 1024*1024)
+
+	var toolCalls []chat.ChatToolCall
+
+	for scanner.Scan() {
+		if err := ctx.Err(); err != nil {
+			return result, err
+		}
+
+		line := strings.TrimSpace(scanner.Text())
+		if line == "" || strings.HasPrefix(line, ":") {
+			continue
+		}
+		if !strings.HasPrefix(line, "data:") {
+			continue
+		}
+
+		payload := strings.TrimSpace(strings.TrimPrefix(line, "data:"))
+		if payload == "[DONE]" {
+			result.ToolCalls = toolCalls
+			return result, nil
+		}
+
+		var chunk chat.ChatCompletionChunk
+		if err := json.Unmarshal([]byte(payload), &chunk); err != nil {
+			return result, fmt.Errorf("invalid chat stream chunk: %w", err)
+		}
+
+		if chunk.Usage != nil {
+			result.Usage = *chunk.Usage
+		}
+
+		for _, choice := range chunk.Choices {
+			if choice.FinishReason != nil {
+				result.FinishReason = *choice.FinishReason
+			}
+
+			if choice.Delta.Content != "" && cb.OnDelta != nil {
+				if err := cb.OnDelta(choice.Delta.Content); err != nil {
+					return result, err
+				}
+			}
+
+			for _, tcd := range choice.Delta.ToolCalls {
+				toolCalls = mergeToolCallDelta(toolCalls, tcd)
+				if cb.OnToolCallDelta != nil {
+					if err := cb.OnToolCallDelta(tcd); err != nil {
+						return result, err
+					}
+				}
+			}
+		}
+	}
+
+	if err := scanner.Err(); err != nil {
+		return result, fmt.Errorf("reading chat stream: %w", err)
+	}
+
+	result.ToolCalls = toolCalls
+	return result, nil
+}
+
+func mergeToolCallDelta(calls []chat.ChatToolCall, delta chat.ChatToolCallDelta) []chat.ChatToolCall {
+	for len(calls) <= delta.Index {
+		calls = append(calls, chat.ChatToolCall{Type: "function"})
+	}
+
+	tc := &calls[delta.Index]
+	if delta.ID != "" {
+		tc.ID = delta.ID
+	}
+	if delta.Type != "" {
+		tc.Type = delta.Type
+	}
+	if delta.Function.Name != "" {
+		tc.Function.Name += delta.Function.Name
+	}
+	if delta.Function.Arguments != "" {
+		tc.Function.Arguments += delta.Function.Arguments
+	}
+	return calls
+}

@@ -1,8 +1,8 @@
 package tui
 
 import (
-	"bitbucket.srv.westpac.com.au/m055731/aim/internal/theme"
 	"charm.land/lipgloss/v2"
+	"github.com/samcharles93/tau/internal/theme"
 )
 
 // tuiTheme holds pre-computed styles derived from the brand colour palette.
@@ -45,7 +45,7 @@ func newTheme() tuiTheme {
 		Help: theme.Help,
 
 		Spinner: lipgloss.NewStyle().
-			Foreground(theme.ColorWestpacRed),
+			Foreground(theme.ColorRed),
 
 		Dim: theme.Dim,
 
