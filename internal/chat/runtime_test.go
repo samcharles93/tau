@@ -5,13 +5,21 @@ import (
 	"testing"
 	"time"
 
-	"bitbucket.srv.westpac.com.au/m055731/aim/internal/platform"
+	"github.com/samcharles93/tau/internal/config"
 )
+
+func testRuntimeProvider() config.ProviderConfig {
+	return config.ProviderConfig{
+		Name:    "test",
+		BaseURL: "https://provider.example",
+		Auth:    config.AuthConfig{Type: config.AuthTypeNone},
+	}
+}
 
 func TestRuntimeStreamsCompletion(t *testing.T) {
 	runtime, err := NewRuntime(
 		context.Background(),
-		func(ctx context.Context, endpoint platform.Endpoint) (string, error) { return "token", nil },
+		func(ctx context.Context, _ config.ProviderConfig) (string, error) { return "token", nil },
 		fakeStreamer{
 			deltas: []string{"Hello", " world"},
 			result: CompletionResult{
@@ -34,7 +42,7 @@ func TestRuntimeStreamsCompletion(t *testing.T) {
 	if err := runtime.Send(StartChatSessionCommand{
 		SessionID: "s1",
 		Config: ChatSessionConfig{
-			Endpoint: platform.Endpoints[1],
+			Provider: testRuntimeProvider(),
 			Model:    ChatModelRef{ID: "nemotron", URL: "https://model.example"},
 		},
 	}); err != nil {
@@ -90,7 +98,7 @@ func TestRuntimeCancelsActiveTurn(t *testing.T) {
 	streamer := &blockingStreamer{started: make(chan struct{})}
 	runtime, err := NewRuntime(
 		context.Background(),
-		func(ctx context.Context, endpoint platform.Endpoint) (string, error) { return "token", nil },
+		func(ctx context.Context, _ config.ProviderConfig) (string, error) { return "token", nil },
 		streamer,
 	)
 	if err != nil {
@@ -107,7 +115,7 @@ func TestRuntimeCancelsActiveTurn(t *testing.T) {
 	if err := runtime.Send(StartChatSessionCommand{
 		SessionID: "s1",
 		Config: ChatSessionConfig{
-			Endpoint: platform.Endpoints[1],
+			Provider: testRuntimeProvider(),
 			Model:    ChatModelRef{ID: "nemotron", URL: "https://model.example"},
 		},
 	}); err != nil {
@@ -163,7 +171,7 @@ func TestRuntimeCancelsActiveTurn(t *testing.T) {
 func TestRuntimeSubscribeEventsFanout(t *testing.T) {
 	runtime, err := NewRuntime(
 		context.Background(),
-		func(ctx context.Context, endpoint platform.Endpoint) (string, error) { return "token", nil },
+		func(ctx context.Context, _ config.ProviderConfig) (string, error) { return "token", nil },
 		fakeStreamer{},
 	)
 	if err != nil {
@@ -180,7 +188,7 @@ func TestRuntimeSubscribeEventsFanout(t *testing.T) {
 	if err := runtime.Send(StartChatSessionCommand{
 		SessionID: "s1",
 		Config: ChatSessionConfig{
-			Endpoint: platform.Endpoints[1],
+			Provider: testRuntimeProvider(),
 			Model:    ChatModelRef{ID: "nemotron", URL: "https://model.example"},
 		},
 	}); err != nil {
@@ -205,7 +213,7 @@ type fakeStreamer struct {
 func (f fakeStreamer) StreamChatCompletion(
 	ctx context.Context,
 	session ChatSessionState,
-	maasToken string,
+	bearerToken string,
 	onDelta func(string) error,
 ) (CompletionResult, error) {
 	for _, delta := range f.deltas {
@@ -226,7 +234,7 @@ type blockingStreamer struct {
 func (b *blockingStreamer) StreamChatCompletion(
 	ctx context.Context,
 	session ChatSessionState,
-	maasToken string,
+	bearerToken string,
 	onDelta func(string) error,
 ) (CompletionResult, error) {
 	close(b.started)

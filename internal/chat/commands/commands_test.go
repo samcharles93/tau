@@ -5,7 +5,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"bitbucket.srv.westpac.com.au/m055731/aim/internal/skills"
+	"github.com/samcharles93/tau/internal/skills"
 	"github.com/stretchr/testify/require"
 )
 
@@ -56,7 +56,7 @@ func TestLoadAll_MixedSources(t *testing.T) {
 func TestLoadSkillCommands(t *testing.T) {
 	configDir := t.TempDir()
 	homeDir := t.TempDir()
-	t.Setenv("AIM_CONFIG_DIR", configDir)
+	t.Setenv("TAU_CONFIG_DIR", configDir)
 	t.Setenv("HOME", homeDir)
 	t.Setenv("USERPROFILE", homeDir)
 
@@ -82,7 +82,7 @@ func TestLoadProjectSkillCommands(t *testing.T) {
 	t.Parallel()
 
 	workingDir := t.TempDir()
-	skillDir := filepath.Join(workingDir, ".aim", "skills", "code-review")
+	skillDir := filepath.Join(workingDir, ".tau", "skills", "code-review")
 	require.NoError(t, os.MkdirAll(skillDir, 0o755))
 	require.NoError(t, os.WriteFile(filepath.Join(skillDir, skills.SkillFileName), []byte(`---
 name: code-review

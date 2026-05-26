@@ -8,8 +8,8 @@ import (
 	"sync"
 	"time"
 
-	"bitbucket.srv.westpac.com.au/m055731/aim/internal/platform"
-	"bitbucket.srv.westpac.com.au/m055731/aim/internal/pubsub"
+	"github.com/samcharles93/tau/internal/config"
+	"github.com/samcharles93/tau/internal/pubsub"
 )
 
 const runtimeEventTopic = "chat.runtime.events"
@@ -19,18 +19,13 @@ const runtimeEventTopic = "chat.runtime.events"
 // enough that back-pressure surfaces promptly if the loop stalls.
 const commandBufferSize = 16
 
-type TokenSource func(ctx context.Context, endpoint platform.Endpoint) (string, error)
-
-type CompletionResult struct {
-	FinishReason string
-	Usage        ChatUsage
-}
+type TokenSource func(ctx context.Context, provider config.ProviderConfig) (string, error)
 
 type CompletionStreamer interface {
 	StreamChatCompletion(
 		ctx context.Context,
 		session ChatSessionState,
-		maasToken string,
+		bearerToken string,
 		onDelta func(string) error,
 	) (CompletionResult, error)
 }
@@ -183,7 +178,7 @@ func (r *Runtime) handleStart(cmd StartChatSessionCommand) {
 	}
 
 	r.sessions[state.SessionID] = &runtimeSession{state: state}
-	snapshot := cloneChatSessionState(state)
+	snapshot := CloneChatSessionState(state)
 	r.mu.Unlock()
 
 	r.emit(ChatSessionSnapshotEvent{State: snapshot})
@@ -217,10 +212,10 @@ func (r *Runtime) handleSubmit(cmd SubmitChatPromptCommand) {
 		return
 	}
 
-	streamState := cloneChatSessionState(session.state)
+	streamState := CloneChatSessionState(session.state)
 	streamCtx, cancel := context.WithCancel(r.ctx)
 	session.cancel = cancel
-	snapshot := cloneChatSessionState(session.state)
+	snapshot := CloneChatSessionState(session.state)
 	r.mu.Unlock()
 
 	r.emit(ChatSessionSnapshotEvent{State: snapshot})
@@ -260,7 +255,7 @@ func (r *Runtime) handleUpdate(cmd UpdateChatSessionCommand) {
 		})
 		return
 	}
-	snapshot := cloneChatSessionState(session.state)
+	snapshot := CloneChatSessionState(session.state)
 	r.mu.Unlock()
 
 	r.emit(ChatSessionSnapshotEvent{State: snapshot})
@@ -305,7 +300,7 @@ func (r *Runtime) handleCancel(cmd CancelChatRequestCommand) {
 		return
 	}
 	cancel := session.cancel
-	snapshot := cloneChatSessionState(session.state)
+	snapshot := CloneChatSessionState(session.state)
 	r.mu.Unlock()
 
 	r.emit(ChatSessionSnapshotEvent{State: snapshot})
@@ -339,7 +334,7 @@ func (r *Runtime) handleReset(cmd ResetChatSessionCommand) {
 		})
 		return
 	}
-	snapshot := cloneChatSessionState(session.state)
+	snapshot := CloneChatSessionState(session.state)
 	r.mu.Unlock()
 
 	r.emit(ChatSessionSnapshotEvent{State: snapshot})
@@ -370,7 +365,7 @@ func (r *Runtime) handleClose(cmd CloseChatSessionCommand) {
 		})
 		return
 	}
-	snapshot := cloneChatSessionState(session.state)
+	snapshot := CloneChatSessionState(session.state)
 	r.mu.Unlock()
 
 	r.emit(ChatSessionSnapshotEvent{State: snapshot})
@@ -378,13 +373,13 @@ func (r *Runtime) handleClose(cmd CloseChatSessionCommand) {
 
 func (r *Runtime) runStream(ctx context.Context, sessionState ChatSessionState) {
 	now := time.Now().UTC()
-	maasToken, err := r.tokenSource(ctx, sessionState.Endpoint)
+	bearerToken, err := r.tokenSource(ctx, sessionState.Provider)
 	if err != nil {
 		r.failActiveTurn(sessionState.SessionID, sessionState.ActiveRequestID, err, now)
 		return
 	}
 
-	result, err := r.streamer.StreamChatCompletion(ctx, sessionState, maasToken, func(delta string) error {
+	result, err := r.streamer.StreamChatCompletion(ctx, sessionState, bearerToken, func(delta string) error {
 		return r.appendDelta(sessionState.SessionID, sessionState.ActiveRequestID, delta, time.Now().UTC())
 	})
 	if err != nil {
@@ -437,7 +432,7 @@ func (r *Runtime) completeActiveTurn(sessionID, requestID string, result Complet
 	}
 	_ = session.state.CompleteTurn(result.FinishReason, result.Usage, at)
 	session.cancel = nil
-	snapshot := cloneChatSessionState(session.state)
+	snapshot := CloneChatSessionState(session.state)
 	r.mu.Unlock()
 
 	r.emitMustDeliver(ChatResponseCompletedEvent{
@@ -458,7 +453,7 @@ func (r *Runtime) cancelActiveTurn(sessionID, requestID string, at time.Time) {
 	}
 	_ = session.state.CancelTurn(at)
 	session.cancel = nil
-	snapshot := cloneChatSessionState(session.state)
+	snapshot := CloneChatSessionState(session.state)
 	r.mu.Unlock()
 
 	r.emitMustDeliver(ChatResponseCancelledEvent{
@@ -477,7 +472,7 @@ func (r *Runtime) failActiveTurn(sessionID, requestID string, err error, at time
 	}
 	_ = session.state.FailTurn(err, at)
 	session.cancel = nil
-	snapshot := cloneChatSessionState(session.state)
+	snapshot := CloneChatSessionState(session.state)
 	r.mu.Unlock()
 
 	r.emitMustDeliver(ChatSessionSnapshotEvent{State: snapshot})
@@ -520,14 +515,6 @@ func (r *Runtime) emitMustDeliver(event ChatEvent) {
 	if err := r.eventBus.PublishMustDeliver(runtimeEventTopic, event); err != nil {
 		slog.Debug("must-deliver publish failed", "err", err)
 	}
-}
-
-func cloneChatSessionState(state *ChatSessionState) ChatSessionState {
-	clone := *state
-	if state.Messages != nil {
-		clone.Messages = append([]ChatMessage(nil), state.Messages...)
-	}
-	return clone
 }
 
 func normalizedCommandTime(at time.Time) time.Time {

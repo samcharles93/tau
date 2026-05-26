@@ -1,12 +1,14 @@
 package chat
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 	"strings"
 	"time"
 
-	"bitbucket.srv.westpac.com.au/m055731/aim/internal/platform"
+	"github.com/samcharles93/tau/internal/config"
+	"github.com/samcharles93/tau/internal/pubsub"
 )
 
 const (
@@ -26,11 +28,12 @@ const (
 	ChatRoleSystem    ChatRole = "system"
 	ChatRoleUser      ChatRole = "user"
 	ChatRoleAssistant ChatRole = "assistant"
+	ChatRoleTool      ChatRole = "tool"
 )
 
 func (r ChatRole) Valid() bool {
 	switch r {
-	case ChatRoleSystem, ChatRoleUser, ChatRoleAssistant:
+	case ChatRoleSystem, ChatRoleUser, ChatRoleAssistant, ChatRoleTool:
 		return true
 	default:
 		return false
@@ -49,13 +52,26 @@ const (
 
 // ChatMessage is the canonical conversation item used for request history.
 type ChatMessage struct {
-	Role    ChatRole `json:"role"`
-	Content string   `json:"content"`
+	Role       ChatRole       `json:"role"`
+	Content    string         `json:"content,omitempty"`
+	ToolCalls  []ChatToolCall `json:"tool_calls,omitempty"`
+	ToolCallID string         `json:"tool_call_id,omitempty"`
 }
 
 func (m ChatMessage) Validate() error {
 	if !m.Role.Valid() {
 		return fmt.Errorf("invalid chat role %q", m.Role)
+	}
+	// Tool result messages carry a tool_call_id instead of requiring content.
+	if m.Role == ChatRoleTool {
+		if strings.TrimSpace(m.ToolCallID) == "" {
+			return errors.New("tool message requires tool_call_id")
+		}
+		return nil
+	}
+	// Assistant messages may have tool_calls without content.
+	if m.Role == ChatRoleAssistant && len(m.ToolCalls) > 0 {
+		return nil
 	}
 	if strings.TrimSpace(m.Content) == "" {
 		return errors.New("chat message content is required")
@@ -63,10 +79,37 @@ func (m ChatMessage) Validate() error {
 	return nil
 }
 
+// ChatToolCall is an OpenAI-compatible tool call from the assistant.
+type ChatToolCall struct {
+	ID       string           `json:"id"`
+	Type     string           `json:"type"` // always "function"
+	Function ChatFunctionCall `json:"function"`
+}
+
+// ChatFunctionCall is the function name + arguments within a tool call.
+type ChatFunctionCall struct {
+	Name      string `json:"name"`
+	Arguments string `json:"arguments"` // JSON string
+}
+
+// ChatToolDef is the OpenAI function-calling tool definition sent in requests.
+type ChatToolDef struct {
+	Type     string              `json:"type"` // "function"
+	Function ChatToolDefFunction `json:"function"`
+}
+
+// ChatToolDefFunction describes one function tool for the API request.
+type ChatToolDefFunction struct {
+	Name        string          `json:"name"`
+	Description string          `json:"description"`
+	Parameters  json.RawMessage `json:"parameters"` // JSON Schema
+}
+
 // ChatModelRef identifies the selected model route for a session.
 type ChatModelRef struct {
-	ID  string `json:"id"`
-	URL string `json:"url"`
+	ID    string `json:"id"`
+	URL   string `json:"url"`
+	Ready bool   `json:"ready,omitempty"`
 }
 
 func (m ChatModelRef) Validate() error {
@@ -123,10 +166,10 @@ type ChatUsage struct {
 
 // ChatSessionConfig is the immutable setup for a newly created session.
 type ChatSessionConfig struct {
-	Endpoint     platform.Endpoint `json:"-"`
-	Model        ChatModelRef      `json:"model"`
-	SystemPrompt string            `json:"system_prompt"`
-	Parameters   ChatParameters    `json:"parameters"`
+	Provider     config.ProviderConfig `json:"-"`
+	Model        ChatModelRef          `json:"model"`
+	SystemPrompt string                `json:"system_prompt"`
+	Parameters   ChatParameters        `json:"parameters"`
 }
 
 func (c ChatSessionConfig) withDefaults() ChatSessionConfig {
@@ -138,8 +181,8 @@ func (c ChatSessionConfig) withDefaults() ChatSessionConfig {
 }
 
 func (c ChatSessionConfig) Validate() error {
-	if strings.TrimSpace(c.Endpoint.Key()) == "/" || c.Endpoint.MaaSGateway == "" {
-		return errors.New("chat endpoint is required")
+	if strings.TrimSpace(c.Provider.Name) == "" || strings.TrimSpace(c.Provider.BaseURL) == "" {
+		return errors.New("chat provider is required")
 	}
 	if err := c.Model.Validate(); err != nil {
 		return err
@@ -171,14 +214,14 @@ func (p ChatSessionPatch) Validate() error {
 }
 
 // ChatCommand is the input contract from the UI to the runtime.
-type ChatCommand interface{ isChatCommand() }
+type ChatCommand interface{ IsChatCommand() }
 
 type StartChatSessionCommand struct {
 	SessionID string            `json:"session_id"`
 	Config    ChatSessionConfig `json:"config"`
 }
 
-func (StartChatSessionCommand) isChatCommand() {}
+func (StartChatSessionCommand) IsChatCommand() {}
 
 type SubmitChatPromptCommand struct {
 	SessionID   string    `json:"session_id"`
@@ -187,14 +230,14 @@ type SubmitChatPromptCommand struct {
 	SubmittedAt time.Time `json:"submitted_at"`
 }
 
-func (SubmitChatPromptCommand) isChatCommand() {}
+func (SubmitChatPromptCommand) IsChatCommand() {}
 
 type UpdateChatSessionCommand struct {
 	SessionID string           `json:"session_id"`
 	Patch     ChatSessionPatch `json:"patch"`
 }
 
-func (UpdateChatSessionCommand) isChatCommand() {}
+func (UpdateChatSessionCommand) IsChatCommand() {}
 
 type CancelChatRequestCommand struct {
 	SessionID   string    `json:"session_id"`
@@ -202,30 +245,38 @@ type CancelChatRequestCommand struct {
 	RequestedAt time.Time `json:"requested_at"`
 }
 
-func (CancelChatRequestCommand) isChatCommand() {}
+func (CancelChatRequestCommand) IsChatCommand() {}
 
 type ResetChatSessionCommand struct {
 	SessionID   string    `json:"session_id"`
 	RequestedAt time.Time `json:"requested_at"`
 }
 
-func (ResetChatSessionCommand) isChatCommand() {}
+func (ResetChatSessionCommand) IsChatCommand() {}
 
 type CloseChatSessionCommand struct {
 	SessionID   string    `json:"session_id"`
 	RequestedAt time.Time `json:"requested_at"`
 }
 
-func (CloseChatSessionCommand) isChatCommand() {}
+func (CloseChatSessionCommand) IsChatCommand() {}
 
 // ChatEvent is the output contract from the runtime back to the UI.
-type ChatEvent interface{ isChatEvent() }
+type ChatEvent interface{ IsChatEvent() }
+
+// ChatRuntime is the interface satisfied by both the legacy Runtime and the
+// agent Coordinator. The TUI depends on this interface, not a concrete type.
+type ChatRuntime interface {
+	Send(cmd ChatCommand) error
+	SubscribeEvents(buffer int) (*pubsub.Subscription[ChatEvent], error)
+	Close()
+}
 
 type ChatSessionSnapshotEvent struct {
 	State ChatSessionState `json:"state"`
 }
 
-func (ChatSessionSnapshotEvent) isChatEvent() {}
+func (ChatSessionSnapshotEvent) IsChatEvent() {}
 
 type ChatResponseStartedEvent struct {
 	SessionID string    `json:"session_id"`
@@ -233,7 +284,7 @@ type ChatResponseStartedEvent struct {
 	StartedAt time.Time `json:"started_at"`
 }
 
-func (ChatResponseStartedEvent) isChatEvent() {}
+func (ChatResponseStartedEvent) IsChatEvent() {}
 
 type ChatResponseDeltaEvent struct {
 	SessionID  string    `json:"session_id"`
@@ -243,7 +294,7 @@ type ChatResponseDeltaEvent struct {
 	ReceivedAt time.Time `json:"received_at"`
 }
 
-func (ChatResponseDeltaEvent) isChatEvent() {}
+func (ChatResponseDeltaEvent) IsChatEvent() {}
 
 type ChatResponseCompletedEvent struct {
 	State        ChatSessionState `json:"state"`
@@ -253,7 +304,7 @@ type ChatResponseCompletedEvent struct {
 	CompletedAt  time.Time        `json:"completed_at"`
 }
 
-func (ChatResponseCompletedEvent) isChatEvent() {}
+func (ChatResponseCompletedEvent) IsChatEvent() {}
 
 type ChatResponseCancelledEvent struct {
 	State       ChatSessionState `json:"state"`
@@ -261,7 +312,7 @@ type ChatResponseCancelledEvent struct {
 	CancelledAt time.Time        `json:"cancelled_at"`
 }
 
-func (ChatResponseCancelledEvent) isChatEvent() {}
+func (ChatResponseCancelledEvent) IsChatEvent() {}
 
 type ChatRuntimeErrorEvent struct {
 	SessionID  string    `json:"session_id"`
@@ -271,7 +322,7 @@ type ChatRuntimeErrorEvent struct {
 	OccurredAt time.Time `json:"occurred_at"`
 }
 
-func (ChatRuntimeErrorEvent) isChatEvent() {}
+func (ChatRuntimeErrorEvent) IsChatEvent() {}
 
 // ChatCompletionRequest is the wire format sent to the OpenAI-compatible endpoint.
 type ChatCompletionRequest struct {
@@ -280,6 +331,7 @@ type ChatCompletionRequest struct {
 	MaxTokens   int           `json:"max_tokens"`
 	Temperature float64       `json:"temperature"`
 	Stream      bool          `json:"stream"`
+	Tools       []ChatToolDef `json:"tools,omitempty"`
 }
 
 // ChatCompletionResponse is the non-streaming response shape.
@@ -305,25 +357,43 @@ type ChatCompletionChunkChoice struct {
 }
 
 type ChatCompletionDelta struct {
-	Content string `json:"content,omitempty"`
+	Content   string              `json:"content,omitempty"`
+	ToolCalls []ChatToolCallDelta `json:"tool_calls,omitempty"`
+}
+
+// ChatToolCallDelta is an incremental tool call chunk from the streaming endpoint.
+// The first chunk for a tool call carries ID, Type, and Function.Name;
+// subsequent chunks append to Function.Arguments.
+type ChatToolCallDelta struct {
+	Index    int                   `json:"index"`
+	ID       string                `json:"id,omitempty"`
+	Type     string                `json:"type,omitempty"`
+	Function ChatFunctionCallDelta `json:"function,omitempty"`
+}
+
+// ChatFunctionCallDelta carries incremental function name/arguments data.
+type ChatFunctionCallDelta struct {
+	Name      string `json:"name,omitempty"`
+	Arguments string `json:"arguments,omitempty"`
 }
 
 // ChatSessionState is the runtime-owned mutable state for one conversation.
 type ChatSessionState struct {
-	SessionID        string            `json:"session_id"`
-	Endpoint         platform.Endpoint `json:"-"`
-	Model            ChatModelRef      `json:"model"`
-	SystemPrompt     string            `json:"system_prompt"`
-	Parameters       ChatParameters    `json:"parameters"`
-	Status           ChatSessionStatus `json:"status"`
-	Messages         []ChatMessage     `json:"messages"`
-	PendingAssistant string            `json:"pending_assistant,omitempty"`
-	ActiveRequestID  string            `json:"active_request_id,omitempty"`
-	LastFinishReason string            `json:"last_finish_reason,omitempty"`
-	LastError        string            `json:"last_error,omitempty"`
-	LastUsage        ChatUsage         `json:"last_usage"`
-	CreatedAt        time.Time         `json:"created_at"`
-	UpdatedAt        time.Time         `json:"updated_at"`
+	SessionID        string                `json:"session_id"`
+	Provider         config.ProviderConfig `json:"-"`
+	Model            ChatModelRef          `json:"model"`
+	SystemPrompt     string                `json:"system_prompt"`
+	Parameters       ChatParameters        `json:"parameters"`
+	Status           ChatSessionStatus     `json:"status"`
+	Messages         []ChatMessage         `json:"messages"`
+	Tools            []ChatToolDef         `json:"tools,omitempty"`
+	PendingAssistant string                `json:"pending_assistant,omitempty"`
+	ActiveRequestID  string                `json:"active_request_id,omitempty"`
+	LastFinishReason string                `json:"last_finish_reason,omitempty"`
+	LastError        string                `json:"last_error,omitempty"`
+	LastUsage        ChatUsage             `json:"last_usage"`
+	CreatedAt        time.Time             `json:"created_at"`
+	UpdatedAt        time.Time             `json:"updated_at"`
 }
 
 func NewChatSessionState(sessionID string, cfg ChatSessionConfig, now time.Time) (*ChatSessionState, error) {
@@ -338,7 +408,7 @@ func NewChatSessionState(sessionID string, cfg ChatSessionConfig, now time.Time)
 	now = normalizeChatTime(now)
 	return &ChatSessionState{
 		SessionID:    sessionID,
-		Endpoint:     cfg.Endpoint,
+		Provider:     cfg.Provider,
 		Model:        cfg.Model,
 		SystemPrompt: cfg.SystemPrompt,
 		Parameters:   cfg.Parameters,
@@ -417,6 +487,45 @@ func (s *ChatSessionState) AppendAssistantDelta(delta string, at time.Time) erro
 	s.PendingAssistant += delta
 	s.UpdatedAt = normalizeChatTime(at)
 	return nil
+}
+
+// AppendAssistantToolCallMessage commits the current assistant turn with tool calls.
+// This is called when the LLM produces a response containing tool_calls.
+func (s *ChatSessionState) AppendAssistantToolCallMessage(content string, calls []ChatToolCall, at time.Time) error {
+	if !s.HasActiveRequest() {
+		return errors.New("no active request")
+	}
+	s.Messages = append(s.Messages, ChatMessage{
+		Role:      ChatRoleAssistant,
+		Content:   content,
+		ToolCalls: calls,
+	})
+	s.PendingAssistant = ""
+	s.UpdatedAt = normalizeChatTime(at)
+	return nil
+}
+
+// AppendToolResultMessage appends a tool result to the conversation.
+func (s *ChatSessionState) AppendToolResultMessage(callID, content string, at time.Time) error {
+	if !s.HasActiveRequest() {
+		return errors.New("no active request")
+	}
+	if strings.TrimSpace(callID) == "" {
+		return errors.New("tool_call_id is required")
+	}
+	s.Messages = append(s.Messages, ChatMessage{
+		Role:       ChatRoleTool,
+		Content:    content,
+		ToolCallID: callID,
+	})
+	s.UpdatedAt = normalizeChatTime(at)
+	return nil
+}
+
+// ClearPendingAssistant resets the in-flight assistant buffer between tool-loop iterations.
+func (s *ChatSessionState) ClearPendingAssistant(at time.Time) {
+	s.PendingAssistant = ""
+	s.UpdatedAt = normalizeChatTime(at)
 }
 
 func (s *ChatSessionState) MarkCancelling(at time.Time) error {
@@ -535,6 +644,7 @@ func (s ChatSessionState) CompletionRequest() ChatCompletionRequest {
 		MaxTokens:   s.Parameters.MaxTokens,
 		Temperature: s.Parameters.Temperature,
 		Stream:      true,
+		Tools:       s.Tools,
 	}
 }
 

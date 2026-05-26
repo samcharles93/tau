@@ -5,15 +5,23 @@ import (
 	"testing"
 	"time"
 
-	"bitbucket.srv.westpac.com.au/m055731/aim/internal/platform"
+	"github.com/samcharles93/tau/internal/config"
 )
+
+func testProvider() config.ProviderConfig {
+	return config.ProviderConfig{
+		Name:    "test",
+		BaseURL: "https://provider.example",
+		Auth:    config.AuthConfig{Type: config.AuthTypeNone},
+	}
+}
 
 func TestNewChatSessionStateDefaultsAndRequest(t *testing.T) {
 	now := time.Date(2026, 5, 21, 10, 0, 0, 0, time.UTC)
 	session, err := NewChatSessionState("s1", ChatSessionConfig{
-		Endpoint: platform.Endpoints[1],
+		Provider: testProvider(),
 		Model: ChatModelRef{
-			ID:  "nemotron-nano-9b",
+			ID:  "test-model",
 			URL: "https://model.example/v1",
 		},
 	}, now)
@@ -49,9 +57,9 @@ func TestNewChatSessionStateDefaultsAndRequest(t *testing.T) {
 func TestChatSessionTurnLifecycle(t *testing.T) {
 	now := time.Date(2026, 5, 21, 10, 0, 0, 0, time.UTC)
 	session, err := NewChatSessionState("s1", ChatSessionConfig{
-		Endpoint: platform.Endpoints[1],
+		Provider: testProvider(),
 		Model: ChatModelRef{
-			ID:  "nemotron-nano-9b",
+			ID:  "test-model",
 			URL: "https://model.example/v1",
 		},
 		Parameters: ChatParameters{MaxTokens: 2048, Temperature: 0.2},
@@ -96,9 +104,9 @@ func TestChatSessionTurnLifecycle(t *testing.T) {
 func TestChatSessionPatchCancelAndFailure(t *testing.T) {
 	now := time.Date(2026, 5, 21, 10, 0, 0, 0, time.UTC)
 	session, err := NewChatSessionState("s1", ChatSessionConfig{
-		Endpoint: platform.Endpoints[1],
+		Provider: testProvider(),
 		Model: ChatModelRef{
-			ID:  "nemotron-nano-9b",
+			ID:  "test-model",
 			URL: "https://model.example/v1",
 		},
 	}, now)
@@ -109,7 +117,7 @@ func TestChatSessionPatchCancelAndFailure(t *testing.T) {
 	newPrompt := "Be concise."
 	newTokens := 512
 	newTemp := 0.1
-	newModel := ChatModelRef{ID: "granite-8b", URL: "https://other.example/v1"}
+	newModel := ChatModelRef{ID: "other-model", URL: "https://other.example/v1"}
 	if err := session.ApplyPatch(ChatSessionPatch{
 		Model:        &newModel,
 		SystemPrompt: &newPrompt,

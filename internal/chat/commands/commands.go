@@ -7,8 +7,8 @@ import (
 	"regexp"
 	"strings"
 
-	aimconfig "bitbucket.srv.westpac.com.au/m055731/aim/internal/config"
-	"bitbucket.srv.westpac.com.au/m055731/aim/internal/skills"
+	tauconfig "github.com/samcharles93/tau/internal/config"
+	"github.com/samcharles93/tau/internal/skills"
 )
 
 var namedArgPattern = regexp.MustCompile(`\$([A-Z][A-Z0-9_]*)`)
@@ -60,14 +60,11 @@ func LoadProjectSkillCommands(workingDir string) []CustomCommand {
 func buildCommandSources(workingDir string) []commandSource {
 	sources := []commandSource{
 		{
-			path:   filepath.Join(aimconfig.Dir(), "commands"),
+			path:   filepath.Join(tauconfig.Dir(), "commands"),
 			prefix: userCommandPrefix,
 		},
 	}
 
-	if legacyDir := legacyHomeCommandsDir(); legacyDir != "" {
-		sources = append(sources, commandSource{path: legacyDir, prefix: userCommandPrefix})
-	}
 	if projectDir := projectCommandsDir(workingDir); projectDir != "" {
 		sources = append(sources, commandSource{path: projectDir, prefix: projectCommandPrefix})
 	}
@@ -75,20 +72,12 @@ func buildCommandSources(workingDir string) []commandSource {
 	return sources
 }
 
-func legacyHomeCommandsDir() string {
-	homeDir, err := os.UserHomeDir()
-	if err != nil {
-		return ""
-	}
-	return filepath.Join(homeDir, ".aim", "commands")
-}
-
 func projectCommandsDir(workingDir string) string {
 	trimmed := strings.TrimSpace(workingDir)
 	if trimmed == "" {
 		return ""
 	}
-	return filepath.Join(trimmed, ".aim", "commands")
+	return filepath.Join(trimmed, ".tau", "commands")
 }
 
 func loadAll(sources []commandSource) ([]CustomCommand, error) {

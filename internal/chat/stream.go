@@ -1,120 +1,35 @@
 package chat
 
-import (
-	"bufio"
-	"bytes"
-	"context"
-	"encoding/json"
-	"fmt"
-	"io"
-	"net/http"
-	"strings"
-	"time"
-
-	"bitbucket.srv.westpac.com.au/m055731/aim/internal/platform"
-)
-
-const defaultStreamTimeout = 120 * time.Second
-
-type OpenAIStreamer struct {
-	Insecure bool
-	Timeout  time.Duration
+// CompletionResult holds the final state of a streamed chat completion.
+type CompletionResult struct {
+	FinishReason string
+	Usage        ChatUsage
+	ToolCalls    []ChatToolCall
 }
 
-func (s OpenAIStreamer) StreamChatCompletion(
-	ctx context.Context,
-	session ChatSessionState,
-	maasToken string,
-	onDelta func(string) error,
-) (CompletionResult, error) {
-	requestBody, err := json.Marshal(session.CompletionRequest())
-	if err != nil {
-		return CompletionResult{}, fmt.Errorf("encoding chat request: %w", err)
-	}
-
-	url := strings.TrimRight(session.Model.URL, "/") + "/v1/chat/completions"
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(requestBody))
-	if err != nil {
-		return CompletionResult{}, fmt.Errorf("creating chat request: %w", err)
-	}
-	req.Header.Set("Authorization", "Bearer "+maasToken)
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Accept", "text/event-stream")
-
-	client := platform.NewHTTPClientWithTimeout(s.Insecure, s.timeout())
-	resp, err := client.Do(req)
-	if err != nil {
-		return CompletionResult{}, fmt.Errorf("chat request failed: %w", err)
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		body, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
-		return CompletionResult{}, fmt.Errorf("chat endpoint returned %d: %s", resp.StatusCode, strings.TrimSpace(string(body)))
-	}
-
-	return s.readStream(ctx, resp.Body, onDelta)
+// StreamCallbacks groups the callbacks the streamer invokes during SSE parsing.
+type StreamCallbacks struct {
+	// OnDelta is called for each text content delta.
+	OnDelta func(string) error
+	// OnToolCallDelta is called for each incremental tool-call chunk.
+	// May be nil if the caller does not need tool-call streaming.
+	OnToolCallDelta func(ChatToolCallDelta) error
 }
 
-func (s OpenAIStreamer) timeout() time.Duration {
-	if s.Timeout <= 0 {
-		return defaultStreamTimeout
-	}
-	return s.Timeout
-}
-
-func (s OpenAIStreamer) readStream(
-	ctx context.Context,
-	body io.Reader,
-	onDelta func(string) error,
-) (CompletionResult, error) {
-	result := CompletionResult{}
-	scanner := bufio.NewScanner(body)
-	scanner.Buffer(make([]byte, 0, 64*1024), 1024*1024)
-
-	for scanner.Scan() {
-		if err := ctx.Err(); err != nil {
-			return result, err
-		}
-
-		line := strings.TrimSpace(scanner.Text())
-		if line == "" || strings.HasPrefix(line, ":") {
-			continue
-		}
-		if !strings.HasPrefix(line, "data:") {
-			continue
-		}
-
-		payload := strings.TrimSpace(strings.TrimPrefix(line, "data:"))
-		if payload == "[DONE]" {
-			return result, nil
-		}
-
-		var chunk ChatCompletionChunk
-		if err := json.Unmarshal([]byte(payload), &chunk); err != nil {
-			return result, fmt.Errorf("invalid chat stream chunk: %w", err)
-		}
-
-		if chunk.Usage != nil {
-			result.Usage = *chunk.Usage
-		}
-
-		for _, choice := range chunk.Choices {
-			if choice.FinishReason != nil {
-				result.FinishReason = *choice.FinishReason
-			}
-			if choice.Delta.Content == "" {
-				continue
-			}
-			if err := onDelta(choice.Delta.Content); err != nil {
-				return result, err
+// CloneChatSessionState creates a deep copy of the session state.
+func CloneChatSessionState(state *ChatSessionState) ChatSessionState {
+	clone := *state
+	if state.Messages != nil {
+		clone.Messages = make([]ChatMessage, len(state.Messages))
+		for i, msg := range state.Messages {
+			clone.Messages[i] = msg
+			if msg.ToolCalls != nil {
+				clone.Messages[i].ToolCalls = append([]ChatToolCall(nil), msg.ToolCalls...)
 			}
 		}
 	}
-
-	if err := scanner.Err(); err != nil {
-		return result, fmt.Errorf("reading chat stream: %w", err)
+	if state.Tools != nil {
+		clone.Tools = append([]ChatToolDef(nil), state.Tools...)
 	}
-
-	return result, nil
+	return clone
 }
