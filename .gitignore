@@ -1,7 +1,11 @@
+# Project-local Tau config may contain provider secrets
+.tau.yaml
+
 # Reference artifacts (kept for analysis only)
 reference/
 
 # Build output
 dist/
-/aim.exe
+/tau
+/tau.exe
 .task/

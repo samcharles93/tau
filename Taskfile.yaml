@@ -1,8 +1,8 @@
 version: "3"
 
 vars:
-  BINARY: aim
-  CMD: ./cmd/aim
+  BINARY: tau
+  CMD: ./cmd/tau
   VERSION:
     sh: git describe --tags --always --dirty 2>/dev/null || echo dev
 
@@ -13,7 +13,7 @@ tasks:
       - task: build
 
   build:
-    desc: Build the aim binary for the current platform
+    desc: Build the tau binary for the current platform
     cmds:
       - go build -ldflags "-s -w -X main.version={{.VERSION}}" -o {{.BINARY}}{{exeExt}} {{.CMD}}
     sources:
@@ -110,6 +110,6 @@ tasks:
       - rm -rf dist/
 
   install:
-    desc: Install aim to $GOPATH/bin
+    desc: Install tau to $GOPATH/bin
     cmds:
       - go install -ldflags "-s -w -X main.version={{.VERSION}}" {{.CMD}}

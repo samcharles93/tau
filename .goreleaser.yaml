@@ -1,6 +1,6 @@
 version: 2
 
-project_name: aim
+project_name: tau
 
 before:
   hooks:
@@ -8,9 +8,9 @@ before:
     - go vet ./...
 
 builds:
-  - id: aim
-    main: ./cmd/aim
-    binary: aim
+  - id: tau
+    main: ./cmd/tau
+    binary: tau
     env:
       - CGO_ENABLED=0
     goos:
@@ -43,7 +43,7 @@ checksum:
 artifactories:
   - name: westpac-artifactory
     mode: archive
-    target: "{{ .Env.ARTIFACTORY_URL }}/aim/{{ .Version }}/"
+    target: "{{ .Env.ARTIFACTORY_URL }}/tau/{{ .Version }}/"
     username: "{{ .Env.ARTIFACTORY_USER }}"
 
 # Disable GitHub-specific features since we use Bitbucket.
