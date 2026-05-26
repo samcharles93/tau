@@ -53,6 +53,8 @@ type Coordinator struct {
 	onSessionStart    func(map[string]any)
 	onSessionShutdown func(map[string]any)
 	onClose           func()
+	startupEvents     []chat.ChatEvent
+	startupEventsOnce sync.Once
 	commands          chan chat.ChatCommand
 	eventBus          *pubsub.Bus[chat.ChatEvent]
 
@@ -81,6 +83,7 @@ type CoordinatorConfig struct {
 	OnSessionStart    func(map[string]any)
 	OnSessionShutdown func(map[string]any)
 	OnClose           func()
+	StartupEvents     []chat.ChatEvent
 }
 
 // NewCoordinator creates and starts the agent coordinator.
@@ -116,6 +119,7 @@ func NewCoordinator(ctx context.Context, cfg CoordinatorConfig) (*Coordinator, e
 		onSessionStart:    cfg.OnSessionStart,
 		onSessionShutdown: cfg.OnSessionShutdown,
 		onClose:           cfg.OnClose,
+		startupEvents:     append([]chat.ChatEvent(nil), cfg.StartupEvents...),
 		commands:          make(chan chat.ChatCommand, commandBufferSize),
 		eventBus:          pubsub.New[chat.ChatEvent](),
 		sessions:          make(map[string]*coordinatorSession),
@@ -134,7 +138,16 @@ func NewCoordinator(ctx context.Context, cfg CoordinatorConfig) (*Coordinator, e
 
 // SubscribeEvents returns a subscription for coordinator events.
 func (c *Coordinator) SubscribeEvents(buffer int) (*pubsub.Subscription[chat.ChatEvent], error) {
-	return c.eventBus.Subscribe(coordinatorEventTopic, buffer)
+	sub, err := c.eventBus.Subscribe(coordinatorEventTopic, buffer)
+	if err != nil {
+		return nil, err
+	}
+	c.startupEventsOnce.Do(func() {
+		for _, event := range c.startupEvents {
+			c.emit(event)
+		}
+	})
+	return sub, nil
 }
 
 // Send submits a command to the coordinator.
