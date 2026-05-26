@@ -112,9 +112,10 @@ func buildFindArgs(binary string, p FindParams, searchPath string) []string {
 		if p.Pattern != "" {
 			args = append(args, "--glob", p.Pattern)
 		}
-		if p.Type == "file" {
+		switch p.Type {
+		case "file":
 			args = append(args, "--type", "f")
-		} else if p.Type == "directory" {
+		case "directory":
 			args = append(args, "--type", "d")
 		}
 		args = append(args, "--search-path", searchPath)
@@ -123,9 +124,10 @@ func buildFindArgs(binary string, p FindParams, searchPath string) []string {
 
 	// POSIX find style
 	args := []string{searchPath}
-	if p.Type == "file" {
+	switch p.Type {
+	case "file":
 		args = append(args, "-type", "f")
-	} else if p.Type == "directory" {
+	case "directory":
 		args = append(args, "-type", "d")
 	}
 	if p.Pattern != "" {

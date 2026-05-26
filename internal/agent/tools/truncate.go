@@ -55,11 +55,12 @@ func TruncateHead(content string, maxLines, maxBytes int) TruncationResult {
 
 	if result.Truncated {
 		kept := b.String()
-		b.WriteString(fmt.Sprintf(
+		fmt.Fprintf(
+			&b,
 			"\n\n[truncated: showing %d/%d lines, %s/%s]",
 			lineCount, originalLines,
 			FormatSize(len(kept)), FormatSize(originalSize),
-		))
+		)
 	}
 
 	result.Content = b.String()

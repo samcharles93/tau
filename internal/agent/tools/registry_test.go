@@ -5,7 +5,7 @@ import (
 	"encoding/json"
 	"testing"
 
-	"bitbucket.srv.westpac.com.au/m055731/aim/internal/agent/tools"
+	"github.com/samcharles93/tau/internal/agent/tools"
 )
 
 func dummyExecutor(_ context.Context, _ json.RawMessage, _ tools.UIBridge) (tools.Result, error) {

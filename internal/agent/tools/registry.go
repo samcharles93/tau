@@ -1,5 +1,5 @@
 // Package tools provides the tool registry and built-in tool implementations
-// for the AIM agent coordinator.
+// for the Tau agent coordinator.
 package tools
 
 import (

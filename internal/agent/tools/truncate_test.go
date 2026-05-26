@@ -4,7 +4,7 @@ import (
 	"strings"
 	"testing"
 
-	"bitbucket.srv.westpac.com.au/m055731/aim/internal/agent/tools"
+	"github.com/samcharles93/tau/internal/agent/tools"
 )
 
 func TestTruncateHead_NoTruncation(t *testing.T) {
