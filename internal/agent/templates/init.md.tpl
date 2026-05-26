@@ -1,6 +1,6 @@
-Analyze this codebase and create/update **{{.Config.Options.InitializeAs}}** to help future agents work effectively in this repository.
+Analyze this codebase and create/update **AGENTS.md** to help future agents work effectively in this repository.
 
-**First**: Check if directory is empty or contains only config files. If so, stop and say "Directory appears empty or only contains config. Add source code first, then run this command to generate {{.Config.Options.InitializeAs}}."
+**First**: Check if directory is empty or contains only config files. If so, stop and say "Directory appears empty or only contains config. Add source code first, then run /init to generate AGENTS.md."
 
 **Goal**: Document what an agent needs to know to work in this codebase - commands, patterns, conventions, gotchas, overall architecture, how components fit together
 
@@ -11,7 +11,7 @@ Analyze this codebase and create/update **{{.Config.Options.InitializeAs}}** to 
 3. Identify project type from config files and directory structure
 4. Find build/test/lint commands from config files, scripts, Makefiles, or CI configs
 5. Read representative source files to understand code patterns, architecture, control/data flow
-6. If {{.Config.Options.InitializeAs}} exists, read and improve it
+6. If AGENTS.md exists, read and improve it
 
 **Content to include**:
 
@@ -27,3 +27,9 @@ Analyze this codebase and create/update **{{.Config.Options.InitializeAs}}** to 
 **Format**: Clear markdown sections. Use your judgment on structure based on what you find. Aim for completeness over brevity - include everything an agent would need to know.
 
 **Critical**: Only document what you actually observe. Never invent commands, patterns, or conventions. If you can't find something, don't include it.
+
+<env>
+Working directory: {{.WorkingDir}}
+Platform: {{.Platform}}
+Today's date: {{.Date}}
+</env>
