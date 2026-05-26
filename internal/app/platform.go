@@ -3,37 +3,32 @@ package app
 import (
 	"context"
 
-	"bitbucket.srv.westpac.com.au/m055731/aim/internal/maas"
-	"bitbucket.srv.westpac.com.au/m055731/aim/internal/platform"
+	"github.com/samcharles93/tau/internal/config"
+	"github.com/samcharles93/tau/internal/provider"
 )
 
-// TokenOptions holds the parameters for minting a MaaS token.
+// TokenOptions holds the parameters for resolving a provider bearer token.
 type TokenOptions struct {
-	Endpoint platform.Endpoint
+	Provider config.ProviderConfig
 	Insecure bool
-	OCPToken string
-	Expiry   string
 }
 
-// MintToken resolves a fresh MaaS JWT, optionally using a pre-existing OCP token.
-func MintToken(ctx context.Context, opts TokenOptions) (string, error) {
-	return maas.ResolveMaaSToken(ctx, opts.Endpoint, opts.Insecure, "", opts.OCPToken, opts.Expiry)
+// ResolveToken resolves the bearer token for the configured provider.
+func ResolveToken(ctx context.Context, opts TokenOptions) (string, error) {
+	return provider.ResolveBearerToken(ctx, opts.Provider, opts.Insecure)
 }
 
 // ModelsOptions holds the parameters for discovering available models.
 type ModelsOptions struct {
-	Endpoint  platform.Endpoint
-	Insecure  bool
-	MaaSToken string
-	OCPToken  string
+	Provider config.ProviderConfig
+	Insecure bool
 }
 
-// DiscoverModels resolves a MaaS token and returns the list of available models.
-func DiscoverModels(ctx context.Context, opts ModelsOptions) ([]maas.Model, error) {
-	maasToken, err := maas.ResolveMaaSToken(ctx, opts.Endpoint, opts.Insecure, opts.MaaSToken, opts.OCPToken, "")
+// DiscoverModels resolves a provider token and returns the list of available models.
+func DiscoverModels(ctx context.Context, opts ModelsOptions) ([]provider.Model, error) {
+	bearerToken, err := provider.ResolveBearerToken(ctx, opts.Provider, opts.Insecure)
 	if err != nil {
 		return nil, err
 	}
-
-	return maas.DiscoverModels(ctx, opts.Endpoint, maasToken, opts.Insecure)
+	return provider.DiscoverModels(ctx, opts.Provider, bearerToken, opts.Insecure)
 }

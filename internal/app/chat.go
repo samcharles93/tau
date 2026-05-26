@@ -11,13 +11,17 @@ import (
 	"strings"
 	"time"
 
-	aimchat "bitbucket.srv.westpac.com.au/m055731/aim/internal/chat"
-	aimconfig "bitbucket.srv.westpac.com.au/m055731/aim/internal/config"
-	"bitbucket.srv.westpac.com.au/m055731/aim/internal/maas"
-	"bitbucket.srv.westpac.com.au/m055731/aim/internal/platform"
-	"bitbucket.srv.westpac.com.au/m055731/aim/internal/pubsub"
-	"bitbucket.srv.westpac.com.au/m055731/aim/internal/tui"
-	"bitbucket.srv.westpac.com.au/m055731/aim/internal/tui/notify"
+	"github.com/samcharles93/tau/internal/agent"
+	"github.com/samcharles93/tau/internal/agent/tools"
+	tauchat "github.com/samcharles93/tau/internal/chat"
+	tauconfig "github.com/samcharles93/tau/internal/config"
+	"github.com/samcharles93/tau/internal/extensions"
+	"github.com/samcharles93/tau/internal/platform"
+	"github.com/samcharles93/tau/internal/provider"
+	"github.com/samcharles93/tau/internal/pubsub"
+	"github.com/samcharles93/tau/internal/streaming"
+	"github.com/samcharles93/tau/internal/tui"
+	"github.com/samcharles93/tau/internal/tui/notify"
 )
 
 // oneShotEventBuffer is the subscriber buffer for runtime events in
@@ -27,10 +31,9 @@ const oneShotEventBuffer = 64
 
 // ChatOptions holds the parameters for launching a chat session.
 type ChatOptions struct {
-	Endpoint     platform.Endpoint
+	Config       tauconfig.Config
+	Provider     tauconfig.ProviderConfig
 	Insecure     bool
-	MaaSToken    string
-	OCPToken     string
 	Model        string
 	SystemPrompt string
 	MaxTokens    int
@@ -46,36 +49,30 @@ type ChatOptions struct {
 // the TUI opens with an empty model list and the user can retry via /models.
 // For one-shot mode a working model is required upfront.
 func RunChat(ctx context.Context, opts ChatOptions) error {
-	maasToken, err := maas.ResolveMaaSToken(ctx, opts.Endpoint, opts.Insecure, opts.MaaSToken, opts.OCPToken, "")
+	bearerToken, err := provider.ResolveBearerToken(ctx, opts.Provider, opts.Insecure)
 	if err != nil {
 		return err
 	}
 
-	allModels, discoverErr := maas.DiscoverModels(ctx, opts.Endpoint, maasToken, opts.Insecure)
-
-	// For non-interactive one-shot mode we need a model upfront.
 	if !isInteractive(opts.Prompt) {
-		if discoverErr != nil {
-			return discoverErr
-		}
-		model, err := pickModel(allModels, opts.Model)
+		model, err := pickModel(nil, opts.Model, opts.Config.DefaultModel, opts.Provider.BaseURL)
 		if err != nil {
 			return err
 		}
-		return runOneShotWithModel(ctx, opts, maasToken, model)
+		return runOneShotWithModel(ctx, opts, bearerToken, model)
 	}
 
-	// Interactive: model discovery failure is non-fatal.
-	var model aimchat.ChatModelRef
-	if discoverErr == nil {
-		model, _ = pickModel(allModels, opts.Model)
-	}
-
-	runtime, err := aimchat.NewRuntime(ctx, staticTokenSource(maasToken), aimchat.OpenAIStreamer{Insecure: opts.Insecure})
+	allModels, discoverErr := provider.DiscoverModels(ctx, opts.Provider, bearerToken, opts.Insecure)
+	model, err := pickModel(allModels, opts.Model, opts.Config.DefaultModel, opts.Provider.BaseURL)
 	if err != nil {
 		return err
 	}
-	defer runtime.Close()
+
+	coordinator, err := newCoordinator(ctx, opts, bearerToken)
+	if err != nil {
+		return err
+	}
+	defer coordinator.Close()
 
 	sessionID, err := newID("session")
 	if err != nil {
@@ -84,7 +81,7 @@ func RunChat(ctx context.Context, opts ChatOptions) error {
 
 	config := buildSessionConfig(opts, model)
 
-	if err := runtime.Send(aimchat.StartChatSessionCommand{SessionID: sessionID, Config: config}); err != nil {
+	if err := coordinator.Send(tauchat.StartChatSessionCommand{SessionID: sessionID, Config: config}); err != nil {
 		return err
 	}
 
@@ -93,16 +90,16 @@ func RunChat(ctx context.Context, opts ChatOptions) error {
 
 	available := buildModelRefs(allModels)
 
-	// Build a refresher closure that captures the endpoint and token so the
-	// TUI can re-discover models without importing maas/platform.
-	refresher := buildModelRefresher(opts.Endpoint, maasToken, opts.Insecure)
+	// Build a refresher closure that captures the provider and token so the
+	// TUI can re-discover models without importing infrastructure packages.
+	refresher := buildModelRefresher(opts.Provider, bearerToken, opts.Insecure)
 
 	tuiCfg := tui.Config{
 		SessionID:          sessionID,
 		ModelName:          model.ID,
-		Endpoint:           opts.Endpoint.Key(),
+		Provider:           opts.Provider.Name,
 		AvailableModels:    available,
-		AvailableEndpoints: endpointKeys(),
+		AvailableProviders: tauconfig.ProviderNames(opts.Config),
 		NotifyBus:          notifyBus,
 		RefreshModels:      refresher,
 	}
@@ -117,17 +114,17 @@ func RunChat(ctx context.Context, opts ChatOptions) error {
 		})
 	}
 
-	return tui.Run(ctx, runtime, tuiCfg)
+	return tui.Run(ctx, coordinator, tuiCfg)
 }
 
-// runOneShotWithModel creates a runtime and runs a one-shot prompt with a
+// runOneShotWithModel creates a coordinator and runs a one-shot prompt with a
 // known-good model.
-func runOneShotWithModel(ctx context.Context, opts ChatOptions, maasToken string, model aimchat.ChatModelRef) error {
-	runtime, err := aimchat.NewRuntime(ctx, staticTokenSource(maasToken), aimchat.OpenAIStreamer{Insecure: opts.Insecure})
+func runOneShotWithModel(ctx context.Context, opts ChatOptions, bearerToken string, model tauchat.ChatModelRef) error {
+	coordinator, err := newCoordinator(ctx, opts, bearerToken)
 	if err != nil {
 		return err
 	}
-	defer runtime.Close()
+	defer coordinator.Close()
 
 	sessionID, err := newID("session")
 	if err != nil {
@@ -136,19 +133,19 @@ func runOneShotWithModel(ctx context.Context, opts ChatOptions, maasToken string
 
 	config := buildSessionConfig(opts, model)
 
-	if err := runtime.Send(aimchat.StartChatSessionCommand{SessionID: sessionID, Config: config}); err != nil {
+	if err := coordinator.Send(tauchat.StartChatSessionCommand{SessionID: sessionID, Config: config}); err != nil {
 		return err
 	}
 
-	return runOneShotChat(ctx, runtime, sessionID, opts.Prompt)
+	return runOneShotChat(ctx, coordinator, sessionID, opts.Prompt)
 }
 
 // buildModelRefresher returns a ModelRefresher closure that re-discovers
-// models from MaaS. The closure captures the endpoint and token so the TUI
-// doesn't need to import infrastructure packages.
-func buildModelRefresher(endpoint platform.Endpoint, maasToken string, insecure bool) tui.ModelRefresher {
-	return func(ctx context.Context) ([]tui.ModelInfo, error) {
-		models, err := maas.DiscoverModels(ctx, endpoint, maasToken, insecure)
+// models from the configured provider. The closure captures the provider and token so the TUI
+// does not need to import infrastructure packages.
+func buildModelRefresher(selectedProvider tauconfig.ProviderConfig, bearerToken string, insecure bool) tui.ModelRefresher {
+	return func(ctx context.Context) ([]tauchat.ChatModelRef, error) {
+		models, err := provider.DiscoverModels(ctx, selectedProvider, bearerToken, insecure)
 		if err != nil {
 			return nil, err
 		}
@@ -156,19 +153,19 @@ func buildModelRefresher(endpoint platform.Endpoint, maasToken string, insecure 
 	}
 }
 
-func buildSessionConfig(opts ChatOptions, model aimchat.ChatModelRef) aimchat.ChatSessionConfig {
-	return aimchat.ChatSessionConfig{
-		Endpoint:     opts.Endpoint,
+func buildSessionConfig(opts ChatOptions, model tauchat.ChatModelRef) tauchat.ChatSessionConfig {
+	return tauchat.ChatSessionConfig{
+		Provider:     opts.Provider,
 		Model:        model,
 		SystemPrompt: opts.SystemPrompt,
-		Parameters: aimchat.ChatParameters{
+		Parameters: tauchat.ChatParameters{
 			MaxTokens:   opts.MaxTokens,
 			Temperature: opts.Temperature,
 		},
 	}
 }
 
-func runOneShotChat(ctx context.Context, runtime *aimchat.Runtime, sessionID, promptFlag string) error {
+func runOneShotChat(ctx context.Context, runtime tauchat.ChatRuntime, sessionID, promptFlag string) error {
 	prompt, err := resolvePrompt(promptFlag)
 	if err != nil {
 		return err
@@ -185,7 +182,7 @@ func runOneShotChat(ctx context.Context, runtime *aimchat.Runtime, sessionID, pr
 		return err
 	}
 
-	if err := runtime.Send(aimchat.SubmitChatPromptCommand{
+	if err := runtime.Send(tauchat.SubmitChatPromptCommand{
 		SessionID:   sessionID,
 		RequestID:   requestID,
 		Prompt:      prompt,
@@ -197,7 +194,7 @@ func runOneShotChat(ctx context.Context, runtime *aimchat.Runtime, sessionID, pr
 	return consumeOneShot(ctx, sub.Channel(), sessionID, requestID)
 }
 
-func consumeOneShot(ctx context.Context, events <-chan aimchat.ChatEvent, sessionID, requestID string) error {
+func consumeOneShot(ctx context.Context, events <-chan tauchat.ChatEvent, sessionID, requestID string) error {
 	wroteOutput := false
 
 	for {
@@ -212,14 +209,14 @@ func consumeOneShot(ctx context.Context, events <-chan aimchat.ChatEvent, sessio
 				return errors.New("chat runtime stopped before the request completed")
 			}
 			switch event := event.(type) {
-			case aimchat.ChatResponseDeltaEvent:
+			case tauchat.ChatResponseDeltaEvent:
 				if event.SessionID != sessionID || event.RequestID != requestID {
 					continue
 				}
 				fmt.Print(event.Delta)
 				wroteOutput = true
 
-			case aimchat.ChatResponseCompletedEvent:
+			case tauchat.ChatResponseCompletedEvent:
 				if event.State.SessionID != sessionID || event.RequestID != requestID {
 					continue
 				}
@@ -231,7 +228,7 @@ func consumeOneShot(ctx context.Context, events <-chan aimchat.ChatEvent, sessio
 				}
 				return nil
 
-			case aimchat.ChatResponseCancelledEvent:
+			case tauchat.ChatResponseCancelledEvent:
 				if event.State.SessionID != sessionID || event.RequestID != requestID {
 					continue
 				}
@@ -240,7 +237,7 @@ func consumeOneShot(ctx context.Context, events <-chan aimchat.ChatEvent, sessio
 				}
 				return errors.New("chat request cancelled")
 
-			case aimchat.ChatRuntimeErrorEvent:
+			case tauchat.ChatRuntimeErrorEvent:
 				if event.SessionID != sessionID {
 					continue
 				}
@@ -253,48 +250,38 @@ func consumeOneShot(ctx context.Context, events <-chan aimchat.ChatEvent, sessio
 	}
 }
 
-func pickModel(models []maas.Model, requestedModel string) (aimchat.ChatModelRef, error) {
+func pickModel(models []provider.Model, requestedModel, defaultModel, baseURL string) (tauchat.ChatModelRef, error) {
 	selectedModel := strings.TrimSpace(requestedModel)
 	if selectedModel == "" {
-		selectedModel = strings.TrimSpace(aimconfig.LoadConfig().DefaultModel)
+		selectedModel = strings.TrimSpace(defaultModel)
 	}
 	if selectedModel == "" {
-		return aimchat.ChatModelRef{}, errors.New("chat model is required")
+		return tauchat.ChatModelRef{}, errors.New("chat model is required; pass --model or set default_model")
 	}
 
-	available := make([]string, 0, len(models))
 	for _, model := range models {
-		available = append(available, model.ID)
 		if model.ID != selectedModel {
 			continue
 		}
 		if !model.Ready {
-			return aimchat.ChatModelRef{}, fmt.Errorf("model %q is not ready", selectedModel)
+			return tauchat.ChatModelRef{}, fmt.Errorf("model %q is not ready", selectedModel)
 		}
-		return aimchat.ChatModelRef{ID: model.ID, URL: model.URL}, nil
+		return tauchat.ChatModelRef{ID: model.ID, URL: model.URL, Ready: model.Ready}, nil
 	}
 
-	return aimchat.ChatModelRef{}, fmt.Errorf("model %q not found (available: %s)", selectedModel, strings.Join(available, ", "))
+	return tauchat.ChatModelRef{ID: selectedModel, URL: strings.TrimRight(baseURL, "/"), Ready: true}, nil
 }
 
-func buildModelRefs(models []maas.Model) []tui.ModelInfo {
-	refs := make([]tui.ModelInfo, 0, len(models))
+func buildModelRefs(models []provider.Model) []tauchat.ChatModelRef {
+	refs := make([]tauchat.ChatModelRef, 0, len(models))
 	for _, m := range models {
-		refs = append(refs, tui.ModelInfo{
+		refs = append(refs, tauchat.ChatModelRef{
 			ID:    m.ID,
 			URL:   m.URL,
 			Ready: m.Ready,
 		})
 	}
 	return refs
-}
-
-func endpointKeys() []string {
-	keys := make([]string, len(platform.Endpoints))
-	for i, ep := range platform.Endpoints {
-		keys[i] = ep.Key()
-	}
-	return keys
 }
 
 func resolvePrompt(flagValue string) (string, error) {
@@ -330,16 +317,54 @@ func isInteractive(promptFlag string) bool {
 	return info.Mode()&os.ModeCharDevice != 0
 }
 
-func staticTokenSource(token string) aimchat.TokenSource {
+// newCoordinator creates and returns an agent coordinator with the standard
+// tool registry and config. Both interactive and one-shot paths use this.
+func newCoordinator(ctx context.Context, opts ChatOptions, bearerToken string) (*agent.Coordinator, error) {
+	cwd, _ := os.Getwd()
+	registry := tools.NewRegistry()
+	if err := tools.RegisterBuiltins(registry, cwd); err != nil {
+		return nil, fmt.Errorf("registering built-in tools: %w", err)
+	}
+	extensionManager, err := extensions.NewManager(extensions.Config{
+		WorkingDir: cwd,
+		Registry:   registry,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("creating extension manager: %w", err)
+	}
+	if err := extensionManager.Load(ctx); err != nil {
+		return nil, fmt.Errorf("loading extensions: %w", err)
+	}
+
+	coordinator, err := agent.NewCoordinator(ctx, agent.CoordinatorConfig{
+		TokenSource: staticTokenSource(bearerToken),
+		Streamer:    streaming.OpenAIStreamer{Insecure: opts.Insecure},
+		Registry:    registry,
+		OnSessionStart: func(eventContext map[string]any) {
+			extensionManager.Dispatch(extensions.EventSessionStart, eventContext)
+		},
+		OnSessionShutdown: func(eventContext map[string]any) {
+			extensionManager.Dispatch(extensions.EventSessionShutdown, eventContext)
+		},
+		OnClose: extensionManager.Unload,
+	})
+	if err != nil {
+		extensionManager.Unload()
+		return nil, err
+	}
+	return coordinator, nil
+}
+
+func staticTokenSource(token string) platform.TokenSource {
 	trimmed := strings.TrimSpace(token)
-	return func(ctx context.Context, endpoint platform.Endpoint) (string, error) {
+	return func(ctx context.Context, _ tauconfig.ProviderConfig) (string, error) {
 		select {
 		case <-ctx.Done():
 			return "", ctx.Err()
 		default:
 		}
 		if trimmed == "" {
-			return "", errors.New("MaaS token is required")
+			return "", nil
 		}
 		return trimmed, nil
 	}
