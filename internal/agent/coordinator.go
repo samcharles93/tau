@@ -53,6 +53,9 @@ type Coordinator struct {
 	maxToolIterations int
 	parallelToolCalls bool
 	showReasoning     bool
+	interactiveUI     bool
+	uiBridge          tools.UIBridge
+	extensionReloader chat.ExtensionReloader
 	onSessionStart    func(map[string]any)
 	onSessionShutdown func(map[string]any)
 	onToolStarted     func(map[string]any)
@@ -72,6 +75,9 @@ type Coordinator struct {
 	done      chan struct{}
 	loopDone  chan struct{}
 	turnWG    sync.WaitGroup
+	promptMu  sync.Mutex
+	prompts   map[string]chan interactivePromptResponse
+	promptSeq uint64
 }
 
 type coordinatorSession struct {
@@ -87,6 +93,8 @@ type CoordinatorConfig struct {
 	MaxToolIterations int   // 0 → default (50)
 	ParallelToolCalls *bool // nil → default (true)
 	ShowReasoning     bool
+	InteractiveUI     bool
+	ExtensionReloader chat.ExtensionReloader
 	OnSessionStart    func(map[string]any)
 	OnSessionShutdown func(map[string]any)
 	OnToolStarted     func(map[string]any)
@@ -127,6 +135,8 @@ func NewCoordinator(ctx context.Context, cfg CoordinatorConfig) (*Coordinator, e
 		maxToolIterations: maxIter,
 		parallelToolCalls: parallel,
 		showReasoning:     cfg.ShowReasoning,
+		interactiveUI:     cfg.InteractiveUI,
+		extensionReloader: cfg.ExtensionReloader,
 		onSessionStart:    cfg.OnSessionStart,
 		onSessionShutdown: cfg.OnSessionShutdown,
 		onToolStarted:     cfg.OnToolStarted,
@@ -138,8 +148,14 @@ func NewCoordinator(ctx context.Context, cfg CoordinatorConfig) (*Coordinator, e
 		eventBus:          pubsub.New[chat.ChatEvent](),
 		sessions:          make(map[string]*coordinatorSession),
 		shutdown:          make(map[string]struct{}),
+		prompts:           make(map[string]chan interactivePromptResponse),
 		done:              make(chan struct{}),
 		loopDone:          make(chan struct{}),
+	}
+	if cfg.InteractiveUI {
+		c.uiBridge = &coordinatorUIBridge{coordinator: c}
+	} else {
+		c.uiBridge = tools.NonInteractiveBridge{}
 	}
 
 	go func() {
@@ -219,6 +235,10 @@ func (c *Coordinator) handleCommand(cmd chat.ChatCommand) {
 		c.handleReset(command)
 	case chat.CloseChatSessionCommand:
 		c.handleClose(command)
+	case chat.ReloadExtensionsCommand:
+		c.handleReloadExtensions(command)
+	case chat.RespondInteractivePromptCommand:
+		c.handleInteractivePromptResponse(command)
 	default:
 		c.emit(chat.ChatRuntimeErrorEvent{
 			Message:    fmt.Sprintf("unsupported command %T", cmd),
@@ -450,6 +470,91 @@ func (c *Coordinator) handleClose(cmd chat.CloseChatSessionCommand) {
 	c.emit(chat.ChatSessionSnapshotEvent{State: snapshot})
 }
 
+func (c *Coordinator) handleReloadExtensions(cmd chat.ReloadExtensionsCommand) {
+	now := normalizedTime(cmd.RequestedAt)
+	if c.extensionReloader == nil {
+		c.emit(chat.ChatNotificationEvent{
+			Message:    "Extension reload is not available",
+			Level:      chat.ChatNotificationWarn,
+			OccurredAt: now,
+		})
+		return
+	}
+
+	idle := c.isIdle()
+	if !idle {
+		c.emit(chat.ChatNotificationEvent{
+			Message:    "Extension reload is only available while idle",
+			Level:      chat.ChatNotificationWarn,
+			OccurredAt: now,
+		})
+		return
+	}
+
+	result, err := c.extensionReloader.ReloadExtensions(c.ctx, true)
+	if err != nil {
+		c.emit(chat.ChatNotificationEvent{
+			Message:    "Extension reload failed: " + err.Error(),
+			Level:      chat.ChatNotificationError,
+			OccurredAt: now,
+		})
+		c.emit(chat.ChatRuntimeErrorEvent{
+			Message:    "Extension reload failed: " + err.Error(),
+			Fatal:      false,
+			OccurredAt: now,
+		})
+		return
+	}
+
+	c.emit(chat.ExtensionsReloadedEvent{Result: result, OccurredAt: now})
+	c.emit(chat.ChatNotificationEvent{
+		Message:    extensionReloadMessage(result),
+		Level:      chat.ChatNotificationInfo,
+		OccurredAt: now,
+	})
+	for _, diagnostic := range result.Diagnostics {
+		if diagnostic.Message == "" {
+			continue
+		}
+		level := chat.ChatNotificationWarn
+		if diagnostic.Severity == "error" {
+			level = chat.ChatNotificationError
+		}
+		c.emit(chat.ChatNotificationEvent{
+			Message:    extensionDiagnosticMessage(diagnostic),
+			Level:      level,
+			OccurredAt: now,
+		})
+	}
+}
+
+func (c *Coordinator) handleInteractivePromptResponse(cmd chat.RespondInteractivePromptCommand) {
+	c.promptMu.Lock()
+	ch := c.prompts[cmd.RequestID]
+	if ch != nil {
+		delete(c.prompts, cmd.RequestID)
+	}
+	c.promptMu.Unlock()
+	if ch == nil {
+		return
+	}
+	ch <- interactivePromptResponse{confirmed: cmd.Confirmed, canceled: cmd.Canceled}
+}
+
+func (c *Coordinator) isIdle() bool {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	for _, session := range c.sessions {
+		if session.state.Status == chat.ChatSessionStreaming || session.state.Status == chat.ChatSessionCancelling {
+			return false
+		}
+		if session.state.HasActiveRequest() {
+			return false
+		}
+	}
+	return true
+}
+
 // runTurn is the agentic turn loop. It streams a completion, and if the
 // model returns tool_calls, executes them in parallel, appends results
 // to the conversation, and loops. Stops when the model produces a final
@@ -581,7 +686,7 @@ func (c *Coordinator) executeToolsParallel(ctx context.Context, sessionID, reque
 			return
 		}
 
-		result, err := tool.Execute(ctx, json.RawMessage(tc.Function.Arguments), nil)
+		result, err := tool.Execute(ctx, json.RawMessage(tc.Function.Arguments), c.uiBridge)
 		if err != nil {
 			result = tools.Result{
 				Content: fmt.Sprintf("tool execution error: %v", err),
