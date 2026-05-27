@@ -1,6 +1,7 @@
 package chat
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -270,9 +271,9 @@ type ReloadExtensionsCommand struct {
 func (ReloadExtensionsCommand) IsChatCommand() {}
 
 type RespondInteractivePromptCommand struct {
-	RequestID string    `json:"request_id"`
-	Confirmed bool      `json:"confirmed"`
-	Canceled  bool      `json:"canceled"`
+	RequestID   string    `json:"request_id"`
+	Confirmed   bool      `json:"confirmed"`
+	Canceled    bool      `json:"canceled"`
 	RespondedAt time.Time `json:"responded_at"`
 }
 
@@ -405,6 +406,45 @@ type ChatRuntimeErrorEvent struct {
 }
 
 func (ChatRuntimeErrorEvent) IsChatEvent() {}
+
+type ChatNotificationLevel string
+
+const (
+	ChatNotificationInfo  ChatNotificationLevel = "info"
+	ChatNotificationWarn  ChatNotificationLevel = "warn"
+	ChatNotificationError ChatNotificationLevel = "error"
+)
+
+type ChatNotificationEvent struct {
+	Message    string                `json:"message"`
+	Level      ChatNotificationLevel `json:"level"`
+	OccurredAt time.Time             `json:"occurred_at"`
+}
+
+func (ChatNotificationEvent) IsChatEvent() {}
+
+type ExtensionsReloadedEvent struct {
+	Result     ExtensionReloadResult `json:"result"`
+	OccurredAt time.Time             `json:"occurred_at"`
+}
+
+func (ExtensionsReloadedEvent) IsChatEvent() {}
+
+type InteractivePromptKind string
+
+const (
+	InteractivePromptConfirm InteractivePromptKind = "confirm"
+)
+
+type InteractivePromptRequestedEvent struct {
+	RequestID   string                `json:"request_id"`
+	Kind        InteractivePromptKind `json:"kind"`
+	Title       string                `json:"title"`
+	Message     string                `json:"message"`
+	RequestedAt time.Time           `json:"requested_at"`
+}
+
+func (InteractivePromptRequestedEvent) IsChatEvent() {}
 
 // ChatCompletionRequest is the wire format sent to the OpenAI-compatible endpoint.
 type ChatCompletionRequest struct {
