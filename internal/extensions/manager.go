@@ -12,10 +12,11 @@ import (
 )
 
 type Config struct {
-	WorkingDir string
-	Sources    []Source
-	Disabled   []string
-	Registry   *tools.Registry
+	WorkingDir     string
+	Sources        []Source
+	DefaultSources bool
+	Disabled       []string
+	Registry       *tools.Registry
 }
 
 type Snapshot struct {
@@ -40,7 +41,7 @@ func NewManager(cfg Config) (*Manager, error) {
 		return nil, errors.New("tool registry is required")
 	}
 	sources := cfg.Sources
-	if len(sources) == 0 {
+	if len(sources) == 0 && cfg.DefaultSources {
 		sources = DefaultSources(cfg.WorkingDir)
 	}
 	manager := &Manager{

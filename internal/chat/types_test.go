@@ -101,6 +101,80 @@ func TestChatSessionTurnLifecycle(t *testing.T) {
 	}
 }
 
+func TestAppendAssistantToolCallMessageWithReasoningStoresReasoningContent(t *testing.T) {
+	now := time.Date(2026, 5, 21, 10, 0, 0, 0, time.UTC)
+	session, err := NewChatSessionState("s1", ChatSessionConfig{
+		Provider: testProvider(),
+		Model: ChatModelRef{
+			ID:  "test-model",
+			URL: "https://model.example/v1",
+		},
+	}, now)
+	if err != nil {
+		t.Fatalf("NewChatSessionState() error = %v", err)
+	}
+	if err := session.BeginTurn("r1", "Hello", now.Add(time.Second)); err != nil {
+		t.Fatalf("BeginTurn() error = %v", err)
+	}
+
+	calls := []ChatToolCall{{
+		ID:   "call_1",
+		Type: "function",
+		Function: ChatFunctionCall{
+			Name:      "lookup",
+			Arguments: "{}",
+		},
+	}}
+	if err := session.AppendAssistantToolCallMessageWithReasoning("", "authentic reasoning", calls, now.Add(2*time.Second)); err != nil {
+		t.Fatalf("AppendAssistantToolCallMessageWithReasoning() error = %v", err)
+	}
+
+	if len(session.Messages) != 2 {
+		t.Fatalf("message count = %d, want 2", len(session.Messages))
+	}
+	got := session.Messages[1]
+	if got.Role != ChatRoleAssistant {
+		t.Fatalf("assistant role = %q, want %q", got.Role, ChatRoleAssistant)
+	}
+	if got.ReasoningContent != "authentic reasoning" {
+		t.Fatalf("reasoning_content = %q, want authentic reasoning", got.ReasoningContent)
+	}
+	if len(got.ToolCalls) != 1 || got.ToolCalls[0].ID != "call_1" {
+		t.Fatalf("tool calls = %#v, want call_1", got.ToolCalls)
+	}
+}
+
+func TestCompleteTurnWithReasoningStoresFinalAssistantReasoningContent(t *testing.T) {
+	now := time.Date(2026, 5, 21, 10, 0, 0, 0, time.UTC)
+	session, err := NewChatSessionState("s1", ChatSessionConfig{
+		Provider: testProvider(),
+		Model: ChatModelRef{
+			ID:  "test-model",
+			URL: "https://model.example/v1",
+		},
+	}, now)
+	if err != nil {
+		t.Fatalf("NewChatSessionState() error = %v", err)
+	}
+	if err := session.BeginTurn("r1", "Hello", now.Add(time.Second)); err != nil {
+		t.Fatalf("BeginTurn() error = %v", err)
+	}
+	if err := session.AppendAssistantDelta("Hi", now.Add(2*time.Second)); err != nil {
+		t.Fatalf("AppendAssistantDelta() error = %v", err)
+	}
+	if err := session.CompleteTurnWithReasoning("stop", ChatUsage{CompletionTokens: 1}, "authentic final reasoning", now.Add(3*time.Second)); err != nil {
+		t.Fatalf("CompleteTurnWithReasoning() error = %v", err)
+	}
+
+	got := session.Messages[len(session.Messages)-1]
+	if got.Content != "Hi" {
+		t.Fatalf("content = %q, want Hi", got.Content)
+	}
+	if got.ReasoningContent != "authentic final reasoning" {
+		t.Fatalf("reasoning_content = %q, want authentic final reasoning", got.ReasoningContent)
+	}
+}
+
 func TestChatSessionPatchCancelAndFailure(t *testing.T) {
 	now := time.Date(2026, 5, 21, 10, 0, 0, 0, time.UTC)
 	session, err := NewChatSessionState("s1", ChatSessionConfig{

@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/samcharles93/tau/internal/chat"
+	"github.com/samcharles93/tau/internal/config"
 	"github.com/samcharles93/tau/internal/platform"
 )
 
@@ -35,7 +36,7 @@ func (s OpenAIStreamer) StreamChatCompletionFull(
 	bearerToken string,
 	cb chat.StreamCallbacks,
 ) (chat.CompletionResult, error) {
-	requestBody, err := json.Marshal(session.CompletionRequest())
+	requestBody, err := buildOpenAIRequestBody(session)
 	if err != nil {
 		return chat.CompletionResult{}, fmt.Errorf("encoding chat request: %w", err)
 	}
@@ -62,6 +63,82 @@ func (s OpenAIStreamer) StreamChatCompletionFull(
 	}
 
 	return s.readStream(ctx, resp.Body, cb)
+}
+
+func buildOpenAIRequestBody(session chat.ChatSessionState) ([]byte, error) {
+	request := session.CompletionRequest()
+	compat := session.Model.Config.Compat
+	if !hasRequestCompat(compat) && !messagesHaveReasoningContent(request.Messages) {
+		return json.Marshal(request)
+	}
+
+	body := map[string]any{
+		"model":       request.Model,
+		"messages":    encodeMessages(request.Messages, compat),
+		"max_tokens":  request.MaxTokens,
+		"temperature": request.Temperature,
+		"stream":      request.Stream,
+	}
+	if len(request.Tools) > 0 {
+		body["tools"] = request.Tools
+	}
+	for key, value := range compat.ExtraBody {
+		body[key] = value
+	}
+	if field := strings.TrimSpace(compat.MaxTokensField); field != "" && field != "max_tokens" {
+		body[field] = body["max_tokens"]
+		delete(body, "max_tokens")
+	}
+	return json.Marshal(body)
+}
+
+func hasRequestCompat(compat config.CompatConfig) bool {
+	return len(compat.ExtraBody) > 0 ||
+		strings.TrimSpace(compat.MaxTokensField) != "" ||
+		compat.RequiresAssistantContentForToolCalls ||
+		compat.RequiresReasoningContentForToolCalls ||
+		compat.RequiresReasoningContentOnAssistantMessages
+}
+
+func messagesHaveReasoningContent(messages []chat.ChatMessage) bool {
+	for _, message := range messages {
+		if message.ReasoningContent != "" {
+			return true
+		}
+	}
+	return false
+}
+
+func encodeMessages(messages []chat.ChatMessage, compat config.CompatConfig) []map[string]any {
+	encoded := make([]map[string]any, 0, len(messages))
+	for _, message := range messages {
+		item := map[string]any{"role": message.Role}
+		if message.Content != "" ||
+			(compat.RequiresAssistantContentForToolCalls &&
+				message.Role == chat.ChatRoleAssistant &&
+				len(message.ToolCalls) > 0) {
+			item["content"] = message.Content
+		}
+		if len(message.ToolCalls) > 0 {
+			item["tool_calls"] = message.ToolCalls
+		}
+		if shouldReplayReasoningContent(message, compat) {
+			item["reasoning_content"] = message.ReasoningContent
+		}
+		if message.ToolCallID != "" {
+			item["tool_call_id"] = message.ToolCallID
+		}
+		encoded = append(encoded, item)
+	}
+	return encoded
+}
+
+func shouldReplayReasoningContent(message chat.ChatMessage, compat config.CompatConfig) bool {
+	if message.Role != chat.ChatRoleAssistant || message.ReasoningContent == "" {
+		return false
+	}
+	return compat.RequiresReasoningContentOnAssistantMessages ||
+		(compat.RequiresReasoningContentForToolCalls && len(message.ToolCalls) > 0)
 }
 
 func (s OpenAIStreamer) timeout() time.Duration {
@@ -118,6 +195,14 @@ func (s OpenAIStreamer) readStream(
 			if choice.Delta.Content != "" && cb.OnDelta != nil {
 				if err := cb.OnDelta(choice.Delta.Content); err != nil {
 					return result, err
+				}
+			}
+			if choice.Delta.ReasoningContent != "" {
+				result.ReasoningContent += choice.Delta.ReasoningContent
+				if cb.OnReasoningDelta != nil {
+					if err := cb.OnReasoningDelta(choice.Delta.ReasoningContent); err != nil {
+						return result, err
+					}
 				}
 			}
 

@@ -55,7 +55,7 @@ func RunChat(ctx context.Context, opts ChatOptions) error {
 	}
 
 	if !isInteractive(opts.Prompt) {
-		model, err := pickModel(nil, opts.Model, opts.Config.DefaultModel, opts.Provider.BaseURL)
+		model, err := pickModel(provider.ConfiguredModels(opts.Provider), opts.Model, opts.Config.DefaultModel, opts.Provider.BaseURL)
 		if err != nil {
 			return err
 		}
@@ -102,6 +102,7 @@ func RunChat(ctx context.Context, opts ChatOptions) error {
 		AvailableProviders: tauconfig.ProviderNames(opts.Config),
 		NotifyBus:          notifyBus,
 		RefreshModels:      refresher,
+		ShowReasoning:      opts.Config.UI.ShowReasoning,
 	}
 
 	// If model discovery failed at startup, notify the user in the TUI
@@ -137,7 +138,7 @@ func runOneShotWithModel(ctx context.Context, opts ChatOptions, bearerToken stri
 		return err
 	}
 
-	return runOneShotChat(ctx, coordinator, sessionID, opts.Prompt)
+	return runOneShotChat(ctx, coordinator, sessionID, opts.Prompt, opts.Config.UI.ShowReasoning)
 }
 
 // buildModelRefresher returns a ModelRefresher closure that re-discovers
@@ -165,7 +166,7 @@ func buildSessionConfig(opts ChatOptions, model tauchat.ChatModelRef) tauchat.Ch
 	}
 }
 
-func runOneShotChat(ctx context.Context, runtime tauchat.ChatRuntime, sessionID, promptFlag string) error {
+func runOneShotChat(ctx context.Context, runtime tauchat.ChatRuntime, sessionID, promptFlag string, showReasoning bool) error {
 	prompt, err := resolvePrompt(promptFlag)
 	if err != nil {
 		return err
@@ -191,10 +192,10 @@ func runOneShotChat(ctx context.Context, runtime tauchat.ChatRuntime, sessionID,
 		return err
 	}
 
-	return consumeOneShot(ctx, sub.Channel(), sessionID, requestID)
+	return consumeOneShot(ctx, sub.Channel(), sessionID, requestID, showReasoning)
 }
 
-func consumeOneShot(ctx context.Context, events <-chan tauchat.ChatEvent, sessionID, requestID string) error {
+func consumeOneShot(ctx context.Context, events <-chan tauchat.ChatEvent, sessionID, requestID string, showReasoning bool) error {
 	wroteOutput := false
 
 	for {
@@ -215,6 +216,24 @@ func consumeOneShot(ctx context.Context, events <-chan tauchat.ChatEvent, sessio
 				}
 				fmt.Print(event.Delta)
 				wroteOutput = true
+
+			case tauchat.ChatReasoningDeltaEvent:
+				if !showReasoning || event.SessionID != sessionID || event.RequestID != requestID {
+					continue
+				}
+				fmt.Fprint(os.Stderr, event.Delta)
+
+			case tauchat.ChatToolExecutionStartedEvent:
+				if event.SessionID != sessionID || event.RequestID != requestID {
+					continue
+				}
+				fmt.Fprintf(os.Stderr, "\ntool started: %s %s\n", event.ToolName, event.ArgumentsSummary)
+
+			case tauchat.ChatToolExecutionCompletedEvent:
+				if event.SessionID != sessionID || event.RequestID != requestID {
+					continue
+				}
+				fmt.Fprintf(os.Stderr, "tool completed: %s %s (%s)\n", event.ToolName, event.Status, event.Duration)
 
 			case tauchat.ChatResponseCompletedEvent:
 				if event.State.SessionID != sessionID || event.RequestID != requestID {
@@ -266,7 +285,12 @@ func pickModel(models []provider.Model, requestedModel, defaultModel, baseURL st
 		if !model.Ready {
 			return tauchat.ChatModelRef{}, fmt.Errorf("model %q is not ready", selectedModel)
 		}
-		return tauchat.ChatModelRef{ID: model.ID, URL: model.URL, Ready: model.Ready}, nil
+		return tauchat.ChatModelRef{
+			ID:     model.ID,
+			URL:    model.URL,
+			Ready:  model.Ready,
+			Config: model.Config,
+		}, nil
 	}
 
 	return tauchat.ChatModelRef{ID: selectedModel, URL: strings.TrimRight(baseURL, "/"), Ready: true}, nil
@@ -276,9 +300,10 @@ func buildModelRefs(models []provider.Model) []tauchat.ChatModelRef {
 	refs := make([]tauchat.ChatModelRef, 0, len(models))
 	for _, m := range models {
 		refs = append(refs, tauchat.ChatModelRef{
-			ID:    m.ID,
-			URL:   m.URL,
-			Ready: m.Ready,
+			ID:     m.ID,
+			URL:    m.URL,
+			Ready:  m.Ready,
+			Config: m.Config,
 		})
 	}
 	return refs
@@ -339,14 +364,24 @@ func newCoordinator(ctx context.Context, opts ChatOptions, bearerToken string) (
 	}
 
 	coordinator, err := agent.NewCoordinator(ctx, agent.CoordinatorConfig{
-		TokenSource: staticTokenSource(bearerToken),
-		Streamer:    streaming.OpenAIStreamer{Insecure: opts.Insecure},
-		Registry:    registry,
+		TokenSource:   staticTokenSource(bearerToken),
+		Streamer:      streaming.OpenAIStreamer{Insecure: opts.Insecure},
+		Registry:      registry,
+		ShowReasoning: opts.Config.UI.ShowReasoning,
 		OnSessionStart: func(eventContext map[string]any) {
 			extensionManager.Dispatch(extensions.EventSessionStart, eventContext)
 		},
 		OnSessionShutdown: func(eventContext map[string]any) {
 			extensionManager.Dispatch(extensions.EventSessionShutdown, eventContext)
+		},
+		OnToolStarted: func(eventContext map[string]any) {
+			extensionManager.Dispatch(extensions.EventToolCallStarted, eventContext)
+		},
+		OnToolCompleted: func(eventContext map[string]any) {
+			extensionManager.Dispatch(extensions.EventToolCallCompleted, eventContext)
+		},
+		OnReasoningDelta: func(eventContext map[string]any) {
+			extensionManager.Dispatch(extensions.EventReasoningDelta, eventContext)
 		},
 		OnClose:       extensionManager.Unload,
 		StartupEvents: extensionStartupEvents(extensionManager.Snapshot().Diagnostics),

@@ -52,10 +52,11 @@ const (
 
 // ChatMessage is the canonical conversation item used for request history.
 type ChatMessage struct {
-	Role       ChatRole       `json:"role"`
-	Content    string         `json:"content,omitempty"`
-	ToolCalls  []ChatToolCall `json:"tool_calls,omitempty"`
-	ToolCallID string         `json:"tool_call_id,omitempty"`
+	Role             ChatRole       `json:"role"`
+	Content          string         `json:"content,omitempty"`
+	ReasoningContent string         `json:"reasoning_content,omitempty"`
+	ToolCalls        []ChatToolCall `json:"tool_calls,omitempty"`
+	ToolCallID       string         `json:"tool_call_id,omitempty"`
 }
 
 func (m ChatMessage) Validate() error {
@@ -107,9 +108,10 @@ type ChatToolDefFunction struct {
 
 // ChatModelRef identifies the selected model route for a session.
 type ChatModelRef struct {
-	ID    string `json:"id"`
-	URL   string `json:"url"`
-	Ready bool   `json:"ready,omitempty"`
+	ID     string             `json:"id"`
+	URL    string             `json:"url"`
+	Ready  bool               `json:"ready,omitempty"`
+	Config config.ModelConfig `json:"-"`
 }
 
 func (m ChatModelRef) Validate() error {
@@ -261,6 +263,21 @@ type CloseChatSessionCommand struct {
 
 func (CloseChatSessionCommand) IsChatCommand() {}
 
+type ReloadExtensionsCommand struct {
+	RequestedAt time.Time `json:"requested_at"`
+}
+
+func (ReloadExtensionsCommand) IsChatCommand() {}
+
+type RespondInteractivePromptCommand struct {
+	RequestID string    `json:"request_id"`
+	Confirmed bool      `json:"confirmed"`
+	Canceled  bool      `json:"canceled"`
+	RespondedAt time.Time `json:"responded_at"`
+}
+
+func (RespondInteractivePromptCommand) IsChatCommand() {}
+
 // ChatEvent is the output contract from the runtime back to the UI.
 type ChatEvent interface{ IsChatEvent() }
 
@@ -270,6 +287,22 @@ type ChatRuntime interface {
 	Send(cmd ChatCommand) error
 	SubscribeEvents(buffer int) (*pubsub.Subscription[ChatEvent], error)
 	Close()
+}
+
+type ExtensionDiagnostic struct {
+	Path          string `json:"path,omitempty"`
+	ExtensionName string `json:"extension_name,omitempty"`
+	Severity      string `json:"severity"`
+	Message       string `json:"message"`
+}
+
+type ExtensionReloadResult struct {
+	ExtensionCount int                   `json:"extension_count"`
+	Diagnostics    []ExtensionDiagnostic `json:"diagnostics,omitempty"`
+}
+
+type ExtensionReloader interface {
+	ReloadExtensions(ctx context.Context, idle bool) (ExtensionReloadResult, error)
 }
 
 type ChatSessionSnapshotEvent struct {
@@ -295,6 +328,55 @@ type ChatResponseDeltaEvent struct {
 }
 
 func (ChatResponseDeltaEvent) IsChatEvent() {}
+
+type ChatReasoningDeltaEvent struct {
+	SessionID  string    `json:"session_id"`
+	RequestID  string    `json:"request_id"`
+	Delta      string    `json:"delta"`
+	Snapshot   string    `json:"snapshot"`
+	ReceivedAt time.Time `json:"received_at"`
+}
+
+func (ChatReasoningDeltaEvent) IsChatEvent() {}
+
+type ChatToolCallDeltaEvent struct {
+	SessionID        string    `json:"session_id"`
+	RequestID        string    `json:"request_id"`
+	CallID           string    `json:"call_id"`
+	Index            int       `json:"index"`
+	ToolName         string    `json:"tool_name"`
+	ArgumentsSummary string    `json:"arguments_summary"`
+	Truncated        bool      `json:"truncated"`
+	ReceivedAt       time.Time `json:"received_at"`
+}
+
+func (ChatToolCallDeltaEvent) IsChatEvent() {}
+
+type ChatToolExecutionStartedEvent struct {
+	SessionID        string    `json:"session_id"`
+	RequestID        string    `json:"request_id"`
+	CallID           string    `json:"call_id"`
+	ToolName         string    `json:"tool_name"`
+	ArgumentsSummary string    `json:"arguments_summary"`
+	StartedAt        time.Time `json:"started_at"`
+}
+
+func (ChatToolExecutionStartedEvent) IsChatEvent() {}
+
+type ChatToolExecutionCompletedEvent struct {
+	SessionID     string        `json:"session_id"`
+	RequestID     string        `json:"request_id"`
+	CallID        string        `json:"call_id"`
+	ToolName      string        `json:"tool_name"`
+	Status        string        `json:"status"`
+	Duration      time.Duration `json:"duration"`
+	ResultSummary string        `json:"result_summary"`
+	IsError       bool          `json:"is_error"`
+	Truncated     bool          `json:"truncated"`
+	CompletedAt   time.Time     `json:"completed_at"`
+}
+
+func (ChatToolExecutionCompletedEvent) IsChatEvent() {}
 
 type ChatResponseCompletedEvent struct {
 	State        ChatSessionState `json:"state"`
@@ -357,8 +439,9 @@ type ChatCompletionChunkChoice struct {
 }
 
 type ChatCompletionDelta struct {
-	Content   string              `json:"content,omitempty"`
-	ToolCalls []ChatToolCallDelta `json:"tool_calls,omitempty"`
+	Content          string              `json:"content,omitempty"`
+	ReasoningContent string              `json:"reasoning_content,omitempty"`
+	ToolCalls        []ChatToolCallDelta `json:"tool_calls,omitempty"`
 }
 
 // ChatToolCallDelta is an incremental tool call chunk from the streaming endpoint.
@@ -492,13 +575,20 @@ func (s *ChatSessionState) AppendAssistantDelta(delta string, at time.Time) erro
 // AppendAssistantToolCallMessage commits the current assistant turn with tool calls.
 // This is called when the LLM produces a response containing tool_calls.
 func (s *ChatSessionState) AppendAssistantToolCallMessage(content string, calls []ChatToolCall, at time.Time) error {
+	return s.AppendAssistantToolCallMessageWithReasoning(content, "", calls, at)
+}
+
+// AppendAssistantToolCallMessageWithReasoning commits the current assistant turn
+// with tool calls and provider-supplied hidden reasoning content.
+func (s *ChatSessionState) AppendAssistantToolCallMessageWithReasoning(content, reasoningContent string, calls []ChatToolCall, at time.Time) error {
 	if !s.HasActiveRequest() {
 		return errors.New("no active request")
 	}
 	s.Messages = append(s.Messages, ChatMessage{
-		Role:      ChatRoleAssistant,
-		Content:   content,
-		ToolCalls: calls,
+		Role:             ChatRoleAssistant,
+		Content:          content,
+		ReasoningContent: reasoningContent,
+		ToolCalls:        calls,
 	})
 	s.PendingAssistant = ""
 	s.UpdatedAt = normalizeChatTime(at)
@@ -541,14 +631,24 @@ func (s *ChatSessionState) MarkCancelling(at time.Time) error {
 }
 
 func (s *ChatSessionState) CompleteTurn(finishReason string, usage ChatUsage, at time.Time) error {
+	return s.CompleteTurnWithReasoning(finishReason, usage, "", at)
+}
+
+// CompleteTurnWithReasoning completes an assistant turn and persists
+// provider-supplied hidden reasoning content with the final assistant message.
+func (s *ChatSessionState) CompleteTurnWithReasoning(finishReason string, usage ChatUsage, reasoningContent string, at time.Time) error {
 	if !s.HasActiveRequest() {
 		return errors.New("no active request")
 	}
 	if s.Status != ChatSessionStreaming && s.Status != ChatSessionCancelling {
 		return fmt.Errorf("cannot complete turn while %s", s.Status)
 	}
-	if strings.TrimSpace(s.PendingAssistant) != "" {
-		s.Messages = append(s.Messages, ChatMessage{Role: ChatRoleAssistant, Content: s.PendingAssistant})
+	if strings.TrimSpace(s.PendingAssistant) != "" || reasoningContent != "" {
+		s.Messages = append(s.Messages, ChatMessage{
+			Role:             ChatRoleAssistant,
+			Content:          s.PendingAssistant,
+			ReasoningContent: reasoningContent,
+		})
 	}
 	s.Status = ChatSessionIdle
 	s.PendingAssistant = ""

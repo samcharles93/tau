@@ -4,15 +4,16 @@ import "charm.land/bubbles/v2/key"
 
 // keyMap defines keybindings for help display. Implements key.Map.
 type keyMap struct {
-	Submit  key.Binding
-	NewChat key.Binding
-	Model   key.Binding
-	System  key.Binding
-	Palette key.Binding
-	Picker  key.Binding
-	Escape  key.Binding
-	Quit    key.Binding
-	Help    key.Binding
+	Submit    key.Binding
+	NewChat   key.Binding
+	Model     key.Binding
+	System    key.Binding
+	Palette   key.Binding
+	Picker    key.Binding
+	Reasoning key.Binding
+	Escape    key.Binding
+	Quit      key.Binding
+	Help      key.Binding
 }
 
 // ShortHelp returns bindings shown in the compact status bar view.
@@ -24,7 +25,7 @@ func (k keyMap) ShortHelp() []key.Binding {
 func (k keyMap) FullHelp() [][]key.Binding {
 	return [][]key.Binding{
 		{k.Submit, k.NewChat, k.Model, k.System},
-		{k.Palette, k.Picker, k.Escape, k.Quit},
+		{k.Palette, k.Picker, k.Reasoning, k.Escape, k.Quit},
 	}
 }
 
@@ -53,6 +54,10 @@ func newKeyMap() keyMap {
 		Picker: key.NewBinding(
 			key.WithKeys("ctrl+k"),
 			key.WithHelp("ctrl+k", "models"),
+		),
+		Reasoning: key.NewBinding(
+			key.WithKeys("ctrl+r"),
+			key.WithHelp("ctrl+r", "reasoning"),
 		),
 		Escape: key.NewBinding(
 			key.WithKeys("esc"),

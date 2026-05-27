@@ -46,17 +46,23 @@ type Extension struct {
 type Event string
 
 const (
-	EventManagerLoad     Event = "manager_load"
-	EventManagerUnload   Event = "manager_unload"
-	EventSessionStart    Event = "session_start"
-	EventSessionShutdown Event = "session_shutdown"
+	EventManagerLoad       Event = "manager_load"
+	EventManagerUnload     Event = "manager_unload"
+	EventSessionStart      Event = "session_start"
+	EventSessionShutdown   Event = "session_shutdown"
+	EventToolCallStarted   Event = "tool_call_started"
+	EventToolCallCompleted Event = "tool_call_completed"
+	EventReasoningDelta    Event = "reasoning_delta"
 )
 
 var safeEvents = map[Event]struct{}{
-	EventManagerLoad:     {},
-	EventManagerUnload:   {},
-	EventSessionStart:    {},
-	EventSessionShutdown: {},
+	EventManagerLoad:       {},
+	EventManagerUnload:     {},
+	EventSessionStart:      {},
+	EventSessionShutdown:   {},
+	EventToolCallStarted:   {},
+	EventToolCallCompleted: {},
+	EventReasoningDelta:    {},
 }
 
 func normalizeName(name string) string {

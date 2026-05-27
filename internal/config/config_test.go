@@ -121,6 +121,198 @@ providers:
 	}
 }
 
+func TestLoadConfigUIShowReasoningDefaultAndLocalOverride(t *testing.T) {
+	configDir := t.TempDir()
+	projectDir := t.TempDir()
+	t.Setenv("TAU_CONFIG_DIR", configDir)
+
+	writeFile(t, filepath.Join(configDir, "config.yaml"), `default_provider: local
+ui:
+  show_reasoning: true
+providers:
+  - name: local
+    base_url: http://localhost:11434
+    auth:
+      type: none
+`)
+	cfg, err := LoadConfigFrom(projectDir)
+	if err != nil {
+		t.Fatalf("LoadConfigFrom() error = %v", err)
+	}
+	if !cfg.UI.ShowReasoning {
+		t.Fatal("UI.ShowReasoning = false, want global true")
+	}
+
+	writeFile(t, filepath.Join(projectDir, ".tau.yaml"), `ui:
+  show_reasoning: false
+`)
+	cfg, err = LoadConfigFrom(projectDir)
+	if err != nil {
+		t.Fatalf("LoadConfigFrom() with local override error = %v", err)
+	}
+	if cfg.UI.ShowReasoning {
+		t.Fatal("UI.ShowReasoning = true, want local override false")
+	}
+
+	writeFile(t, filepath.Join(configDir, "config.yaml"), `default_provider: local
+providers:
+  - name: local
+    base_url: http://localhost:11434
+    auth:
+      type: none
+`)
+	if err := os.Remove(filepath.Join(projectDir, ".tau.yaml")); err != nil {
+		t.Fatalf("remove local config: %v", err)
+	}
+	cfg, err = LoadConfigFrom(projectDir)
+	if err != nil {
+		t.Fatalf("LoadConfigFrom() default error = %v", err)
+	}
+	if cfg.UI.ShowReasoning {
+		t.Fatal("UI.ShowReasoning default = true, want false")
+	}
+}
+
+func TestLoadConfigAcceptsProviderMapAndAliases(t *testing.T) {
+	configDir := t.TempDir()
+	projectDir := t.TempDir()
+	t.Setenv("TAU_CONFIG_DIR", configDir)
+
+	writeFile(t, filepath.Join(configDir, "config.yaml"), `default_provider: deepseek
+default_model: deepseek-v4-pro
+providers:
+  deepseek:
+    baseUrl: https://api.deepseek.com
+    api: openai-completions
+    apiKey: $DEEPSEEK_API_KEY
+    models:
+      deepseek-v4-pro:
+        name: DeepSeek V4 Pro
+        contextWindow: 128000
+        defaultMaxTokens: 8192
+        maxTokens: 32768
+        input: [text]
+        canReason: true
+        thinking:
+          min_level: low
+          max_level: high
+          mode: effort
+        cost:
+          input: 0.1
+          output: 0.2
+          cache_read: 0.01
+          cache_write: 0.02
+        compat:
+          maxTokensField: max_tokens
+          supportsDeveloperRole: false
+          supportsReasoningEffort: true
+          supportsToolChoice: false
+          thinkingFormat: deepseek
+          reasoningEffortMap:
+            low: low
+            high: high
+            xhigh: max
+          extraBody:
+            thinking:
+              type: enabled
+          requiresAssistantContentForToolCalls: true
+          requiresReasoningContentForToolCalls: true
+          requiresReasoningContentOnAssistantMessages: true
+`)
+
+	cfg, err := LoadConfigFrom(projectDir)
+	if err != nil {
+		t.Fatalf("LoadConfigFrom() error = %v", err)
+	}
+	provider, err := ResolveProvider(cfg, "deepseek")
+	if err != nil {
+		t.Fatalf("ResolveProvider() error = %v", err)
+	}
+	if provider.Name != "deepseek" || provider.BaseURL != "https://api.deepseek.com" {
+		t.Fatalf("provider map did not normalize name/base URL: %#v", provider)
+	}
+	if provider.API != "openai-completions" || provider.Auth.Type != AuthTypeAPIKey || provider.Auth.APIKeyEnv != "DEEPSEEK_API_KEY" {
+		t.Fatalf("provider metadata/auth = %#v", provider)
+	}
+	if len(provider.Models) != 1 {
+		t.Fatalf("models = %d, want 1", len(provider.Models))
+	}
+	model := provider.Models[0]
+	if model.ID != "deepseek-v4-pro" || model.ContextWindow != 128000 || !model.Reasoning {
+		t.Fatalf("model metadata did not decode aliases: %#v", model)
+	}
+	if model.Thinking.Mode != "effort" {
+		t.Fatalf("thinking mode = %q, want effort", model.Thinking.Mode)
+	}
+	if model.Compat.MaxTokensField != "max_tokens" || model.Compat.SupportsToolChoice == nil || *model.Compat.SupportsToolChoice {
+		t.Fatalf("model compat did not decode aliases: %#v", model.Compat)
+	}
+	if model.Compat.SupportsDeveloperRole == nil || *model.Compat.SupportsDeveloperRole || !model.Compat.SupportsReasoningEffort {
+		t.Fatalf("developer/reasoning effort compat did not decode aliases: %#v", model.Compat)
+	}
+	if model.Compat.ReasoningEffortMap["xhigh"] != "max" {
+		t.Fatalf("reasoning effort map = %#v, want xhigh=max", model.Compat.ReasoningEffortMap)
+	}
+	if model.Compat.ExtraBody["thinking"] == nil ||
+		!model.Compat.RequiresAssistantContentForToolCalls ||
+		!model.Compat.RequiresReasoningContentForToolCalls ||
+		!model.Compat.RequiresReasoningContentOnAssistantMessages {
+		t.Fatalf("model compat extra body/requirements = %#v", model.Compat)
+	}
+}
+
+func TestLoadConfigRejectsTopLevelLiteralAPIKey(t *testing.T) {
+	configDir := t.TempDir()
+	projectDir := t.TempDir()
+	t.Setenv("TAU_CONFIG_DIR", configDir)
+
+	writeFile(t, filepath.Join(configDir, "config.yaml"), `default_provider: deepseek
+providers:
+  deepseek:
+    baseUrl: https://api.deepseek.com
+    apiKey: literal-secret
+`)
+
+	_, err := LoadConfigFrom(projectDir)
+	if err == nil {
+		t.Fatal("LoadConfigFrom() error = nil, want top-level apiKey rejection")
+	}
+	if !containsAll(err.Error(), "top-level api_key/apiKey", "$DEEPSEEK_API_KEY", "auth.api_key") {
+		t.Fatalf("error = %q, want clear top-level literal apiKey guidance", err)
+	}
+}
+
+func TestLoadConfigLocalMapOverridesGlobalListProviderByName(t *testing.T) {
+	configDir := t.TempDir()
+	projectDir := t.TempDir()
+	t.Setenv("TAU_CONFIG_DIR", configDir)
+
+	writeFile(t, filepath.Join(configDir, "config.yaml"), `default_provider: deepseek
+providers:
+  - name: deepseek
+    base_url: https://global.example
+    auth:
+      type: none
+`)
+	writeFile(t, filepath.Join(projectDir, ".tau.yaml"), `providers:
+  deepseek:
+    baseUrl: https://local.example
+    apiKey: $DEEPSEEK_API_KEY
+`)
+
+	cfg, err := LoadConfigFrom(projectDir)
+	if err != nil {
+		t.Fatalf("LoadConfigFrom() error = %v", err)
+	}
+	provider, err := ResolveProvider(cfg, "deepseek")
+	if err != nil {
+		t.Fatalf("ResolveProvider() error = %v", err)
+	}
+	if provider.BaseURL != "https://local.example" || provider.Auth.APIKeyEnv != "DEEPSEEK_API_KEY" {
+		t.Fatalf("local map provider did not override global list provider: %#v", provider)
+	}
+}
+
 func TestLoadConfigRequiresProviders(t *testing.T) {
 	configDir := t.TempDir()
 	projectDir := t.TempDir()

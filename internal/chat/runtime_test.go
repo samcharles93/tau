@@ -23,8 +23,9 @@ func TestRuntimeStreamsCompletion(t *testing.T) {
 		fakeStreamer{
 			deltas: []string{"Hello", " world"},
 			result: CompletionResult{
-				FinishReason: "stop",
-				Usage:        ChatUsage{CompletionTokens: 2, TotalTokens: 4},
+				FinishReason:     "stop",
+				Usage:            ChatUsage{CompletionTokens: 2, TotalTokens: 4},
+				ReasoningContent: "runtime reasoning",
 			},
 		},
 	)
@@ -85,8 +86,12 @@ func TestRuntimeStreamsCompletion(t *testing.T) {
 				if len(deltas) != 2 {
 					t.Fatalf("delta count = %d, want 2", len(deltas))
 				}
-				if got := event.State.Messages[len(event.State.Messages)-1].Content; got != "Hello world" {
+				message := event.State.Messages[len(event.State.Messages)-1]
+				if got := message.Content; got != "Hello world" {
 					t.Fatalf("assistant content = %q, want %q", got, "Hello world")
+				}
+				if got := message.ReasoningContent; got != "runtime reasoning" {
+					t.Fatalf("assistant reasoning_content = %q, want runtime reasoning", got)
 				}
 				return
 			}

@@ -13,9 +13,9 @@ import (
 )
 
 const (
-	ManifestFileName              = "tau.yaml"
-	DefaultLuaEntryFile           = "main.lua"
-	ExtensionPathsEnvVar          = "TAU_EXTENSION_PATHS"
+	ManifestFileName     = "tau.yaml"
+	DefaultLuaEntryFile  = "main.lua"
+	ExtensionPathsEnvVar = "TAU_EXTENSION_PATHS"
 )
 
 type manifest struct {

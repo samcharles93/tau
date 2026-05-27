@@ -23,6 +23,9 @@ end)
 tau.on("session_shutdown", function(ctx)
   if ctx.session_id ~= seen then error("wrong session") end
 end)
+tau.on("tool_call_completed", function(ctx)
+  if ctx.tool_name ~= "read" then error("wrong tool") end
+end)
 `)
 
 	registry := tools.NewRegistry()
@@ -31,11 +34,13 @@ end)
 
 	manager.Dispatch(EventSessionStart, map[string]any{"event": "session_start", "session_id": "s1"})
 	manager.Dispatch(EventSessionShutdown, map[string]any{"event": "session_shutdown", "session_id": "s1"})
+	manager.Dispatch(EventToolCallCompleted, map[string]any{"event": "tool_call_completed", "tool_name": "read"})
 
 	snapshot := manager.Snapshot()
 	require.Len(t, snapshot.Extensions, 1)
 	require.True(t, containsDiagnostic(snapshot.Diagnostics, "loading"))
 	require.False(t, containsDiagnostic(snapshot.Diagnostics, "wrong session"))
+	require.False(t, containsDiagnostic(snapshot.Diagnostics, "wrong tool"))
 }
 
 func TestManagerRuntimeErrorsBecomeDiagnostics(t *testing.T) {

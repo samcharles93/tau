@@ -10,8 +10,10 @@ import (
 
 // turnBlock represents one rendered conversation turn for the viewport.
 type turnBlock struct {
-	role    tauchat.ChatRole
-	content string
+	role      tauchat.ChatRole
+	content   string
+	tools     []toolActivity
+	reasoning string
 	// rendered caches the styled output for completed turns.
 	rendered string
 	// width tracks the render width so we can invalidate on resize.
@@ -20,13 +22,33 @@ type turnBlock struct {
 	finished bool
 }
 
+type toolActivity struct {
+	callID           string
+	toolName         string
+	argumentsSummary string
+	status           string
+	duration         string
+	resultSummary    string
+	isError          bool
+	truncated        bool
+}
+
 // renderConversation builds the full viewport content from structured turns.
-func renderConversation(turns []turnBlock, streamingContent string, streamMD *streamingMarkdown, width int, t tuiTheme) string {
+func renderConversation(
+	turns []turnBlock,
+	streamingContent string,
+	streamingTools []toolActivity,
+	streamingReasoning string,
+	showReasoning bool,
+	streamMD *streamingMarkdown,
+	width int,
+	t tuiTheme,
+) string {
 	var b strings.Builder
 
 	for i := range turns {
 		if turns[i].rendered == "" || turns[i].width != width {
-			turns[i].rendered = renderTurn(turns[i].role, turns[i].content, width, t)
+			turns[i].rendered = renderTurn(turns[i], showReasoning, width, t)
 			turns[i].width = width
 		}
 		if i > 0 {
@@ -35,39 +57,101 @@ func renderConversation(turns []turnBlock, streamingContent string, streamMD *st
 		b.WriteString(turns[i].rendered)
 	}
 
-	if streamingContent != "" {
+	if streamingContent != "" || len(streamingTools) > 0 || (showReasoning && streamingReasoning != "") {
 		if b.Len() > 0 {
 			b.WriteByte('\n')
 		}
-		b.WriteString(renderStreamingTurn(streamingContent, streamMD, width, t))
+		b.WriteString(renderStreamingTurn(streamingContent, streamingTools, streamingReasoning, showReasoning, streamMD, width, t))
 	}
 
 	return b.String()
 }
 
 // renderTurn styles a completed turn with its role label and markdown content.
-func renderTurn(role tauchat.ChatRole, content string, width int, t tuiTheme) string {
+func renderTurn(turn turnBlock, showReasoning bool, width int, t tuiTheme) string {
 	contentWidth := max(width-4, 20)
 
 	var rendered string
-	switch role {
+	switch turn.role {
 	case tauchat.ChatRoleAssistant:
-		rendered = renderAssistantContent(content, contentWidth, t)
+		rendered = renderAssistantContent(turn.content, contentWidth, t)
 	default:
-		rendered = t.StreamingText.Width(contentWidth).Render(content)
+		rendered = t.StreamingText.Width(contentWidth).Render(turn.content)
 	}
+	rendered = appendObservabilitySections(rendered, turn.tools, turn.reasoning, showReasoning, contentWidth, t)
 
-	border := renderTurnBorder(role, contentWidth)
+	border := renderTurnBorder(turn.role, contentWidth)
 	return border + "\n" + rendered
 }
 
 // renderStreamingTurn renders the in-flight assistant response using
 // incremental markdown rendering for non-thinking segments.
-func renderStreamingTurn(content string, streamMD *streamingMarkdown, width int, t tuiTheme) string {
+func renderStreamingTurn(
+	content string,
+	tools []toolActivity,
+	reasoning string,
+	showReasoning bool,
+	streamMD *streamingMarkdown,
+	width int,
+	t tuiTheme,
+) string {
 	contentWidth := max(width-4, 20)
 	border := renderTurnBorder(tauchat.ChatRoleAssistant, contentWidth)
 	rendered := renderAssistantStreaming(content, streamMD, contentWidth, t)
+	rendered = appendObservabilitySections(rendered, tools, reasoning, showReasoning, contentWidth, t)
 	return border + "\n" + rendered
+}
+
+func appendObservabilitySections(
+	rendered string,
+	tools []toolActivity,
+	reasoning string,
+	showReasoning bool,
+	width int,
+	t tuiTheme,
+) string {
+	var b strings.Builder
+	b.WriteString(rendered)
+	if len(tools) > 0 {
+		if b.Len() > 0 {
+			b.WriteString("\n\n")
+		}
+		b.WriteString(t.Dim.Render("Tools"))
+		for _, tool := range tools {
+			line := "• " + tool.toolName
+			if tool.status != "" {
+				line += " " + tool.status
+			}
+			if tool.duration != "" {
+				line += " (" + tool.duration + ")"
+			}
+			if tool.argumentsSummary != "" {
+				line += " args: " + tool.argumentsSummary
+			}
+			if tool.resultSummary != "" {
+				line += " → " + tool.resultSummary
+			}
+			if tool.truncated {
+				line += " [truncated]"
+			}
+			if tool.isError {
+				b.WriteByte('\n')
+				b.WriteString(t.Error.Width(width).Render(line))
+			} else {
+				b.WriteByte('\n')
+				b.WriteString(t.Dim.Width(width).Render(line))
+			}
+		}
+	}
+	if showReasoning && reasoning != "" {
+		if b.Len() > 0 {
+			b.WriteString("\n\n")
+		}
+		b.WriteString(t.Dim.Render("Reasoning"))
+		b.WriteByte('\n')
+		b.WriteString(t.Dim.Width(width).Render(reasoning))
+	}
+	return b.String()
 }
 
 // renderAssistantContent renders a completed assistant turn, dimming <think> blocks.

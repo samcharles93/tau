@@ -430,7 +430,7 @@ func (r *Runtime) completeActiveTurn(sessionID, requestID string, result Complet
 		r.mu.Unlock()
 		return
 	}
-	_ = session.state.CompleteTurn(result.FinishReason, result.Usage, at)
+	_ = session.state.CompleteTurnWithReasoning(result.FinishReason, result.Usage, result.ReasoningContent, at)
 	session.cancel = nil
 	snapshot := CloneChatSessionState(session.state)
 	r.mu.Unlock()

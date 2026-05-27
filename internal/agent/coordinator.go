@@ -10,6 +10,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"strings"
 	"sync"
 	"time"
 
@@ -23,6 +24,7 @@ const (
 	coordinatorEventTopic        = "agent.coordinator.events"
 	commandBufferSize            = 16
 	defaultMaxToolLoopIterations = 50
+	toolSummaryMaxBytes          = 600
 )
 
 // TokenSource resolves a bearer token for the configured provider.
@@ -50,8 +52,12 @@ type Coordinator struct {
 	registry          *tools.Registry
 	maxToolIterations int
 	parallelToolCalls bool
+	showReasoning     bool
 	onSessionStart    func(map[string]any)
 	onSessionShutdown func(map[string]any)
+	onToolStarted     func(map[string]any)
+	onToolCompleted   func(map[string]any)
+	onReasoningDelta  func(map[string]any)
 	onClose           func()
 	startupEvents     []chat.ChatEvent
 	startupEventsOnce sync.Once
@@ -80,8 +86,12 @@ type CoordinatorConfig struct {
 	Registry          *tools.Registry
 	MaxToolIterations int   // 0 → default (50)
 	ParallelToolCalls *bool // nil → default (true)
+	ShowReasoning     bool
 	OnSessionStart    func(map[string]any)
 	OnSessionShutdown func(map[string]any)
+	OnToolStarted     func(map[string]any)
+	OnToolCompleted   func(map[string]any)
+	OnReasoningDelta  func(map[string]any)
 	OnClose           func()
 	StartupEvents     []chat.ChatEvent
 }
@@ -116,8 +126,12 @@ func NewCoordinator(ctx context.Context, cfg CoordinatorConfig) (*Coordinator, e
 		registry:          cfg.Registry,
 		maxToolIterations: maxIter,
 		parallelToolCalls: parallel,
+		showReasoning:     cfg.ShowReasoning,
 		onSessionStart:    cfg.OnSessionStart,
 		onSessionShutdown: cfg.OnSessionShutdown,
+		onToolStarted:     cfg.OnToolStarted,
+		onToolCompleted:   cfg.OnToolCompleted,
+		onReasoningDelta:  cfg.OnReasoningDelta,
 		onClose:           cfg.OnClose,
 		startupEvents:     append([]chat.ChatEvent(nil), cfg.StartupEvents...),
 		commands:          make(chan chat.ChatCommand, commandBufferSize),
@@ -463,17 +477,35 @@ func (c *Coordinator) runTurn(ctx context.Context, state chat.ChatSessionState) 
 
 		// Inject tools into the session state for this call.
 		state.Tools = toolDefs
+		reasoningSnapshot := ""
+		toolCallSnapshots := make([]chat.ChatToolCall, 0)
 
 		result, err := c.streamer.StreamChatCompletionFull(ctx, state, bearerToken, chat.StreamCallbacks{
 			OnDelta: func(delta string) error {
 				return c.appendDelta(sessionID, requestID, delta, time.Now().UTC())
 			},
+			OnReasoningDelta: func(delta string) error {
+				reasoningSnapshot += delta
+				c.emitReasoningDelta(sessionID, requestID, delta, reasoningSnapshot, time.Now().UTC())
+				return nil
+			},
 			OnToolCallDelta: func(tcd chat.ChatToolCallDelta) error {
-				// Emit tool-call progress for TUI observability.
-				c.emit(AgentToolCallDeltaEvent{
-					SessionID: sessionID,
-					RequestID: requestID,
-					Delta:     tcd,
+				toolCallSnapshots = mergeToolCallDelta(toolCallSnapshots, tcd)
+				call := toolCallSnapshots[tcd.Index]
+				callID := call.ID
+				if callID == "" {
+					callID = fmt.Sprintf("tool_call_%d", tcd.Index)
+				}
+				argsSummary, truncated := summarizeForUIWithTruncation(call.Function.Arguments)
+				c.emit(chat.ChatToolCallDeltaEvent{
+					SessionID:        sessionID,
+					RequestID:        requestID,
+					CallID:           callID,
+					Index:            tcd.Index,
+					ToolName:         call.Function.Name,
+					ArgumentsSummary: argsSummary,
+					Truncated:        truncated,
+					ReceivedAt:       time.Now().UTC(),
 				})
 				return nil
 			},
@@ -495,10 +527,10 @@ func (c *Coordinator) runTurn(ctx context.Context, state chat.ChatSessionState) 
 
 		// Tool calls detected. Commit the assistant's response (with tool_calls)
 		// and execute them in parallel.
-		c.commitAssistantMessage(sessionID, c.getPendingContent(sessionID), result.ToolCalls)
+		c.commitAssistantMessage(sessionID, c.getPendingContent(sessionID), result.ReasoningContent, result.ToolCalls)
 
 		// Execute tool calls in parallel.
-		toolResults := c.executeToolsParallel(ctx, result.ToolCalls)
+		toolResults := c.executeToolsParallel(ctx, sessionID, requestID, result.ToolCalls)
 
 		// Append tool result messages to the session.
 		for i, tc := range result.ToolCalls {
@@ -523,31 +555,40 @@ func (c *Coordinator) runTurn(ctx context.Context, state chat.ChatSessionState) 
 
 // executeToolsParallel runs tool calls and returns results in input order.
 // When parallelToolCalls is true, calls run concurrently; otherwise sequentially.
-func (c *Coordinator) executeToolsParallel(ctx context.Context, calls []chat.ChatToolCall) []tools.Result {
+func (c *Coordinator) executeToolsParallel(ctx context.Context, sessionID, requestID string, calls []chat.ChatToolCall) []tools.Result {
 	results := make([]tools.Result, len(calls))
 
 	executeTool := func(i int, tc chat.ChatToolCall) {
-		c.emit(AgentToolExecutionStartedEvent{
-			SessionID: tc.ID,
-			ToolName:  tc.Function.Name,
-			Arguments: tc.Function.Arguments,
+		startedAt := time.Now().UTC()
+		c.emit(chat.ChatToolExecutionStartedEvent{
+			SessionID:        sessionID,
+			RequestID:        requestID,
+			CallID:           tc.ID,
+			ToolName:         tc.Function.Name,
+			ArgumentsSummary: summarizeForUI(tc.Function.Arguments),
+			StartedAt:        startedAt,
 		})
+		c.dispatchToolStarted(sessionID, requestID, tc, startedAt)
 
 		tool, ok := c.registry.Get(tc.Function.Name)
 		if !ok {
-			results[i] = tools.Result{
+			result := tools.Result{
 				Content: fmt.Sprintf("unknown tool: %s", tc.Function.Name),
 				IsError: true,
 			}
+			results[i] = result
+			c.emitToolCompleted(sessionID, requestID, tc, result, startedAt, false)
 			return
 		}
 
 		result, err := tool.Execute(ctx, json.RawMessage(tc.Function.Arguments), nil)
 		if err != nil {
-			results[i] = tools.Result{
+			result = tools.Result{
 				Content: fmt.Sprintf("tool execution error: %v", err),
 				IsError: true,
 			}
+			results[i] = result
+			c.emitToolCompleted(sessionID, requestID, tc, result, startedAt, false)
 			return
 		}
 
@@ -556,6 +597,7 @@ func (c *Coordinator) executeToolsParallel(ctx context.Context, calls []chat.Cha
 		result.Content = tr.Content
 
 		results[i] = result
+		c.emitToolCompleted(sessionID, requestID, tc, result, startedAt, tr.Truncated)
 	}
 
 	if c.parallelToolCalls {
@@ -591,6 +633,88 @@ func (c *Coordinator) buildToolDefs() []chat.ChatToolDef {
 		}
 	}
 	return defs
+}
+
+func mergeToolCallDelta(calls []chat.ChatToolCall, delta chat.ChatToolCallDelta) []chat.ChatToolCall {
+	for len(calls) <= delta.Index {
+		calls = append(calls, chat.ChatToolCall{Type: "function"})
+	}
+
+	tc := &calls[delta.Index]
+	if delta.ID != "" {
+		tc.ID = delta.ID
+	}
+	if delta.Type != "" {
+		tc.Type = delta.Type
+	}
+	if delta.Function.Name != "" {
+		tc.Function.Name += delta.Function.Name
+	}
+	if delta.Function.Arguments != "" {
+		tc.Function.Arguments += delta.Function.Arguments
+	}
+	return calls
+}
+
+func (c *Coordinator) emitReasoningDelta(sessionID, requestID, delta, snapshot string, at time.Time) {
+	c.emit(chat.ChatReasoningDeltaEvent{
+		SessionID:  sessionID,
+		RequestID:  requestID,
+		Delta:      delta,
+		Snapshot:   snapshot,
+		ReceivedAt: at,
+	})
+	if c.showReasoning && c.onReasoningDelta != nil {
+		c.onReasoningDelta(map[string]any{
+			"event":      "reasoning_delta",
+			"session_id": sessionID,
+			"request_id": requestID,
+			"delta":      summarizeForUI(delta),
+		})
+	}
+}
+
+func (c *Coordinator) emitToolCompleted(
+	sessionID string,
+	requestID string,
+	tc chat.ChatToolCall,
+	result tools.Result,
+	startedAt time.Time,
+	truncated bool,
+) {
+	completedAt := time.Now().UTC()
+	status := "success"
+	if result.IsError {
+		status = "error"
+	}
+	event := chat.ChatToolExecutionCompletedEvent{
+		SessionID:     sessionID,
+		RequestID:     requestID,
+		CallID:        tc.ID,
+		ToolName:      tc.Function.Name,
+		Status:        status,
+		Duration:      completedAt.Sub(startedAt),
+		ResultSummary: summarizeForUI(result.Content),
+		IsError:       result.IsError,
+		Truncated:     truncated,
+		CompletedAt:   completedAt,
+	}
+	c.emit(event)
+	c.dispatchToolCompleted(event)
+}
+
+func summarizeForUI(value string) string {
+	summary, _ := summarizeForUIWithTruncation(value)
+	return summary
+}
+
+func summarizeForUIWithTruncation(value string) (string, bool) {
+	value = strings.TrimSpace(value)
+	value = strings.Join(strings.Fields(value), " ")
+	if len(value) <= toolSummaryMaxBytes {
+		return value, false
+	}
+	return value[:toolSummaryMaxBytes] + "…", true
 }
 
 // Session state helpers — these operate under the coordinator mutex.
@@ -633,14 +757,14 @@ func (c *Coordinator) getPendingContent(sessionID string) string {
 	return session.state.PendingAssistant
 }
 
-func (c *Coordinator) commitAssistantMessage(sessionID string, content string, calls []chat.ChatToolCall) {
+func (c *Coordinator) commitAssistantMessage(sessionID string, content string, reasoningContent string, calls []chat.ChatToolCall) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	session, ok := c.sessions[sessionID]
 	if !ok {
 		return
 	}
-	_ = session.state.AppendAssistantToolCallMessage(content, calls, time.Now().UTC())
+	_ = session.state.AppendAssistantToolCallMessageWithReasoning(content, reasoningContent, calls, time.Now().UTC())
 }
 
 func (c *Coordinator) appendToolResult(sessionID string, callID, content string) {
@@ -680,7 +804,7 @@ func (c *Coordinator) completeTurn(sessionID, requestID string, result chat.Comp
 		c.mu.Unlock()
 		return
 	}
-	_ = session.state.CompleteTurn(result.FinishReason, result.Usage, at)
+	_ = session.state.CompleteTurnWithReasoning(result.FinishReason, result.Usage, result.ReasoningContent, at)
 	session.cancel = nil
 	snapshot := chat.CloneChatSessionState(session.state)
 	c.mu.Unlock()
@@ -775,6 +899,40 @@ func (c *Coordinator) dispatchSessionShutdown(sessionID string) {
 	c.onSessionShutdown(map[string]any{
 		"event":      "session_shutdown",
 		"session_id": sessionID,
+	})
+}
+
+func (c *Coordinator) dispatchToolStarted(sessionID, requestID string, tc chat.ChatToolCall, startedAt time.Time) {
+	if c.onToolStarted == nil {
+		return
+	}
+	c.onToolStarted(map[string]any{
+		"event":             "tool_call_started",
+		"session_id":        sessionID,
+		"request_id":        requestID,
+		"call_id":           tc.ID,
+		"tool_name":         tc.Function.Name,
+		"arguments_summary": summarizeForUI(tc.Function.Arguments),
+		"started_at":        startedAt.Format(time.RFC3339Nano),
+	})
+}
+
+func (c *Coordinator) dispatchToolCompleted(event chat.ChatToolExecutionCompletedEvent) {
+	if c.onToolCompleted == nil {
+		return
+	}
+	c.onToolCompleted(map[string]any{
+		"event":          "tool_call_completed",
+		"session_id":     event.SessionID,
+		"request_id":     event.RequestID,
+		"call_id":        event.CallID,
+		"tool_name":      event.ToolName,
+		"status":         event.Status,
+		"duration_ms":    event.Duration.Milliseconds(),
+		"result_summary": event.ResultSummary,
+		"is_error":       event.IsError,
+		"truncated":      event.Truncated,
+		"completed_at":   event.CompletedAt.Format(time.RFC3339Nano),
 	})
 }
 

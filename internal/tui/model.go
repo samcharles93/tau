@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"charm.land/bubbles/v2/help"
+	"charm.land/bubbles/v2/key"
 	"charm.land/bubbles/v2/spinner"
 	"charm.land/bubbles/v2/textarea"
 	"charm.land/bubbles/v2/viewport"
@@ -27,8 +28,6 @@ const (
 	statusBarHeight = 1
 	inputHeight     = 3
 	chromeHeight    = statusBarHeight + inputHeight + 2 // borders/padding
-
-	ctrlCDebounceWindow = 1 * time.Second
 
 	// defaultViewportWidth and defaultViewportHeight are initial viewport
 	// dimensions before the first WindowSizeMsg arrives.
@@ -59,6 +58,7 @@ type Config struct {
 	AvailableProviders []string
 	NotifyBus          *pubsub.Bus[notify.Notification]
 	RefreshModels      ModelRefresher
+	ShowReasoning      bool
 }
 
 // Model is the root Bubble Tea model for the Tau chat TUI.
@@ -86,19 +86,18 @@ type Model struct {
 	overlay *dialog.Overlay
 
 	// Conversation state.
-	turns            []turnBlock
-	streamingContent string
-	streamMD         streamingMarkdown
-	status           tauchat.ChatSessionStatus
-	lastError        string
+	turns              []turnBlock
+	streamingContent   string
+	streamingTools     []toolActivity
+	streamingReasoning string
+	streamMD           streamingMarkdown
+	status             tauchat.ChatSessionStatus
+	lastError          string
 
 	// Dimensions.
 	width  int
 	height int
 	ready  bool
-
-	// Ctrl+C debounce: first press cancels, second press exits.
-	lastCtrlC time.Time
 
 	// Track whether the user has scrolled up (disable auto-scroll).
 	userScrolled bool
@@ -108,8 +107,9 @@ type Model struct {
 	notifySub     *pubsub.Subscription[notify.Notification]
 
 	// Settings (user-configurable from /settings dialog).
-	thinking bool
-	effort   string // "low", "medium", "high"
+	thinking      bool
+	effort        string // "low", "medium", "high"
+	showReasoning bool
 }
 
 // New creates a new TUI model wired to the given runtime.
@@ -165,6 +165,7 @@ func New(ctx context.Context, runtime tauchat.ChatRuntime, sub *pubsub.Subscript
 		status:        tauchat.ChatSessionIdle,
 		notifications: notify.NewQueue(),
 		effort:        "medium",
+		showReasoning: cfg.ShowReasoning,
 	}
 
 	if cfg.NotifyBus != nil {
@@ -210,6 +211,9 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case tea.KeyPressMsg:
 		return m.handleKeyPress(msg)
+
+	case tea.MouseMsg:
+		return m.handleMouse(msg)
 
 	case runtimeEventMsg:
 		m.handleRuntimeEvent(msg.event)
@@ -340,31 +344,37 @@ func (m *Model) updateSubModels(msg tea.Msg) []tea.Cmd {
 func (m *Model) handleKeyPress(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	k := msg.Key()
 
-	// Ctrl+C: cancel in-flight → exit on double-press (always active).
-	if k.Code == 'c' && k.Mod == tea.ModCtrl {
-		return m.handleCtrlC()
-	}
-
 	// If a dialog is open, route all keys to it.
 	if m.overlay.HasDialogs() {
 		action := m.overlay.Update(msg)
 		return m.handleDialogAction(action)
 	}
 
+	// Ctrl+C: cancel in-flight or exit/clear input.
+	if isCtrlKey(k, 'c') {
+		return m.handleCtrlC()
+	}
+
 	// Ctrl+P: open command palette.
-	if k.Code == 'p' && k.Mod == tea.ModCtrl {
+	if key.Matches(msg, m.keys.Palette) || isCtrlKey(k, 'p') {
 		m.openCommandPalette()
 		return m, nil
 	}
 
 	// Ctrl+K: open model picker.
-	if k.Code == 'k' && k.Mod == tea.ModCtrl {
+	if key.Matches(msg, m.keys.Picker) || isCtrlKey(k, 'k') {
 		m.openModelPicker()
 		return m, nil
 	}
 
+	// Ctrl+R: toggle rendering for captured provider reasoning.
+	if key.Matches(msg, m.keys.Reasoning) || isCtrlKey(k, 'r') {
+		m.toggleReasoning()
+		return m, nil
+	}
+
 	// Toggle help (only when input is empty so '?' can be typed normally).
-	if k.Code == '?' && k.Mod == 0 && strings.TrimSpace(m.input.Value()) == "" {
+	if key.Matches(msg, m.keys.Help) && strings.TrimSpace(m.input.Value()) == "" {
 		if m.help.ShowAll {
 			m.help.ShowAll = false
 			return m, nil
@@ -391,8 +401,8 @@ func (m *Model) handleKeyPress(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		return m.handleSubmit()
 	}
 
-	// Escape: dismiss help → close completions → clear input → show quit hint.
-	if k.Code == tea.KeyEscape {
+	// Escape: dismiss help → close completions → clear input → quit.
+	if key.Matches(msg, m.keys.Escape) {
 		if m.help.ShowAll {
 			m.help.ShowAll = false
 			return m, nil
@@ -406,11 +416,11 @@ func (m *Model) handleKeyPress(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 			m.input.Reset()
 			return m, nil
 		}
-		return m, m.quitHintCmd()
+		return m, tea.Quit
 	}
 
 	// Ctrl+Backspace: delete previous word.
-	if k.Code == tea.KeyBackspace && k.Mod == tea.ModCtrl {
+	if k.Code == tea.KeyBackspace && k.Mod.Contains(tea.ModCtrl) {
 		m.deleteWordBackward()
 		m.completions.Sync(m.input.Value())
 		m.adjustViewportHeight()
@@ -433,33 +443,71 @@ func (m *Model) handleKeyPress(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	return m, cmd
 }
 
-// handleCtrlC always warns before quitting.
-// First press: clears input/completions and shows quit hint.
-// Second press within the debounce window: quits.
+// handleCtrlC cancels active requests, exits when idle with empty input, or
+// clears non-empty input before allowing a following empty Ctrl+C to quit.
 func (m *Model) handleCtrlC() (tea.Model, tea.Cmd) {
-	now := time.Now()
-
-	// Second press within debounce window → quit.
-	if now.Sub(m.lastCtrlC) < ctrlCDebounceWindow {
+	if m.status == tauchat.ChatSessionStreaming {
+		if strings.TrimSpace(m.input.Value()) != "" {
+			m.input.Reset()
+		}
+		m.completions.Close()
+		m.status = tauchat.ChatSessionCancelling
+		return m, tea.Batch(m.sendCancel(), m.cancelHintCmd())
+	}
+	if m.status == tauchat.ChatSessionCancelling {
 		return m, tea.Quit
 	}
-
-	m.lastCtrlC = now
-
-	// Clear any input or completions on the first press.
 	if strings.TrimSpace(m.input.Value()) != "" {
 		m.input.Reset()
+		m.completions.Close()
+		return m, m.quitHintCmd()
 	}
 	m.completions.Close()
+	return m, tea.Quit
+}
 
-	// Show the quit hint.
-	return m, m.quitHintCmd()
+func isCtrlKey(k tea.Key, code rune) bool {
+	return k.Code == code && k.Mod.Contains(tea.ModCtrl)
+}
+
+func (m *Model) handleMouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
+	mouse := msg.Mouse()
+	var cmd tea.Cmd
+	m.viewport, cmd = m.viewport.Update(msg)
+	switch mouse.Button {
+	case tea.MouseWheelUp:
+		m.userScrolled = true
+	case tea.MouseWheelDown:
+		m.userScrolled = !m.viewport.AtBottom()
+	}
+	return m, cmd
+}
+
+func (m *Model) toggleReasoning() {
+	m.setReasoningVisible(!m.showReasoning)
+}
+
+func (m *Model) setReasoningVisible(show bool) {
+	m.showReasoning = show
+	for i := range m.turns {
+		m.turns[i].rendered = ""
+	}
+	m.refreshViewport()
 }
 
 // quitHintCmd pushes the "Ctrl+C to quit" notification.
 func (m *Model) quitHintCmd() tea.Cmd {
 	return m.pushNotification(notify.Notification{
 		Message:  "Ctrl+C to quit",
+		Level:    notify.LevelWarn,
+		Duration: notifyDurationBrief,
+	})
+}
+
+// cancelHintCmd pushes the cancellation notification.
+func (m *Model) cancelHintCmd() tea.Cmd {
+	return m.pushNotification(notify.Notification{
+		Message:  "Cancelling… Ctrl+C to quit",
 		Level:    notify.LevelWarn,
 		Duration: notifyDurationBrief,
 	})
@@ -508,6 +556,8 @@ func (m *Model) handleSlashCommand(text string) (tea.Model, tea.Cmd) {
 		m.input.Reset()
 		m.turns = nil
 		m.streamingContent = ""
+		m.streamingTools = nil
+		m.streamingReasoning = ""
 		m.streamMD.Reset()
 		m.lastError = ""
 		m.refreshViewport()
@@ -535,7 +585,7 @@ func (m *Model) handleSlashCommand(text string) (tea.Model, tea.Cmd) {
 		m.config.ModelName = modelRef.ID
 		m.lastError = ""
 		m.refreshViewport()
-		return m, m.sendUpdateModel(tauchat.ChatModelRef{ID: modelRef.ID, URL: modelRef.URL})
+		return m, m.sendUpdateModel(modelRef)
 
 	case "/system":
 		m.input.Reset()
@@ -551,6 +601,25 @@ func (m *Model) handleSlashCommand(text string) (tea.Model, tea.Cmd) {
 	case "/refresh":
 		m.input.Reset()
 		return m, m.refreshModelsCmd()
+
+	case "/reasoning":
+		m.input.Reset()
+		if len(parts) < 2 {
+			m.toggleReasoning()
+			return m, nil
+		}
+		switch strings.ToLower(parts[1]) {
+		case "on":
+			m.setReasoningVisible(true)
+		case "off":
+			m.setReasoningVisible(false)
+		case "toggle":
+			m.toggleReasoning()
+		default:
+			m.lastError = "usage: /reasoning on|off|toggle"
+			m.refreshViewport()
+		}
+		return m, nil
 
 	case "/settings":
 		m.input.Reset()
@@ -599,6 +668,7 @@ func (m *Model) openCommandPalette() {
 		{ID: "new", Label: "/new", Description: "Start a new conversation"},
 		{ID: "model", Label: "/model", Description: "Switch model"},
 		{ID: "system", Label: "/system", Description: "Set system prompt"},
+		{ID: "reasoning", Label: "/reasoning toggle", Description: "Show or hide provider reasoning"},
 		{ID: "settings", Label: "/settings", Description: "View and edit settings"},
 		{ID: "exit", Label: "/exit", Description: "Quit the app"},
 	}
@@ -633,6 +703,13 @@ func (m *Model) openSettings() {
 
 	entries := []dialog.SettingEntry{
 		{
+			Key:     "show_reasoning",
+			Label:   "Reasoning",
+			Kind:    dialog.SettingToggle,
+			BoolVal: m.showReasoning,
+			Value:   boolToOnOff(m.showReasoning),
+		},
+		{
 			Key:     "thinking",
 			Label:   "Thinking",
 			Kind:    dialog.SettingToggle,
@@ -664,6 +741,8 @@ func (m *Model) openSettings() {
 func (m *Model) applySettings(entries []dialog.SettingEntry) (tea.Model, tea.Cmd) {
 	for _, e := range entries {
 		switch e.Key {
+		case "show_reasoning":
+			m.setReasoningVisible(e.BoolVal)
 		case "thinking":
 			m.thinking = e.BoolVal
 		case "effort":
@@ -714,6 +793,9 @@ func (m *Model) handleDialogAction(action dialog.Action) (tea.Model, tea.Cmd) {
 		m.config.ModelName = a.ID
 		m.lastError = ""
 		m.refreshViewport()
+		if modelRef, ok := m.findModel(a.ID); ok {
+			return m, m.sendUpdateModel(modelRef)
+		}
 		return m, m.sendUpdateModel(tauchat.ChatModelRef{ID: a.ID, URL: a.URL})
 	case dialog.SettingsChangedAction:
 		return m.applySettings(a.Settings)
@@ -727,6 +809,8 @@ func (m *Model) executePaletteAction(a dialog.SelectAction) (tea.Model, tea.Cmd)
 	case "new":
 		m.turns = nil
 		m.streamingContent = ""
+		m.streamingTools = nil
+		m.streamingReasoning = ""
 		m.streamMD.Reset()
 		m.lastError = ""
 		m.refreshViewport()
@@ -739,6 +823,9 @@ func (m *Model) executePaletteAction(a dialog.SelectAction) (tea.Model, tea.Cmd)
 		m.input.SetValue("/system ")
 		m.input.CursorEnd()
 		m.completions.Sync(m.input.Value())
+		return m, nil
+	case "reasoning":
+		m.toggleReasoning()
 		return m, nil
 	case "settings":
 		m.openSettings()
@@ -756,6 +843,7 @@ func builtinCommands() []completions.CommandDef {
 		{Name: "/system", Description: "Set system prompt", AcceptsArgs: true},
 		{Name: "/model", Description: "Switch model", AcceptsArgs: true},
 		{Name: "/refresh", Description: "Refresh app state (models, skills, etc.)"},
+		{Name: "/reasoning", Description: "Show or hide captured provider reasoning", AcceptsArgs: true},
 		{Name: "/settings", Description: "View and edit settings"},
 		{Name: "/exit", Description: "Quit the app"},
 	}
@@ -769,13 +857,17 @@ func (m *Model) handleRuntimeEvent(event tauchat.ChatEvent) {
 		if ev.State.Status == tauchat.ChatSessionIdle {
 			// Safety net: if we have streaming content but state went idle
 			// (e.g., CompletedEvent was missed), finalize the turn.
-			if m.streamingContent != "" {
+			if m.streamingContent != "" || len(m.streamingTools) > 0 || m.streamingReasoning != "" {
 				m.turns = append(m.turns, turnBlock{
-					role:     tauchat.ChatRoleAssistant,
-					content:  m.streamingContent,
-					finished: true,
+					role:      tauchat.ChatRoleAssistant,
+					content:   m.streamingContent,
+					tools:     append([]toolActivity(nil), m.streamingTools...),
+					reasoning: m.streamingReasoning,
+					finished:  true,
 				})
 				m.streamingContent = ""
+				m.streamingTools = nil
+				m.streamingReasoning = ""
 				m.streamMD.Reset()
 			} else {
 				m.syncTurnsFromState(ev.State)
@@ -785,6 +877,8 @@ func (m *Model) handleRuntimeEvent(event tauchat.ChatEvent) {
 	case tauchat.ChatResponseStartedEvent:
 		m.status = tauchat.ChatSessionStreaming
 		m.streamingContent = ""
+		m.streamingTools = nil
+		m.streamingReasoning = ""
 		m.streamMD.Reset()
 		m.lastError = ""
 		m.userScrolled = false
@@ -792,28 +886,71 @@ func (m *Model) handleRuntimeEvent(event tauchat.ChatEvent) {
 	case tauchat.ChatResponseDeltaEvent:
 		m.streamingContent = ev.Snapshot
 
+	case tauchat.ChatReasoningDeltaEvent:
+		m.streamingReasoning = ev.Snapshot
+
+	case tauchat.ChatToolCallDeltaEvent:
+		m.upsertToolActivity(toolActivity{
+			callID:           ev.CallID,
+			toolName:         ev.ToolName,
+			argumentsSummary: ev.ArgumentsSummary,
+			status:           "building",
+			truncated:        ev.Truncated,
+		})
+
+	case tauchat.ChatToolExecutionStartedEvent:
+		m.upsertToolActivity(toolActivity{
+			callID:           ev.CallID,
+			toolName:         ev.ToolName,
+			argumentsSummary: ev.ArgumentsSummary,
+			status:           "running",
+		})
+
+	case tauchat.ChatToolExecutionCompletedEvent:
+		m.upsertToolActivity(toolActivity{
+			callID:        ev.CallID,
+			toolName:      ev.ToolName,
+			status:        ev.Status,
+			duration:      ev.Duration.String(),
+			resultSummary: ev.ResultSummary,
+			isError:       ev.IsError,
+			truncated:     ev.Truncated,
+		})
+
 	case tauchat.ChatResponseCompletedEvent:
 		m.status = tauchat.ChatSessionIdle
-		if m.streamingContent != "" {
+		reasoning := m.streamingReasoning
+		if reasoning == "" {
+			reasoning = latestAssistantReasoning(ev.State)
+		}
+		if m.streamingContent != "" || len(m.streamingTools) > 0 || reasoning != "" {
 			m.turns = append(m.turns, turnBlock{
-				role:     tauchat.ChatRoleAssistant,
-				content:  m.streamingContent,
-				finished: true,
+				role:      tauchat.ChatRoleAssistant,
+				content:   m.streamingContent,
+				tools:     append([]toolActivity(nil), m.streamingTools...),
+				reasoning: reasoning,
+				finished:  true,
 			})
 		}
 		m.streamingContent = ""
+		m.streamingTools = nil
+		m.streamingReasoning = ""
 		m.streamMD.Reset()
 
 	case tauchat.ChatResponseCancelledEvent:
 		m.status = tauchat.ChatSessionIdle
-		if m.streamingContent != "" {
+		if m.streamingContent != "" || len(m.streamingTools) > 0 || m.streamingReasoning != "" {
 			m.turns = append(m.turns, turnBlock{
-				role:     tauchat.ChatRoleAssistant,
-				content:  m.streamingContent + "\n\n[cancelled]",
-				finished: true,
+				role:      tauchat.ChatRoleAssistant,
+				content:   m.streamingContent + "\n\n[cancelled]",
+				tools:     append([]toolActivity(nil), m.streamingTools...),
+				reasoning: m.streamingReasoning,
+				finished:  true,
 			})
 		}
 		m.streamingContent = ""
+		m.streamingTools = nil
+		m.streamingReasoning = ""
 		m.streamMD.Reset()
 
 	case tauchat.ChatRuntimeErrorEvent:
@@ -821,6 +958,8 @@ func (m *Model) handleRuntimeEvent(event tauchat.ChatEvent) {
 		if m.status == tauchat.ChatSessionStreaming || m.status == tauchat.ChatSessionCancelling {
 			m.status = tauchat.ChatSessionIdle
 			m.streamingContent = ""
+			m.streamingTools = nil
+			m.streamingReasoning = ""
 			m.streamMD.Reset()
 		}
 	}
@@ -834,11 +973,49 @@ func (m *Model) syncTurnsFromState(state tauchat.ChatSessionState) {
 			continue
 		}
 		m.turns = append(m.turns, turnBlock{
-			role:     msg.Role,
-			content:  msg.Content,
-			finished: true,
+			role:      msg.Role,
+			content:   msg.Content,
+			reasoning: msg.ReasoningContent,
+			finished:  true,
 		})
 	}
+}
+
+func latestAssistantReasoning(state tauchat.ChatSessionState) string {
+	for i := len(state.Messages) - 1; i >= 0; i-- {
+		msg := state.Messages[i]
+		if msg.Role == tauchat.ChatRoleAssistant {
+			return msg.ReasoningContent
+		}
+	}
+	return ""
+}
+
+func (m *Model) upsertToolActivity(update toolActivity) {
+	for i := range m.streamingTools {
+		if m.streamingTools[i].callID != update.callID {
+			continue
+		}
+		if update.toolName != "" {
+			m.streamingTools[i].toolName = update.toolName
+		}
+		if update.argumentsSummary != "" {
+			m.streamingTools[i].argumentsSummary = update.argumentsSummary
+		}
+		if update.status != "" {
+			m.streamingTools[i].status = update.status
+		}
+		if update.duration != "" {
+			m.streamingTools[i].duration = update.duration
+		}
+		if update.resultSummary != "" {
+			m.streamingTools[i].resultSummary = update.resultSummary
+		}
+		m.streamingTools[i].isError = update.isError
+		m.streamingTools[i].truncated = update.truncated
+		return
+	}
+	m.streamingTools = append(m.streamingTools, update)
 }
 
 // refreshViewport rebuilds and sets the viewport content from structured turns.
@@ -847,7 +1024,16 @@ func (m *Model) refreshViewport() {
 	m.adjustViewportHeight()
 
 	contentWidth := max(m.width-2, 20)
-	content := renderConversation(m.turns, m.streamingContent, &m.streamMD, contentWidth, m.tuiTheme)
+	content := renderConversation(
+		m.turns,
+		m.streamingContent,
+		m.streamingTools,
+		m.streamingReasoning,
+		m.showReasoning,
+		&m.streamMD,
+		contentWidth,
+		m.tuiTheme,
+	)
 
 	if m.lastError != "" {
 		if content != "" {
