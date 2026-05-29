@@ -207,9 +207,9 @@ type ModelConfig struct {
 	MaxTokens        int            `yaml:"max_tokens,omitempty" json:"max_tokens,omitempty"`
 	Input            []string       `yaml:"input,omitempty" json:"input,omitempty"`
 	Reasoning        bool           `yaml:"reasoning,omitempty" json:"reasoning,omitempty"`
-	Thinking         ThinkingConfig `yaml:"thinking,omitempty" json:"thinking,omitempty"`
-	Cost             CostConfig     `yaml:"cost,omitempty" json:"cost,omitempty"`
-	Compat           CompatConfig   `yaml:"compat,omitempty" json:"compat,omitempty"`
+	Thinking         ThinkingConfig `yaml:"thinking,omitempty" json:"thinking"`
+	Cost             CostConfig     `yaml:"cost,omitempty" json:"cost"`
+	Compat           CompatConfig   `yaml:"compat,omitempty" json:"compat"`
 }
 
 func (m *ModelConfig) UnmarshalYAML(value *yaml.Node) error {

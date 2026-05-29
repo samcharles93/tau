@@ -108,19 +108,12 @@ func (b *Bus[T]) PublishMustDeliver(topic string, message T) error {
 	}
 
 	b.mu.Lock()
+	defer b.mu.Unlock()
 	if b.closed {
-		b.mu.Unlock()
 		return ErrClosed
 	}
-	// Copy the subscriber list under lock so we can release it before
-	// blocking on individual channels.
-	subs := make([]chan T, 0, len(b.topics[normalized]))
-	for _, ch := range b.topics[normalized] {
-		subs = append(subs, ch)
-	}
-	b.mu.Unlock()
 
-	for _, ch := range subs {
+	for _, ch := range b.topics[normalized] {
 		select {
 		case ch <- message:
 		default:

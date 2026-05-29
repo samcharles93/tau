@@ -37,6 +37,7 @@ type Runtime struct {
 	streamer    CompletionStreamer
 	commands    chan ChatCommand
 	eventBus    *pubsub.Bus[ChatEvent]
+	reloader    ExtensionReloader
 
 	mu       sync.Mutex
 	sessions map[string]*runtimeSession
@@ -143,6 +144,20 @@ func (r *Runtime) handleCommand(cmd ChatCommand) {
 		r.handleReset(command)
 	case CloseChatSessionCommand:
 		r.handleClose(command)
+	case ReloadExtensionsCommand:
+		r.handleReloadExtensions(command)
+	case RunExtensionCommandCommand:
+		r.emit(ChatRuntimeErrorEvent{
+			Message:    "extension commands are not supported by this runtime",
+			Fatal:      false,
+			OccurredAt: time.Now().UTC(),
+		})
+	case RespondInteractivePromptCommand:
+		r.emit(ChatRuntimeErrorEvent{
+			Message:    "interactive prompts are not supported by this runtime",
+			Fatal:      false,
+			OccurredAt: time.Now().UTC(),
+		})
 	default:
 		r.emit(ChatRuntimeErrorEvent{
 			Message:    fmt.Sprintf("unsupported chat command %T", cmd),
@@ -150,6 +165,12 @@ func (r *Runtime) handleCommand(cmd ChatCommand) {
 			OccurredAt: time.Now().UTC(),
 		})
 	}
+}
+
+func (r *Runtime) SetExtensionReloader(reloader ExtensionReloader) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.reloader = reloader
 }
 
 func (r *Runtime) handleStart(cmd StartChatSessionCommand) {
@@ -371,6 +392,74 @@ func (r *Runtime) handleClose(cmd CloseChatSessionCommand) {
 	r.emit(ChatSessionSnapshotEvent{State: snapshot})
 }
 
+func (r *Runtime) handleReloadExtensions(cmd ReloadExtensionsCommand) {
+	now := normalizedCommandTime(cmd.RequestedAt)
+
+	r.mu.Lock()
+	reloader := r.reloader
+	idle := true
+	for _, session := range r.sessions {
+		if session.state.Status == ChatSessionStreaming || session.state.Status == ChatSessionCancelling || session.state.HasActiveRequest() {
+			idle = false
+			break
+		}
+	}
+	r.mu.Unlock()
+
+	if reloader == nil {
+		r.emit(ChatNotificationEvent{
+			Message:    "Extension reload is not available",
+			Level:      ChatNotificationWarn,
+			OccurredAt: now,
+		})
+		return
+	}
+	if !idle {
+		r.emit(ChatNotificationEvent{
+			Message:    "Extension reload is only available while idle",
+			Level:      ChatNotificationWarn,
+			OccurredAt: now,
+		})
+		return
+	}
+
+	result, err := reloader.ReloadExtensions(r.ctx, true)
+	if err != nil {
+		r.emit(ChatNotificationEvent{
+			Message:    "Extension reload failed: " + err.Error(),
+			Level:      ChatNotificationError,
+			OccurredAt: now,
+		})
+		r.emit(ChatRuntimeErrorEvent{
+			Message:    "Extension reload failed: " + err.Error(),
+			Fatal:      false,
+			OccurredAt: now,
+		})
+		return
+	}
+
+	r.emit(ExtensionsReloadedEvent{Result: result, OccurredAt: now})
+	r.emit(ChatNotificationEvent{
+		Message:    runtimeExtensionReloadMessage(result),
+		Level:      ChatNotificationInfo,
+		OccurredAt: now,
+	})
+	for _, diagnostic := range result.Diagnostics {
+		if diagnostic.Message == "" {
+			continue
+		}
+		level := ChatNotificationWarn
+		if diagnostic.Severity == "error" {
+			level = ChatNotificationError
+		}
+		r.emit(ChatNotificationEvent{
+			Message:    runtimeExtensionDiagnosticMessage(diagnostic),
+			Level:      level,
+			OccurredAt: now,
+		})
+	}
+}
+
 func (r *Runtime) runStream(ctx context.Context, sessionState ChatSessionState) {
 	now := time.Now().UTC()
 	bearerToken, err := r.tokenSource(ctx, sessionState.Provider)
@@ -522,4 +611,20 @@ func normalizedCommandTime(at time.Time) time.Time {
 		return time.Now().UTC()
 	}
 	return at.UTC()
+}
+
+func runtimeExtensionReloadMessage(result ExtensionReloadResult) string {
+	message := fmt.Sprintf("Reloaded extensions: %d loaded", result.ExtensionCount)
+	if len(result.Diagnostics) > 0 {
+		message += fmt.Sprintf(", %d diagnostics", len(result.Diagnostics))
+	}
+	return message
+}
+
+func runtimeExtensionDiagnosticMessage(diagnostic ExtensionDiagnostic) string {
+	prefix := "Extension diagnostic"
+	if diagnostic.ExtensionName != "" {
+		prefix += " (" + diagnostic.ExtensionName + ")"
+	}
+	return prefix + ": " + diagnostic.Message
 }

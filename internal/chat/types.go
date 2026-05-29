@@ -270,8 +270,17 @@ type ReloadExtensionsCommand struct {
 
 func (ReloadExtensionsCommand) IsChatCommand() {}
 
+type RunExtensionCommandCommand struct {
+	Name        string    `json:"name"`
+	Args        string    `json:"args,omitempty"`
+	RequestedAt time.Time `json:"requested_at"`
+}
+
+func (RunExtensionCommandCommand) IsChatCommand() {}
+
 type RespondInteractivePromptCommand struct {
 	RequestID   string    `json:"request_id"`
+	Response    string    `json:"response,omitempty"`
 	Confirmed   bool      `json:"confirmed"`
 	Canceled    bool      `json:"canceled"`
 	RespondedAt time.Time `json:"responded_at"`
@@ -300,10 +309,13 @@ type ExtensionDiagnostic struct {
 type ExtensionReloadResult struct {
 	ExtensionCount int                   `json:"extension_count"`
 	Diagnostics    []ExtensionDiagnostic `json:"diagnostics,omitempty"`
+	Commands       []ExtensionCommand    `json:"commands,omitempty"`
 }
 
 type ExtensionReloader interface {
 	ReloadExtensions(ctx context.Context, idle bool) (ExtensionReloadResult, error)
+	ExtensionCommands() []ExtensionCommand
+	RunExtensionCommand(ctx context.Context, name, args string, uiBridge any) (string, error)
 }
 
 type ChatSessionSnapshotEvent struct {
@@ -430,10 +442,32 @@ type ExtensionsReloadedEvent struct {
 
 func (ExtensionsReloadedEvent) IsChatEvent() {}
 
+type ExtensionCommand struct {
+	Name          string `json:"name"`
+	Description   string `json:"description,omitempty"`
+	ExtensionName string `json:"extension_name,omitempty"`
+}
+
+type ExtensionCommandsChangedEvent struct {
+	Commands   []ExtensionCommand `json:"commands"`
+	OccurredAt time.Time          `json:"occurred_at"`
+}
+
+func (ExtensionCommandsChangedEvent) IsChatEvent() {}
+
+type ExtensionCommandResultEvent struct {
+	Name       string    `json:"name"`
+	Output     string    `json:"output"`
+	OccurredAt time.Time `json:"occurred_at"`
+}
+
+func (ExtensionCommandResultEvent) IsChatEvent() {}
+
 type InteractivePromptKind string
 
 const (
-	InteractivePromptConfirm InteractivePromptKind = "confirm"
+	InteractivePromptConfirm  InteractivePromptKind = "confirm"
+	InteractivePromptQuestion InteractivePromptKind = "question"
 )
 
 type InteractivePromptRequestedEvent struct {
@@ -441,7 +475,7 @@ type InteractivePromptRequestedEvent struct {
 	Kind        InteractivePromptKind `json:"kind"`
 	Title       string                `json:"title"`
 	Message     string                `json:"message"`
-	RequestedAt time.Time           `json:"requested_at"`
+	RequestedAt time.Time             `json:"requested_at"`
 }
 
 func (InteractivePromptRequestedEvent) IsChatEvent() {}
@@ -491,7 +525,7 @@ type ChatToolCallDelta struct {
 	Index    int                   `json:"index"`
 	ID       string                `json:"id,omitempty"`
 	Type     string                `json:"type,omitempty"`
-	Function ChatFunctionCallDelta `json:"function,omitempty"`
+	Function ChatFunctionCallDelta `json:"function"`
 }
 
 // ChatFunctionCallDelta carries incremental function name/arguments data.

@@ -10,6 +10,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"maps"
 	"net/http"
 	"strings"
 	"time"
@@ -82,9 +83,7 @@ func buildOpenAIRequestBody(session chat.ChatSessionState) ([]byte, error) {
 	if len(request.Tools) > 0 {
 		body["tools"] = request.Tools
 	}
-	for key, value := range compat.ExtraBody {
-		body[key] = value
-	}
+	maps.Copy(body, compat.ExtraBody)
 	if field := strings.TrimSpace(compat.MaxTokensField); field != "" && field != "max_tokens" {
 		body[field] = body["max_tokens"]
 		delete(body, "max_tokens")

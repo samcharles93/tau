@@ -43,6 +43,12 @@ type Extension struct {
 	Scope      Scope  `json:"scope"`
 }
 
+type Command struct {
+	Name          string `json:"name"`
+	Description   string `json:"description,omitempty"`
+	ExtensionName string `json:"extension_name,omitempty"`
+}
+
 type Event string
 
 const (

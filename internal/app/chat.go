@@ -68,7 +68,7 @@ func RunChat(ctx context.Context, opts ChatOptions) error {
 		return err
 	}
 
-	coordinator, err := newCoordinator(ctx, opts, bearerToken)
+	coordinator, err := newCoordinator(ctx, opts, bearerToken, true)
 	if err != nil {
 		return err
 	}
@@ -121,7 +121,7 @@ func RunChat(ctx context.Context, opts ChatOptions) error {
 // runOneShotWithModel creates a coordinator and runs a one-shot prompt with a
 // known-good model.
 func runOneShotWithModel(ctx context.Context, opts ChatOptions, bearerToken string, model tauchat.ChatModelRef) error {
-	coordinator, err := newCoordinator(ctx, opts, bearerToken)
+	coordinator, err := newCoordinator(ctx, opts, bearerToken, false)
 	if err != nil {
 		return err
 	}
@@ -344,17 +344,18 @@ func isInteractive(promptFlag string) bool {
 
 // newCoordinator creates and returns an agent coordinator with the standard
 // tool registry and config. Both interactive and one-shot paths use this.
-func newCoordinator(ctx context.Context, opts ChatOptions, bearerToken string) (*agent.Coordinator, error) {
+func newCoordinator(ctx context.Context, opts ChatOptions, bearerToken string, interactive bool) (*agent.Coordinator, error) {
 	cwd, _ := os.Getwd()
 	registry := tools.NewRegistry()
 	if err := tools.RegisterBuiltins(registry, cwd); err != nil {
 		return nil, fmt.Errorf("registering built-in tools: %w", err)
 	}
 	extensionManager, err := extensions.NewManager(extensions.Config{
-		WorkingDir: cwd,
-		Sources:    extensions.SourcesFromConfig(cwd, opts.Config.Extensions),
-		Disabled:   opts.Config.Extensions.Disabled,
-		Registry:   registry,
+		WorkingDir:       cwd,
+		Sources:          extensions.SourcesFromConfig(cwd, opts.Config.Extensions),
+		Disabled:         opts.Config.Extensions.Disabled,
+		ReservedCommands: tui.BuiltinCommandNames(),
+		Registry:         registry,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("creating extension manager: %w", err)
@@ -368,6 +369,10 @@ func newCoordinator(ctx context.Context, opts ChatOptions, bearerToken string) (
 		Streamer:      streaming.OpenAIStreamer{Insecure: opts.Insecure},
 		Registry:      registry,
 		ShowReasoning: opts.Config.UI.ShowReasoning,
+		InteractiveUI: interactive,
+		ExtensionReloader: extensionReloader{
+			manager: extensionManager,
+		},
 		OnSessionStart: func(eventContext map[string]any) {
 			extensionManager.Dispatch(extensions.EventSessionStart, eventContext)
 		},
@@ -384,7 +389,7 @@ func newCoordinator(ctx context.Context, opts ChatOptions, bearerToken string) (
 			extensionManager.Dispatch(extensions.EventReasoningDelta, eventContext)
 		},
 		OnClose:       extensionManager.Unload,
-		StartupEvents: extensionStartupEvents(extensionManager.Snapshot().Diagnostics),
+		StartupEvents: extensionStartupEvents(extensionManager.Snapshot()),
 	})
 	if err != nil {
 		extensionManager.Unload()
@@ -393,9 +398,12 @@ func newCoordinator(ctx context.Context, opts ChatOptions, bearerToken string) (
 	return coordinator, nil
 }
 
-func extensionStartupEvents(diagnostics []extensions.Diagnostic) []tauchat.ChatEvent {
-	events := make([]tauchat.ChatEvent, 0, len(diagnostics))
-	for _, diagnostic := range diagnostics {
+func extensionStartupEvents(snapshot extensions.Snapshot) []tauchat.ChatEvent {
+	events := []tauchat.ChatEvent{tauchat.ExtensionCommandsChangedEvent{
+		Commands:   extensionCommands(snapshot.Commands),
+		OccurredAt: time.Now().UTC(),
+	}}
+	for _, diagnostic := range snapshot.Diagnostics {
 		if diagnostic.Severity != extensions.SeverityError {
 			continue
 		}
@@ -411,6 +419,65 @@ func extensionStartupEvents(diagnostics []extensions.Diagnostic) []tauchat.ChatE
 		})
 	}
 	return events
+}
+
+type extensionReloader struct {
+	manager *extensions.Manager
+}
+
+func (r extensionReloader) ReloadExtensions(ctx context.Context, idle bool) (tauchat.ExtensionReloadResult, error) {
+	if r.manager == nil {
+		return tauchat.ExtensionReloadResult{}, errors.New("extension manager is not available")
+	}
+	if err := r.manager.ReloadIfIdle(ctx, idle); err != nil {
+		return tauchat.ExtensionReloadResult{}, err
+	}
+	snapshot := r.manager.Snapshot()
+	return tauchat.ExtensionReloadResult{
+		ExtensionCount: len(snapshot.Extensions),
+		Diagnostics:    extensionDiagnostics(snapshot.Diagnostics),
+		Commands:       extensionCommands(snapshot.Commands),
+	}, nil
+}
+
+func (r extensionReloader) ExtensionCommands() []tauchat.ExtensionCommand {
+	if r.manager == nil {
+		return nil
+	}
+	return extensionCommands(r.manager.Snapshot().Commands)
+}
+
+func (r extensionReloader) RunExtensionCommand(ctx context.Context, name, args string, uiBridge any) (string, error) {
+	if r.manager == nil {
+		return "", errors.New("extension manager is not available")
+	}
+	ui, _ := uiBridge.(tools.UIBridge)
+	return r.manager.ExecuteCommand(ctx, name, args, ui)
+}
+
+func extensionDiagnostics(diagnostics []extensions.Diagnostic) []tauchat.ExtensionDiagnostic {
+	out := make([]tauchat.ExtensionDiagnostic, 0, len(diagnostics))
+	for _, diagnostic := range diagnostics {
+		out = append(out, tauchat.ExtensionDiagnostic{
+			Path:          diagnostic.Path,
+			ExtensionName: diagnostic.ExtensionName,
+			Severity:      string(diagnostic.Severity),
+			Message:       diagnostic.Message,
+		})
+	}
+	return out
+}
+
+func extensionCommands(commands []extensions.Command) []tauchat.ExtensionCommand {
+	out := make([]tauchat.ExtensionCommand, 0, len(commands))
+	for _, command := range commands {
+		out = append(out, tauchat.ExtensionCommand{
+			Name:          command.Name,
+			Description:   command.Description,
+			ExtensionName: command.ExtensionName,
+		})
+	}
+	return out
 }
 
 func staticTokenSource(token string) platform.TokenSource {

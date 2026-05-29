@@ -14,11 +14,20 @@ import (
 )
 
 type luaExtension struct {
-	manifest Extension
-	state    *lua.LState
-	mu       sync.Mutex
-	hooks    map[Event][]*lua.LFunction
-	tools    []string
+	manifest   Extension
+	state      *lua.LState
+	mu         sync.Mutex
+	hooks      map[Event][]*lua.LFunction
+	tools      []string
+	toolDefs   []tools.Tool
+	commands   map[string]luaCommand
+	currentCtx context.Context
+	currentUI  tools.UIBridge
+}
+
+type luaCommand struct {
+	command Command
+	fn      *lua.LFunction
 }
 
 func newLuaExtension(
@@ -34,6 +43,7 @@ func newLuaExtension(
 		manifest: ext,
 		state:    lua.NewState(),
 		hooks:    make(map[Event][]*lua.LFunction),
+		commands: make(map[string]luaCommand),
 	}
 	host.injectTauAPI(registry, recordDiagnostic)
 	if err := host.state.DoFile(ext.Entry); err != nil {
@@ -52,12 +62,45 @@ func (h *luaExtension) injectTauAPI(
 ) {
 	tauTable := h.state.NewTable()
 	h.state.SetFuncs(tauTable, map[string]lua.LGFunction{
-		"log":           h.luaLog(recordDiagnostic),
-		"on":            h.luaRegisterHook(),
-		"register_hook": h.luaRegisterHook(),
-		"register_tool": h.luaRegisterTool(registry),
+		"log":              h.luaLog(recordDiagnostic),
+		"on":               h.luaRegisterHook(),
+		"register_hook":    h.luaRegisterHook(),
+		"register_tool":    h.luaRegisterTool(registry),
+		"register_command": h.luaRegisterCommand(),
+		"confirm":          h.luaConfirm(),
+		"ask":              h.luaAsk(),
 	})
 	h.state.SetGlobal("tau", tauTable)
+}
+
+func (h *luaExtension) luaRegisterCommand() lua.LGFunction {
+	return func(l *lua.LState) int {
+		schemaTable := l.CheckTable(1)
+		fn := l.CheckFunction(2)
+		name := strings.TrimPrefix(strings.TrimSpace(lua.LVAsString(schemaTable.RawGetString("name"))), "/")
+		if name == "" {
+			l.RaiseError("command name is required")
+			return 0
+		}
+		if strings.ContainsAny(name, " \t\r\n") {
+			l.RaiseError("command name must not contain whitespace")
+			return 0
+		}
+		normalized := normalizeName(name)
+		if _, exists := h.commands[normalized]; exists {
+			l.RaiseError("command %q is already registered", name)
+			return 0
+		}
+		h.commands[normalized] = luaCommand{
+			command: Command{
+				Name:          normalized,
+				Description:   lua.LVAsString(schemaTable.RawGetString("description")),
+				ExtensionName: h.manifest.Name,
+			},
+			fn: fn,
+		}
+		return 0
+	}
 }
 
 func (h *luaExtension) luaLog(recordDiagnostic func(Diagnostic)) lua.LGFunction {
@@ -107,8 +150,8 @@ func (h *luaExtension) luaRegisterTool(registry *tools.Registry) lua.LGFunction 
 			return 0
 		}
 		toolName := schema.Name
-		executor := func(ctx context.Context, params json.RawMessage, _ tools.UIBridge) (tools.Result, error) {
-			return h.executeLuaTool(ctx, fn, params)
+		executor := func(ctx context.Context, params json.RawMessage, ui tools.UIBridge) (tools.Result, error) {
+			return h.executeLuaTool(ctx, fn, params, ui)
 		}
 		if err := registry.Register(tools.Tool{
 			Schema:  schema,
@@ -119,6 +162,11 @@ func (h *luaExtension) luaRegisterTool(registry *tools.Registry) lua.LGFunction 
 			return 0
 		}
 		h.tools = append(h.tools, toolName)
+		h.toolDefs = append(h.toolDefs, tools.Tool{
+			Schema:  schema,
+			Execute: executor,
+			Source:  "extension:" + h.manifest.Name,
+		})
 		return 0
 	}
 }
@@ -127,6 +175,7 @@ func (h *luaExtension) executeLuaTool(
 	ctx context.Context,
 	fn *lua.LFunction,
 	params json.RawMessage,
+	ui tools.UIBridge,
 ) (tools.Result, error) {
 	select {
 	case <-ctx.Done():
@@ -143,6 +192,12 @@ func (h *luaExtension) executeLuaTool(
 
 	h.mu.Lock()
 	defer h.mu.Unlock()
+	h.currentCtx = ctx
+	h.currentUI = ui
+	defer func() {
+		h.currentCtx = nil
+		h.currentUI = nil
+	}()
 
 	args := goToLua(h.state, decoded)
 	if err := h.state.CallByParam(lua.P{
@@ -155,6 +210,121 @@ func (h *luaExtension) executeLuaTool(
 	result := h.state.Get(-1)
 	h.state.Pop(1)
 	return toolResultFromLua(result), nil
+}
+
+func (h *luaExtension) luaConfirm() lua.LGFunction {
+	return func(l *lua.LState) int {
+		message := l.CheckString(1)
+		title := "Confirm"
+		if l.GetTop() >= 2 {
+			title = l.CheckString(2)
+		}
+		if h.currentUI == nil {
+			l.RaiseError("%s", tools.ErrInteractiveUnsupported.Error())
+			return 0
+		}
+		ctx := h.currentCtx
+		if ctx == nil {
+			ctx = context.Background()
+		}
+		confirmed, err := h.currentUI.Confirm(ctx, title, message)
+		if err != nil {
+			l.RaiseError("%s", err.Error())
+			return 0
+		}
+		l.Push(lua.LBool(confirmed))
+		return 1
+	}
+}
+
+func (h *luaExtension) luaAsk() lua.LGFunction {
+	return func(l *lua.LState) int {
+		message := l.CheckString(1)
+		title := "Question"
+		if l.GetTop() >= 2 {
+			title = l.CheckString(2)
+		}
+		if h.currentUI == nil {
+			l.RaiseError("%s", tools.ErrInteractiveUnsupported.Error())
+			return 0
+		}
+		ctx := h.currentCtx
+		if ctx == nil {
+			ctx = context.Background()
+		}
+		answer, err := h.currentUI.Input(ctx, title, message)
+		if err != nil {
+			l.RaiseError("%s", err.Error())
+			return 0
+		}
+		l.Push(lua.LString(answer))
+		return 1
+	}
+}
+
+func (h *luaExtension) hasCommand(normalized string) bool {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	_, ok := h.commands[normalized]
+	return ok
+}
+
+func (h *luaExtension) commandsSnapshot() []Command {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	commands := make([]Command, 0, len(h.commands))
+	for _, command := range h.commands {
+		commands = append(commands, command.command)
+	}
+	return commands
+}
+
+func (h *luaExtension) executeCommand(ctx context.Context, normalized, args string, ui tools.UIBridge) (string, error) {
+	select {
+	case <-ctx.Done():
+		return "", ctx.Err()
+	default:
+	}
+
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	command, ok := h.commands[normalized]
+	if !ok {
+		return "", fmt.Errorf("extension command %q not found", normalized)
+	}
+	h.currentCtx = ctx
+	h.currentUI = ui
+	defer func() {
+		h.currentCtx = nil
+		h.currentUI = nil
+	}()
+
+	argTable := h.state.NewTable()
+	argTable.RawSetString("raw", lua.LString(args))
+	argv := h.state.NewTable()
+	if strings.TrimSpace(args) != "" {
+		for i, field := range strings.Fields(args) {
+			argv.RawSetInt(i+1, lua.LString(field))
+		}
+	}
+	argTable.RawSetString("argv", argv)
+	if err := h.state.CallByParam(lua.P{
+		Fn:      command.fn,
+		NRet:    1,
+		Protect: true,
+	}, argTable); err != nil {
+		return "", err
+	}
+	result := h.state.Get(-1)
+	h.state.Pop(1)
+	switch result := result.(type) {
+	case lua.LString:
+		return string(result), nil
+	case *lua.LNilType:
+		return "", nil
+	default:
+		return lua.LVAsString(result), nil
+	}
 }
 
 func (h *luaExtension) dispatch(event Event, ctx map[string]any) []Diagnostic {

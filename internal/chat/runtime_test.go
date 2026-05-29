@@ -209,6 +209,127 @@ func TestRuntimeSubscribeEventsFanout(t *testing.T) {
 	}
 }
 
+func TestRuntimeReloadExtensionsWhileIdle(t *testing.T) {
+	reloader := &fakeRuntimeReloader{
+		result: ExtensionReloadResult{ExtensionCount: 1},
+	}
+	runtime, err := NewRuntime(
+		context.Background(),
+		func(ctx context.Context, _ config.ProviderConfig) (string, error) { return "token", nil },
+		fakeStreamer{},
+	)
+	if err != nil {
+		t.Fatalf("NewRuntime() error = %v", err)
+	}
+	defer runtime.Close()
+	runtime.SetExtensionReloader(reloader)
+
+	sub, err := runtime.SubscribeEvents(8)
+	if err != nil {
+		t.Fatalf("SubscribeEvents() error = %v", err)
+	}
+	defer sub.Unsubscribe()
+
+	if err := runtime.Send(StartChatSessionCommand{
+		SessionID: "s1",
+		Config: ChatSessionConfig{
+			Provider: testRuntimeProvider(),
+			Model:    ChatModelRef{ID: "nemotron", URL: "https://model.example"},
+		},
+	}); err != nil {
+		t.Fatalf("Send(start) error = %v", err)
+	}
+	if err := runtime.Send(ReloadExtensionsCommand{RequestedAt: time.Now().UTC()}); err != nil {
+		t.Fatalf("Send(reload) error = %v", err)
+	}
+
+	deadline := time.After(2 * time.Second)
+	for {
+		select {
+		case <-deadline:
+			t.Fatal("timed out waiting for reload event")
+		case event := <-sub.Channel():
+			reloaded, ok := event.(ExtensionsReloadedEvent)
+			if !ok {
+				continue
+			}
+			if reloaded.Result.ExtensionCount != 1 {
+				t.Fatalf("extension count = %d, want 1", reloaded.Result.ExtensionCount)
+			}
+			if reloader.calls != 1 || !reloader.lastIdle {
+				t.Fatalf("reloader calls = %d idle = %v, want 1 true", reloader.calls, reloader.lastIdle)
+			}
+			return
+		}
+	}
+}
+
+func TestRuntimeReloadExtensionsWhileActiveRejects(t *testing.T) {
+	reloader := &fakeRuntimeReloader{}
+	streamer := &blockingStreamer{started: make(chan struct{})}
+	runtime, err := NewRuntime(
+		context.Background(),
+		func(ctx context.Context, _ config.ProviderConfig) (string, error) { return "token", nil },
+		streamer,
+	)
+	if err != nil {
+		t.Fatalf("NewRuntime() error = %v", err)
+	}
+	defer runtime.Close()
+	runtime.SetExtensionReloader(reloader)
+
+	sub, err := runtime.SubscribeEvents(8)
+	if err != nil {
+		t.Fatalf("SubscribeEvents() error = %v", err)
+	}
+	defer sub.Unsubscribe()
+
+	if err := runtime.Send(StartChatSessionCommand{
+		SessionID: "s1",
+		Config: ChatSessionConfig{
+			Provider: testRuntimeProvider(),
+			Model:    ChatModelRef{ID: "nemotron", URL: "https://model.example"},
+		},
+	}); err != nil {
+		t.Fatalf("Send(start) error = %v", err)
+	}
+	if err := runtime.Send(SubmitChatPromptCommand{
+		SessionID:   "s1",
+		RequestID:   "r1",
+		Prompt:      "Hi",
+		SubmittedAt: time.Now().UTC(),
+	}); err != nil {
+		t.Fatalf("Send(submit) error = %v", err)
+	}
+	select {
+	case <-streamer.started:
+	case <-time.After(2 * time.Second):
+		t.Fatal("timed out waiting for streamer to start")
+	}
+	if err := runtime.Send(ReloadExtensionsCommand{RequestedAt: time.Now().UTC()}); err != nil {
+		t.Fatalf("Send(reload) error = %v", err)
+	}
+
+	deadline := time.After(2 * time.Second)
+	for {
+		select {
+		case <-deadline:
+			t.Fatal("timed out waiting for reload notification")
+		case event := <-sub.Channel():
+			notification, ok := event.(ChatNotificationEvent)
+			if !ok {
+				continue
+			}
+			if notification.Message == "Extension reload is only available while idle" {
+				if reloader.calls != 0 {
+					t.Fatalf("reloader calls = %d, want 0", reloader.calls)
+				}
+				return
+			}
+		}
+	}
+}
+
 type fakeStreamer struct {
 	deltas []string
 	result CompletionResult
@@ -245,4 +366,25 @@ func (b *blockingStreamer) StreamChatCompletion(
 	close(b.started)
 	<-ctx.Done()
 	return CompletionResult{}, ctx.Err()
+}
+
+type fakeRuntimeReloader struct {
+	calls    int
+	lastIdle bool
+	result   ExtensionReloadResult
+	err      error
+}
+
+func (r *fakeRuntimeReloader) ReloadExtensions(_ context.Context, idle bool) (ExtensionReloadResult, error) {
+	r.calls++
+	r.lastIdle = idle
+	return r.result, r.err
+}
+
+func (r *fakeRuntimeReloader) ExtensionCommands() []ExtensionCommand {
+	return r.result.Commands
+}
+
+func (r *fakeRuntimeReloader) RunExtensionCommand(context.Context, string, string, any) (string, error) {
+	return "", nil
 }
