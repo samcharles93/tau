@@ -1,4 +1,4 @@
-package gotui
+package tui
 
 import (
 	"strings"
@@ -6,40 +6,40 @@ import (
 	"unicode"
 	"unicode/utf8"
 
-	gotui "github.com/grindlemire/go-tui"
+	gt "github.com/grindlemire/go-tui"
 )
 
 type chatInput struct {
-	value            *gotui.State[string]
-	cursorPos        *gotui.State[int]
-	scrollPos        *gotui.State[int]
-	blink            *gotui.State[bool]
-	focused          *gotui.State[bool]
+	value            *gt.State[string]
+	cursorPos        *gt.State[int]
+	scrollPos        *gt.State[int]
+	blink            *gt.State[bool]
+	focused          *gt.State[bool]
 	width            int
 	placeholder      string
-	textStyle        gotui.Style
-	placeholderStyle gotui.Style
-	focusColor       gotui.Color
+	textStyle        gt.Style
+	placeholderStyle gt.Style
+	focusColor       gt.Color
 	onSubmit         func(string)
 	onChange         func(string)
 }
 
 func newChatInput(
-	value *gotui.State[string],
+	value *gt.State[string],
 	width int,
 	placeholder string,
-	textStyle gotui.Style,
-	placeholderStyle gotui.Style,
-	focusColor gotui.Color,
+	textStyle gt.Style,
+	placeholderStyle gt.Style,
+	focusColor gt.Color,
 	onSubmit func(string),
 	onChange func(string),
 ) *chatInput {
 	return &chatInput{
 		value:            value,
-		cursorPos:        gotui.NewState(utf8.RuneCountInString(value.Get())),
-		scrollPos:        gotui.NewState(0),
-		blink:            gotui.NewState(true),
-		focused:          gotui.NewState(false),
+		cursorPos:        gt.NewState(utf8.RuneCountInString(value.Get())),
+		scrollPos:        gt.NewState(0),
+		blink:            gt.NewState(true),
+		focused:          gt.NewState(false),
 		width:            width,
 		placeholder:      placeholder,
 		textStyle:        textStyle,
@@ -50,7 +50,7 @@ func newChatInput(
 	}
 }
 
-func (i *chatInput) BindApp(app *gotui.App) {
+func (i *chatInput) BindApp(app *gt.App) {
 	i.value.BindApp(app)
 	i.cursorPos.BindApp(app)
 	i.scrollPos.BindApp(app)
@@ -58,44 +58,44 @@ func (i *chatInput) BindApp(app *gotui.App) {
 	i.focused.BindApp(app)
 }
 
-func (i *chatInput) Render(app *gotui.App) *gotui.Element {
+func (i *chatInput) Render(app *gt.App) *gt.Element {
 	i.ensureCursorVisible()
-	element := gotui.New(
-		gotui.WithDirection(gotui.Row),
-		gotui.WithWidth(i.width),
-		gotui.WithHeight(1),
-		gotui.WithFocusable(true),
-		gotui.WithAutoFocus(true),
+	element := gt.New(
+		gt.WithDirection(gt.Row),
+		gt.WithWidth(i.width),
+		gt.WithHeight(1),
+		gt.WithFocusable(true),
+		gt.WithAutoFocus(true),
 	)
-	element.SetOnFocus(func(*gotui.Element) { i.Focus() })
-	element.SetOnBlur(func(*gotui.Element) { i.Blur() })
+	element.SetOnFocus(func(*gt.Element) { i.Focus() })
+	element.SetOnBlur(func(*gt.Element) { i.Blur() })
 
 	if i.value.Get() == "" && i.placeholder != "" && !i.focused.Get() {
-		element.AddChild(gotui.New(
-			gotui.WithText(i.placeholder),
-			gotui.WithTextStyle(i.placeholderStyle),
+		element.AddChild(gt.New(
+			gt.WithText(i.placeholder),
+			gt.WithTextStyle(i.placeholderStyle),
 		))
 		return element
 	}
-	element.AddChild(gotui.New(
-		gotui.WithText(i.displayText()),
-		gotui.WithTextStyle(i.textStyle),
+	element.AddChild(gt.New(
+		gt.WithText(i.displayText()),
+		gt.WithTextStyle(i.textStyle),
 	))
 	return element
 }
 
-func (i *chatInput) KeyMap() gotui.KeyMap {
-	return gotui.KeyMap{
-		gotui.OnFocused(gotui.AnyRune, i.insertChar),
-		gotui.OnFocused(gotui.KeyBackspace, i.backspace),
-		gotui.OnFocused(gotui.KeyDelete, i.delete),
-		gotui.OnFocused(gotui.KeyLeft, func(gotui.KeyEvent) { i.moveLeft() }),
-		gotui.OnFocused(gotui.KeyRight, func(gotui.KeyEvent) { i.moveRight() }),
-		gotui.OnFocused(gotui.KeyLeft.Ctrl(), func(gotui.KeyEvent) { i.moveWordLeft() }),
-		gotui.OnFocused(gotui.KeyRight.Ctrl(), func(gotui.KeyEvent) { i.moveWordRight() }),
-		gotui.OnFocused(gotui.KeyHome, func(gotui.KeyEvent) { i.moveHome() }),
-		gotui.OnFocused(gotui.KeyEnd, func(gotui.KeyEvent) { i.moveEnd() }),
-		gotui.OnFocused(gotui.KeyEnter, func(gotui.KeyEvent) {
+func (i *chatInput) KeyMap() gt.KeyMap {
+	return gt.KeyMap{
+		gt.OnFocused(gt.AnyRune, i.insertChar),
+		gt.OnFocused(gt.KeyBackspace, i.backspace),
+		gt.OnFocused(gt.KeyDelete, i.delete),
+		gt.OnFocused(gt.KeyLeft, func(gt.KeyEvent) { i.moveLeft() }),
+		gt.OnFocused(gt.KeyRight, func(gt.KeyEvent) { i.moveRight() }),
+		gt.OnFocused(gt.KeyLeft.Ctrl(), func(gt.KeyEvent) { i.moveWordLeft() }),
+		gt.OnFocused(gt.KeyRight.Ctrl(), func(gt.KeyEvent) { i.moveWordRight() }),
+		gt.OnFocused(gt.KeyHome, func(gt.KeyEvent) { i.moveHome() }),
+		gt.OnFocused(gt.KeyEnd, func(gt.KeyEvent) { i.moveEnd() }),
+		gt.OnFocused(gt.KeyEnter, func(gt.KeyEvent) {
 			if i.onSubmit != nil {
 				i.onSubmit(i.value.Get())
 			}
@@ -103,8 +103,8 @@ func (i *chatInput) KeyMap() gotui.KeyMap {
 	}
 }
 
-func (i *chatInput) Watchers() []gotui.Watcher {
-	return []gotui.Watcher{gotui.OnTimer(500*time.Millisecond, func() {
+func (i *chatInput) Watchers() []gt.Watcher {
+	return []gt.Watcher{gt.OnTimer(500*time.Millisecond, func() {
 		if i.focused.Get() {
 			i.blink.Set(!i.blink.Get())
 		}
@@ -136,7 +136,7 @@ func (i *chatInput) Blur() {
 	i.focused.Set(false)
 }
 
-func (i *chatInput) insertChar(ke gotui.KeyEvent) {
+func (i *chatInput) insertChar(ke gt.KeyEvent) {
 	runes := []rune(i.value.Get())
 	pos := i.clampCursorPos()
 	next := make([]rune, 0, len(runes)+1)
@@ -146,7 +146,7 @@ func (i *chatInput) insertChar(ke gotui.KeyEvent) {
 	i.setRunes(next, pos+1)
 }
 
-func (i *chatInput) backspace(gotui.KeyEvent) {
+func (i *chatInput) backspace(gt.KeyEvent) {
 	runes := []rune(i.value.Get())
 	pos := i.clampCursorPos()
 	if pos == 0 {
@@ -156,7 +156,7 @@ func (i *chatInput) backspace(gotui.KeyEvent) {
 	i.setRunes(next, pos-1)
 }
 
-func (i *chatInput) delete(gotui.KeyEvent) {
+func (i *chatInput) delete(gt.KeyEvent) {
 	runes := []rune(i.value.Get())
 	pos := i.clampCursorPos()
 	if pos >= len(runes) {

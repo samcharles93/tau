@@ -1,6 +1,11 @@
 package cli
 
-import urfavecli "github.com/urfave/cli/v3"
+import (
+	"context"
+
+	"github.com/samcharles93/tau/internal/app"
+	urfavecli "github.com/urfave/cli/v3"
+)
 
 func NewRootCommand(version string) *urfavecli.Command {
 	return &urfavecli.Command{
@@ -10,7 +15,6 @@ func NewRootCommand(version string) *urfavecli.Command {
 		Commands: []*urfavecli.Command{
 			tokenCmd(),
 			modelsCmd(),
-			chatCmd(),
 		},
 		Flags: []urfavecli.Flag{
 			&urfavecli.StringFlag{
@@ -29,6 +33,45 @@ func NewRootCommand(version string) *urfavecli.Command {
 				Usage:   "Show progress/debug messages on stderr",
 				Sources: urfavecli.EnvVars("TAU_VERBOSE"),
 			},
+			&urfavecli.StringFlag{
+				Name:  "prompt",
+				Usage: "Prompt text to send; if omitted, stdin is used when piped",
+			},
+			&urfavecli.StringFlag{
+				Name:  "model",
+				Usage: "Model ID to use for chat",
+			},
+			&urfavecli.StringFlag{
+				Name:  "system-prompt",
+				Usage: "Override the system prompt for this chat session",
+			},
+			&urfavecli.IntFlag{
+				Name:  "max-tokens",
+				Usage: "Maximum completion tokens per response",
+				Value: defaultChatParameters.MaxTokens,
+			},
+			&urfavecli.FloatFlag{
+				Name:  "temperature",
+				Usage: "Sampling temperature for the model response",
+				Value: defaultChatParameters.Temperature,
+			},
+		},
+		Action: func(ctx context.Context, cmd *urfavecli.Command) error {
+			cfg, selectedProvider, err := loadProvider(cmd)
+			if err != nil {
+				return err
+			}
+
+			return app.RunChat(ctx, app.ChatOptions{
+				Config:       cfg,
+				Provider:     selectedProvider,
+				Insecure:     cmd.Bool("insecure"),
+				Model:        cmd.String("model"),
+				SystemPrompt: cmd.String("system-prompt"),
+				MaxTokens:    cmd.Int("max-tokens"),
+				Temperature:  cmd.Float("temperature"),
+				Prompt:       cmd.String("prompt"),
+			})
 		},
 	}
 }

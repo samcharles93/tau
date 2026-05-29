@@ -1,11 +1,11 @@
-package gotui
+package tui
 
 import (
 	"context"
 	"strings"
 	"testing"
 
-	gotui "github.com/grindlemire/go-tui"
+	gt "github.com/grindlemire/go-tui"
 	tauchat "github.com/samcharles93/tau/internal/chat"
 	"github.com/samcharles93/tau/internal/pubsub"
 	"github.com/samcharles93/tau/internal/theme"
@@ -27,7 +27,7 @@ func (r *fakeRuntime) SubscribeEvents(int) (*pubsub.Subscription[tauchat.ChatEve
 func (r *fakeRuntime) Close() {}
 
 func newTestPanel(runtime *fakeRuntime) *ChatPanel {
-	return NewChatPanel(context.Background(), runtime, nil, Config{
+	return NewChatPanel(context.Background(), runtime, nil, nil, Config{
 		SessionID: "session_1",
 		ModelName: "model-a",
 		AvailableModels: []tauchat.ChatModelRef{
@@ -257,7 +257,7 @@ func TestStatusBarShowsSelectedModel(t *testing.T) {
 }
 
 func TestInputCtrlWordMovement(t *testing.T) {
-	value := gotui.NewState("hello brave world")
+	value := gt.NewState("hello brave world")
 	input := newChatInput(value, 120, "", theme.BodyStyle(), theme.DimStyle(), theme.ColorPurple, nil, nil)
 
 	input.SetText("hello brave world")

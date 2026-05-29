@@ -2,11 +2,12 @@ package tui
 
 import (
 	"context"
+	"fmt"
 	"log/slog"
 
+	gt "github.com/grindlemire/go-tui"
 	tauchat "github.com/samcharles93/tau/internal/chat"
 	"github.com/samcharles93/tau/internal/pubsub"
-	gotuiui "github.com/samcharles93/tau/internal/tui/gotui"
 	"github.com/samcharles93/tau/internal/tui/notify"
 )
 
@@ -38,14 +39,16 @@ func Run(ctx context.Context, runtime tauchat.ChatRuntime, cfg Config) error {
 	notifySub := cfg.notifyBusSubscription()
 	defer notifySub.Unsubscribe()
 
-	return gotuiui.Run(ctx, runtime, sub, gotuiui.Config{
-		SessionID:          cfg.SessionID,
-		ModelName:          cfg.ModelName,
-		Provider:           cfg.Provider,
-		AvailableModels:    cfg.AvailableModels,
-		AvailableProviders: cfg.AvailableProviders,
-		NotifySub:          notifySub,
-		RefreshModels:      gotuiui.ModelRefresher(cfg.RefreshModels),
-		ShowReasoning:      cfg.ShowReasoning,
-	})
+	root := NewChatPanel(ctx, runtime, sub, notifySub, cfg)
+
+	app, err := gt.NewApp(gt.WithRootComponent(root), gt.WithMouse())
+	if err != nil {
+		return fmt.Errorf("creating go-tui app: %w", err)
+	}
+	defer app.Close()
+
+	if err := app.Run(); err != nil {
+		return fmt.Errorf("running go-tui app: %w", err)
+	}
+	return nil
 }

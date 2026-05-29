@@ -14,54 +14,6 @@ import (
 
 var defaultChatParameters = tauchat.DefaultParameters()
 
-func chatCmd() *urfavecli.Command {
-	return &urfavecli.Command{
-		Name:  "chat",
-		Usage: "Stream a prompt against an OpenAI-compatible chat model",
-		Flags: []urfavecli.Flag{
-			&urfavecli.StringFlag{
-				Name:  "prompt",
-				Usage: "Prompt text to send; if omitted, stdin is used when piped",
-			},
-			&urfavecli.StringFlag{
-				Name:  "model",
-				Usage: "Model ID to use for chat",
-			},
-			&urfavecli.StringFlag{
-				Name:  "system-prompt",
-				Usage: "Override the system prompt for this chat session",
-			},
-			&urfavecli.IntFlag{
-				Name:  "max-tokens",
-				Usage: "Maximum completion tokens per response",
-				Value: defaultChatParameters.MaxTokens,
-			},
-			&urfavecli.FloatFlag{
-				Name:  "temperature",
-				Usage: "Sampling temperature for the model response",
-				Value: defaultChatParameters.Temperature,
-			},
-		},
-		Action: func(ctx context.Context, cmd *urfavecli.Command) error {
-			cfg, selectedProvider, err := loadProvider(cmd)
-			if err != nil {
-				return err
-			}
-
-			return app.RunChat(ctx, app.ChatOptions{
-				Config:       cfg,
-				Provider:     selectedProvider,
-				Insecure:     cmd.Root().Bool("insecure"),
-				Model:        cmd.String("model"),
-				SystemPrompt: cmd.String("system-prompt"),
-				MaxTokens:    cmd.Int("max-tokens"),
-				Temperature:  cmd.Float("temperature"),
-				Prompt:       cmd.String("prompt"),
-			})
-		},
-	}
-}
-
 func tokenCmd() *urfavecli.Command {
 	return &urfavecli.Command{
 		Name:  "token",

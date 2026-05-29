@@ -1,5 +1,4 @@
-// Package gotui provides the go-tui based chat interface for Tau.
-package gotui
+package tui
 
 import (
 	"context"
@@ -10,27 +9,13 @@ import (
 	"strings"
 	"time"
 
-	gotui "github.com/grindlemire/go-tui"
+	gt "github.com/grindlemire/go-tui"
+
 	tauchat "github.com/samcharles93/tau/internal/chat"
 	"github.com/samcharles93/tau/internal/pubsub"
 	"github.com/samcharles93/tau/internal/theme"
 	"github.com/samcharles93/tau/internal/tui/notify"
 )
-
-// ModelRefresher re-discovers available models from the selected provider.
-type ModelRefresher func(ctx context.Context) ([]tauchat.ChatModelRef, error)
-
-// Config holds go-tui chat panel configuration.
-type Config struct {
-	SessionID          string
-	ModelName          string
-	Provider           string
-	AvailableModels    []tauchat.ChatModelRef
-	AvailableProviders []string
-	NotifySub          *pubsub.Subscription[notify.Notification]
-	RefreshModels      ModelRefresher
-	ShowReasoning      bool
-}
 
 type completionItem struct {
 	Value       string
@@ -41,30 +26,31 @@ type completionItem struct {
 
 // ChatPanel is the root go-tui component for the interactive chat UI.
 type ChatPanel struct {
-	ctx      context.Context
-	runtime  tauchat.ChatRuntime
-	eventSub *pubsub.Subscription[tauchat.ChatEvent]
-	cfg      Config
-	app      *gotui.App
+	ctx       context.Context
+	runtime   tauchat.ChatRuntime
+	eventSub  *pubsub.Subscription[tauchat.ChatEvent]
+	cfg       Config
+	app       *gt.App
+	notifySub *pubsub.Subscription[notify.Notification]
 
-	messages           *gotui.State[[]tauchat.ChatMessage]
-	streamingContent   *gotui.State[string]
-	streamingReasoning *gotui.State[string]
-	inputValue         *gotui.State[string]
-	scrollY            *gotui.State[int]
-	status             *gotui.State[tauchat.ChatSessionStatus]
-	lastError          *gotui.State[string]
-	notice             *gotui.State[string]
-	showHelp           *gotui.State[bool]
-	showReasoning      *gotui.State[bool]
-	modelName          *gotui.State[string]
-	availableModels    *gotui.State[[]tauchat.ChatModelRef]
-	extensionCommands  *gotui.State[map[string]tauchat.ExtensionCommand]
-	activeRequestID    *gotui.State[string]
-	completions        *gotui.State[[]completionItem]
-	completionIndex    *gotui.State[int]
-	showSettings       *gotui.State[bool]
-	settingsModal      *gotui.Modal
+	messages           *gt.State[[]tauchat.ChatMessage]
+	streamingContent   *gt.State[string]
+	streamingReasoning *gt.State[string]
+	inputValue         *gt.State[string]
+	scrollY            *gt.State[int]
+	status             *gt.State[tauchat.ChatSessionStatus]
+	lastError          *gt.State[string]
+	notice             *gt.State[string]
+	showHelp           *gt.State[bool]
+	showReasoning      *gt.State[bool]
+	modelName          *gt.State[string]
+	availableModels    *gt.State[[]tauchat.ChatModelRef]
+	extensionCommands  *gt.State[map[string]tauchat.ExtensionCommand]
+	activeRequestID    *gt.State[string]
+	completions        *gt.State[[]completionItem]
+	completionIndex    *gt.State[int]
+	showSettings       *gt.State[bool]
+	settingsModal      *gt.Modal
 	input              *chatInput
 }
 
@@ -73,6 +59,7 @@ func NewChatPanel(
 	ctx context.Context,
 	runtime tauchat.ChatRuntime,
 	eventSub *pubsub.Subscription[tauchat.ChatEvent],
+	notifySub *pubsub.Subscription[notify.Notification],
 	cfg Config,
 ) *ChatPanel {
 	commands := make(map[string]tauchat.ExtensionCommand)
@@ -81,37 +68,38 @@ func NewChatPanel(
 		ctx:                ctx,
 		runtime:            runtime,
 		eventSub:           eventSub,
+		notifySub:          notifySub,
 		cfg:                cfg,
-		messages:           gotui.NewState(make([]tauchat.ChatMessage, 0)),
-		streamingContent:   gotui.NewState(""),
-		streamingReasoning: gotui.NewState(""),
-		inputValue:         gotui.NewState(""),
-		scrollY:            gotui.NewState(0),
-		status:             gotui.NewState(tauchat.ChatSessionIdle),
-		lastError:          gotui.NewState(""),
-		notice:             gotui.NewState(""),
-		showHelp:           gotui.NewState(false),
-		showReasoning:      gotui.NewState(cfg.ShowReasoning),
-		modelName:          gotui.NewState(cfg.ModelName),
-		availableModels:    gotui.NewState(models),
-		extensionCommands:  gotui.NewState(commands),
-		activeRequestID:    gotui.NewState(""),
-		completions:        gotui.NewState(make([]completionItem, 0)),
-		completionIndex:    gotui.NewState(0),
-		showSettings:       gotui.NewState(false),
+		messages:           gt.NewState(make([]tauchat.ChatMessage, 0)),
+		streamingContent:   gt.NewState(""),
+		streamingReasoning: gt.NewState(""),
+		inputValue:         gt.NewState(""),
+		scrollY:            gt.NewState(0),
+		status:             gt.NewState(tauchat.ChatSessionIdle),
+		lastError:          gt.NewState(""),
+		notice:             gt.NewState(""),
+		showHelp:           gt.NewState(false),
+		showReasoning:      gt.NewState(cfg.ShowReasoning),
+		modelName:          gt.NewState(cfg.ModelName),
+		availableModels:    gt.NewState(models),
+		extensionCommands:  gt.NewState(commands),
+		activeRequestID:    gt.NewState(""),
+		completions:        gt.NewState(make([]completionItem, 0)),
+		completionIndex:    gt.NewState(0),
+		showSettings:       gt.NewState(false),
 	}
-	panel.settingsModal = gotui.NewModal(
-		gotui.WithModalOpen(panel.showSettings),
-		gotui.WithModalBackdrop("dim"),
-		gotui.WithModalTrapFocus(true),
-		gotui.WithModalElementOptions(
-			gotui.WithDisplay(gotui.DisplayFlex),
-			gotui.WithDirection(gotui.Column),
-			gotui.WithJustify(gotui.JustifyCenter),
-			gotui.WithAlign(gotui.AlignCenter),
+	panel.settingsModal = gt.NewModal(
+		gt.WithModalOpen(panel.showSettings),
+		gt.WithModalBackdrop("dim"),
+		gt.WithModalTrapFocus(true),
+		gt.WithModalElementOptions(
+			gt.WithDisplay(gt.DisplayFlex),
+			gt.WithDirection(gt.Column),
+			gt.WithJustify(gt.JustifyCenter),
+			gt.WithAlign(gt.AlignCenter),
 		),
-		gotui.WithModalKeyMap(gotui.KeyMap{
-			gotui.OnPreemptStop(gotui.Rune('q'), func(gotui.KeyEvent) {
+		gt.WithModalKeyMap(gt.KeyMap{
+			gt.OnPreemptStop(gt.Rune('q'), func(gt.KeyEvent) {
 				panel.showSettings.Set(false)
 			}),
 		}),
@@ -120,7 +108,7 @@ func NewChatPanel(
 }
 
 // BindApp binds all reactive state to the running app.
-func (c *ChatPanel) BindApp(app *gotui.App) {
+func (c *ChatPanel) BindApp(app *gt.App) {
 	c.app = app
 	c.messages.BindApp(app)
 	c.streamingContent.BindApp(app)
@@ -143,13 +131,13 @@ func (c *ChatPanel) BindApp(app *gotui.App) {
 }
 
 // Watchers bridges runtime and notification channels into the go-tui event loop.
-func (c *ChatPanel) Watchers() []gotui.Watcher {
-	watchers := make([]gotui.Watcher, 0, 2)
+func (c *ChatPanel) Watchers() []gt.Watcher {
+	watchers := make([]gt.Watcher, 0, 2)
 	if c.eventSub != nil && c.eventSub.Channel() != nil {
-		watchers = append(watchers, gotui.Watch(c.eventSub.Channel(), c.handleRuntimeEvent))
+		watchers = append(watchers, gt.Watch(c.eventSub.Channel(), c.handleRuntimeEvent))
 	}
-	if c.cfg.NotifySub != nil && c.cfg.NotifySub.Channel() != nil {
-		watchers = append(watchers, gotui.Watch(c.cfg.NotifySub.Channel(), c.handleNotification))
+	if c.notifySub != nil && c.notifySub.Channel() != nil {
+		watchers = append(watchers, gt.Watch(c.notifySub.Channel(), c.handleNotification))
 	}
 	return watchers
 }
@@ -284,22 +272,22 @@ func (c *ChatPanel) scrollToBottom() {
 }
 
 // Render builds the go-tui element tree.
-func (c *ChatPanel) Render(app *gotui.App) *gotui.Element {
-	root := gotui.New(
-		gotui.WithDisplay(gotui.DisplayFlex),
-		gotui.WithDirection(gotui.Column),
-		gotui.WithWidthPercent(100),
-		gotui.WithHeightPercent(100),
+func (c *ChatPanel) Render(app *gt.App) *gt.Element {
+	root := gt.New(
+		gt.WithDisplay(gt.DisplayFlex),
+		gt.WithDirection(gt.Column),
+		gt.WithWidthPercent(100),
+		gt.WithHeightPercent(100),
 	)
 
 	root.AddChild(c.renderHeader())
 	root.AddChild(c.renderMessages())
 	if errMsg := strings.TrimSpace(c.lastError.Get()); errMsg != "" {
-		root.AddChild(gotui.New(
-			gotui.WithText("Error: "+errMsg),
-			gotui.WithTextStyle(theme.ErrorStyle()),
-			gotui.WithPaddingTRBL(0, 1, 0, 1),
-			gotui.WithFlexShrink(0),
+		root.AddChild(gt.New(
+			gt.WithText("Error: "+errMsg),
+			gt.WithTextStyle(theme.ErrorStyle()),
+			gt.WithPaddingTRBL(0, 1, 0, 1),
+			gt.WithFlexShrink(0),
 		))
 	}
 	if completions := c.renderCompletions(); completions != nil {
@@ -311,41 +299,41 @@ func (c *ChatPanel) Render(app *gotui.App) *gotui.Element {
 	return root
 }
 
-func (c *ChatPanel) renderHeader() *gotui.Element {
-	header := gotui.New(
-		gotui.WithDisplay(gotui.DisplayFlex),
-		gotui.WithDirection(gotui.Row),
-		gotui.WithBorder(gotui.BorderSingle),
-		gotui.WithBorderStyle(theme.BorderStyle()),
-		gotui.WithPaddingTRBL(0, 1, 0, 1),
-		gotui.WithFlexShrink(0),
+func (c *ChatPanel) renderHeader() *gt.Element {
+	header := gt.New(
+		gt.WithDisplay(gt.DisplayFlex),
+		gt.WithDirection(gt.Row),
+		gt.WithBorder(gt.BorderSingle),
+		gt.WithBorderStyle(theme.BorderStyle()),
+		gt.WithPaddingTRBL(0, 1, 0, 1),
+		gt.WithFlexShrink(0),
 	)
-	header.AddChild(gotui.New(
-		gotui.WithText("τ tau"),
-		gotui.WithTextStyle(theme.BrandStyle()),
+	header.AddChild(gt.New(
+		gt.WithText("τ tau"),
+		gt.WithTextStyle(theme.BrandStyle()),
 	))
-	header.AddChild(gotui.New(gotui.WithFlexGrow(1)))
+	header.AddChild(gt.New(gt.WithFlexGrow(1)))
 	right := c.modelName.Get()
 	if c.cfg.Provider != "" {
 		right += " · " + c.cfg.Provider
 	}
-	header.AddChild(gotui.New(
-		gotui.WithText(right),
-		gotui.WithTextStyle(theme.DimStyle()),
+	header.AddChild(gt.New(
+		gt.WithText(right),
+		gt.WithTextStyle(theme.DimStyle()),
 	))
 	return header
 }
 
-func (c *ChatPanel) renderMessages() *gotui.Element {
-	messageList := gotui.New(
-		gotui.WithDisplay(gotui.DisplayFlex),
-		gotui.WithDirection(gotui.Column),
-		gotui.WithFlexGrow(1),
-		gotui.WithScrollable(gotui.ScrollVertical),
-		gotui.WithScrollOffset(0, c.scrollY.Get()),
-		gotui.WithScrollbarHidden(true),
-		gotui.WithPadding(1),
-		gotui.WithGap(1),
+func (c *ChatPanel) renderMessages() *gt.Element {
+	messageList := gt.New(
+		gt.WithDisplay(gt.DisplayFlex),
+		gt.WithDirection(gt.Column),
+		gt.WithFlexGrow(1),
+		gt.WithScrollable(gt.ScrollVertical),
+		gt.WithScrollOffset(0, c.scrollY.Get()),
+		gt.WithScrollbarHidden(true),
+		gt.WithPadding(1),
+		gt.WithGap(1),
 	)
 
 	messages := c.messages.Get()
@@ -356,57 +344,57 @@ func (c *ChatPanel) renderMessages() *gotui.Element {
 		messageList.AddChild(c.renderStreamingContent())
 	}
 	if len(messages) == 0 && c.streamingContent.Get() == "" {
-		messageList.AddChild(gotui.New(
-			gotui.WithText("Start a conversation…"),
-			gotui.WithTextStyle(theme.DimStyle().Italic()),
-			gotui.WithTextAlign(gotui.TextAlignCenter),
+		messageList.AddChild(gt.New(
+			gt.WithText("Start a conversation…"),
+			gt.WithTextStyle(theme.DimStyle().Italic()),
+			gt.WithTextAlign(gt.TextAlignCenter),
 		))
 	}
 	return messageList
 }
 
-func (c *ChatPanel) renderMessage(msg tauchat.ChatMessage) *gotui.Element {
-	block := gotui.New(
-		gotui.WithDisplay(gotui.DisplayFlex),
-		gotui.WithDirection(gotui.Row),
-		gotui.WithGap(1),
+func (c *ChatPanel) renderMessage(msg tauchat.ChatMessage) *gt.Element {
+	block := gt.New(
+		gt.WithDisplay(gt.DisplayFlex),
+		gt.WithDirection(gt.Row),
+		gt.WithGap(1),
 	)
-	block.AddChild(gotui.New(
-		gotui.WithWidth(1),
-		gotui.WithText(roleRail(msg.Role)),
-		gotui.WithTextStyle(roleStyle(msg.Role)),
+	block.AddChild(gt.New(
+		gt.WithWidth(1),
+		gt.WithText(roleRail(msg.Role)),
+		gt.WithTextStyle(roleStyle(msg.Role)),
 	))
 
-	body := gotui.New(
-		gotui.WithDisplay(gotui.DisplayFlex),
-		gotui.WithDirection(gotui.Column),
-		gotui.WithFlexGrow(1),
+	body := gt.New(
+		gt.WithDisplay(gt.DisplayFlex),
+		gt.WithDirection(gt.Column),
+		gt.WithFlexGrow(1),
 	)
 	if label := roleLabel(msg.Role); label != "" {
-		body.AddChild(gotui.New(
-			gotui.WithText(label),
-			gotui.WithTextStyle(roleStyle(msg.Role).Bold()),
+		body.AddChild(gt.New(
+			gt.WithText(label),
+			gt.WithTextStyle(roleStyle(msg.Role).Bold()),
 		))
 	}
 	if c.showReasoning.Get() && msg.ReasoningContent != "" {
-		body.AddChild(gotui.New(
-			gotui.WithText("Reasoning\n"+msg.ReasoningContent),
-			gotui.WithTextStyle(theme.DimStyle()),
-			gotui.WithWrap(true),
+		body.AddChild(gt.New(
+			gt.WithText("Reasoning\n"+msg.ReasoningContent),
+			gt.WithTextStyle(theme.DimStyle()),
+			gt.WithWrap(true),
 		))
 	}
 	if msg.Content != "" {
-		body.AddChild(gotui.New(
-			gotui.WithText(msg.Content),
-			gotui.WithTextStyle(theme.BodyStyle()),
-			gotui.WithWrap(true),
+		body.AddChild(gt.New(
+			gt.WithText(msg.Content),
+			gt.WithTextStyle(theme.BodyStyle()),
+			gt.WithWrap(true),
 		))
 	}
 	block.AddChild(body)
 	return block
 }
 
-func (c *ChatPanel) renderStreamingContent() *gotui.Element {
+func (c *ChatPanel) renderStreamingContent() *gt.Element {
 	content := c.streamingContent.Get()
 	reasoning := ""
 	if c.showReasoning.Get() {
@@ -429,20 +417,20 @@ func (c *ChatPanel) renderStreamingContent() *gotui.Element {
 	})
 }
 
-func (c *ChatPanel) renderInput(app *gotui.App) *gotui.Element {
-	inputContainer := gotui.New(
-		gotui.WithDisplay(gotui.DisplayFlex),
-		gotui.WithDirection(gotui.Row),
-		gotui.WithBorder(gotui.BorderSingle),
-		gotui.WithBorderStyle(theme.BorderStyle()),
-		gotui.WithPaddingTRBL(0, 1, 0, 1),
-		gotui.WithFlexShrink(0),
+func (c *ChatPanel) renderInput(app *gt.App) *gt.Element {
+	inputContainer := gt.New(
+		gt.WithDisplay(gt.DisplayFlex),
+		gt.WithDirection(gt.Row),
+		gt.WithBorder(gt.BorderSingle),
+		gt.WithBorderStyle(theme.BorderStyle()),
+		gt.WithPaddingTRBL(0, 1, 0, 1),
+		gt.WithFlexShrink(0),
 	)
-	inputContainer.AddChild(gotui.New(
-		gotui.WithText("› "),
-		gotui.WithTextStyle(theme.BrandStyle()),
+	inputContainer.AddChild(gt.New(
+		gt.WithText("› "),
+		gt.WithTextStyle(theme.BrandStyle()),
 	))
-	input := app.MountPersistent(c, 0, func() gotui.Component {
+	input := app.MountPersistent(c, 0, func() gt.Component {
 		if c.input == nil {
 			c.input = newChatInput(
 				c.inputValue,
@@ -461,94 +449,94 @@ func (c *ChatPanel) renderInput(app *gotui.App) *gotui.Element {
 	return inputContainer
 }
 
-func (c *ChatPanel) renderStatusBar() *gotui.Element {
-	statusBar := gotui.New(
-		gotui.WithDisplay(gotui.DisplayFlex),
-		gotui.WithDirection(gotui.Row),
-		gotui.WithBorder(gotui.BorderSingle),
-		gotui.WithBorderStyle(theme.BorderStyle()),
-		gotui.WithPaddingTRBL(0, 1, 0, 1),
-		gotui.WithFlexShrink(0),
+func (c *ChatPanel) renderStatusBar() *gt.Element {
+	statusBar := gt.New(
+		gt.WithDisplay(gt.DisplayFlex),
+		gt.WithDirection(gt.Row),
+		gt.WithBorder(gt.BorderSingle),
+		gt.WithBorderStyle(theme.BorderStyle()),
+		gt.WithPaddingTRBL(0, 1, 0, 1),
+		gt.WithFlexShrink(0),
 	)
-	statusBar.AddChild(gotui.New(
-		gotui.WithText(c.statusText()),
-		gotui.WithTextStyle(c.statusStyle()),
+	statusBar.AddChild(gt.New(
+		gt.WithText(c.statusText()),
+		gt.WithTextStyle(c.statusStyle()),
 	))
 	if notice := strings.TrimSpace(c.notice.Get()); notice != "" {
-		statusBar.AddChild(gotui.New(
-			gotui.WithText(" · "+notice),
-			gotui.WithTextStyle(theme.DimStyle()),
-			gotui.WithTruncate(true),
+		statusBar.AddChild(gt.New(
+			gt.WithText(" · "+notice),
+			gt.WithTextStyle(theme.DimStyle()),
+			gt.WithTruncate(true),
 		))
 	}
-	statusBar.AddChild(gotui.New(gotui.WithFlexGrow(1)))
+	statusBar.AddChild(gt.New(gt.WithFlexGrow(1)))
 	modelStatus := c.modelName.Get()
 	if c.cfg.Provider != "" {
 		modelStatus += " · " + c.cfg.Provider
 	}
 	if modelStatus != "" {
-		statusBar.AddChild(gotui.New(
-			gotui.WithText(modelStatus+" · "),
-			gotui.WithTextStyle(theme.BrandStyle()),
-			gotui.WithTruncate(true),
+		statusBar.AddChild(gt.New(
+			gt.WithText(modelStatus+" · "),
+			gt.WithTextStyle(theme.BrandStyle()),
+			gt.WithTruncate(true),
 		))
 	}
 	help := "enter send · tab complete · ctrl+r reasoning · ctrl+c cancel/quit"
 	if c.showHelp.Get() {
 		help = "/new · /model <id> · /system <prompt> · /reload · /refresh · /settings · /exit"
 	}
-	statusBar.AddChild(gotui.New(
-		gotui.WithText(help),
-		gotui.WithTextStyle(theme.DimStyle()),
-		gotui.WithTruncate(true),
+	statusBar.AddChild(gt.New(
+		gt.WithText(help),
+		gt.WithTextStyle(theme.DimStyle()),
+		gt.WithTruncate(true),
 	))
 	return statusBar
 }
 
-func (c *ChatPanel) renderSettingsModal(app *gotui.App) *gotui.Element {
+func (c *ChatPanel) renderSettingsModal(app *gt.App) *gt.Element {
 	modal := c.settingsModal.Render(app)
-	content := gotui.New(
-		gotui.WithDisplay(gotui.DisplayFlex),
-		gotui.WithDirection(gotui.Column),
-		gotui.WithWidth(64),
-		gotui.WithBorder(gotui.BorderRounded),
-		gotui.WithBorderStyle(theme.BrandStyle()),
-		gotui.WithPadding(1),
-		gotui.WithGap(1),
+	content := gt.New(
+		gt.WithDisplay(gt.DisplayFlex),
+		gt.WithDirection(gt.Column),
+		gt.WithWidth(64),
+		gt.WithBorder(gt.BorderRounded),
+		gt.WithBorderStyle(theme.BrandStyle()),
+		gt.WithPadding(1),
+		gt.WithGap(1),
 	)
-	content.AddChild(gotui.New(
-		gotui.WithText("Settings"),
-		gotui.WithTextStyle(theme.BrandStyle()),
+	content.AddChild(gt.New(
+		gt.WithText("Settings"),
+		gt.WithTextStyle(theme.BrandStyle()),
 	))
-	content.AddChild(gotui.New(
-		gotui.WithText("Model: "+c.modelName.Get()),
-		gotui.WithTextStyle(theme.BodyStyle()),
-		gotui.WithTruncate(true),
+	content.AddChild(gt.New(
+		gt.WithText("Model: "+c.modelName.Get()),
+		gt.WithTextStyle(theme.BodyStyle()),
+		gt.WithTruncate(true),
 	))
 	if c.cfg.Provider != "" {
-		content.AddChild(gotui.New(
-			gotui.WithText("Provider: "+c.cfg.Provider),
-			gotui.WithTextStyle(theme.BodyStyle()),
-			gotui.WithTruncate(true),
+		content.AddChild(gt.New(
+			gt.WithText("Provider: "+c.cfg.Provider),
+			gt.WithTextStyle(theme.BodyStyle()),
+			gt.WithTruncate(true),
 		))
 	}
 	reasoning := "off"
 	if c.showReasoning.Get() {
 		reasoning = "on"
 	}
-	content.AddChild(gotui.New(
-		gotui.WithText("Reasoning: "+reasoning+" (Ctrl+R or /reasoning toggle)"),
-		gotui.WithTextStyle(theme.BodyStyle()),
-		gotui.WithTruncate(true),
+	content.AddChild(gt.New(
+		gt.WithText("Reasoning: "+reasoning+" (Ctrl+R or /reasoning toggle)"),
+		gt.WithTextStyle(theme.BodyStyle()),
+		gt.WithTruncate(true),
 	))
-	content.AddChild(gotui.New(
-		gotui.WithText("Commands: /model <id>, /refresh, /reload, /system <prompt>"),
-		gotui.WithTextStyle(theme.DimStyle()),
-		gotui.WithWrap(true),
+	content.AddChild(gt.New(
+		gt.WithText("Commands: /model <id>, /refresh, /reload, /system <prompt>"),
+		gt.WithTextStyle(theme.DimStyle()),
+		gt.WithWrap(true),
 	))
-	content.AddChild(gotui.New(
-		gotui.WithText("Esc or q closes this dialog."),
-		gotui.WithTextStyle(theme.DimStyle()),
+	content.AddChild(gt.New(
+		gt.WithText("Esc or q closes this dialog."),
+		gt.WithTextStyle(theme.DimStyle()),
 	))
 	modal.AddChild(content)
 	return modal
@@ -567,7 +555,7 @@ func (c *ChatPanel) statusText() string {
 	}
 }
 
-func (c *ChatPanel) statusStyle() gotui.Style {
+func (c *ChatPanel) statusStyle() gt.Style {
 	switch c.status.Get() {
 	case tauchat.ChatSessionStreaming, tauchat.ChatSessionCancelling:
 		return theme.BrandStyle()
@@ -755,20 +743,20 @@ func (c *ChatPanel) refreshModels() {
 	}()
 }
 
-func (c *ChatPanel) renderCompletions() *gotui.Element {
+func (c *ChatPanel) renderCompletions() *gt.Element {
 	items := c.completions.Get()
 	if len(items) == 0 {
 		return nil
 	}
 	selected := clamp(c.completionIndex.Get(), 0, len(items)-1)
-	container := gotui.New(
-		gotui.WithDisplay(gotui.DisplayFlex),
-		gotui.WithDirection(gotui.Column),
-		gotui.WithBorder(gotui.BorderSingle),
-		gotui.WithBorderStyle(theme.BorderStyle()),
-		gotui.WithPaddingTRBL(0, 1, 0, 1),
-		gotui.WithFlexShrink(0),
-		gotui.WithGap(0),
+	container := gt.New(
+		gt.WithDisplay(gt.DisplayFlex),
+		gt.WithDirection(gt.Column),
+		gt.WithBorder(gt.BorderSingle),
+		gt.WithBorderStyle(theme.BorderStyle()),
+		gt.WithPaddingTRBL(0, 1, 0, 1),
+		gt.WithFlexShrink(0),
+		gt.WithGap(0),
 	)
 	for i, item := range items {
 		prefix := "  "
@@ -781,10 +769,10 @@ func (c *ChatPanel) renderCompletions() *gotui.Element {
 		if item.Description != "" {
 			line += " — " + item.Description
 		}
-		container.AddChild(gotui.New(
-			gotui.WithText(line),
-			gotui.WithTextStyle(style),
-			gotui.WithTruncate(true),
+		container.AddChild(gt.New(
+			gt.WithText(line),
+			gt.WithTextStyle(style),
+			gt.WithTruncate(true),
 		))
 	}
 	return container
@@ -962,9 +950,9 @@ func limitCompletions(items []completionItem) []completionItem {
 }
 
 // KeyMap defines app-level keyboard shortcuts.
-func (c *ChatPanel) KeyMap() gotui.KeyMap {
-	return gotui.KeyMap{
-		gotui.On(gotui.KeyEscape, func(ke gotui.KeyEvent) {
+func (c *ChatPanel) KeyMap() gt.KeyMap {
+	return gt.KeyMap{
+		gt.On(gt.KeyEscape, func(ke gt.KeyEvent) {
 			if len(c.completions.Get()) > 0 {
 				c.closeCompletions()
 				return
@@ -975,24 +963,24 @@ func (c *ChatPanel) KeyMap() gotui.KeyMap {
 			}
 			ke.App().Stop()
 		}),
-		gotui.On(gotui.KeyTab, func(ke gotui.KeyEvent) {
+		gt.On(gt.KeyTab, func(ke gt.KeyEvent) {
 			c.applySelectedCompletion()
 		}),
-		gotui.On(gotui.KeyUp, func(ke gotui.KeyEvent) {
+		gt.On(gt.KeyUp, func(ke gt.KeyEvent) {
 			if len(c.completions.Get()) > 0 {
 				c.selectCompletion(-1)
 				return
 			}
 			c.scrollY.Set(max(0, c.scrollY.Get()-2))
 		}),
-		gotui.On(gotui.KeyDown, func(ke gotui.KeyEvent) {
+		gt.On(gt.KeyDown, func(ke gt.KeyEvent) {
 			if len(c.completions.Get()) > 0 {
 				c.selectCompletion(1)
 				return
 			}
 			c.scrollY.Set(c.scrollY.Get() + 2)
 		}),
-		gotui.On(gotui.KeyCtrlC, func(ke gotui.KeyEvent) {
+		gt.On(gt.KeyCtrlC, func(ke gt.KeyEvent) {
 			if c.status.Get() == tauchat.ChatSessionStreaming {
 				c.status.Set(tauchat.ChatSessionCancelling)
 				c.sendCommand(tauchat.CancelChatRequestCommand{
@@ -1005,13 +993,13 @@ func (c *ChatPanel) KeyMap() gotui.KeyMap {
 			}
 			ke.App().Stop()
 		}),
-		gotui.On(gotui.KeyCtrlR, func(ke gotui.KeyEvent) {
+		gt.On(gt.KeyCtrlR, func(ke gt.KeyEvent) {
 			c.showReasoning.Set(!c.showReasoning.Get())
 		}),
-		gotui.On(gotui.KeyPageUp, func(ke gotui.KeyEvent) {
+		gt.On(gt.KeyPageUp, func(ke gt.KeyEvent) {
 			c.scrollY.Set(max(0, c.scrollY.Get()-10))
 		}),
-		gotui.On(gotui.KeyPageDown, func(ke gotui.KeyEvent) {
+		gt.On(gt.KeyPageDown, func(ke gt.KeyEvent) {
 			c.scrollY.Set(c.scrollY.Get() + 10)
 		}),
 	}
@@ -1045,14 +1033,14 @@ func roleRail(role tauchat.ChatRole) string {
 	}
 }
 
-func roleStyle(role tauchat.ChatRole) gotui.Style {
+func roleStyle(role tauchat.ChatRole) gt.Style {
 	switch role {
 	case tauchat.ChatRoleUser:
-		return gotui.NewStyle().Foreground(theme.ColorNavyBlue)
+		return gt.NewStyle().Foreground(theme.ColorNavyBlue)
 	case tauchat.ChatRoleAssistant:
 		return theme.BrandStyle()
 	case tauchat.ChatRoleTool:
-		return gotui.NewStyle().Foreground(theme.ColorGreen)
+		return gt.NewStyle().Foreground(theme.ColorGreen)
 	case tauchat.ChatRoleSystem:
 		return theme.DimStyle()
 	default:
