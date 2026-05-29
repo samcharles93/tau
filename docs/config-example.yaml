@@ -1,0 +1,57 @@
+# Example Tau configuration.
+# Copy to ~/.config/tau/config.yaml for global use or .tau.yaml in a project.
+# Keep secrets out of config files; reference API keys with environment variables.
+
+default_provider: hosted-example
+default_model: example-chat-model
+
+providers:
+  - name: hosted-example
+    type: hosted
+    api: openai-completions
+    base_url: https://hosted-provider.example.invalid
+    auth:
+      type: api_key
+      api_key_env: EXAMPLE_PROVIDER_API_KEY
+    models:
+      - id: example-chat-model
+        name: Example Chat Model
+        context_window: 128000
+        default_max_tokens: 8192
+        max_tokens: 32768
+        input:
+          - text
+
+  - name: local-example
+    type: local
+    api: openai-completions
+    base_url: http://local-provider.example.invalid
+    auth:
+      type: none
+    models:
+      - id: example-local-model
+        name: Example Local Model
+        context_window: 32768
+        default_max_tokens: 4096
+        max_tokens: 8192
+        input:
+          - text
+
+  - name: browser-login-example
+    type: hosted
+    api: openai-completions
+    base_url: https://browser-provider.example.invalid
+    auth:
+      type: oauth_pkce
+      authorize_url: https://auth-provider.example.invalid/oauth/authorize
+      token_url: https://auth-provider.example.invalid/oauth/token
+      client_id: example-client-id
+      idp: example-idp
+    models:
+      - id: example-oauth-model
+        name: Example OAuth Model
+        context_window: 128000
+        default_max_tokens: 8192
+        max_tokens: 32768
+        input:
+          - text
