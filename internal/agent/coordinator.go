@@ -199,6 +199,7 @@ func (c *Coordinator) Send(cmd chat.ChatCommand) error {
 func (c *Coordinator) Close() {
 	c.closeOnce.Do(func() {
 		c.cancel()
+		c.cancelInteractivePrompts()
 		<-c.loopDone
 		if c.onClose != nil {
 			c.onClose()
@@ -237,6 +238,8 @@ func (c *Coordinator) handleCommand(cmd chat.ChatCommand) {
 		c.handleClose(command)
 	case chat.ReloadExtensionsCommand:
 		c.handleReloadExtensions(command)
+	case chat.RunExtensionCommandCommand:
+		c.handleRunExtensionCommand(command)
 	case chat.RespondInteractivePromptCommand:
 		c.handleInteractivePromptResponse(command)
 	default:
@@ -321,11 +324,9 @@ func (c *Coordinator) handleSubmit(cmd chat.SubmitChatPromptCommand) {
 		StartedAt: now,
 	})
 
-	c.turnWG.Add(1)
-	go func() {
-		defer c.turnWG.Done()
+	c.turnWG.Go(func() {
 		c.runTurn(turnCtx, turnState)
-	}()
+	})
 }
 
 func (c *Coordinator) handleUpdate(cmd chat.UpdateChatSessionCommand) {
@@ -507,6 +508,10 @@ func (c *Coordinator) handleReloadExtensions(cmd chat.ReloadExtensionsCommand) {
 	}
 
 	c.emit(chat.ExtensionsReloadedEvent{Result: result, OccurredAt: now})
+	c.emit(chat.ExtensionCommandsChangedEvent{
+		Commands:   result.Commands,
+		OccurredAt: now,
+	})
 	c.emit(chat.ChatNotificationEvent{
 		Message:    extensionReloadMessage(result),
 		Level:      chat.ChatNotificationInfo,
@@ -538,7 +543,54 @@ func (c *Coordinator) handleInteractivePromptResponse(cmd chat.RespondInteractiv
 	if ch == nil {
 		return
 	}
-	ch <- interactivePromptResponse{confirmed: cmd.Confirmed, canceled: cmd.Canceled}
+	ch <- interactivePromptResponse{confirmed: cmd.Confirmed, canceled: cmd.Canceled, response: cmd.Response}
+}
+
+func (c *Coordinator) handleRunExtensionCommand(cmd chat.RunExtensionCommandCommand) {
+	now := normalizedTime(cmd.RequestedAt)
+	if c.extensionReloader == nil {
+		c.emit(chat.ChatNotificationEvent{
+			Message:    "Extension commands are not available",
+			Level:      chat.ChatNotificationWarn,
+			OccurredAt: now,
+		})
+		return
+	}
+	if !c.isIdle() {
+		c.emit(chat.ChatNotificationEvent{
+			Message:    "Extension commands are only available while idle",
+			Level:      chat.ChatNotificationWarn,
+			OccurredAt: now,
+		})
+		return
+	}
+	name := strings.TrimSpace(cmd.Name)
+	args := strings.TrimSpace(cmd.Args)
+	c.turnWG.Go(func() {
+		output, err := c.extensionReloader.RunExtensionCommand(c.ctx, name, args, c.uiBridge)
+		at := time.Now().UTC()
+		if err != nil {
+			c.emit(chat.ChatNotificationEvent{
+				Message:    "Extension command failed: " + err.Error(),
+				Level:      chat.ChatNotificationError,
+				OccurredAt: at,
+			})
+			c.emit(chat.ChatRuntimeErrorEvent{
+				Message:    "Extension command failed: " + err.Error(),
+				Fatal:      false,
+				OccurredAt: at,
+			})
+			return
+		}
+		c.emit(chat.ExtensionCommandResultEvent{Name: name, Output: output, OccurredAt: at})
+		if strings.TrimSpace(output) != "" {
+			c.emit(chat.ChatNotificationEvent{
+				Message:    "Extension command completed: /" + name,
+				Level:      chat.ChatNotificationInfo,
+				OccurredAt: at,
+			})
+		}
+	})
 }
 
 func (c *Coordinator) isIdle() bool {

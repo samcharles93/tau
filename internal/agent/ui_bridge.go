@@ -13,6 +13,7 @@ import (
 type interactivePromptResponse struct {
 	confirmed bool
 	canceled  bool
+	response  string
 }
 
 type coordinatorUIBridge struct {
@@ -43,6 +44,8 @@ func (b *coordinatorUIBridge) Confirm(ctx context.Context, title, description st
 	select {
 	case <-ctx.Done():
 		return false, ctx.Err()
+	case <-c.ctx.Done():
+		return false, c.ctx.Err()
 	case response := <-ch:
 		if response.canceled {
 			return false, tools.ErrInteractiveCanceled
@@ -55,8 +58,38 @@ func (b *coordinatorUIBridge) Select(context.Context, string, []string) (string,
 	return "", tools.ErrInteractiveUnsupported
 }
 
-func (b *coordinatorUIBridge) Input(context.Context, string, string) (string, error) {
-	return "", tools.ErrInteractiveUnsupported
+func (b *coordinatorUIBridge) Input(ctx context.Context, title, placeholder string) (string, error) {
+	if b == nil || b.coordinator == nil || !b.coordinator.interactiveUI {
+		return "", tools.ErrInteractiveUnsupported
+	}
+	c := b.coordinator
+	requestID := c.nextPromptID()
+	ch := make(chan interactivePromptResponse, 1)
+
+	c.promptMu.Lock()
+	c.prompts[requestID] = ch
+	c.promptMu.Unlock()
+	defer c.forgetPrompt(requestID)
+
+	c.emit(chat.InteractivePromptRequestedEvent{
+		RequestID:   requestID,
+		Kind:        chat.InteractivePromptQuestion,
+		Title:       title,
+		Message:     placeholder,
+		RequestedAt: time.Now().UTC(),
+	})
+
+	select {
+	case <-ctx.Done():
+		return "", ctx.Err()
+	case <-c.ctx.Done():
+		return "", c.ctx.Err()
+	case response := <-ch:
+		if response.canceled {
+			return "", tools.ErrInteractiveCanceled
+		}
+		return response.response, nil
+	}
 }
 
 func (b *coordinatorUIBridge) Notify(title, level string) {
@@ -86,6 +119,16 @@ func (c *Coordinator) forgetPrompt(requestID string) {
 	c.promptMu.Lock()
 	delete(c.prompts, requestID)
 	c.promptMu.Unlock()
+}
+
+func (c *Coordinator) cancelInteractivePrompts() {
+	c.promptMu.Lock()
+	prompts := c.prompts
+	c.prompts = make(map[string]chan interactivePromptResponse)
+	c.promptMu.Unlock()
+	for _, ch := range prompts {
+		ch <- interactivePromptResponse{canceled: true}
+	}
 }
 
 func extensionReloadMessage(result chat.ExtensionReloadResult) string {

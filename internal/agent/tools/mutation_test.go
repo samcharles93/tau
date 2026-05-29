@@ -18,9 +18,7 @@ func TestMutationQueue_Serializes(t *testing.T) {
 
 	for i := range 50 {
 		_ = i
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
+		wg.Go(func() {
 			release := q.Acquire(path)
 			defer release()
 
@@ -33,7 +31,7 @@ func TestMutationQueue_Serializes(t *testing.T) {
 				}
 			}
 			counter.Add(-1)
-		}()
+		})
 	}
 
 	wg.Wait()

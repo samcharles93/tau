@@ -3,6 +3,7 @@ package agent
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"strings"
 	"sync"
 	"testing"
@@ -332,6 +333,312 @@ func TestCoordinatorUnknownToolPublishesCompletedError(t *testing.T) {
 	}
 }
 
+func TestCoordinatorReloadExtensionsWhileIdle(t *testing.T) {
+	reloader := &fakeExtensionReloader{
+		result: chat.ExtensionReloadResult{
+			ExtensionCount: 2,
+			Diagnostics: []chat.ExtensionDiagnostic{{
+				ExtensionName: "demo",
+				Severity:      "warning",
+				Message:       "heads up",
+			}},
+		},
+	}
+	coordinator, err := NewCoordinator(context.Background(), CoordinatorConfig{
+		TokenSource: func(context.Context, config.ProviderConfig) (string, error) {
+			return "", nil
+		},
+		Streamer:          noopStreamer{},
+		Registry:          tools.NewRegistry(),
+		ExtensionReloader: reloader,
+	})
+	require.NoError(t, err)
+	defer coordinator.Close()
+
+	sub, err := coordinator.SubscribeEvents(8)
+	require.NoError(t, err)
+	defer sub.Unsubscribe()
+
+	startTestSession(t, coordinator)
+	require.NoError(t, coordinator.Send(chat.ReloadExtensionsCommand{RequestedAt: time.Now().UTC()}))
+
+	var sawReload, sawSuccess bool
+	deadline := time.After(time.Second)
+	for !sawReload || !sawSuccess {
+		select {
+		case event := <-sub.Channel():
+			switch ev := event.(type) {
+			case chat.ExtensionsReloadedEvent:
+				require.Equal(t, 2, ev.Result.ExtensionCount)
+				require.Len(t, ev.Result.Diagnostics, 1)
+				sawReload = true
+			case chat.ChatNotificationEvent:
+				if strings.Contains(ev.Message, "Reloaded extensions") {
+					sawSuccess = true
+				}
+			}
+		case <-deadline:
+			t.Fatal("timed out waiting for reload events")
+		}
+	}
+	require.Equal(t, 1, reloader.calls)
+	require.True(t, reloader.lastIdle)
+}
+
+func TestCoordinatorReloadExtensionsWhileActiveRejects(t *testing.T) {
+	reloader := &fakeExtensionReloader{}
+	streamer := &blockingFullStreamer{started: make(chan struct{})}
+	coordinator, err := NewCoordinator(context.Background(), CoordinatorConfig{
+		TokenSource: func(context.Context, config.ProviderConfig) (string, error) {
+			return "", nil
+		},
+		Streamer:          streamer,
+		Registry:          tools.NewRegistry(),
+		ExtensionReloader: reloader,
+	})
+	require.NoError(t, err)
+	defer coordinator.Close()
+
+	sub, err := coordinator.SubscribeEvents(16)
+	require.NoError(t, err)
+	defer sub.Unsubscribe()
+
+	startTestSession(t, coordinator)
+	require.NoError(t, coordinator.Send(chat.SubmitChatPromptCommand{
+		SessionID:   "session-1",
+		RequestID:   "request-1",
+		Prompt:      "hold",
+		SubmittedAt: time.Now().UTC(),
+	}))
+	select {
+	case <-streamer.started:
+	case <-time.After(time.Second):
+		t.Fatal("timed out waiting for streamer")
+	}
+	require.NoError(t, coordinator.Send(chat.ReloadExtensionsCommand{RequestedAt: time.Now().UTC()}))
+
+	deadline := time.After(time.Second)
+	for {
+		select {
+		case event := <-sub.Channel():
+			notification, ok := event.(chat.ChatNotificationEvent)
+			if !ok {
+				continue
+			}
+			if strings.Contains(notification.Message, "only available while idle") {
+				require.Equal(t, 0, reloader.calls)
+				return
+			}
+		case <-deadline:
+			t.Fatal("timed out waiting for busy reload notification")
+		}
+	}
+}
+
+func TestCoordinatorConfirmBridgeResponseAndCancel(t *testing.T) {
+	coordinator, err := NewCoordinator(context.Background(), CoordinatorConfig{
+		TokenSource: func(context.Context, config.ProviderConfig) (string, error) {
+			return "", nil
+		},
+		Streamer:      noopStreamer{},
+		Registry:      tools.NewRegistry(),
+		InteractiveUI: true,
+	})
+	require.NoError(t, err)
+	defer coordinator.Close()
+
+	sub, err := coordinator.SubscribeEvents(4)
+	require.NoError(t, err)
+	defer sub.Unsubscribe()
+
+	resultCh := make(chan bool, 1)
+	errCh := make(chan error, 1)
+	go func() {
+		result, err := coordinator.uiBridge.Confirm(context.Background(), "Title", "Continue?")
+		if err != nil {
+			errCh <- err
+			return
+		}
+		resultCh <- result
+	}()
+
+	var requestID string
+	select {
+	case event := <-sub.Channel():
+		request, ok := event.(chat.InteractivePromptRequestedEvent)
+		require.True(t, ok)
+		require.Equal(t, chat.InteractivePromptConfirm, request.Kind)
+		requestID = request.RequestID
+	case <-time.After(time.Second):
+		t.Fatal("timed out waiting for prompt request")
+	}
+	require.NoError(t, coordinator.Send(chat.RespondInteractivePromptCommand{
+		RequestID: requestID,
+		Confirmed: true,
+	}))
+	select {
+	case result := <-resultCh:
+		require.True(t, result)
+	case err := <-errCh:
+		t.Fatalf("confirm returned error: %v", err)
+	case <-time.After(time.Second):
+		t.Fatal("timed out waiting for prompt result")
+	}
+
+	errCh = make(chan error, 1)
+	go func() {
+		_, err := coordinator.uiBridge.Confirm(context.Background(), "Title", "Cancel?")
+		errCh <- err
+	}()
+	select {
+	case event := <-sub.Channel():
+		request := event.(chat.InteractivePromptRequestedEvent)
+		require.NoError(t, coordinator.Send(chat.RespondInteractivePromptCommand{
+			RequestID: request.RequestID,
+			Canceled:  true,
+		}))
+	case <-time.After(time.Second):
+		t.Fatal("timed out waiting for cancel prompt request")
+	}
+	select {
+	case err := <-errCh:
+		require.ErrorIs(t, err, tools.ErrInteractiveCanceled)
+	case <-time.After(time.Second):
+		t.Fatal("timed out waiting for canceled prompt result")
+	}
+}
+
+func TestCoordinatorQuestionBridgeResponse(t *testing.T) {
+	coordinator, err := NewCoordinator(context.Background(), CoordinatorConfig{
+		TokenSource: func(context.Context, config.ProviderConfig) (string, error) {
+			return "", nil
+		},
+		Streamer:      noopStreamer{},
+		Registry:      tools.NewRegistry(),
+		InteractiveUI: true,
+	})
+	require.NoError(t, err)
+	defer coordinator.Close()
+
+	sub, err := coordinator.SubscribeEvents(4)
+	require.NoError(t, err)
+	defer sub.Unsubscribe()
+
+	resultCh := make(chan string, 1)
+	errCh := make(chan error, 1)
+	go func() {
+		result, err := coordinator.uiBridge.Input(context.Background(), "Question", "Your name?")
+		if err != nil {
+			errCh <- err
+			return
+		}
+		resultCh <- result
+	}()
+
+	var requestID string
+	select {
+	case event := <-sub.Channel():
+		request, ok := event.(chat.InteractivePromptRequestedEvent)
+		require.True(t, ok)
+		require.Equal(t, chat.InteractivePromptQuestion, request.Kind)
+		requestID = request.RequestID
+	case <-time.After(time.Second):
+		t.Fatal("timed out waiting for prompt request")
+	}
+	require.NoError(t, coordinator.Send(chat.RespondInteractivePromptCommand{
+		RequestID: requestID,
+		Response:  "Tau",
+	}))
+	select {
+	case result := <-resultCh:
+		require.Equal(t, "Tau", result)
+	case err := <-errCh:
+		t.Fatalf("question returned error: %v", err)
+	case <-time.After(time.Second):
+		t.Fatal("timed out waiting for prompt result")
+	}
+}
+
+func TestCoordinatorPromptBridgeUnblocksOnClose(t *testing.T) {
+	coordinator, err := NewCoordinator(context.Background(), CoordinatorConfig{
+		TokenSource: func(context.Context, config.ProviderConfig) (string, error) {
+			return "", nil
+		},
+		Streamer:      noopStreamer{},
+		Registry:      tools.NewRegistry(),
+		InteractiveUI: true,
+	})
+	require.NoError(t, err)
+
+	sub, err := coordinator.SubscribeEvents(4)
+	require.NoError(t, err)
+	defer sub.Unsubscribe()
+
+	errCh := make(chan error, 1)
+	go func() {
+		_, err := coordinator.uiBridge.Confirm(context.Background(), "Title", "Continue?")
+		errCh <- err
+	}()
+
+	select {
+	case event := <-sub.Channel():
+		_, ok := event.(chat.InteractivePromptRequestedEvent)
+		require.True(t, ok)
+	case <-time.After(time.Second):
+		t.Fatal("timed out waiting for prompt request")
+	}
+
+	coordinator.Close()
+	select {
+	case err := <-errCh:
+		if !errors.Is(err, context.Canceled) && !errors.Is(err, tools.ErrInteractiveCanceled) {
+			t.Fatalf("confirm error = %v, want cancellation", err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("timed out waiting for prompt cancellation")
+	}
+}
+
+func TestCoordinatorRunsExtensionCommand(t *testing.T) {
+	reloader := &fakeExtensionReloader{commandOutput: "hello from extension"}
+	coordinator, err := NewCoordinator(context.Background(), CoordinatorConfig{
+		TokenSource: func(context.Context, config.ProviderConfig) (string, error) {
+			return "", nil
+		},
+		Streamer:          noopStreamer{},
+		Registry:          tools.NewRegistry(),
+		ExtensionReloader: reloader,
+		InteractiveUI:     true,
+	})
+	require.NoError(t, err)
+	defer coordinator.Close()
+
+	sub, err := coordinator.SubscribeEvents(8)
+	require.NoError(t, err)
+	defer sub.Unsubscribe()
+	startTestSession(t, coordinator)
+	require.NoError(t, coordinator.Send(chat.RunExtensionCommandCommand{Name: "hello", Args: "sam"}))
+
+	deadline := time.After(time.Second)
+	for {
+		select {
+		case event := <-sub.Channel():
+			result, ok := event.(chat.ExtensionCommandResultEvent)
+			if !ok {
+				continue
+			}
+			require.Equal(t, "hello", result.Name)
+			require.Equal(t, "hello from extension", result.Output)
+			require.Equal(t, "hello", reloader.commandName)
+			require.Equal(t, "sam", reloader.commandArgs)
+			require.NotNil(t, reloader.commandUI)
+			return
+		case <-deadline:
+			t.Fatal("timed out waiting for extension command result")
+		}
+	}
+}
+
 type reasoningOnlyStreamer struct{}
 
 func (*reasoningOnlyStreamer) StreamChatCompletionFull(
@@ -377,6 +684,50 @@ func (s *unknownToolStreamer) StreamChatCompletionFull(
 			},
 		}},
 	}, nil
+}
+
+type fakeExtensionReloader struct {
+	calls         int
+	lastIdle      bool
+	result        chat.ExtensionReloadResult
+	err           error
+	commandName   string
+	commandArgs   string
+	commandUI     any
+	commandOutput string
+}
+
+func (r *fakeExtensionReloader) ReloadExtensions(_ context.Context, idle bool) (chat.ExtensionReloadResult, error) {
+	r.calls++
+	r.lastIdle = idle
+	return r.result, r.err
+}
+
+func (r *fakeExtensionReloader) ExtensionCommands() []chat.ExtensionCommand {
+	return r.result.Commands
+}
+
+func (r *fakeExtensionReloader) RunExtensionCommand(_ context.Context, name, args string, ui any) (string, error) {
+	r.commandName = name
+	r.commandArgs = args
+	r.commandUI = ui
+	return r.commandOutput, nil
+}
+
+type blockingFullStreamer struct {
+	started chan struct{}
+	once    sync.Once
+}
+
+func (s *blockingFullStreamer) StreamChatCompletionFull(
+	ctx context.Context,
+	_ chat.ChatSessionState,
+	_ string,
+	_ chat.StreamCallbacks,
+) (chat.CompletionResult, error) {
+	s.once.Do(func() { close(s.started) })
+	<-ctx.Done()
+	return chat.CompletionResult{}, ctx.Err()
 }
 
 func startTestSession(t *testing.T, coordinator *Coordinator) {

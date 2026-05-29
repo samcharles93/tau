@@ -20,7 +20,7 @@ The project follows a **layered architecture** with a command/event boundary bet
 | CLI | `internal/cli/` | Command definitions & flag parsing (thin handlers) |
 | Orchestration | `internal/app/` | Wires subsystems together for each use case (chat, token, models) |
 | Domain | `internal/chat/`, `internal/skills/`, `internal/agent/` | Core business logic, commands, events |
-| Presentation | `internal/tui/`, `internal/completions/` | Bubble Tea UI, popup completions |
+| Presentation | `internal/tui/` | go-tui interactive terminal UI |
 | Infrastructure | `internal/platform/`, `internal/maas/`, `internal/config/`, `internal/pubsub/`, `internal/theme/`, `internal/store/` | Auth, HTTP, API clients, config, event bus, theming, persistence |
 
 ### Package Responsibilities
@@ -28,13 +28,12 @@ The project follows a **layered architecture** with a command/event boundary bet
 - **`app`** — Service/orchestration layer. Resolves tokens, discovers models, creates the chat runtime, and launches the TUI or one-shot stream. CLI commands call `app.*` functions.
 - **`cli`** — Thin command definitions using urfave/cli. Parses flags and delegates to `app`.
 - **`chat`** — Chat runtime: session lifecycle, streaming, command dispatch, event publishing via pubsub.
-- **`tui`** — Bubble Tea interactive terminal UI. Consumes `chat.Runtime` events, sends commands.
-- **`completions`** — Popup completion system for slash commands and arguments.
+- **`tui`** — go-tui interactive terminal UI. Consumes `chat.Runtime` events, sends commands.
 - **`platform`** — Endpoint resolution, OAuth PKCE flow, token caching, HTTP client factory.
 - **`maas`** — MaaS API integration: model discovery and token exchange.
 - **`config`** — Loads `~/.config/aim/config.yaml`; foundation package with no internal imports.
 - **`pubsub`** — Generic typed in-process pub/sub event bus (`Bus[T]`).
-- **`theme`** — Shared brand colour palette and semantic lipgloss styles. Leaf dependency with zero internal imports. All UI code must import colours and styles from here — never define local colour hex literals.
+- **`theme`** — Shared brand colour palette and semantic go-tui styles. Leaf dependency with zero internal imports. All UI code must import colours and styles from here — never define local colour hex literals.
 - **`skills`** — Skill discovery from YAML files, lifecycle management, activation tracking.
 - **`agent`** — Agent behaviour, decision-making, notifications (the `agent/notify` sub-package is a pure domain layer with zero internal imports).
 - **`store`** — Future persistence layer (SQLite + sqlc).
@@ -43,7 +42,7 @@ The project follows a **layered architecture** with a command/event boundary bet
 
 1. **CLI → App → Domain/Infra** — never the reverse.
 2. **Domain packages** (`chat`, `skills`, `agent`) may import infrastructure (`platform`, `pubsub`, `config`) but never `cli`, `app`, or `tui`.
-3. **TUI** imports `chat` and `completions` only — never `app`, `cli`, `maas`, or `platform` directly.
+3. **TUI** imports `chat`, `pubsub`, `theme`, and TUI-local packages only — never `app`, `cli`, `maas`, or `platform` directly.
 4. **Infrastructure** packages (`config`, `pubsub`, `theme`) have zero internal imports — they are leaf dependencies.
 5. **`app`** is the only package that may import both domain and infrastructure to wire them together.
 
