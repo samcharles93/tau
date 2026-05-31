@@ -1,7 +1,6 @@
 package tui
 
 import (
-	"strings"
 	"time"
 	"unicode"
 	"unicode/utf8"
@@ -283,8 +282,4 @@ func (i *chatInput) displayText() string {
 
 func (i *chatInput) clampCursorPos() int {
 	return clamp(i.cursorPos.Get(), 0, utf8.RuneCountInString(i.value.Get()))
-}
-
-func completionToken(value string) string {
-	return strings.TrimSpace(value)
 }

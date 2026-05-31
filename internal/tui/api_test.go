@@ -12,6 +12,7 @@ func TestBuiltinCommandNames(t *testing.T) {
 		"reload":    true,
 		"reasoning": true,
 		"settings":  true,
+		"debug":     true,
 		"exit":      true,
 	}
 	if len(got) != len(want) {

@@ -5,6 +5,7 @@ import (
 	"crypto/rand"
 	"encoding/base64"
 	"fmt"
+	"os"
 	"slices"
 	"strings"
 	"time"
@@ -14,7 +15,9 @@ import (
 	tauchat "github.com/samcharles93/tau/internal/chat"
 	"github.com/samcharles93/tau/internal/pubsub"
 	"github.com/samcharles93/tau/internal/theme"
+	"github.com/samcharles93/tau/internal/tui/components"
 	"github.com/samcharles93/tau/internal/tui/notify"
+	"github.com/samcharles93/tau/internal/tui/views"
 )
 
 type completionItem struct {
@@ -33,25 +36,30 @@ type ChatPanel struct {
 	app       *gt.App
 	notifySub *pubsub.Subscription[notify.Notification]
 
-	messages           *gt.State[[]tauchat.ChatMessage]
-	streamingContent   *gt.State[string]
-	streamingReasoning *gt.State[string]
-	inputValue         *gt.State[string]
-	scrollY            *gt.State[int]
-	status             *gt.State[tauchat.ChatSessionStatus]
-	lastError          *gt.State[string]
-	notice             *gt.State[string]
-	showHelp           *gt.State[bool]
-	showReasoning      *gt.State[bool]
-	modelName          *gt.State[string]
-	availableModels    *gt.State[[]tauchat.ChatModelRef]
-	extensionCommands  *gt.State[map[string]tauchat.ExtensionCommand]
-	activeRequestID    *gt.State[string]
-	completions        *gt.State[[]completionItem]
-	completionIndex    *gt.State[int]
-	showSettings       *gt.State[bool]
-	settingsModal      *gt.Modal
-	input              *chatInput
+	messages             *gt.State[[]tauchat.ChatMessage]
+	streamingContent     *gt.State[string]
+	streamingReasoning   *gt.State[string]
+	inputValue           *gt.State[string]
+	scrollY              *gt.State[int]
+	status               *gt.State[tauchat.ChatSessionStatus]
+	lastError            *gt.State[string]
+	notice               *gt.State[string]
+	showHelp             *gt.State[bool]
+	showReasoning        *gt.State[bool]
+	modelName            *gt.State[string]
+	availableModels      *gt.State[[]tauchat.ChatModelRef]
+	extensionCommands    *gt.State[map[string]tauchat.ExtensionCommand]
+	activeRequestID      *gt.State[string]
+	completions          *gt.State[[]completionItem]
+	completionIndex      *gt.State[int]
+	showSettings         *gt.State[bool]
+	settingsModal        *gt.Modal
+	showDebug            *gt.State[bool]
+	debugView            *views.DebugView
+	showDebugList        *gt.State[bool]
+	debugListView        *views.DebugListView
+	dumpTreeOnNextRender bool
+	input                *chatInput
 }
 
 // NewChatPanel creates a new go-tui chat panel with reactive state initialized.
@@ -87,6 +95,8 @@ func NewChatPanel(
 		completions:        gt.NewState(make([]completionItem, 0)),
 		completionIndex:    gt.NewState(0),
 		showSettings:       gt.NewState(false),
+		showDebug:          gt.NewState(false),
+		showDebugList:      gt.NewState(false),
 	}
 	panel.settingsModal = gt.NewModal(
 		gt.WithModalOpen(panel.showSettings),
@@ -98,11 +108,6 @@ func NewChatPanel(
 			gt.WithJustify(gt.JustifyCenter),
 			gt.WithAlign(gt.AlignCenter),
 		),
-		gt.WithModalKeyMap(gt.KeyMap{
-			gt.OnPreemptStop(gt.Rune('q'), func(gt.KeyEvent) {
-				panel.showSettings.Set(false)
-			}),
-		}),
 	)
 	return panel
 }
@@ -128,6 +133,8 @@ func (c *ChatPanel) BindApp(app *gt.App) {
 	c.completionIndex.BindApp(app)
 	c.showSettings.BindApp(app)
 	c.settingsModal.BindApp(app)
+	c.showDebug.BindApp(app)
+	c.showDebugList.BindApp(app)
 }
 
 // Watchers bridges runtime and notification channels into the go-tui event loop.
@@ -295,8 +302,49 @@ func (c *ChatPanel) Render(app *gt.App) *gt.Element {
 	}
 	root.AddChild(c.renderInput(app))
 	root.AddChild(c.renderStatusBar())
+
+	// Modals register themselves as overlays during their Render step.
+	// We add them to the root tree directly so that go-tui's focus manager
+	// discovers their focusable elements. Since they have overlay=true,
+	// they do not disrupt the flex layout, and are rendered in the overlay pass.
 	root.AddChild(c.renderSettingsModal(app))
+	root.AddChild(c.renderDebugModal(app))
+	root.AddChild(c.renderDebugListModal(app))
+
+	if c.dumpTreeOnNextRender {
+		c.dumpTreeOnNextRender = false
+		c.writeTreeDump(root)
+	}
+
 	return root
+}
+
+func (c *ChatPanel) writeTreeDump(root *gt.Element) {
+	f, err := os.OpenFile("tree.log", os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o644)
+	if err != nil {
+		c.lastError.Set("failed to write tree.log: " + err.Error())
+		return
+	}
+	defer f.Close()
+	c.dumpElementTree(root, 0, f)
+}
+
+func (c *ChatPanel) dumpElementTree(el *gt.Element, depth int, f *os.File) {
+	if el == nil {
+		return
+	}
+	compType := "nil"
+	isKeyListener := false
+	if el.Component() != nil {
+		compType = fmt.Sprintf("%T", el.Component())
+		_, isKeyListener = el.Component().(gt.KeyListener)
+	}
+	indent := strings.Repeat("  ", depth)
+	fmt.Fprintf(f, "%s- Element: hidden=%v, overlay=%v, focusable=%v, tabStop=%v, component=%s, isKeyListener=%v\n",
+		indent, el.Hidden(), el.IsOverlay(), el.IsFocusable(), el.IsTabStop(), compType, isKeyListener)
+	for _, child := range el.Children() {
+		c.dumpElementTree(child, depth+1, f)
+	}
 }
 
 func (c *ChatPanel) renderHeader() *gt.Element {
@@ -481,7 +529,7 @@ func (c *ChatPanel) renderStatusBar() *gt.Element {
 			gt.WithTruncate(true),
 		))
 	}
-	help := "enter send · tab complete · ctrl+r reasoning · ctrl+c cancel/quit"
+	help := "enter send · tab complete · ctrl+r reasoning · ctrl+c quit"
 	if c.showHelp.Get() {
 		help = "/new · /model <id> · /system <prompt> · /reload · /refresh · /settings · /exit"
 	}
@@ -494,11 +542,18 @@ func (c *ChatPanel) renderStatusBar() *gt.Element {
 }
 
 func (c *ChatPanel) renderSettingsModal(app *gt.App) *gt.Element {
-	modal := c.settingsModal.Render(app)
+	modalEl := app.MountPersistent(c, 1, func() gt.Component {
+		return c.settingsModal
+	})
+	modalEl.AddChild(c.buildSettingsContent())
+	return modalEl
+}
+
+func (c *ChatPanel) buildSettingsContent() *gt.Element {
 	content := gt.New(
 		gt.WithDisplay(gt.DisplayFlex),
 		gt.WithDirection(gt.Column),
-		gt.WithWidth(64),
+		gt.WithWidth(56),
 		gt.WithBorder(gt.BorderRounded),
 		gt.WithBorderStyle(theme.BrandStyle()),
 		gt.WithPadding(1),
@@ -525,21 +580,114 @@ func (c *ChatPanel) renderSettingsModal(app *gt.App) *gt.Element {
 		reasoning = "on"
 	}
 	content.AddChild(gt.New(
-		gt.WithText("Reasoning: "+reasoning+" (Ctrl+R or /reasoning toggle)"),
+		gt.WithText("Reasoning: "+reasoning+"  (Ctrl+R toggles)"),
 		gt.WithTextStyle(theme.BodyStyle()),
 		gt.WithTruncate(true),
 	))
 	content.AddChild(gt.New(
-		gt.WithText("Commands: /model <id>, /refresh, /reload, /system <prompt>"),
-		gt.WithTextStyle(theme.DimStyle()),
-		gt.WithWrap(true),
+		gt.WithText("Available models:"),
+		gt.WithTextStyle(theme.BodyStyle()),
 	))
+	modelList := gt.New(
+		gt.WithDisplay(gt.DisplayFlex),
+		gt.WithDirection(gt.Column),
+		gt.WithGap(0),
+		gt.WithMaxHeight(12),
+		gt.WithScrollable(gt.ScrollVertical),
+	)
+	currentModel := c.modelName.Get()
+	for _, model := range c.availableModels.Get() {
+		prefix := "  "
+		style := theme.DimStyle()
+		if model.ID == currentModel {
+			prefix = "› "
+			style = theme.BrandStyle()
+		} else if !model.Ready {
+			style = theme.DimStyle().Italic()
+		}
+		label := prefix + model.ID
+		if !model.Ready {
+			label += " (not ready)"
+		}
+		modelList.AddChild(gt.New(
+			gt.WithText(label),
+			gt.WithTextStyle(style),
+			gt.WithTruncate(true),
+		))
+	}
+	content.AddChild(modelList)
 	content.AddChild(gt.New(
-		gt.WithText("Esc or q closes this dialog."),
-		gt.WithTextStyle(theme.DimStyle()),
+		gt.WithText("Esc closes this dialog."),
+		gt.WithTextStyle(theme.DimStyle().Italic()),
 	))
-	modal.AddChild(content)
-	return modal
+	return content
+}
+
+func (c *ChatPanel) renderDebugModal(app *gt.App) *gt.Element {
+	if c.debugView == nil || !c.showDebug.Get() {
+		return gt.New(gt.WithHidden(true))
+	}
+	return app.MountPersistent(c, 2, func() gt.Component {
+		return c.debugView
+	})
+}
+
+func (c *ChatPanel) handleDebugCommand(rest string) {
+	rest = strings.TrimSpace(rest)
+	parts := strings.Fields(rest)
+	if len(parts) == 0 {
+		c.lastError.Set("usage: /debug <subcommand> [args]\navailable subcommands: components")
+		return
+	}
+	sub := strings.ToLower(parts[0])
+	switch sub {
+	case "components":
+		if len(parts) < 2 {
+			c.launchDebugListView()
+		} else {
+			c.launchDebugView(parts[1])
+		}
+	default:
+		c.lastError.Set(fmt.Sprintf("unknown debug subcommand: %q (available: components)", sub))
+	}
+}
+
+func (c *ChatPanel) launchDebugListView() {
+	if c.app == nil {
+		return
+	}
+	if c.debugListView == nil {
+		c.debugListView = views.NewDebugListView(c.showDebugList, func(name string) {
+			c.showDebugList.Set(false)
+			c.launchDebugView(name)
+		})
+		c.debugListView.BindApp(c.app)
+	}
+	c.showDebugList.Set(true)
+}
+
+func (c *ChatPanel) renderDebugListModal(app *gt.App) *gt.Element {
+	if c.debugListView == nil || !c.showDebugList.Get() {
+		return gt.New(gt.WithHidden(true))
+	}
+	return app.MountPersistent(c, 3, func() gt.Component {
+		return c.debugListView
+	})
+}
+
+func (c *ChatPanel) launchDebugView(name string) {
+	if c.app == nil {
+		return
+	}
+	v := views.NewDebugView(name, c.showDebug)
+	if v == nil {
+		c.lastError.Set("component not found: " + name)
+		return
+	}
+	v.BindApp(c.app)
+	c.debugView = v
+	c.showDebug.Set(true)
+	c.dumpTreeOnNextRender = true
 }
 
 func (c *ChatPanel) statusText() string {
@@ -567,12 +715,23 @@ func (c *ChatPanel) statusStyle() gt.Style {
 }
 
 func (c *ChatPanel) handleSubmit(value string) {
+	c.handleSubmitWithDepth(value, 0)
+}
+
+func (c *ChatPanel) handleSubmitWithDepth(value string, depth int) {
 	text := strings.TrimSpace(value)
 	if text == "" {
 		return
 	}
+	if depth > 3 {
+		c.lastError.Set("autocomplete recursion limit exceeded")
+		return
+	}
 	if c.shouldApplyCompletion(value) {
-		c.applySelectedCompletion()
+		completed, acceptsArgs := c.applySelectedCompletion()
+		if completed != "" && !acceptsArgs {
+			c.handleSubmitWithDepth(completed, depth+1)
+		}
 		return
 	}
 	c.inputValue.Set("")
@@ -627,6 +786,12 @@ func (c *ChatPanel) handleSlashCommand(text string) {
 	case "settings":
 		c.showSettings.Set(true)
 		c.closeCompletions()
+	case "debug":
+		if c.cfg.Debug {
+			c.handleDebugCommand(rest)
+		} else {
+			c.lastError.Set("unknown command: /" + command)
+		}
 	default:
 		if extCommand, ok := c.extensionCommands.Get()[command]; ok {
 			c.sendCommand(tauchat.RunExtensionCommandCommand{
@@ -798,19 +963,21 @@ func (c *ChatPanel) completionItems(value string) []completionItem {
 		return c.commandCompletions(commandPrefix)
 	}
 
-	argPrefix := strings.TrimSpace(parts[1])
+	argPrefix := parts[1]
 	switch commandPrefix {
 	case "model":
-		return c.modelCompletions(argPrefix)
+		return c.modelCompletions(strings.TrimSpace(argPrefix))
 	case "reasoning":
-		return c.reasoningCompletions(argPrefix)
+		return c.reasoningCompletions(strings.TrimSpace(argPrefix))
+	case "debug":
+		return c.debugCompletions(argPrefix)
 	default:
 		return nil
 	}
 }
 
 func (c *ChatPanel) commandCompletions(prefix string) []completionItem {
-	commands := builtinCompletionItems()
+	commands := builtinCompletionItems(c.cfg.Debug)
 	for _, ext := range c.sortedExtensionCommands() {
 		commands = append(commands, completionItem{
 			Value:       "/" + ext.Name,
@@ -868,6 +1035,54 @@ func (c *ChatPanel) reasoningCompletions(prefix string) []completionItem {
 	return matches
 }
 
+func (c *ChatPanel) debugCompletions(arg string) []completionItem {
+	parts := strings.Fields(arg)
+
+	// Case 1: user typed "/debug" or "/debug " or "/debug sub" -> suggest subcommands
+	if len(parts) == 0 || (len(parts) == 1 && !strings.HasSuffix(arg, " ")) {
+		prefix := ""
+		if len(parts) == 1 {
+			prefix = strings.ToLower(parts[0])
+		}
+		options := []completionItem{
+			{Value: "/debug components", Label: "components", Description: "list/preview TUI components"},
+		}
+		matches := make([]completionItem, 0, len(options))
+		for _, item := range options {
+			if prefix == "" || strings.HasPrefix(item.Label, prefix) {
+				matches = append(matches, item)
+			}
+		}
+		return matches
+	}
+
+	// Case 2: user typed "/debug components " or "/debug components name"
+	sub := strings.ToLower(parts[0])
+	if sub == "components" {
+		prefix := ""
+		if len(parts) > 1 {
+			prefix = strings.ToLower(parts[1])
+		}
+		options := []completionItem{}
+		for _, name := range components.ListNames() {
+			options = append(options, completionItem{
+				Value:       "/debug components " + name,
+				Label:       name,
+				Description: "Debug component: " + name,
+			})
+		}
+		matches := make([]completionItem, 0, len(options))
+		for _, item := range options {
+			if prefix == "" || strings.HasPrefix(item.Label, prefix) {
+				matches = append(matches, item)
+			}
+		}
+		return limitCompletions(matches)
+	}
+
+	return nil
+}
+
 func (c *ChatPanel) sortedExtensionCommands() []tauchat.ExtensionCommand {
 	commands := c.extensionCommands.Get()
 	names := make([]string, 0, len(commands))
@@ -891,18 +1106,19 @@ func (c *ChatPanel) shouldApplyCompletion(value string) bool {
 	return item.Value != value
 }
 
-func (c *ChatPanel) applySelectedCompletion() {
+func (c *ChatPanel) applySelectedCompletion() (completed string, acceptsArgs bool) {
 	items := c.completions.Get()
 	if len(items) == 0 {
-		return
+		return "", false
 	}
 	item := items[clamp(c.completionIndex.Get(), 0, len(items)-1)]
 	if c.input != nil {
 		c.input.SetText(item.Value)
-		return
+		return item.Value, item.AcceptsArgs
 	}
 	c.inputValue.Set(item.Value)
 	c.syncCompletions(item.Value)
+	return item.Value, item.AcceptsArgs
 }
 
 func (c *ChatPanel) selectCompletion(delta int) {
@@ -924,12 +1140,8 @@ func (c *ChatPanel) closeCompletions() {
 	c.completionIndex.Set(0)
 }
 
-func completionOpen(items []completionItem) bool {
-	return len(items) > 0
-}
-
-func builtinCompletionItems() []completionItem {
-	return []completionItem{
+func builtinCompletionItems(debug bool) []completionItem {
+	items := []completionItem{
 		{Value: "/new", Label: "/new", Description: "start a new conversation"},
 		{Value: "/system ", Label: "/system", Description: "set system prompt", AcceptsArgs: true},
 		{Value: "/model ", Label: "/model", Description: "switch model", AcceptsArgs: true},
@@ -937,8 +1149,12 @@ func builtinCompletionItems() []completionItem {
 		{Value: "/reload", Label: "/reload", Description: "reload extensions while idle"},
 		{Value: "/reasoning ", Label: "/reasoning", Description: "show or hide reasoning", AcceptsArgs: true},
 		{Value: "/settings", Label: "/settings", Description: "show settings help"},
-		{Value: "/exit", Label: "/exit", Description: "quit"},
 	}
+	if debug {
+		items = append(items, completionItem{Value: "/debug ", Label: "/debug", Description: "preview TUI components (developer)", AcceptsArgs: true})
+	}
+	items = append(items, completionItem{Value: "/exit", Label: "/exit", Description: "quit"})
+	return items
 }
 
 func limitCompletions(items []completionItem) []completionItem {
@@ -961,7 +1177,7 @@ func (c *ChatPanel) KeyMap() gt.KeyMap {
 				c.inputValue.Set("")
 				return
 			}
-			ke.App().Stop()
+			c.notice.Set("Press Ctrl+C to quit")
 		}),
 		gt.On(gt.KeyTab, func(ke gt.KeyEvent) {
 			c.applySelectedCompletion()
@@ -981,7 +1197,8 @@ func (c *ChatPanel) KeyMap() gt.KeyMap {
 			c.scrollY.Set(c.scrollY.Get() + 2)
 		}),
 		gt.On(gt.KeyCtrlC, func(ke gt.KeyEvent) {
-			if c.status.Get() == tauchat.ChatSessionStreaming {
+			switch {
+			case c.status.Get() == tauchat.ChatSessionStreaming:
 				c.status.Set(tauchat.ChatSessionCancelling)
 				c.sendCommand(tauchat.CancelChatRequestCommand{
 					SessionID:   c.cfg.SessionID,
@@ -989,9 +1206,12 @@ func (c *ChatPanel) KeyMap() gt.KeyMap {
 					RequestedAt: time.Now().UTC(),
 				})
 				c.notice.Set("cancelling… Ctrl+C again to quit")
-				return
+			case c.inputValue.Get() != "":
+				c.inputValue.Set("")
+				c.closeCompletions()
+			default:
+				ke.App().Stop()
 			}
-			ke.App().Stop()
 		}),
 		gt.On(gt.KeyCtrlR, func(ke gt.KeyEvent) {
 			c.showReasoning.Set(!c.showReasoning.Get())

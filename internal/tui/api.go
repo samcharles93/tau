@@ -28,6 +28,7 @@ type Config struct {
 	NotifyBus          *pubsub.Bus[notify.Notification]
 	RefreshModels      ModelRefresher
 	ShowReasoning      bool
+	Debug              bool
 }
 
 // BuiltinCommandNames returns built-in slash command names without the leading slash.
@@ -40,6 +41,7 @@ func BuiltinCommandNames() []string {
 		"reload",
 		"reasoning",
 		"settings",
+		"debug",
 		"exit",
 	}
 	names := make([]string, 0, len(commands))

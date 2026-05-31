@@ -39,6 +39,7 @@ type ChatOptions struct {
 	MaxTokens    int
 	Temperature  float64
 	Prompt       string
+	Version      string
 }
 
 // RunChat orchestrates a chat session: resolves tokens and model, creates
@@ -103,6 +104,7 @@ func RunChat(ctx context.Context, opts ChatOptions) error {
 		NotifyBus:          notifyBus,
 		RefreshModels:      refresher,
 		ShowReasoning:      opts.Config.UI.ShowReasoning,
+		Debug:              isDevel(opts.Version, opts.Config),
 	}
 
 	// If model discovery failed at startup, notify the user in the TUI
@@ -502,4 +504,12 @@ func newID(prefix string) (string, error) {
 	}
 	suffix := base64.RawURLEncoding.EncodeToString(bytes)
 	return prefix + "_" + suffix, nil
+}
+
+func isDevel(version string, cfg tauconfig.Config) bool {
+	if cfg.Debug {
+		return true
+	}
+	v := strings.ToLower(version)
+	return strings.Contains(v, "dev") || strings.Contains(v, "none")
 }

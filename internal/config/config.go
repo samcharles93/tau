@@ -19,6 +19,7 @@ type Config struct {
 	Providers       []ProviderConfig `yaml:"providers"`
 	Extensions      ExtensionConfig  `yaml:"extensions"`
 	UI              UIConfig         `yaml:"ui"`
+	Debug           bool             `yaml:"debug"`
 }
 
 func (c *Config) UnmarshalYAML(value *yaml.Node) error {
@@ -28,6 +29,7 @@ func (c *Config) UnmarshalYAML(value *yaml.Node) error {
 		Providers       yaml.Node       `yaml:"providers"`
 		Extensions      ExtensionConfig `yaml:"extensions"`
 		UI              UIConfig        `yaml:"ui"`
+		Debug           bool            `yaml:"debug"`
 	}
 	var raw rawConfig
 	if err := value.Decode(&raw); err != nil {
@@ -37,6 +39,7 @@ func (c *Config) UnmarshalYAML(value *yaml.Node) error {
 	c.DefaultModel = raw.DefaultModel
 	c.Extensions = raw.Extensions
 	c.UI = raw.UI
+	c.Debug = raw.Debug
 	if raw.Providers.Kind != 0 {
 		providers, err := decodeProviders(raw.Providers)
 		if err != nil {
@@ -612,6 +615,7 @@ func mergeConfigs(globalCfg, localCfg Config) Config {
 	if strings.TrimSpace(localCfg.DefaultModel) != "" {
 		merged.DefaultModel = localCfg.DefaultModel
 	}
+	merged.Debug = globalCfg.Debug || localCfg.Debug
 
 	providers := make(map[string]ProviderConfig, len(globalCfg.Providers)+len(localCfg.Providers))
 	order := make([]string, 0, len(globalCfg.Providers)+len(localCfg.Providers))

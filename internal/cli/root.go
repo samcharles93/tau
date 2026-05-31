@@ -71,6 +71,7 @@ func NewRootCommand(version string) *urfavecli.Command {
 				MaxTokens:    cmd.Int("max-tokens"),
 				Temperature:  cmd.Float("temperature"),
 				Prompt:       cmd.String("prompt"),
+				Version:      version,
 			})
 		},
 	}

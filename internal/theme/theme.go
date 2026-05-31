@@ -44,6 +44,11 @@ func BrandStyle() gotui.Style {
 	return gotui.NewStyle().Foreground(ColorPurple).Bold()
 }
 
+// SelectedStyle is used for focused/selected list items, cycle elements, etc.
+func SelectedStyle() gotui.Style {
+	return gotui.NewStyle().Foreground(ColorPurple).Bold()
+}
+
 // BodyStyle is default prose content.
 func BodyStyle() gotui.Style {
 	return gotui.NewStyle().Foreground(ColorLightGray)

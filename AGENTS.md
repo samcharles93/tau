@@ -1,4 +1,4 @@
-# AIM Project Guidelines
+# TAU Project Guidelines
 
 ## Strict Requirements
 
@@ -16,7 +16,7 @@ The project follows a **layered architecture** with a command/event boundary bet
 
 | Layer | Packages | Role |
 | ----- | -------- | ---- |
-| Entry point | `cmd/aim/` | Binary bootstrap; delegates to `cli` |
+| Entry point | `cmd/tau/` | Binary bootstrap; delegates to `cli` |
 | CLI | `internal/cli/` | Command definitions & flag parsing (thin handlers) |
 | Orchestration | `internal/app/` | Wires subsystems together for each use case (chat, token, models) |
 | Domain | `internal/chat/`, `internal/skills/`, `internal/agent/` | Core business logic, commands, events |
@@ -31,7 +31,7 @@ The project follows a **layered architecture** with a command/event boundary bet
 - **`tui`** — go-tui interactive terminal UI. Consumes `chat.Runtime` events, sends commands.
 - **`platform`** — Endpoint resolution, OAuth PKCE flow, token caching, HTTP client factory.
 - **`maas`** — MaaS API integration: model discovery and token exchange.
-- **`config`** — Loads `~/.config/aim/config.yaml`; foundation package with no internal imports.
+- **`config`** — Loads `~/.config/tau/config.yaml`; foundation package with no internal imports.
 - **`pubsub`** — Generic typed in-process pub/sub event bus (`Bus[T]`).
 - **`theme`** — Shared brand colour palette and semantic go-tui styles. Leaf dependency with zero internal imports. All UI code must import colours and styles from here — never define local colour hex literals.
 - **`skills`** — Skill discovery from YAML files, lifecycle management, activation tracking.
@@ -52,3 +52,12 @@ The project follows a **layered architecture** with a command/event boundary bet
 - Runtime publishes `ChatEvent` through the pubsub bus.
 - TUI subscribes to events and renders updates.
 - No external message broker; in-process channels provide sufficient decoupling.
+
+## Idea Capture
+
+When the user mentions a design idea, architecture decision, or feature concept during conversation:
+
+- Elaborate on the idea with concrete implementation notes (file paths, types, wiring).
+- Save it as a new numbered section in `docs/IDEAS.md` with a descriptive heading.
+- Update existing sections if the idea refines or supersedes an earlier one.
+- Do not let ideas stay only in chat — they must be persisted to `docs/IDEAS.md` before the turn ends.
