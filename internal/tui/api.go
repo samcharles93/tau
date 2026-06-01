@@ -41,6 +41,8 @@ func BuiltinCommandNames() []string {
 		"reload",
 		"reasoning",
 		"settings",
+		"session",
+		"resume",
 		"debug",
 		"exit",
 	}

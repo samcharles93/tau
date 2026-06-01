@@ -58,6 +58,12 @@ type ChatPanel struct {
 	debugView            *views.DebugView
 	showDebugList        *gt.State[bool]
 	debugListView        *views.DebugListView
+	showSessionList      *gt.State[bool]
+	showSessionInfo      *gt.State[bool]
+	sessionListView      *views.SessionListView
+	sessionInfoView      *views.SessionInfoView
+	sessionSummaries     *gt.State[[]tauchat.SessionSummary]
+	sessionListCursor    string
 	dumpTreeOnNextRender bool
 	input                *chatInput
 }
@@ -97,6 +103,9 @@ func NewChatPanel(
 		showSettings:       gt.NewState(false),
 		showDebug:          gt.NewState(false),
 		showDebugList:      gt.NewState(false),
+		showSessionList:    gt.NewState(false),
+		showSessionInfo:    gt.NewState(false),
+		sessionSummaries:   gt.NewState([]tauchat.SessionSummary{}),
 	}
 	panel.settingsModal = gt.NewModal(
 		gt.WithModalOpen(panel.showSettings),
@@ -135,6 +144,9 @@ func (c *ChatPanel) BindApp(app *gt.App) {
 	c.settingsModal.BindApp(app)
 	c.showDebug.BindApp(app)
 	c.showDebugList.BindApp(app)
+	c.showSessionList.BindApp(app)
+	c.showSessionInfo.BindApp(app)
+	c.sessionSummaries.BindApp(app)
 }
 
 // Watchers bridges runtime and notification channels into the go-tui event loop.
@@ -224,6 +236,25 @@ func (c *ChatPanel) handleRuntimeEvent(event tauchat.ChatEvent) {
 		c.appendMessage(tauchat.ChatMessage{Role: tauchat.ChatRoleTool, Content: ev.Output})
 	case tauchat.InteractivePromptRequestedEvent:
 		c.notice.Set(ev.Title + ": " + ev.Message)
+	case tauchat.SessionsListedEvent:
+		c.sessionSummaries.Set(ev.Sessions)
+		c.sessionListCursor = ev.NextCursor
+		if c.sessionListView != nil {
+			c.sessionListView.SetCursor(ev.NextCursor, ev.NextCursor != "")
+		}
+	case tauchat.SessionLoadedEvent:
+		c.syncState(ev.State)
+		c.notice.Set(fmt.Sprintf("Session %s loaded (%d messages)", ev.State.SessionID, len(ev.State.Messages)))
+		c.showSessionList.Set(false)
+	case tauchat.SessionDeletedEvent:
+		c.notice.Set("Session deleted: " + ev.SessionID)
+		c.showSessionInfo.Set(false)
+	case tauchat.SessionExportedEvent:
+		if ev.Path != "" {
+			c.notice.Set(fmt.Sprintf("Session exported to %s", ev.Path))
+		} else {
+			c.notice.Set("Session exported to stdout")
+		}
 	}
 }
 
@@ -310,6 +341,8 @@ func (c *ChatPanel) Render(app *gt.App) *gt.Element {
 	root.AddChild(c.renderSettingsModal(app))
 	root.AddChild(c.renderDebugModal(app))
 	root.AddChild(c.renderDebugListModal(app))
+	root.AddChild(c.renderSessionListModal(app))
+	root.AddChild(c.renderSessionInfoModal(app))
 
 	if c.dumpTreeOnNextRender {
 		c.dumpTreeOnNextRender = false
@@ -690,6 +723,139 @@ func (c *ChatPanel) launchDebugView(name string) {
 	c.dumpTreeOnNextRender = true
 }
 
+// --- Session management ---
+
+func (c *ChatPanel) handleSessionCommand(rest string) {
+	parts := strings.Fields(strings.TrimSpace(rest))
+	if len(parts) == 0 {
+		// Bare "/session" — open session list.
+		c.openSessionList()
+		return
+	}
+
+	sub := strings.ToLower(parts[0])
+	switch sub {
+	case "info":
+		c.handleSessionInfo(rest)
+	case "export":
+		c.handleSessionExport(rest)
+	case "delete":
+		c.handleSessionDelete(rest)
+	case "list":
+		c.openSessionList()
+	default:
+		c.lastError.Set("usage: /session [list|info <id>|export <id> [path]|delete <id>]")
+	}
+}
+
+func (c *ChatPanel) handleResumeCommand() {
+	c.openSessionList()
+}
+
+func (c *ChatPanel) openSessionList() {
+	if c.app == nil {
+		return
+	}
+
+	selected := gt.NewState(0)
+	selected.BindApp(c.app)
+
+	c.sessionListView = views.NewSessionListView(
+		c.showSessionList,
+		c.sessionSummaries,
+		selected,
+		func(summary tauchat.SessionSummary) {
+			c.sendCommand(tauchat.LoadSessionCommand{SessionID: summary.ID})
+		},
+		func() {
+			c.sendCommand(tauchat.ListSessionsCommand{Limit: 10, Cursor: c.sessionListCursor})
+		},
+	)
+	c.sessionListView.BindApp(c.app)
+
+	// Fetch the first page.
+	c.sendCommand(tauchat.ListSessionsCommand{Limit: 10})
+	c.showSessionList.Set(true)
+}
+
+func (c *ChatPanel) handleSessionInfo(rest string) {
+	parts := strings.Fields(rest)
+	if len(parts) < 2 {
+		c.lastError.Set("usage: /session info <id>")
+		return
+	}
+	id := parts[1]
+	summaries := c.sessionSummaries.Get()
+	for _, s := range summaries {
+		if s.ID == id {
+			if c.sessionInfoView == nil {
+				summaryState := gt.NewState(s)
+				if c.app != nil {
+					summaryState.BindApp(c.app)
+				}
+				c.sessionInfoView = views.NewSessionInfoView(c.showSessionInfo, summaryState)
+				if c.app != nil {
+					c.sessionInfoView.BindApp(c.app)
+				}
+			} else {
+				// Update existing view with newly fetched summaries.
+				c.sessionInfoView = views.NewSessionInfoView(c.showSessionInfo, gt.NewState(s))
+				if c.app != nil {
+					c.sessionInfoView.BindApp(c.app)
+				}
+			}
+			c.showSessionInfo.Set(true)
+			return
+		}
+	}
+	c.lastError.Set("session not found: " + id + " (try /session list first)")
+}
+
+func (c *ChatPanel) handleSessionExport(rest string) {
+	parts := strings.Fields(rest)
+	if len(parts) < 2 {
+		c.lastError.Set("usage: /session export <id> [path]")
+		return
+	}
+	id := parts[1]
+	outputPath := ""
+	if len(parts) >= 3 {
+		outputPath = parts[2]
+	}
+	c.sendCommand(tauchat.ExportSessionCommand{
+		SessionID: id,
+		Format:    "jsonl",
+		Output:    outputPath,
+	})
+}
+
+func (c *ChatPanel) handleSessionDelete(rest string) {
+	parts := strings.Fields(rest)
+	if len(parts) < 2 {
+		c.lastError.Set("usage: /session delete <id>")
+		return
+	}
+	c.sendCommand(tauchat.DeleteSessionCommand{SessionID: parts[1]})
+}
+
+func (c *ChatPanel) renderSessionListModal(app *gt.App) *gt.Element {
+	if c.sessionListView == nil || !c.showSessionList.Get() {
+		return gt.New(gt.WithHidden(true))
+	}
+	return app.MountPersistent(c, 4, func() gt.Component {
+		return c.sessionListView
+	})
+}
+
+func (c *ChatPanel) renderSessionInfoModal(app *gt.App) *gt.Element {
+	if c.sessionInfoView == nil || !c.showSessionInfo.Get() {
+		return gt.New(gt.WithHidden(true))
+	}
+	return app.MountPersistent(c, 5, func() gt.Component {
+		return c.sessionInfoView
+	})
+}
+
 func (c *ChatPanel) statusText() string {
 	switch c.status.Get() {
 	case tauchat.ChatSessionStreaming:
@@ -786,6 +952,10 @@ func (c *ChatPanel) handleSlashCommand(text string) {
 	case "settings":
 		c.showSettings.Set(true)
 		c.closeCompletions()
+	case "session":
+		c.handleSessionCommand(rest)
+	case "resume":
+		c.handleResumeCommand()
 	case "debug":
 		if c.cfg.Debug {
 			c.handleDebugCommand(rest)
@@ -1149,6 +1319,8 @@ func builtinCompletionItems(debug bool) []completionItem {
 		{Value: "/reload", Label: "/reload", Description: "reload extensions while idle"},
 		{Value: "/reasoning ", Label: "/reasoning", Description: "show or hide reasoning", AcceptsArgs: true},
 		{Value: "/settings", Label: "/settings", Description: "show settings help"},
+		{Value: "/session ", Label: "/session", Description: "manage saved sessions", AcceptsArgs: true},
+		{Value: "/resume", Label: "/resume", Description: "resume a saved session"},
 	}
 	if debug {
 		items = append(items, completionItem{Value: "/debug ", Label: "/debug", Description: "preview TUI components (developer)", AcceptsArgs: true})

@@ -15,6 +15,7 @@ func NewRootCommand(version string) *urfavecli.Command {
 		Commands: []*urfavecli.Command{
 			tokenCmd(),
 			modelsCmd(),
+			sessionsCmd(),
 		},
 		Flags: []urfavecli.Flag{
 			&urfavecli.StringFlag{
@@ -52,6 +53,11 @@ func NewRootCommand(version string) *urfavecli.Command {
 				Usage: "Sampling temperature for the model response",
 				Value: defaultChatParameters.Temperature,
 			},
+			&urfavecli.StringFlag{
+				Name:    "resume",
+				Aliases: []string{"r"},
+				Usage:   "Resume a saved session (pass ID or 'latest' for most recent)",
+			},
 		},
 		Action: func(ctx context.Context, cmd *urfavecli.Command) error {
 			cfg, selectedProvider, err := loadProvider(cmd)
@@ -59,15 +65,18 @@ func NewRootCommand(version string) *urfavecli.Command {
 				return err
 			}
 
+			resumeID := cmd.String("resume")
+
 			return app.RunChat(ctx, app.ChatOptions{
-				Config:       cfg,
-				Provider:     selectedProvider,
-				Insecure:     cmd.Bool("insecure"),
-				Model:        cmd.String("model"),
-				SystemPrompt: cmd.String("system-prompt"),
-				MaxTokens:    cmd.Int("max-tokens"),
-				Temperature:  cmd.Float("temperature"),
-				Version:      version,
+				Config:          cfg,
+				Provider:        selectedProvider,
+				Insecure:        cmd.Bool("insecure"),
+				Model:           cmd.String("model"),
+				SystemPrompt:    cmd.String("system-prompt"),
+				MaxTokens:       cmd.Int("max-tokens"),
+				Temperature:     cmd.Float("temperature"),
+				Version:         version,
+				ResumeSessionID: resumeID,
 			})
 		},
 	}

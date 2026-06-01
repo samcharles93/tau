@@ -288,11 +288,41 @@ type RespondInteractivePromptCommand struct {
 
 func (RespondInteractivePromptCommand) IsChatCommand() {}
 
+// ListSessionsCommand requests a paginated list of saved sessions.
+type ListSessionsCommand struct {
+	Limit  int    `json:"limit"`
+	Cursor string `json:"cursor,omitempty"`
+}
+
+func (ListSessionsCommand) IsChatCommand() {}
+
+// LoadSessionCommand requests loading a saved session by ID.
+type LoadSessionCommand struct {
+	SessionID string `json:"session_id"`
+}
+
+func (LoadSessionCommand) IsChatCommand() {}
+
+// DeleteSessionCommand deletes a saved session and its messages.
+type DeleteSessionCommand struct {
+	SessionID string `json:"session_id"`
+}
+
+func (DeleteSessionCommand) IsChatCommand() {}
+
+// ExportSessionCommand exports a session to a file or stdout.
+type ExportSessionCommand struct {
+	SessionID string `json:"session_id"`
+	Format    string `json:"format"`           // "jsonl" or "html"
+	Output    string `json:"output,omitempty"` // file path, empty = stdout
+}
+
+func (ExportSessionCommand) IsChatCommand() {}
+
 // ChatEvent is the output contract from the runtime back to the UI.
 type ChatEvent interface{ IsChatEvent() }
 
-// ChatRuntime is the interface satisfied by both the legacy Runtime and the
-// agent Coordinator. The TUI depends on this interface, not a concrete type.
+// ChatRuntime is the interface the TUI uses to interact with the coordinator.
 type ChatRuntime interface {
 	Send(cmd ChatCommand) error
 	SubscribeEvents(buffer int) (*pubsub.Subscription[ChatEvent], error)
@@ -479,6 +509,55 @@ type InteractivePromptRequestedEvent struct {
 }
 
 func (InteractivePromptRequestedEvent) IsChatEvent() {}
+
+// SessionSummary is the wire type for session list rows. It carries
+// metadata without the full message history.
+type SessionSummary struct {
+	ID           string    `json:"id"`
+	ModelID      string    `json:"model_id"`
+	Provider     string    `json:"provider"`
+	CreatedAt    time.Time `json:"created_at"`
+	UpdatedAt    time.Time `json:"updated_at"`
+	Status       string    `json:"status"`
+	MessageCount int       `json:"message_count"`
+	InputTokens  int       `json:"input_tokens"`
+	OutputTokens int       `json:"output_tokens"`
+	TotalTokens  int       `json:"total_tokens"`
+	Cost         float64   `json:"cost"`
+	DurationMs   int64     `json:"duration_ms"`
+	SystemPrompt string    `json:"system_prompt,omitempty"`
+}
+
+// SessionsListedEvent carries paginated session summaries back to the TUI.
+type SessionsListedEvent struct {
+	Sessions   []SessionSummary `json:"sessions"`
+	NextCursor string           `json:"next_cursor,omitempty"`
+}
+
+func (SessionsListedEvent) IsChatEvent() {}
+
+// SessionLoadedEvent carries a fully reconstructed session state.
+type SessionLoadedEvent struct {
+	State ChatSessionState `json:"state"`
+}
+
+func (SessionLoadedEvent) IsChatEvent() {}
+
+// SessionDeletedEvent confirms that a session was deleted.
+type SessionDeletedEvent struct {
+	SessionID string `json:"session_id"`
+}
+
+func (SessionDeletedEvent) IsChatEvent() {}
+
+// SessionExportedEvent signals that a session export completed.
+type SessionExportedEvent struct {
+	SessionID string `json:"session_id"`
+	Format    string `json:"format"`
+	Path      string `json:"path,omitempty"` // file path if written to file
+}
+
+func (SessionExportedEvent) IsChatEvent() {}
 
 // ChatCompletionRequest is the wire format sent to the OpenAI-compatible endpoint.
 type ChatCompletionRequest struct {

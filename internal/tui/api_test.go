@@ -12,6 +12,8 @@ func TestBuiltinCommandNames(t *testing.T) {
 		"reload":    true,
 		"reasoning": true,
 		"settings":  true,
+		"session":   true,
+		"resume":    true,
 		"debug":     true,
 		"exit":      true,
 	}

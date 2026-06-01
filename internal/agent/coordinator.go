@@ -10,6 +10,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"os"
 	"strings"
 	"sync"
 	"time"
@@ -18,6 +19,7 @@ import (
 	"github.com/samcharles93/tau/internal/chat"
 	"github.com/samcharles93/tau/internal/platform"
 	"github.com/samcharles93/tau/internal/pubsub"
+	"github.com/samcharles93/tau/internal/store"
 )
 
 const (
@@ -56,6 +58,8 @@ type Coordinator struct {
 	interactiveUI     bool
 	uiBridge          tools.UIBridge
 	extensionReloader chat.ExtensionReloader
+	sessionStore      store.SessionStore
+	autoExportJSONL   bool
 	onSessionStart    func(map[string]any)
 	onSessionShutdown func(map[string]any)
 	onToolStarted     func(map[string]any)
@@ -95,6 +99,8 @@ type CoordinatorConfig struct {
 	ShowReasoning     bool
 	InteractiveUI     bool
 	ExtensionReloader chat.ExtensionReloader
+	SessionStore      store.SessionStore
+	AutoExportJSONL   bool
 	OnSessionStart    func(map[string]any)
 	OnSessionShutdown func(map[string]any)
 	OnToolStarted     func(map[string]any)
@@ -137,6 +143,8 @@ func NewCoordinator(ctx context.Context, cfg CoordinatorConfig) (*Coordinator, e
 		showReasoning:     cfg.ShowReasoning,
 		interactiveUI:     cfg.InteractiveUI,
 		extensionReloader: cfg.ExtensionReloader,
+		sessionStore:      cfg.SessionStore,
+		autoExportJSONL:   cfg.AutoExportJSONL,
 		onSessionStart:    cfg.OnSessionStart,
 		onSessionShutdown: cfg.OnSessionShutdown,
 		onToolStarted:     cfg.OnToolStarted,
@@ -242,6 +250,14 @@ func (c *Coordinator) handleCommand(cmd chat.ChatCommand) {
 		c.handleRunExtensionCommand(command)
 	case chat.RespondInteractivePromptCommand:
 		c.handleInteractivePromptResponse(command)
+	case chat.ListSessionsCommand:
+		c.handleListSessions(command)
+	case chat.LoadSessionCommand:
+		c.handleLoadSession(command)
+	case chat.DeleteSessionCommand:
+		c.handleDeleteSession(command)
+	case chat.ExportSessionCommand:
+		c.handleExportSession(command)
 	default:
 		c.emit(chat.ChatRuntimeErrorEvent{
 			Message:    fmt.Sprintf("unsupported command %T", cmd),
@@ -466,8 +482,10 @@ func (c *Coordinator) handleClose(cmd chat.CloseChatSessionCommand) {
 		return
 	}
 	snapshot := chat.CloneChatSessionState(session.state)
+	duration := now.Sub(snapshot.CreatedAt)
 	c.mu.Unlock()
 
+	c.persistSession(snapshot, duration)
 	c.emit(chat.ChatSessionSnapshotEvent{State: snapshot})
 }
 
@@ -1018,17 +1036,19 @@ func (c *Coordinator) failTurn(sessionID, requestID string, err error, at time.T
 
 func (c *Coordinator) cancelAllSessions() {
 	c.mu.Lock()
-	sessionIDs := make([]string, 0, len(c.sessions))
+	sessions := make([]*coordinatorSession, 0, len(c.sessions))
 	for _, session := range c.sessions {
 		if session.cancel != nil {
 			session.cancel()
 		}
-		sessionIDs = append(sessionIDs, session.state.SessionID)
+		sessions = append(sessions, session)
 	}
 	c.mu.Unlock()
 
-	for _, sessionID := range sessionIDs {
-		c.dispatchSessionShutdown(sessionID)
+	for _, session := range sessions {
+		state := chat.CloneChatSessionState(session.state)
+		c.dispatchSessionShutdown(state.SessionID)
+		c.persistSession(state, time.Since(state.CreatedAt))
 	}
 }
 
@@ -1110,4 +1130,206 @@ func normalizedTime(at time.Time) time.Time {
 		return time.Now().UTC()
 	}
 	return at.UTC()
+}
+
+// --- Session persistence ---
+
+func (c *Coordinator) handleListSessions(cmd chat.ListSessionsCommand) {
+	if c.sessionStore == nil {
+		c.emit(chat.ChatNotificationEvent{
+			Message:    "Session persistence is not available",
+			Level:      chat.ChatNotificationWarn,
+			OccurredAt: time.Now().UTC(),
+		})
+		return
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	summaries, nextCursor, err := c.sessionStore.List(ctx, cmd.Limit, cmd.Cursor)
+	if err != nil {
+		c.emit(chat.ChatRuntimeErrorEvent{
+			Message:    fmt.Sprintf("listing sessions: %v", err),
+			Fatal:      false,
+			OccurredAt: time.Now().UTC(),
+		})
+		return
+	}
+
+	// Convert store summaries to chat wire type.
+	wireSummaries := make([]chat.SessionSummary, len(summaries))
+	for i, s := range summaries {
+		wireSummaries[i] = chat.SessionSummary{
+			ID:           s.ID,
+			ModelID:      s.ModelID,
+			Provider:     s.Provider,
+			CreatedAt:    s.CreatedAt,
+			UpdatedAt:    s.UpdatedAt,
+			Status:       s.Status,
+			MessageCount: s.MessageCount,
+			InputTokens:  s.InputTokens,
+			OutputTokens: s.OutputTokens,
+			TotalTokens:  s.TotalTokens,
+			Cost:         s.Cost,
+			DurationMs:   s.DurationMs,
+			SystemPrompt: s.SystemPrompt,
+		}
+	}
+
+	c.emit(chat.SessionsListedEvent{
+		Sessions:   wireSummaries,
+		NextCursor: nextCursor,
+	})
+}
+
+func (c *Coordinator) handleLoadSession(cmd chat.LoadSessionCommand) {
+	if c.sessionStore == nil {
+		c.emit(chat.ChatRuntimeErrorEvent{
+			Message:    "Session persistence is not available",
+			Fatal:      false,
+			OccurredAt: time.Now().UTC(),
+		})
+		return
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	loaded, err := c.sessionStore.Load(ctx, cmd.SessionID)
+	if err != nil {
+		c.emit(chat.ChatRuntimeErrorEvent{
+			SessionID:  cmd.SessionID,
+			Message:    fmt.Sprintf("loading session: %v", err),
+			Fatal:      false,
+			OccurredAt: time.Now().UTC(),
+		})
+		return
+	}
+
+	c.emit(chat.SessionLoadedEvent{State: loaded})
+}
+
+func (c *Coordinator) handleDeleteSession(cmd chat.DeleteSessionCommand) {
+	if c.sessionStore == nil {
+		c.emit(chat.ChatRuntimeErrorEvent{
+			Message:    "Session persistence is not available",
+			Fatal:      false,
+			OccurredAt: time.Now().UTC(),
+		})
+		return
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	if err := c.sessionStore.Delete(ctx, cmd.SessionID); err != nil {
+		c.emit(chat.ChatRuntimeErrorEvent{
+			SessionID:  cmd.SessionID,
+			Message:    fmt.Sprintf("deleting session: %v", err),
+			Fatal:      false,
+			OccurredAt: time.Now().UTC(),
+		})
+		return
+	}
+
+	c.emit(chat.SessionDeletedEvent(cmd))
+}
+
+func (c *Coordinator) handleExportSession(cmd chat.ExportSessionCommand) {
+	if c.sessionStore == nil {
+		c.emit(chat.ChatRuntimeErrorEvent{
+			Message:    "Session persistence is not available",
+			Fatal:      false,
+			OccurredAt: time.Now().UTC(),
+		})
+		return
+	}
+
+	outputPath := cmd.Output
+	if outputPath != "" {
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+
+		if err := store.ExportSessionAsJSONL(ctx, c.sessionStore, cmd.SessionID, outputPath); err != nil {
+			c.emit(chat.ChatRuntimeErrorEvent{
+				SessionID:  cmd.SessionID,
+				Message:    fmt.Sprintf("exporting session: %v", err),
+				Fatal:      false,
+				OccurredAt: time.Now().UTC(),
+			})
+			return
+		}
+	} else {
+		// Export to stdout: stream lines through events.
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+
+		ch, errCh := c.sessionStore.ExportMessages(ctx, cmd.SessionID)
+
+		var output strings.Builder
+		for line := range ch {
+			output.Write(line)
+		}
+
+		select {
+		case err := <-errCh:
+			if err != nil {
+				c.emit(chat.ChatRuntimeErrorEvent{
+					SessionID:  cmd.SessionID,
+					Message:    fmt.Sprintf("exporting session: %v", err),
+					Fatal:      false,
+					OccurredAt: time.Now().UTC(),
+				})
+				return
+			}
+		default:
+		}
+
+		// Write to actual stdout for CLI exports.
+		fmt.Fprint(os.Stdout, output.String())
+	}
+
+	c.emit(chat.SessionExportedEvent{
+		SessionID: cmd.SessionID,
+		Format:    cmd.Format,
+		Path:      outputPath,
+	})
+}
+
+// persistSession saves the session state to the store. It is called on graceful
+// close and on forced shutdown. Errors are logged but not surfaced to the TUI —
+// persistence is best-effort.
+func (c *Coordinator) persistSession(state chat.ChatSessionState, duration time.Duration) {
+	if c.sessionStore == nil {
+		return
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	if err := c.sessionStore.Save(ctx, state, duration); err != nil {
+		slog.Error("coordinator: persist session failed",
+			"session_id", state.SessionID,
+			"err", err,
+		)
+		return
+	}
+
+	if !c.autoExportJSONL {
+		return
+	}
+
+	// Auto-export JSONL as a background convenience artifact.
+	go func() {
+		exportPath := c.sessionStore.SessionJSONLPath(state.SessionID, state.CreatedAt)
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+		if err := store.ExportSessionAsJSONL(ctx, c.sessionStore, state.SessionID, exportPath); err != nil {
+			slog.Warn("coordinator: auto-export jsonl failed",
+				"session_id", state.SessionID,
+				"err", err,
+			)
+		}
+	}()
 }

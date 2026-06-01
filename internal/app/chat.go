@@ -6,7 +6,9 @@ import (
 	"encoding/base64"
 	"errors"
 	"fmt"
+	"log/slog"
 	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -18,6 +20,7 @@ import (
 	"github.com/samcharles93/tau/internal/platform"
 	"github.com/samcharles93/tau/internal/provider"
 	"github.com/samcharles93/tau/internal/pubsub"
+	"github.com/samcharles93/tau/internal/store"
 	"github.com/samcharles93/tau/internal/streaming"
 	"github.com/samcharles93/tau/internal/tui"
 	"github.com/samcharles93/tau/internal/tui/notify"
@@ -25,14 +28,15 @@ import (
 
 // ChatOptions holds the parameters for launching an interactive chat session.
 type ChatOptions struct {
-	Config       tauconfig.Config
-	Provider     tauconfig.ProviderConfig
-	Insecure     bool
-	Model        string
-	SystemPrompt string
-	MaxTokens    int
-	Temperature  float64
-	Version      string
+	Config          tauconfig.Config
+	Provider        tauconfig.ProviderConfig
+	Insecure        bool
+	Model           string
+	SystemPrompt    string
+	MaxTokens       int
+	Temperature     float64
+	Version         string
+	ResumeSessionID string // load this session on startup, empty = fresh session
 }
 
 // RunChat orchestrates an interactive chat session: resolves tokens and model,
@@ -49,8 +53,24 @@ func RunChat(ctx context.Context, opts ChatOptions) error {
 		return err
 	}
 
-	coordinator, err := newCoordinator(ctx, opts, bearerToken)
+	// Initialize session store at the RunChat level so it outlives the
+	// coordinator (needed for --resume and exit summary).
+	sessionsDir := filepath.Join(tauconfig.Dir(), "sessions")
+	if err := os.MkdirAll(sessionsDir, 0o755); err != nil {
+		slog.Warn("session store: could not create sessions dir", "err", err)
+	}
+	storePath := filepath.Join(tauconfig.Dir(), "sessions.db")
+	sessionStore, storeErr := store.NewSQLiteStore(storePath, sessionsDir)
+	if storeErr != nil {
+		slog.Warn("session store unavailable, sessions will not be persisted", "err", storeErr)
+		sessionStore = nil
+	}
+
+	coordinator, err := newCoordinator(ctx, opts, bearerToken, sessionStore)
 	if err != nil {
+		if sessionStore != nil {
+			sessionStore.Close()
+		}
 		return err
 	}
 	defer coordinator.Close()
@@ -60,10 +80,43 @@ func RunChat(ctx context.Context, opts ChatOptions) error {
 		return err
 	}
 
-	config := buildSessionConfig(opts, model)
-
-	if err := coordinator.Send(tauchat.StartChatSessionCommand{SessionID: sessionID, Config: config}); err != nil {
-		return err
+	// If --resume is set, load the session and use its ID/properties.
+	resumeSummary := "" // printed on exit
+	if opts.ResumeSessionID != "" && sessionStore != nil {
+		resumeID := opts.ResumeSessionID
+		if resumeID == "latest" {
+			summaries, _, lErr := sessionStore.List(ctx, 1, "")
+			if lErr != nil || len(summaries) == 0 {
+				return fmt.Errorf("no saved sessions to resume")
+			}
+			resumeID = summaries[0].ID
+		}
+		loaded, lErr := sessionStore.Load(ctx, resumeID)
+		if lErr != nil {
+			return fmt.Errorf("resume session %q: %w", resumeID, lErr)
+		}
+		sessionID = loaded.SessionID
+		// Use the loaded session's model if available.
+		if loaded.Model.ID != "" {
+			model = loaded.Model
+		}
+		// Start the session, then load the messages via LoadSessionCommand.
+		config := buildSessionConfig(opts, model)
+		config.SystemPrompt = loaded.SystemPrompt
+		if err := coordinator.Send(tauchat.StartChatSessionCommand{SessionID: sessionID, Config: config}); err != nil {
+			return err
+		}
+		// Load the message history into the running session.
+		if err := coordinator.Send(tauchat.LoadSessionCommand{SessionID: sessionID}); err != nil {
+			return err
+		}
+		resumeSummary = fmt.Sprintf("Session %s resumed (%d messages). Exit: save + resume with: tau --resume %s",
+			sessionID, len(loaded.Messages), sessionID)
+	} else {
+		config := buildSessionConfig(opts, model)
+		if err := coordinator.Send(tauchat.StartChatSessionCommand{SessionID: sessionID, Config: config}); err != nil {
+			return err
+		}
 	}
 
 	notifyBus := pubsub.New[notify.Notification]()
@@ -93,11 +146,52 @@ func RunChat(ctx context.Context, opts ChatOptions) error {
 		_ = notifyBus.Publish(ctx, "notifications", notify.Notification{
 			Message:  "Model discovery failed: " + discoverErr.Error() + " (`/refresh` to retry)",
 			Level:    notify.LevelWarn,
-			Duration: 8 * time.Second, // longer for startup warnings
+			Duration: 8 * time.Second,
 		})
 	}
 
-	return tui.Run(ctx, coordinator, tuiCfg)
+	tuiErr := tui.Run(ctx, coordinator, tuiCfg)
+
+	// Print session summary on exit.
+	if sessionStore != nil {
+		printExitSummary(ctx, sessionStore, sessionID, resumeSummary)
+		sessionStore.Close()
+	}
+
+	return tuiErr
+}
+
+// printExitSummary prints session metadata after the TUI exits.
+func printExitSummary(ctx context.Context, s store.SessionStore, sessionID, extra string) {
+	summaries, _, err := s.List(ctx, 1, "")
+	if err != nil || len(summaries) == 0 {
+		return
+	}
+	// The most recent session is the one we just closed.
+	latest := summaries[0]
+	if latest.ID != sessionID {
+		return
+	}
+
+	fmt.Fprintf(os.Stderr, "\nSession %s saved — %d messages, %s tokens",
+		latest.ID, latest.MessageCount, formatTokensHuman(latest.TotalTokens))
+	if latest.Cost > 0 {
+		fmt.Fprintf(os.Stderr, ", $%.4f", latest.Cost)
+	}
+	fmt.Fprintf(os.Stderr, "\nResume: tau --resume %s\n", latest.ID)
+	if extra != "" {
+		fmt.Fprintln(os.Stderr, extra)
+	}
+}
+
+func formatTokensHuman(n int) string {
+	if n >= 1_000_000 {
+		return fmt.Sprintf("%.1fM", float64(n)/1_000_000)
+	}
+	if n >= 1_000 {
+		return fmt.Sprintf("%dK", n/1000)
+	}
+	return fmt.Sprintf("%d", n)
 }
 
 // buildModelRefresher returns a ModelRefresher closure that re-discovers
@@ -166,8 +260,8 @@ func buildModelRefs(models []provider.Model) []tauchat.ChatModelRef {
 }
 
 // newCoordinator creates and returns an agent coordinator with the standard
-// tool registry and config.
-func newCoordinator(ctx context.Context, opts ChatOptions, bearerToken string) (*agent.Coordinator, error) {
+// tool registry, config, and session persistence.
+func newCoordinator(ctx context.Context, opts ChatOptions, bearerToken string, sessionStore store.SessionStore) (*agent.Coordinator, error) {
 	cwd, _ := os.Getwd()
 	registry := tools.NewRegistry()
 	if err := tools.RegisterBuiltins(registry, cwd); err != nil {
@@ -188,11 +282,13 @@ func newCoordinator(ctx context.Context, opts ChatOptions, bearerToken string) (
 	}
 
 	coordinator, err := agent.NewCoordinator(ctx, agent.CoordinatorConfig{
-		TokenSource:   staticTokenSource(bearerToken),
-		Streamer:      streaming.OpenAIStreamer{Insecure: opts.Insecure},
-		Registry:      registry,
-		ShowReasoning: opts.Config.UI.ShowReasoning,
-		InteractiveUI: true,
+		TokenSource:     staticTokenSource(bearerToken),
+		Streamer:        streaming.OpenAIStreamer{Insecure: opts.Insecure},
+		Registry:        registry,
+		ShowReasoning:   opts.Config.UI.ShowReasoning,
+		InteractiveUI:   true,
+		SessionStore:    sessionStore,
+		AutoExportJSONL: true,
 		ExtensionReloader: extensionReloader{
 			manager: extensionManager,
 		},
@@ -211,7 +307,10 @@ func newCoordinator(ctx context.Context, opts ChatOptions, bearerToken string) (
 		OnReasoningDelta: func(eventContext map[string]any) {
 			extensionManager.Dispatch(extensions.EventReasoningDelta, eventContext)
 		},
-		OnClose:       extensionManager.Unload,
+		OnClose: func() {
+			extensionManager.Unload()
+			// SessionStore is closed by RunChat, not here.
+		},
 		StartupEvents: extensionStartupEvents(extensionManager.Snapshot()),
 	})
 	if err != nil {
