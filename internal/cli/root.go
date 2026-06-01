@@ -33,10 +33,7 @@ func NewRootCommand(version string) *urfavecli.Command {
 				Usage:   "Show progress/debug messages on stderr",
 				Sources: urfavecli.EnvVars("TAU_VERBOSE"),
 			},
-			&urfavecli.StringFlag{
-				Name:  "prompt",
-				Usage: "Prompt text to send; if omitted, stdin is used when piped",
-			},
+
 			&urfavecli.StringFlag{
 				Name:  "model",
 				Usage: "Model ID to use for chat",
@@ -70,7 +67,6 @@ func NewRootCommand(version string) *urfavecli.Command {
 				SystemPrompt: cmd.String("system-prompt"),
 				MaxTokens:    cmd.Int("max-tokens"),
 				Temperature:  cmd.Float("temperature"),
-				Prompt:       cmd.String("prompt"),
 				Version:      version,
 			})
 		},

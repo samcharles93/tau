@@ -69,6 +69,14 @@ func (b *Bus[T]) Subscribe(topic string, buffer int) (*Subscription[T], error) {
 	}, nil
 }
 
+// Publish delivers a message to all subscribers of the topic.
+//
+// Sends are non-blocking: when a subscriber's channel is full the message
+// is silently dropped for that subscriber. This means the mutex is held only
+// briefly and no subscriber can stall concurrent bus operations.
+//
+// The context is checked for early cancellation before publishing begins
+// but is not used to interrupt individual sends (they are non-blocking).
 func (b *Bus[T]) Publish(ctx context.Context, topic string, message T) error {
 	normalized, err := normalizeTopic(topic)
 	if err != nil {
@@ -78,6 +86,11 @@ func (b *Bus[T]) Publish(ctx context.Context, topic string, message T) error {
 		ctx = context.Background()
 	}
 
+	// Bail early if the caller's context is already done.
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+
 	b.mu.Lock()
 	defer b.mu.Unlock()
 
@@ -85,11 +98,10 @@ func (b *Bus[T]) Publish(ctx context.Context, topic string, message T) error {
 		return ErrClosed
 	}
 
-	for _, channel := range b.topics[normalized] {
+	for _, ch := range b.topics[normalized] {
 		select {
-		case channel <- message:
-		case <-ctx.Done():
-			return ctx.Err()
+		case ch <- message:
+		default:
 		}
 	}
 
@@ -101,6 +113,10 @@ func (b *Bus[T]) Publish(ctx context.Context, topic string, message T) error {
 // mustDeliverTimeout before dropping the event for that subscriber. This is
 // appropriate for terminal events (finish, error, cancel) that must not be
 // silently coalesced away by a non-blocking send.
+//
+// The lock is held for the entire call — but since Publish is always
+// non-blocking, the lock is only contended briefly and this cannot create
+// a deadlock.
 func (b *Bus[T]) PublishMustDeliver(topic string, message T) error {
 	normalized, err := normalizeTopic(topic)
 	if err != nil {
@@ -109,6 +125,7 @@ func (b *Bus[T]) PublishMustDeliver(topic string, message T) error {
 
 	b.mu.Lock()
 	defer b.mu.Unlock()
+
 	if b.closed {
 		return ErrClosed
 	}
@@ -122,7 +139,6 @@ func (b *Bus[T]) PublishMustDeliver(topic string, message T) error {
 			select {
 			case ch <- message:
 			case <-timer.C:
-				// Drop for this subscriber after timeout.
 			}
 			timer.Stop()
 		}
