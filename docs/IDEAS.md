@@ -758,6 +758,146 @@ Tool calls currently appear only as transient text notices in the status bar ("t
 
 ---
 
+## 31. Bundled Reference Plugin with External Plugin Ecosystem
+
+### Status: Planned
+
+### Motivation
+
+Tau should ship with one ready-made extension that demonstrates the plugin contract and gives immediate value (MCP support), while still encouraging community plugins hosted in separate repositories.
+
+### Decision
+
+- Keep `plugins/tau-plugin-mcp` inside the tau repository as a maintained reference implementation.
+- Do not require users to install it.
+- Preserve support for third-party plugins located in external repositories.
+
+### Why this model
+
+- New users get a working example of plugin structure and runtime behavior without extra setup.
+- Plugin authors can copy or fork a known-good implementation as a template.
+- Core maintainers can validate extension APIs against a real in-tree consumer.
+- Community ecosystem remains open and decoupled from the core repo.
+
+### Implementation sketch
+
+**Discovery and loading**
+- Keep local development discovery from `plugins/` in `internal/plugin/manager.go`.
+- Add/configure user-level plugin paths in `internal/config/config.go` (for example `plugins.paths`), so external repos can be discovered without vendoring.
+- Ensure `internal/plugin/plugin.go` metadata includes clear identity fields (`name`, `version`, `source`) to distinguish bundled vs external plugins in diagnostics.
+
+**CLI and UX**
+- Add docs and CLI output that classify plugin origin:
+  - bundled (in-repo reference),
+  - local path,
+  - external repo install.
+- Surface this in plugin listing and startup logs so users understand that bundled plugins are optional examples, not mandatory dependencies.
+
+**Documentation flow**
+- Position `plugins/tau-plugin-mcp` as the canonical "hello world + real capability" example.
+- Add a short "build your own plugin" walkthrough that points to this plugin as a template and then to external hosting recommendations.
+
+### Files to modify (incremental)
+
+| File | Change |
+|------|--------|
+| `internal/config/config.go` | Add or formalize configurable plugin search paths |
+| `internal/plugin/manager.go` | Merge discovery from bundled and external paths with deterministic precedence |
+| `internal/plugin/plugin.go` | Expand plugin metadata to include origin/source |
+| `internal/cli/commands.go` | Improve plugin list/status output to show plugin origin |
+| `docs/NEXT_STEPS.md` | Add implementation milestones for external plugin discovery UX |
+| `plugins/tau-plugin-mcp/README.md` | Document role as optional reference plugin/template |
+
+### Open Questions
+
+1. Should bundled plugins be auto-enabled or only shown as available until explicitly enabled?
+2. Should external plugin installs be managed by a future `tau plugin install` command or remain path-based first?
+3. What precedence should apply when a bundled and external plugin share the same name?
+
+---
+
+## 32. Dedicated Plugin Repository and Remote Install UX
+
+### Status: Planned
+
+### Motivation
+
+A separate plugin repository (for example `samcharles93/tau-plugins`) gives cleaner ownership and versioning for extensions while keeping the main tau repository focused on core runtime and UX.
+
+### Decision direction
+
+- Keep tau core in this repository.
+- Host first-party and community-curated plugins in a dedicated plugins repository.
+- Provide a simple install command using a source spec format like `owner/repo:plugin`.
+
+### Proposed install command
+
+```shell
+tau plugin install samcharles93/tau-plugins:mcp
+```
+
+Optional future flags:
+
+```shell
+tau plugin install samcharles93/tau-plugins:mcp@v1.2.0
+tau plugin install samcharles93/tau-plugins:mcp --ref main
+tau plugin install samcharles93/tau-plugins:mcp --verify
+```
+
+### Source spec format
+
+`<owner>/<repo>:<plugin>[@<version>]`
+
+- `owner/repo` maps to a Git remote source.
+- `plugin` identifies a subdirectory or manifest entry inside the plugins repo.
+- `version` maps to a git tag or release.
+
+### Installation flow (MVP)
+
+1. Parse source spec in CLI.
+2. Clone/fetch repo into a cache directory (`~/.cache/tau/plugins/repos/<owner>/<repo>`).
+3. Resolve plugin from manifest (`plugins.yaml`) or default path (`plugins/<plugin>`).
+4. Copy plugin artifact/files into user install dir (`~/.tau/plugins/<plugin>`).
+5. Record lock metadata (`source`, `resolved_commit`, `version`, `installed_at`) for updates and audit.
+
+### Recommended repository layout (`tau-plugins`)
+
+```text
+plugins/
+  mcp/
+    plugin.yaml
+    README.md
+    bin/
+      tau-plugin-mcp-linux-amd64
+      tau-plugin-mcp-darwin-arm64
+      tau-plugin-mcp-windows-amd64.exe
+plugins.yaml
+```
+
+### Security and trust model
+
+- Default to pinned tag/commit installs.
+- Add optional checksum/signature verification in `plugin.yaml`.
+- Prompt before enabling shell/file permissions declared by plugin manifests.
+
+### Files to modify (incremental)
+
+| File | Change |
+|------|--------|
+| `internal/cli/commands.go` | Add `tau plugin install` command and source-spec parsing |
+| `internal/plugin/manager.go` | Add install registry and lockfile handling |
+| `internal/plugin/plugin.go` | Add source/version/commit metadata fields |
+| `internal/config/config.go` | Add plugin install/cache directories and defaults |
+| `docs/NEXT_STEPS.md` | Add staged roadmap for remote plugin install support |
+
+### Open Questions
+
+1. Should `tau plugin install` support GitHub shorthand only at first, or generic git URLs from day one?
+2. Should plugin manifests allow multiple binaries per OS/ARCH or require a single URL template?
+3. Should Tau auto-update plugins by default, or only through explicit `tau plugin update`?
+
+---
+
 ## 31. Markdown Rendering with Syntax Highlighting
 
 ### Status: Not yet planned (upstream PR exists)
@@ -1415,3 +1555,927 @@ Extensions solve this because:
 - Provider-specific error handling
 
 **Security note**: Extension code runs in-process (Lua VM). Token values are passed as strings. Extensions should not log tokens. The `slog` calls in `maas.go` printing token prefixes should be removed or guarded behind a debug flag.
+
+---
+
+## 57. Migrate Extension Architecture from Lua to go-plugin with gRPC
+
+### Status: Not yet planned
+
+### Motivation
+
+The current extensions architecture runs Lua scripts in-process via gopher-lua. This has several limitations:
+
+- **No isolation** — a misbehaving extension can hang or crash Tau
+- **No streaming** — Lua can't efficiently stream data (LLM responses)
+- **No language choice** — extensions must be written in Lua
+- **Limited concurrency** — shared Lua VM with a global interpreter lock
+- **Development friction** — no type safety, limited IDE support, unfamiliar language for many developers
+
+[hashicorp/go-plugin](https://github.com/hashicorp/go-plugin) with gRPC is a mature, production-proven extension architecture used by Terraform, Vault, Nomad, and Packer. It provides:
+
+- **Process isolation** — each extension runs as a separate binary
+- **gRPC streaming** — native bidirectional streaming for LLM token output
+- **Any language** — extensions can be written in Go, Rust, Python, or any gRPC-capable language
+- **Type-safe contracts** — protobuf definitions are the single source of truth
+- **Auto-negotiated transports** — falls back from gRPC to net/rpc for simpler extensions
+- **Built-in health checking** — host detects crashed plugins and can restart them
+- **Secure by default** — stdio-based transport, no network ports exposed
+
+### Architecture (from go-plugin streaming example)
+
+The example demonstrates the core pattern: a shared interface, proto-generated gRPC stubs, and a streaming data path with chunking for large payloads.
+
+```
+┌─ Tau (host) ─────────────────────────────────────────┐
+│                                                        │
+│  plugin.NewClient(&plugin.ClientConfig{                │
+│    Plugins: map[string]plugin.Plugin{                  │
+│      "streamer": &shared.StreamerPlugin{Impl: impl},   │
+│    },                                                  │
+│    Cmd: exec.Command("./plugins/streamer"),             │
+│  })                                                    │
+│                                                        │
+│  rpcClient.Dispense("streamer") → Streamer interface   │
+│  streamer.Configure(...)                               │
+│  streamer.Write(ctx, data)  // client-side streaming   │
+│  streamer.Read(ctx)          // server-side streaming  │
+│                                                        │
+└────────────────────┬───────────────────────────────────┘
+                     │ gRPC over stdio
+┌─ Plugin (separate binary) ────────────────────────────┐
+│                                                        │
+│  plugin.Serve(&plugin.ServeConfig{                     │
+│    Plugins: map[string]plugin.Plugin{                  │
+│      "streamer": &shared.StreamerPlugin{               │
+│        Impl: &FileStreamer{...},                       │
+│      },                                                │
+│    },                                                  │
+│  })                                                    │
+│                                                        │
+│  // FileStreamer implements shared.Streamer            │
+│  func (fs *FileStreamer) Read(ctx) ([]byte, error)     │
+│  func (fs *FileStreamer) Write(ctx, b []byte) error    │
+│  func (fs *FileStreamer) Configure(ctx, ...) error     │
+│                                                        │
+└────────────────────────────────────────────────────────┘
+```
+
+**Key files from the reference example**:
+
+| File | Role |
+|------|------|
+| `proto/streamer.proto` | Protobuf service definition (`Configure`, `Read` server-stream, `Write` client-stream) |
+| `shared/interface.go` | Go interface that both host and plugin agree on |
+| `shared/client.go` | gRPC client adapter — translates `Streamer` calls to gRPC |
+| `shared/server.go` | gRPC server adapter + `StreamerPlugin` (the `go-plugin` shim) |
+| `plugin/plugin.go` | Plugin binary: `main()` with `plugin.Serve()`, real implementation of `Streamer` |
+| `main.go` | Host: `plugin.NewClient()`, dispenses plugin, calls interface methods |
+
+### Tau-Specific Design
+
+**Phase 1: Core plugin infrastructure**
+
+Create a `pkg/plugin` package (public API for extension authors):
+
+```go
+// pkg/plugin/extension.go — the interface extension authors implement
+type Extension interface {
+    Name() string
+    Commands() []Command
+    OnSessionStart(ctx context.Context, session SessionInfo) error
+    OnSessionShutdown(ctx context.Context, session SessionInfo) error
+    OnToolCall(ctx context.Context, tool ToolCall) (ToolResult, error)
+}
+
+type Command struct {
+    Name        string
+    Description string
+    Handler     func(ctx context.Context, args string) (string, error)
+}
+
+type SessionInfo struct {
+    ID        string
+    ModelID   string
+    Provider  string
+    CreatedAt time.Time
+}
+```
+
+**Phase 2: Proto service definition**
+
+```protobuf
+// internal/plugin/proto/extension.proto
+service ExtensionService {
+  rpc GetName(GetName.Request) returns (GetName.Response);
+  rpc GetCommands(GetCommands.Request) returns (GetCommands.Response);
+  rpc OnSessionStart(SessionEvent) returns (google.protobuf.Empty);
+  rpc OnSessionShutdown(SessionEvent) returns (google.protobuf.Empty);
+  rpc StreamChat(stream StreamChat.Chunk) returns (stream StreamChat.Chunk);
+}
+```
+
+**Phase 3: Plugin discovery and lifecycle**
+
+- `~/.config/tau/plugins/` directory scanned on startup
+- Each subdirectory contains a compiled plugin binary + optional config
+- `tau plugins list` shows loaded plugins with status
+- `tau plugins reload` sends SIGHUP to all plugins and re-discovers
+- Plugin crashes are detected via health check; auto-restart with backoff
+
+**Phase 4: Migration from Lua**
+
+- Existing Lua extension API (`tau.register_tool`, etc.) is deprecated but NOT removed
+- New extensions use the go-plugin API
+- Lua shim layer: a go-plugin extension that wraps the gopher-lua VM, allowing existing Lua extensions to run as a plugin binary
+- Eventually the Lua VM can be removed entirely
+
+**Streaming benefit for Tau**: The `StreamChat` RPC uses bidirectional streaming — the host sends user prompts and receives LLM tokens, tool call intermediates, and final responses over the same gRPC stream. This is a direct replacement for the current coordinator's `StreamChatCompletionFull` callback pattern.
+
+### Files to Create/Modify
+
+| File | Action | Phase |
+|------|--------|-------|
+| `pkg/plugin/extension.go` | New — public `Extension` interface | 1 |
+| `pkg/plugin/command.go` | New — command registration types | 1 |
+| `pkg/plugin/events.go` | New — session/tool event types | 1 |
+| `internal/plugin/proto/extension.proto` | New — protobuf service definition | 2 |
+| `internal/plugin/proto/` | New — generated Go code (`protoc-gen-go`, `protoc-gen-go-grpc`) | 2 |
+| `internal/plugin/server.go` | New — gRPC server adapter + ExtensionPlugin shim | 2 |
+| `internal/plugin/client.go` | New — gRPC client adapter | 2 |
+| `internal/plugin/manager.go` | New — plugin discovery, lifecycle, health checking | 3 |
+| `internal/app/chat.go` | Modify — replace extensionManager with pluginManager | 3 |
+| `go.mod` | Modify — add `google.golang.org/grpc`, `google.golang.org/protobuf`, `github.com/hashicorp/go-plugin` | 1 |
+
+### Risks and Mitigations
+
+| Risk | Severity | Mitigation |
+|------|----------|-----------|
+| Plugin binary compilation burden | Medium | Ship a `tau plugin new` scaffolder; provide pre-built plugin binaries via `tau plugins install` |
+| gRPC + protobuf adds build complexity | Medium | `//go:generate` directives; CI pipeline handles proto generation |
+| Plugin version mismatch | Low | Handshake protocol version check on connect; plugin manifest with semver range |
+| Startup latency (spawning processes) | Low | Plugins started once and kept alive; health check pings are cheap |
+| Memory overhead (N plugin processes) | Low | Typical deployment is 1-5 plugins; each Go plugin ~10-20MB RSS |
+
+---
+
+## 58. Extension Surface Design — Capability-Based Plugin System
+
+### Status: Design phase
+
+### Motivation
+
+The initial Extension interface (Metadata, RunCommand, Reload, DispatchEvent) is deliberately narrow — just commands and lifecycle events. To support the wilder ideas (Custom TUI Panels, Multi-Model Router, Compliance/Audit, Live Token Stream Processor, External Tool Registry), the interface must grow. But we can't just keep adding methods — that breaks every existing plugin on each release.
+
+**The solution**: capability-based extension surface. Plugins declare which capabilities they support. The host discovers capabilities during handshake. Unknown capabilities are gracefully ignored. This is how gRPC service discovery already works — we formalize it.
+
+### Design: Capability-Based Plugin Interface
+
+Instead of one monolithic `Extension` interface, plugins implement **capability interfaces**. Each capability is a separate gRPC service. Plugins opt in to the capabilities they need.
+
+```
+┌─ Plugin binary ───────────────────────────────────┐
+│                                                     │
+│  Capabilities declared in plugin manifest:          │
+│                                                     │
+│  ☑ core         — metadata, commands, lifecycle    │
+│  ☐ provider     — custom auth, model routing       │
+│  ☐ stream       — token interception/transformation │
+│  ☐ tools        — dynamic tool registration        │
+│  ☐ ui           — custom panels, keybindings       │
+│  ☐ audit        — observation sink for all events  │
+│  ☐ pipeline     — request/response middleware      │
+│                                                     │
+│  Only implements the gRPC services it needs.       │
+│                                                     │
+└─────────────────────────────────────────────────────┘
+```
+
+### Proto: Capability Discovery
+
+```protobuf
+// Capabilities are discovered during plugin handshake.
+service ExtensionService {
+  // Core — every plugin must implement.
+  rpc GetCapabilities(CapabilitiesRequest) returns (CapabilitiesResponse);
+  rpc GetMetadata(GetMetadataRequest) returns (GetMetadataResponse);
+  rpc Reload(ReloadRequest) returns (ReloadResponse);
+  rpc DispatchEvent(DispatchEventRequest) returns (DispatchEventResponse);
+}
+
+// Optional capability A: Provider (custom auth/model routing).
+service ProviderService {
+  rpc ResolveModel(ResolveModelRequest) returns (ResolveModelResponse);
+  rpc ExchangeToken(ExchangeTokenRequest) returns (ExchangeTokenResponse);
+  rpc DiscoverModels(DiscoverModelsRequest) returns (stream ModelInfo);
+}
+
+// Optional capability B: Stream (token interception).
+service StreamService {
+  // Bidirectional: host sends tokens, plugin returns transformed tokens.
+  rpc ProcessStream(stream StreamChunk) returns (stream StreamChunk);
+}
+
+// Optional capability C: Tools (dynamic registration).
+service ToolService {
+  rpc RegisterTools(ToolRegistrationRequest) returns (stream ToolDefinition);
+  rpc ExecuteTool(ToolExecutionRequest) returns (ToolExecutionResponse);
+}
+
+// Optional capability D: UI (custom panels).
+service UIService {
+  rpc RenderPanel(PanelRequest) returns (stream PanelUpdate);
+  rpc HandleKey(KeyEvent) returns (KeyResponse);
+}
+
+// Optional capability E: Audit (observation).
+service AuditService {
+  rpc Observe(stream AuditEvent) returns (AuditAck);
+}
+
+// Optional capability F: Pipeline (middleware).
+service PipelineService {
+  // Plugin sits between host and LLM. Host sends request, plugin may:
+  // - Forward unchanged (passthrough)
+  // - Rewrite (change model, system prompt, messages)
+  // - Short-circuit (return cached/static response)
+  // - Route (send to different model)
+  rpc ProcessRequest(stream PipelineEvent) returns (stream PipelineEvent);
+}
+
+message CapabilitiesResponse {
+  repeated string capabilities = 1; // ["core", "provider", "stream", ...]
+}
+```
+
+### Go Interface: Capability Interfaces
+
+```go
+// pkg/plugin/capabilities.go
+
+// Core is required — every plugin implements this.
+type Core interface {
+    Metadata() (name string, commands []*proto.Command)
+    RunCommand(ctx context.Context, name, args string) (string, error)
+    Reload(ctx context.Context) ([]*proto.Diagnostic, []*proto.Command, error)
+    DispatchEvent(ctx context.Context, event string, context map[string]string)
+}
+
+// Provider enables custom auth flows and model routing.
+type ProviderCapability interface {
+    // ResolveModel returns the model to use for a request.
+    // Can route based on prompt content, user preference, cost budget.
+    ResolveModel(ctx context.Context, req ResolveModelRequest) (ModelRef, error)
+    
+    // ExchangeToken transforms a base auth token into a provider-specific token.
+    ExchangeToken(ctx context.Context, baseToken string, config map[string]string) (string, error)
+    
+    // DiscoverModels returns available models (may differ from config).
+    DiscoverModels(ctx context.Context, baseURL string) ([]ModelInfo, error)
+}
+
+// StreamProcessor intercepts and transforms LLM output tokens.
+type StreamCapability interface {
+    // ProcessStream is bidirectional streaming.
+    // Receives tokens from the LLM, returns transformed tokens.
+    // Can: pass through, redact PII, translate, inject context.
+    ProcessStream(ctx context.Context, input <-chan StreamChunk, output chan<- StreamChunk) error
+}
+
+// ToolProvider registers and executes custom tools.
+type ToolCapability interface {
+    // RegisterTools returns tool definitions to register with the registry.
+    RegisterTools(ctx context.Context) ([]ToolDef, error)
+    
+    // ExecuteTool runs a tool and returns the result.
+    ExecuteTool(ctx context.Context, call ToolCall) (ToolResult, error)
+}
+
+// UIPanel renders a custom UI component in the TUI.
+type UICapability interface {
+    // RenderPanel is server-streaming — plugin pushes updates to the TUI.
+    RenderPanel(ctx context.Context, panelID string, output chan<- PanelUpdate) error
+    
+    // HandleKey processes a key event in the plugin's panel.
+    HandleKey(ctx context.Context, panelID string, key KeyEvent) (KeyResponse, error)
+}
+
+// AuditSink receives a stream of all observable events.
+type AuditCapability interface {
+    // Observe is client-streaming — host pushes events, plugin acknowledges.
+    Observe(ctx context.Context, events <-chan AuditEvent) error
+}
+
+// Pipeline sits in the request/response path.
+type PipelineCapability interface {
+    // ProcessRequest is bidirectional streaming.
+    // Plugin receives request, can rewrite, route, or short-circuit.
+    ProcessRequest(ctx context.Context, input <-chan PipelineEvent, output chan<- PipelineEvent) error
+}
+```
+
+### Capability Discovery Flow
+
+```
+1. Host starts plugin binary
+2. gRPC handshake completes
+3. Host calls GetCapabilities() — plugin returns ["core", "provider", "audit"]
+4. Host checks each capability:
+   - "core" → always required
+   - "provider" → register in provider resolution chain
+   - "audit" → subscribe to event bus
+   - "ui" → register panel in TUI layout
+   - "stream" → wrap streamer with interceptor
+   - Unknown → silently ignore (forward compatibility)
+5. Plugin runs — only receives calls for capabilities it declared
+```
+
+### How Each Wild Idea Maps to Capabilities
+
+| Idea | Capabilities | What happens |
+|------|-------------|--------------|
+| **Custom TUI Panels** | core + ui | GetMetadata + RenderPanel streams to TUI; HandleKey for keypresses |
+| **Multi-Model Router** | core + provider + pipeline | ResolveModel picks model; ProcessRequest rewrites the prompt/system for that model |
+| **Compliance/Audit** | core + audit | Observe receives every ChatEvent; plugin logs/signs/stores to external system |
+| **Live Token Stream** | core + stream | ProcessStream receives tokens, redacts PII, injects links, translates; returned tokens render in TUI |
+| **External Tool Registry** | core + tools | RegisterTools adds postgres/splunk/k8s tools; ExecuteTool runs them via plugin's network access |
+| **Session Intelligence** | core + audit + tools | Observe watches all sessions; tools let user query the knowledge base |
+| **Post-Chat Automation** | core + audit | Observe triggers on SessionShutdown; plugin reads messages, creates GitHub issue/Slack post |
+
+### Protocol Evolution Strategy
+
+**Adding a new capability (e.g., v1.1 adds "search" capability):**
+1. Add `SearchService` to proto, add `SearchCapability` to Go interface
+2. Generate new stubs — old clients don't need to recompile, their handshake won't list "search"
+3. New plugins that declare "search" get the capability; old plugins ignore it
+4. Host gracefully handles missing capabilities
+
+**No breaking change ever needed** — capabilities are additive. The host discovers what a plugin supports and only calls those services. A v1.0 plugin runs unchanged on v2.x host because the host knows the plugin doesn't implement new services.
+
+### What This Enables
+
+**Plugin chaining**: The pipeline capability means plugins can compose:
+```
+User Prompt → [Audit Logger] → [PII Redactor] → [Model Router] → LLM
+LLM Response → [PII Restorer] → [Translator] → [Audit Logger] → TUI
+```
+
+**Sandboxing**: Each plugin is a separate process. The audit plugin can't crash the streaming plugin. The UI plugin can't access the model router's credentials.
+
+**Language freedom**: A Python developer writes the audit plugin (gRPC supports Python). A Rust developer writes the high-performance stream processor. A Go developer writes the model router. All work together.
+
+### Implementation Plan
+
+**Phase 1** — Core capability (current state): Metadata, RunCommand, Reload, DispatchEvent. Every plugin implements this. No capability discovery yet — all plugins are implicitly core-only.
+
+**Phase 2** — Add `GetCapabilities` RPC and capability discovery in the manager. Plugins declare their capabilities. Host inspects and routes accordingly. Add `StreamService` (token interception) as the first optional capability.
+
+**Phase 3** — Add `ProviderService`, `ToolService`, `UIService`, `AuditService`, `PipelineService` one at a time. Each is a separate proto service, separate Go interface, additive (no breaking changes).
+
+**Phase 4** — Plugin chaining and ordering. Allow users to configure plugin order in the pipeline. "Run PII Redactor first, then Model Router, then Audit."
+
+### Files
+
+| File | Phase |
+|------|-------|
+| `internal/plugin/proto/extension.proto` | 2 — add `GetCapabilities` RPC, `StreamService` |
+| `internal/plugin/proto/provider.proto` | 3 — `ProviderService` |
+| `internal/plugin/proto/stream.proto` | 2 — `StreamService` |
+| `internal/plugin/proto/tools.proto` | 3 — `ToolService` |
+| `internal/plugin/proto/ui.proto` | 3 — `UIService` |
+| `internal/plugin/proto/audit.proto` | 3 — `AuditService` |
+| `internal/plugin/proto/pipeline.proto` | 3 — `PipelineService` |
+| `internal/plugin/capabilities.go` | 2 — Go capability interfaces |
+| `internal/plugin/manager.go` | 2 — capability discovery, routing |
+
+---
+
+## 59. Plugin Isolation Guarantees
+
+### Status: Design constraint
+
+### Motivation
+
+Users can install any number of plugins. They must be guaranteed that plugins won't interfere with each other unless explicitly designed to do so. This isn't just about process crashes — it's about namespace collision, event ordering, resource contention, and pipeline composability.
+
+go-plugin provides process isolation for free (separate binaries, separate OS processes). But we need additional guarantees at the host level.
+
+### Isolation Dimensions
+
+#### 1. Process Isolation (already provided by go-plugin)
+
+- Each plugin is a separate OS process
+- One plugin crashing does not affect others or the host
+- Memory, file descriptors, network sockets are per-process
+- Plugin A cannot access Plugin B's memory
+- Host can detect crashed plugins via health check and restart them
+
+#### 2. Namespace Isolation — Commands and Tools
+
+**Problem**: Two plugins register `/export` command. Which one runs?
+
+**Rule**: Command names and tool names are **plugin-scoped**. The host prepends the plugin name as a namespace:
+
+```
+Plugin "maas-auth" registers command "login"     → /maas-auth:login
+Plugin "slack-bot" registers command "login"     → /slack-bot:login
+
+No collision. Both can coexist.
+```
+
+For built-in commands that plugins shadow (e.g., a plugin wants to override `/export`), the user configures it explicitly:
+
+```yaml
+plugins:
+  shadow:
+    export: my-exporter  # route /export to plugin "my-exporter"
+```
+
+**Rule**: A plugin can only deregister its own commands/tools. Plugin A cannot remove Plugin B's commands.
+
+#### 3. Pipeline Ordering — Explicit, Configurable
+
+**Problem**: User installs PII Redactor and Model Router. Both are pipeline plugins. Which runs first? Does Redactor see the original prompt or the routed one?
+
+**Rule**: Pipeline plugins receive events in a user-configured order. The order is explicit, not implicit:
+
+```yaml
+plugins:
+  pipeline:
+    request:
+      - pii-redactor    # runs first — sees original user prompt
+      - model-router    # runs second — sees redacted prompt, chooses model
+      - audit-logger    # runs third — logs the final request
+    response:
+      - pii-redactor    # runs first — restores PII in the response
+      - translator      # runs second — translates to user's language
+      - audit-logger    # runs third — logs final response
+```
+
+**Rule**: Each pipeline plugin sees the output of the previous plugin in the chain. The first plugin sees the raw host output. No plugin can skip or remove another plugin from the chain — that's host configuration, not plugin behavior.
+
+#### 4. Event Dispatch — Parallel by Default
+
+**Problem**: A slow audit plugin should not delay the streaming plugin.
+
+**Rule**: Event dispatch (lifecycle events, tool call notifications) fans out to all plugins **in parallel**. Each plugin's handler runs in its own goroutine. A slow plugin blocks only itself.
+
+**Exception**: Pipeline processing is sequential (see #3 above) because middleware order matters.
+
+**Timeout**: Each plugin gets a configurable timeout for event handling. If a plugin exceeds the timeout, the host logs a warning and moves on. The plugin is not killed — it may just be slow. Configurable via:
+
+```yaml
+plugins:
+  timeout:
+    event_dispatch: 5s
+    pipeline_step: 30s
+    command_execution: 60s
+```
+
+#### 5. Observation Isolation — Plugins Don't See Each Other
+
+**Problem**: An audit plugin should see what the user sees, not what other plugins see.
+
+**Rule**: Audit plugins receive events **after** pipeline processing. They see the final request (going to the LLM) and the final response (shown to the user), not intermediate pipeline states. This also means audit plugins cannot observe each other's processing.
+
+**Rule**: No plugin can subscribe to another plugin's internal events. Plugin A cannot observe Plugin B's DispatchEvent calls.
+
+**Rule**: If a plugin needs to communicate with another plugin, it must be explicit — they share a pub/sub topic that both subscribe to. This is opt-in, not default.
+
+#### 6. Resource Limits
+
+**Problem**: A plugin allocates 32GB of memory or opens 10,000 file descriptors.
+
+**Rule**: Resource limits are configurable per-plugin or globally. Implemented via OS-level cgroups/rlimits where available:
+
+```yaml
+plugins:
+  limits:
+    max_memory_mb: 512
+    max_file_descriptors: 256
+    max_cpu_seconds_per_request: 30
+```
+
+On platforms without cgroups (macOS, Windows), best-effort with `runtime.SetMemoryLimit` and `os/rlimit`.
+
+#### 7. Plugin Identity — Immutable After Load
+
+**Problem**: A plugin changes its name or commands after reload.
+
+**Rule**: Plugin identity (name, capabilities, command names) is established at load time. If a reload changes the identity, the host treats it as a new plugin — old commands are deregistered, new ones registered. Users are notified via a diagnostic.
+
+This prevents a plugin from silently replacing another plugin's commands by changing its own name.
+
+### Isolation Matrix
+
+| Concern | Default | Override |
+|---------|---------|----------|
+| Process crashes | Plugin dies, others unaffected | Health check + auto-restart |
+| Command name collision | Plugin-scoped namespacing | Explicit shadow config |
+| Tool name collision | Plugin-scoped namespacing | Explicit shadow config |
+| Pipeline ordering | Declared by user config | Required — no implicit ordering |
+| Event dispatch ordering | Parallel (no ordering guarantee) | Sequential via pipeline config |
+| Slow plugin blocks others | No — timeout + parallel dispatch | Timeout per plugin |
+| Plugin A observes Plugin B | No — audit sees final output only | Explicit pub/sub topic |
+| Resource exhaustion | Per-plugin limits | Configurable |
+| Identity change on reload | Treated as new plugin | Diagnostic notification |
+
+### What This Means for the Extension Surface
+
+These isolation guarantees are enforced by the **host** (the plugin manager), not by individual plugins. The proto interface doesn't need to change — isolation is a host-side concern. The manager:
+
+1. Prefixes command/tool names with plugin namespace before registering
+2. Routes pipeline events through the configured chain in order
+3. Dispatches events to plugins via goroutines with timeouts
+4. Wraps plugin processes with resource limits (where OS supports it)
+5. Validates plugin identity on reload and handles changes gracefully
+
+**The key principle**: plugins are guests in the host's house. The host sets the rules. Plugins can't negotiate around them.
+
+---
+
+## 60. Bidirectional Plugin Communication — Host Service API
+
+### Status: Design constraint
+
+### Motivation
+
+The current interface is host→plugin only: host dispatches events, host runs commands, host pushes audit events. But real plugins need to initiate communication back to the host. Two critical patterns require this:
+
+1. **Agent-callable plugins** (MCP client): The agent needs to discover a plugin's tools and call them. The plugin registers tools with the host, then the host calls the plugin to execute them. But between calls, the MCP server might push notifications to the client — that's bidirectional streaming initiated by the plugin.
+
+2. **Context-aware plugins** (pipeline, stream): A model router plugin needs to know the current session state, available models, and user preferences to make routing decisions. It can't be passive — it needs to query the host.
+
+### Design: HostService — The Plugin's Window into Tau
+
+The host exposes a **HostService** gRPC service. Every plugin gets a client for this service during handshake. This is the plugin's API surface for calling back into tau.
+
+```protobuf
+// HostService is exposed by tau to all plugins.
+// It is the plugin's window into the host.
+service HostService {
+  // --- Session ---
+  rpc GetSessionState(SessionRequest) returns (SessionState);
+  rpc ListActiveSessions(ListSessionsRequest) returns (ListSessionsResponse);
+  
+  // --- Models ---
+  rpc GetAvailableModels(ModelsRequest) returns (stream ModelInfo);
+  rpc GetModelConfig(ModelConfigRequest) returns (ModelConfig);
+  
+  // --- Tools ---
+  // Register tools that plugins make available to the agent.
+  rpc RegisterTools(stream ToolRegistration) returns (ToolRegistrationAck);
+  // Called BY the agent THROUGH the host to execute a plugin-registered tool.
+  // The host routes to the correct plugin.
+  rpc ExecutePluginTool(ToolExecutionRequest) returns (ToolExecutionResponse);
+  
+  // --- Events ---
+  // Subscribe to tau event bus (ChatEvent stream).
+  // Plugin chooses: push (host calls plugin) or pull (plugin subscribes).
+  rpc SubscribeEvents(EventSubscription) returns (stream ChatEvent);
+  
+  // --- Notifications ---
+  // Plugin can push notifications to the TUI.
+  rpc Notify(NotificationRequest) returns (NotificationResponse);
+  
+  // --- Storage ---
+  // Plugin can read/write plugin-scoped key-value storage.
+  rpc GetConfig(ConfigRequest) returns (ConfigResponse);
+  rpc SetConfig(ConfigRequest) returns (ConfigResponse);
+}
+```
+
+### Two Communication Patterns
+
+**Pattern A: Hook (Host → Plugin push)** — Existing model. Host calls plugin. Fast, synchronous-ish. Good for: lifecycle events, command execution, pipeline processing.
+
+```
+Host → Plugin.DispatchEvent(session_start, ctx)
+Host → Plugin.RunCommand("/export", "session-id")
+Host → Plugin.PipelineService.ProcessRequest(stream)
+```
+
+**Pattern B: Query (Plugin → Host pull)** — New. Plugin calls host. Plugin-initiated, asynchronous. Good for: context lookups, state queries, configuration reads.
+
+```
+Plugin → Host.GetSessionState("session-123")           // What's the current session state?
+Plugin → Host.GetAvailableModels()                      // What models are available?
+Plugin → Host.GetConfig("plugin.my-plugin.api-key")     // Read my API key
+```
+
+**Pattern C: Subscribe (Plugin pulls event stream)** — Plugin subscribes to host event bus. Instead of host pushing every event, plugin pulls only what it needs.
+
+```
+Plugin → Host.SubscribeEvents(["tool_call_started", "session_shutdown"])
+Host → stream(ChatEvent, ChatEvent, ...)  // Plugin receives filtered events
+```
+
+This is more efficient than Pattern A for high-frequency events (like token streaming) because the plugin only receives events it subscribed to, not every event the host fires.
+
+**Pattern D: Register + Callback (Plugin registers, Host calls back)** — Plugin registers resources (tools, commands, panels), then host calls back when needed.
+
+```
+Plugin → Host.RegisterTools(stream ToolDef, ToolDef, ...)
+// Later, when agent wants to call a tool:
+Agent → Host (via coordinator) → Host.ExecutePluginTool(plugin, tool, args)
+// Host routes to the correct plugin automatically.
+```
+
+### Mapping to Plugin Capabilities
+
+| Capability | Push (Host→Plugin) | Pull (Plugin→Host) | Register+Callback |
+|-----------|-------------------|-------------------|------------------|
+| core | DispatchEvent | GetConfig, Notify | RunCommand |
+| provider | ExchangeToken (push) | GetAvailableModels, GetModelConfig | DiscoverModels (stream) |
+| stream | ProcessStream (bidir) | — | — |
+| tools | ExecuteTool (push) | — | RegisterTools → ExecutePluginTool |
+| ui | HandleKey (push) | — | RenderPanel (stream out) |
+| audit | — | SubscribeEvents (pull) | — |
+| pipeline | ProcessRequest (bidir) | GetSessionState | — |
+
+### Why Both Push and Pull?
+
+**Push is better when**: The host knows exactly when an event happens (session started, tool called, key pressed). The plugin shouldn't have to poll.
+
+**Pull is better when**: The plugin needs context that the host has but doesn't know the plugin needs it (current session state, available models, user config). Or when the plugin wants to filter what it receives (subscribe to specific events, not all).
+
+**Bidirectional streaming is needed when**: Both sides produce data over time (token streaming, pipeline processing, MCP notifications). Neither side is purely a client or server.
+
+### The Full Communication Surface
+
+```
+┌─ Tau Host ───────────────────────────────────┐
+│                                                │
+│  Exposes: HostService                          │
+│    GetSessionState ←─── Plugin calls this      │
+│    GetAvailableModels ←─── Plugin calls this   │
+│    SubscribeEvents ←─── Plugin subscribes      │
+│    RegisterTools ←─── Plugin registers         │
+│    ExecutePluginTool ←─── Host routes to plugin│
+│    Notify ←─── Plugin pushes to TUI            │
+│    GetConfig/SetConfig ←─── Plugin storage     │
+│                                                │
+│  Consumes: ExtensionService (per-plugin)       │
+│    DispatchEvent ───→ Plugin receives          │
+│    RunCommand ───→ Plugin executes             │
+│    Reload ───→ Plugin reloads                  │
+│                                                │
+│  Consumes: ProviderService (if capability)     │
+│  Consumes: StreamService (bidirectional)        │
+│  Consumes: PipelineService (bidirectional)      │
+│  Consumes: UIService (if capability)           │
+│  Consumes: AuditService (if capability)        │
+│                                                │
+└────────────────────────────────────────────────┘
+```
+
+### Security: Plugin Scoping
+
+Not every plugin gets full HostService access. Capabilities gate the available host methods:
+
+| Host method | Required capability |
+|------------|-------------------|
+| GetSessionState | core (always available) |
+| GetAvailableModels | provider |
+| RegisterTools | tools |
+| SubscribeEvents | audit |
+| GetConfig/SetConfig | core |
+| Notify | core |
+
+The host checks the plugin's declared capabilities before allowing each call. A core-only plugin can't call RegisterTools. A provider plugin can't call SubscribeEvents.
+
+### What This Enables
+
+**MCP client plugin**: Declares `tools` capability. Calls `Host.RegisterTools()` to register MCP server tools. Agent discovers them. When agent calls a tool, host routes to `Host.ExecutePluginTool()` which calls back to the plugin. The MCP server can also push notifications through the bidirectional stream.
+
+**Context-aware router**: Declares `provider` + `pipeline` capabilities. Before routing a request, calls `Host.GetSessionState()` and `Host.GetAvailableModels()` to make an informed decision. Has full context without the host needing to push it.
+
+**Notification plugin**: Declares `core`. Calls `Host.Notify()` to push status messages to the TUI. "Model router: selected claude-sonnet-4 (cost: $0.002/1K)".
+
+**Persistent plugin state**: Declares `core`. Calls `Host.GetConfig()` to read its API keys and `Host.SetConfig()` to save state between sessions. Plugin-scoped key-value store, persisted to SQLite.
+
+### Plugin Config Schema
+
+Plugins declare their config schema during `GetMetadata()`. The host reads matching config from `~/.config/tau/config.yaml` under a `plugins.<plugin-name>` block and makes it available via `Host.GetConfig()`:
+
+```yaml
+# ~/.config/tau/config.yaml
+plugins:
+  mcp-client:
+    mcpServers:
+      postgres:
+        command: npx
+        args: ["-y", "@modelcontextprotocol/server-postgres", "$DATABASE_URL"]
+      filesystem:
+        command: npx
+        args: ["-y", "@modelcontextprotocol/server-filesystem", "/tmp"]
+    auto_discover: true
+```
+
+```go
+// Plugin declares its config schema at Metadata time.
+func (p *MCPPlugin) Metadata() (string, []*proto.Command) {
+    return "mcp-client", []*proto.Command{}, proto.ConfigSchema{
+        Fields: map[string]proto.ConfigField{
+            "mcpServers":   {Type: "object", Required: false},
+            "auto_discover": {Type: "bool", Default: "true"},
+        },
+    }
+}
+
+// Later, plugin reads its config:
+serversJSON, _ := host.GetConfig(ctx, "mcpServers")
+autoDiscover, _ := host.GetConfig(ctx, "auto_discover")
+```
+
+**Key properties**:
+- Config is **plugin-namespaced** — `plugins.mcp-client` in config.yaml maps to the "mcp-client" plugin
+- **No re-parsing** — host validates config against schema at load time, plugin gets pre-validated values
+- **Hot reload** — host watches config.yaml for changes, notifies plugins via `Reload()` when their config changes
+- **Persistent writes** — `Host.SetConfig()` writes plugin-scoped state to SQLite, not to config.yaml (user config is read-only from the plugin's perspective)
+
+
+---
+
+## 61. Plugin Discovery via Git Naming Convention
+
+### Status: Design
+
+### Motivation
+
+Plugin binaries sitting in `~/.config/tau/plugins/` requires manual installation. For tau to have an ecosystem, plugins need to be discoverable and installable with minimal friction. The established pattern — used by kubectl, gh CLI, oh-my-zsh, and many others — is a naming convention: `tau-plugin-<name>`.
+
+### Design
+
+**Discovery**: Plugins are Git repositories matching the pattern `tau-plugin-<name>`. They can live anywhere (GitHub, GitLab, self-hosted Gitea). Tau doesn't need a central registry — it searches GitHub, or users specify a repo directly.
+
+**Installation**:
+
+```
+tau plugins search mcp           # searches GitHub for "tau-plugin-mcp"
+tau plugins install mcp           # git clone → go build → install to ~/.config/tau/plugins/
+tau plugins install gh:user/mcp   # install from specific GitHub repo
+tau plugins install https://gitlab.example.com/team/tau-plugin-mcp
+tau plugins list                  # show installed plugins
+tau plugins update mcp            # git pull → rebuild → replace
+tau plugins uninstall mcp        # remove binary
+```
+
+**Repository structure**:
+
+```
+tau-plugin-mcp/
+├── main.go          # plugin entry point (implements plugin.Extension)
+├── go.mod           # module tau-plugin-mcp
+├── go.sum
+└── README.md
+```
+
+No complex scaffolding — just a single Go binary. The `tau plugins new mcp` command scaffolds this structure.
+
+**How it works**:
+
+1. `tau plugins install mcp` searches GitHub API for repos named `tau-plugin-mcp`
+2. If exactly one match, clones to `~/.cache/tau/plugins/src/tau-plugin-mcp`
+3. Runs `go build -o ~/.config/tau/plugins/tau-plugin-mcp .`
+4. Reloads the plugin manager (new binary appears in plugins dir)
+5. Plugin connects, registers tools/commands
+
+**Updates**: `tau plugins update` does `git pull` in the cached source, rebuilds, replaces the binary. Plugin manager detects the change and restarts the plugin.
+
+**Compatibility**: Plugin declares required tau version range in its `Metadata()`. Host checks before loading:
+
+```go
+func (p *Plugin) Metadata() (string, []*proto.Command) {
+    return "mcp-plugin", nil,
+        proto.RequiresTau(">=0.5.0") // host validates
+}
+```
+
+**Private plugins**: `tau plugins install gh:my-org/private-mcp` works with `gh auth` token. Self-hosted GitLab with `GITLAB_TOKEN` env var.
+
+### Why Not a Central Registry?
+
+Central registries (VS Code marketplace, npm) require infrastructure, moderation, and trust. The Git naming convention is:
+
+- **Decentralized** — no single point of failure or control
+- **Already understood** — kubectl, gh, oh-my-zsh users know the pattern
+- **Versioned** — Git tags = plugin versions
+- **Self-hostable** — enterprises can run their own GitLab with private plugins
+- **Zero infra cost** — GitHub search is free
+
+If the ecosystem grows large enough to need curation, an optional index repo (`tau-plugins/index`) can provide a curated list with metadata, but it's additive, not required.
+
+### Comparison: gh CLI Extension Architecture
+
+The gh CLI's extension system (https://github.com/cli/cli/tree/trunk/pkg/extensions) is a model of simplicity:
+
+```go
+// The entire extension interface (1K lines of code total in the package):
+type Extension interface {
+    Name() string           // name without gh- prefix
+    Path() string           // path to executable
+    URL() string            // repo URL
+    CurrentVersion() string
+    LatestVersion() string
+    IsPinned() bool
+    UpdateAvailable() bool
+    IsBinary() bool
+    IsLocal() bool
+    Owner() string
+}
+
+type ExtensionManager interface {
+    List() []Extension
+    Install(ghrepo.Interface, string) error
+    InstallLocal(dir string) error
+    Upgrade(name string, force bool) error
+    Remove(name string) error
+    Dispatch(args []string, stdin io.Reader, stdout, stderr io.Writer) (bool, error)
+    Create(name string, tmplType ExtTemplateType) error
+    EnableDryRunMode()
+    UpdateDir(name string) string
+}
+```
+
+**Key differences from tau's go-plugin approach**:
+
+| Concern | gh CLI | tau (go-plugin) |
+|---------|--------|-----------------|
+| Communication | stdin/stdout | gRPC over stdio |
+| Process model | One-shot exec per command | Long-lived process |
+| Capabilities | Implicit (binary name = subcommand) | Explicit (proto service discovery) |
+| Installation | `gh repo clone` + auto-detect on PATH | Binary in plugins dir |
+| Interface size | ~10 methods (manager) | ~50+ methods (proto services) |
+| Language support | Any language (just needs a binary) | Any gRPC-capable language |
+
+**What tau should adopt from gh**:
+- **Naming convention + PATH discovery** — `tau-plugin-*` binaries on PATH
+- **Small manager interface** — the manager doesn't need to know about capabilities
+- **Official extensions list** — a curated set of GitHub-owned extensions for discovery
+- **`Dispatch` with stdin/stdout** — for simple command extensions, gRPC is overkill
+
+**What tau gets from go-plugin that gh doesn't**:
+- Rich bidirectional streaming (LLM tokens, pipeline processing)
+- Tool registration with the agent
+- Event hooks (session lifecycle, tool calls)
+- Health checking and auto-restart
+- Capability negotiation at handshake time
+
+**The right model for tau**: Both. Simple command extensions use the gh model (binary on PATH, exec on demand). Rich capability plugins use go-plugin (long-lived process, gRPC streaming). A plugin declares its mode in its manifest — the manager routes accordingly.
+
+---
+
+## 62. Rich Event Hook Surface — Complete Lifecycle Coverage
+
+### Status: Design — based on extension-contract-spec + Pi comparison matrix
+
+### Motivation
+
+The current plugin DispatchEvent carries only session_start/session_shutdown as bare map[string]string. Pi has 24 typed events. The user's own extension contract spec defines 10 lifecycle events with typed payloads and response transforms. The gap is massive — real plugins (compliance, model router, PII redactor) need to observe and modify every phase of the agent lifecycle.
+
+### Design: Typed Event Payloads + Response Transforms
+
+Instead of string maps, events carry typed proto oneof payloads. Modifying events return EventResponse that the coordinator merges and applies.
+
+### Event Map
+
+| Event | Fires | Plugin Can |
+|-------|-------|------------|
+| session_start | New session | Init state |
+| before_agent_start | Agent loop starting | Inject system prompt |
+| turn_start | Each turn | Track stats |
+| context | Before LLM context build | Inject/remove messages |
+| before_llm_call | Before API request | Modify payload, headers, model |
+| after_llm_call | After API response | Log/intercept response |
+| message_start | Assistant message begins | Track lifecycle |
+| message_delta | Each token | Real-time PII redact, translate |
+| message_end | Message complete | Archive, analyze |
+| tool_execution_start/update/end | Tool execution lifecycle | Log, stream progress |
+| before_tool_exec | Tool call dispatched | Validate, block, modify args |
+| after_tool_exec | Tool completed | Transform/annotate result |
+| turn_end | Turn complete | Persist, trigger actions |
+| before_compact/after_compact | Compaction | Customize/verify |
+| session_end | Session closing | Flush, persist |
+
+### Response Merging
+
+When multiple plugins respond to the same event, the manager merges:
+- InjectMessages: concatenated from all plugins
+- RemoveMessageIndices: union of all
+- InjectSystemPrompt: newline-joined
+- BlockToolExecution: first block wins
+- AddHeaders: last plugin wins per key
+- Diagnostics: accumulated from all
+
+### Coordinator Integration
+
+The coordinator already has hook points (OnSessionStart, OnToolStarted, etc.) as func(map[string]any). These are widened to carry typed payloads and return responses. The plugin manager's DispatchEvent returns *EventResponse.
+
+### Priority
+
+1. Add typed event payloads to proto (EventPayload with oneof, EventResponse)
+2. Update DispatchEvent to carry EventPayload and return EventResponse
+3. Wire coordinator to fire events at turn/tool/LLM boundaries
+4. Implement response merging in plugin manager
+

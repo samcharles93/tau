@@ -9,3 +9,5 @@ dist/
 /tau
 /tau.exe
 .task/
+
+/plugins/
