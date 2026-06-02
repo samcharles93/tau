@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
+	"maps"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -233,9 +234,7 @@ func mergeResponses(responses []*api.EventResponse) *api.EventResponse {
 			if merged.AddHeaders == nil {
 				merged.AddHeaders = make(map[string]string)
 			}
-			for k, v := range r.AddHeaders {
-				merged.AddHeaders[k] = v
-			}
+			maps.Copy(merged.AddHeaders, r.AddHeaders)
 		}
 		if r.ModifiedModelId != "" {
 			merged.ModifiedModelId = r.ModifiedModelId

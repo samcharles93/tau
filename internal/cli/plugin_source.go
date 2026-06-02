@@ -44,9 +44,9 @@ func ParsePluginSourceSpec(raw string) (PluginSourceSpec, error) {
 
 	plugin := pluginRef
 	version := ""
-	if at := strings.Index(pluginRef, "@"); at >= 0 {
-		plugin = strings.TrimSpace(pluginRef[:at])
-		version = strings.TrimSpace(pluginRef[at+1:])
+	if before, after, ok := strings.Cut(pluginRef, "@"); ok {
+		plugin = strings.TrimSpace(before)
+		version = strings.TrimSpace(after)
 		if version == "" {
 			return PluginSourceSpec{}, fmt.Errorf("invalid plugin source %q: version cannot be empty", raw)
 		}

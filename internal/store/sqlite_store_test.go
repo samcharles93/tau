@@ -139,7 +139,7 @@ func TestSQLiteStore_ListAndPagination(t *testing.T) {
 
 	// Create sessions with staggered timestamps.
 	now := time.Now().UTC()
-	for i := 0; i < 5; i++ {
+	for i := range 5 {
 		state := chatSessionFixture("sess-"+string(rune('a'+i)), "model", "prov")
 		state.CreatedAt = now.Add(-time.Duration(4-i) * time.Hour)
 		state.UpdatedAt = state.CreatedAt
