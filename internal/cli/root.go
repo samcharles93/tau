@@ -2,10 +2,28 @@ package cli
 
 import (
 	"context"
+	"log/slog"
+	"os"
+	"path/filepath"
 
 	"github.com/samcharles93/tau/internal/app"
+	tauconfig "github.com/samcharles93/tau/internal/config"
 	urfavecli "github.com/urfave/cli/v3"
 )
+
+func initLogging(debug bool) {
+	logPath := filepath.Join(tauconfig.Dir(), "tau.log")
+	logFile, err := os.OpenFile(logPath, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o600)
+	if err != nil {
+		return
+	}
+	level := slog.LevelInfo
+	if debug {
+		level = slog.LevelDebug
+	}
+	handler := slog.NewTextHandler(logFile, &slog.HandlerOptions{Level: level})
+	slog.SetDefault(slog.New(handler))
+}
 
 func NewRootCommand(version string) *urfavecli.Command {
 	return &urfavecli.Command{
@@ -64,6 +82,8 @@ func NewRootCommand(version string) *urfavecli.Command {
 			if err != nil {
 				return err
 			}
+
+			initLogging(cmd.Bool("verbose") || cfg.Debug)
 
 			resumeID := cmd.String("resume")
 

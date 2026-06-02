@@ -163,29 +163,32 @@ func (p *ProviderConfig) UnmarshalYAML(value *yaml.Node) error {
 
 // AuthConfig describes how Tau obtains a bearer token for a provider.
 type AuthConfig struct {
-	Type         string `yaml:"type" json:"type"`
-	APIKeyEnv    string `yaml:"api_key_env" json:"api_key_env,omitempty"`
-	APIKey       string `yaml:"api_key" json:"api_key,omitempty"`
-	AuthorizeURL string `yaml:"authorize_url" json:"authorize_url,omitempty"`
-	TokenURL     string `yaml:"token_url" json:"token_url,omitempty"`
-	ClientID     string `yaml:"client_id" json:"client_id,omitempty"`
-	IDP          string `yaml:"idp" json:"idp,omitempty"`
+	Type            string `yaml:"type" json:"type"`
+	APIKeyEnv       string `yaml:"api_key_env" json:"api_key_env,omitempty"`
+	APIKey          string `yaml:"api_key" json:"api_key,omitempty"`
+	AuthorizeURL    string `yaml:"authorize_url" json:"authorize_url,omitempty"`
+	TokenURL        string `yaml:"token_url" json:"token_url,omitempty"`
+	ClientID        string `yaml:"client_id" json:"client_id,omitempty"`
+	IDP             string `yaml:"idp" json:"idp,omitempty"`
+	TokenAuthMethod string `yaml:"token_auth_method" json:"token_auth_method,omitempty"`
 }
 
 func (a *AuthConfig) UnmarshalYAML(value *yaml.Node) error {
 	type rawAuthConfig struct {
-		Type              string `yaml:"type"`
-		APIKeyEnv         string `yaml:"api_key_env"`
-		APIKeyEnvCamel    string `yaml:"apiKeyEnv"`
-		APIKey            string `yaml:"api_key"`
-		APIKeyCamel       string `yaml:"apiKey"`
-		AuthorizeURL      string `yaml:"authorize_url"`
-		AuthorizeURLCamel string `yaml:"authorizeUrl"`
-		TokenURL          string `yaml:"token_url"`
-		TokenURLCamel     string `yaml:"tokenUrl"`
-		ClientID          string `yaml:"client_id"`
-		ClientIDCamel     string `yaml:"clientId"`
-		IDP               string `yaml:"idp"`
+		Type                 string `yaml:"type"`
+		APIKeyEnv            string `yaml:"api_key_env"`
+		APIKeyEnvCamel       string `yaml:"apiKeyEnv"`
+		APIKey               string `yaml:"api_key"`
+		APIKeyCamel          string `yaml:"apiKey"`
+		AuthorizeURL         string `yaml:"authorize_url"`
+		AuthorizeURLCamel    string `yaml:"authorizeUrl"`
+		TokenURL             string `yaml:"token_url"`
+		TokenURLCamel        string `yaml:"tokenUrl"`
+		ClientID             string `yaml:"client_id"`
+		ClientIDCamel        string `yaml:"clientId"`
+		IDP                  string `yaml:"idp"`
+		TokenAuthMethod      string `yaml:"token_auth_method"`
+		TokenAuthMethodCamel string `yaml:"tokenAuthMethod"`
 	}
 	var raw rawAuthConfig
 	if err := value.Decode(&raw); err != nil {
@@ -198,6 +201,7 @@ func (a *AuthConfig) UnmarshalYAML(value *yaml.Node) error {
 	a.TokenURL = firstNonEmpty(raw.TokenURL, raw.TokenURLCamel)
 	a.ClientID = firstNonEmpty(raw.ClientID, raw.ClientIDCamel)
 	a.IDP = raw.IDP
+	a.TokenAuthMethod = firstNonEmpty(raw.TokenAuthMethod, raw.TokenAuthMethodCamel)
 	return nil
 }
 
@@ -205,6 +209,7 @@ func (a *AuthConfig) UnmarshalYAML(value *yaml.Node) error {
 type ModelConfig struct {
 	ID               string         `yaml:"id" json:"id"`
 	Name             string         `yaml:"name,omitempty" json:"name,omitempty"`
+	URL              string         `yaml:"url,omitempty" json:"url,omitempty"`
 	ContextWindow    int            `yaml:"context_window,omitempty" json:"context_window,omitempty"`
 	DefaultMaxTokens int            `yaml:"default_max_tokens,omitempty" json:"default_max_tokens,omitempty"`
 	MaxTokens        int            `yaml:"max_tokens,omitempty" json:"max_tokens,omitempty"`
@@ -219,6 +224,7 @@ func (m *ModelConfig) UnmarshalYAML(value *yaml.Node) error {
 	type rawModelConfig struct {
 		ID                                               string            `yaml:"id"`
 		Name                                             string            `yaml:"name"`
+		URL                                              string            `yaml:"url"`
 		ContextWindow                                    int               `yaml:"context_window"`
 		ContextWindowCamel                               int               `yaml:"contextWindow"`
 		DefaultMaxTokens                                 int               `yaml:"default_max_tokens"`
@@ -255,6 +261,7 @@ func (m *ModelConfig) UnmarshalYAML(value *yaml.Node) error {
 	}
 	m.ID = raw.ID
 	m.Name = raw.Name
+	m.URL = raw.URL
 	m.ContextWindow = firstNonZero(raw.ContextWindow, raw.ContextWindowCamel)
 	m.DefaultMaxTokens = firstNonZero(raw.DefaultMaxTokens, raw.DefaultMaxTokensCamel)
 	m.MaxTokens = firstNonZero(raw.MaxTokens, raw.MaxTokensCamel)
@@ -401,6 +408,11 @@ const (
 	AuthTypeAPIKey    = "api_key"
 	AuthTypeNone      = "none"
 	AuthTypeOAuthPKCE = "oauth_pkce"
+
+	// TokenAuthMethodPost sends client_id in the form body (standard OAuth 2.0, default).
+	TokenAuthMethodPost = "post"
+	// TokenAuthMethodBasic sends client_id and client_secret via HTTP Basic auth.
+	TokenAuthMethodBasic = "basic"
 )
 
 // Dir returns the Tau configuration directory.

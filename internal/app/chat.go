@@ -152,6 +152,9 @@ func RunChat(ctx context.Context, opts ChatOptions) error {
 
 	tuiErr := tui.Run(ctx, coordinator, tuiCfg)
 
+	// Close coordinator first so it can persist sessions while the store is still open.
+	coordinator.Close()
+
 	// Print session summary on exit.
 	if sessionStore != nil {
 		printExitSummary(ctx, sessionStore, sessionID, resumeSummary)

@@ -250,7 +250,10 @@ func exchangeCodeForToken(ctx context.Context, provider config.ProviderConfig, c
 		"code":          {code},
 		"redirect_uri":  {redirectURI},
 		"code_verifier": {codeVerifier},
-		"client_id":     {provider.Auth.ClientID},
+	}
+
+	if provider.Auth.TokenAuthMethod != config.TokenAuthMethodBasic {
+		form.Set("client_id", provider.Auth.ClientID)
 	}
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, provider.Auth.TokenURL, strings.NewReader(form.Encode()))
@@ -259,6 +262,10 @@ func exchangeCodeForToken(ctx context.Context, provider config.ProviderConfig, c
 	}
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	req.Header.Set("Accept", "application/json")
+
+	if provider.Auth.TokenAuthMethod == config.TokenAuthMethodBasic {
+		req.SetBasicAuth(provider.Auth.ClientID, "")
+	}
 
 	client := NewHTTPClient(insecure)
 	resp, err := client.Do(req)

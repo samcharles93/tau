@@ -1236,3 +1236,182 @@ ui:
 - Built-in themes: `tau` (default), `dracula`, `nord`, `solarized-dark`, `catppuccin`
 - Custom themes override any subset of colours
 - Theme package reads from config at startup, falling back to compiled-in defaults
+
+---
+
+## 54. Custom Provider Types via Extensions Architecture
+
+### Status: Not yet planned
+
+### Motivation
+
+Provider auth is hardcoded to three types: `api_key`, `none`, `oauth_pkce`. Real-world providers (MaaS gateways, org-specific proxies) need multi-stage auth flows, custom token exchange, per-model URL overrides, and non-standard auth methods. Embedding these in the core platform package is:
+
+- A security risk — infrastructure details (URLs, auth flows) should not be in a public repo
+- A maintenance burden — each org-specific flow adds complexity to the generic paths
+- A hard cap on adoption — users can't add providers without forking Tau
+
+### Design
+
+Extensions register **provider types** via a new Lua API. A provider type is a named bundle of auth hooks and model discovery logic that the extension supplies:
+
+```lua
+-- Extension: maas_provider.lua
+tau.register_provider_type("maas_oauth", {
+  name = "MaaS Gateway",
+  description = "Two-stage OAuth PKCE → MaaS JWT exchange",
+  -- Auth hooks
+  post_authenticate = function(ctx)
+    -- Called after OAuth PKCE completes.
+    -- ctx.bearer_token contains the OAuth token.
+    -- Return the final token to use for API calls.
+    local jwt = tau.http.post(ctx.exchange_url, {
+      headers = { Authorization = "Bearer " .. ctx.bearer_token },
+      body = { expiration = ctx.expiry or "8h" }
+    })
+    return jwt.token
+  end,
+  -- Model URL resolution
+  model_url = function(model_id, base_url, model_cfg)
+    return model_cfg.url or base_url .. "/v1/chat/completions"
+  end,
+  -- Config schema — what fields the user puts in their config.yaml
+  config_schema = {
+    token_exchange_url = { type = "string", required = true },
+    token_expiry = { type = "string", default = "8h" },
+  }
+})
+```
+
+**Config integration** — users reference the provider type in `config.yaml`:
+
+```yaml
+providers:
+  maas:
+    type: maas_oauth        # matches registered provider type
+    base_url: https://api.example.com
+    auth:
+      type: oauth_pkce       # base auth mechanism
+      authorize_url: ...
+      token_url: ...
+      client_id: ...
+      token_auth_method: basic
+      token_exchange_url: ...  # extension-specific field
+      token_expiry: "8h"       # extension-specific field
+```
+
+**Fallback**: If no extension registers the type, the standard built-in types (`api_key`, `none`, `oauth_pkce`) work as before. Zero-config for standard providers.
+
+**Files to create/modify**:
+- `internal/extensions/provider.go` — provider type registry, hook dispatch
+- `internal/extensions/lua/provider_api.go` — Lua bindings: `tau.register_provider_type`
+- `internal/app/chat.go` — check for registered provider type before falling back to built-in
+- `internal/platform/` — NO changes. Provider-specific logic lives in extensions.
+
+---
+
+## 55. Inline-Streaming TUI Mode
+
+### Status: Not yet planned
+
+### Motivation
+
+Tau currently uses go-tui in full-screen alternate-screen mode. This works but has limitations:
+
+- **Text selection is broken** — mouse capture prevents native terminal copy/paste
+- **No scrollback** — closed sessions lose their history entirely (session persistence helps but requires /resume)
+- **Native terminal feel is lost** — full-screen apps feel isolated from the rest of the terminal
+
+go-tui's inline mode (`WithInlineHeight`) solves all of these:
+- Terminal scrollback works natively (mouse events disabled by default)
+- Messages scroll into terminal history via `PrintAbove` / `StreamAbove`
+- Text selection works out of the box
+- Chat history persists in scrollback after exit
+- Modals/settings/session picker use `EnterAlternateScreen()` / `ExitAlternateScreen()`
+- Streaming LLM responses via `StreamAbove()` with styled/gradient output
+
+### Design
+
+**TUI layout** — two modes, toggled at runtime:
+
+```
+┌─ Inline mode (default) ──────────────────────────────┐
+│  [scrollback: all previous messages, terminal output] │
+│  ...                                                  │
+│  You: Hello                                           │
+│  Claude: Hi there! How can I help?                    │
+│  ┌─ tau input ──────────────────────────────────────┐ │
+│  │ > _                                              │ │
+│  └──────────────────────────────────────────────────┘ │
+└──────────────────────────────────────────────────────┘
+
+┌─ Alternate screen (modal) ───────────────────────────┐
+│  ╭─ Sessions ───────────────────────────╮             │
+│  │  › 2026-06-02 12:00  claude  msgs:38 │             │
+│  │    2026-06-01 09:30  gpt-4   msgs:12 │             │
+│  │    ↑↓: navigate  Enter: resume  Esc  │             │
+│  ╰──────────────────────────────────────╯             │
+└──────────────────────────────────────────────────────┘
+```
+
+**Implementation approach**:
+
+```go
+// internal/tui/chatui.go
+app, err := tui.NewApp(
+    tui.WithInlineHeight(3),  // input area
+    tui.WithRootComponent(chatPanel),
+)
+```
+
+- Input area: 3-row inline widget at bottom
+- Messages: `app.PrintAboveln()` / `app.QueuePrintAboveln()` for discrete messages
+- Streaming: `app.StreamAbove()` for character-by-character LLM output
+- Modals (session list, settings, info): `app.EnterAlternateScreen()` / `app.ExitAlternateScreen()`
+- Keybind: Esc when idle → stop app; Esc in modal → close modal and return to inline
+
+**Migration path**: The existing full-screen rendering paths (messages list, chat input, modals) are refactored so the message list becomes `PrintAbove` calls and the input+status becomes the inline widget. Modals remain as full-screen overlays via alternate screen.
+
+**Files to modify**:
+- `internal/tui/chatui.go` — switch to inline mode, refactor message rendering to `PrintAbove`/`StreamAbove`
+- `internal/tui/views/session_list.go` — already rendered as modal, works with alternate screen
+- `internal/tui/views/session_info.go` — same
+- `internal/tui/views/settings.go` — same
+- `internal/tui/components/` — may simplify (no scrollable message list needed)
+
+---
+
+## 56. Sensitive Provider Logic in Extensions
+
+### Status: Not yet planned
+
+### Motivation
+
+Provider-specific auth logic (MaaS token exchange, org-specific proxies, custom auth flows) contains infrastructure details that must not appear in a public repository. The MaaS token exchange patch exposed internal URLs, endpoint paths, and auth flow details in commit messages, source code, and a `FIX_PLAN.md` file.
+
+Extensions solve this because:
+- Extensions live outside the Tau repo (in `~/.config/tau/extensions/` or user directories)
+- They can be `.gitignore`'d or kept in private repos
+- The core Tau codebase stays generic and infrastructure-agnostic
+
+### Design
+
+**Principle**: Any logic that contains organisation-specific URLs, endpoint paths, or auth flow details belongs in an extension, never in `internal/platform/`.
+
+**Current leakage points** (fixed by #54 — Custom Provider Types):
+- `internal/platform/maas.go` — `ExchangeMaaSToken` with hardcoded exchange URL pattern → becomes a `post_authenticate` hook in an extension
+- `internal/config/config.go` — `TokenExchangeURL`, `TokenExpiry` fields on `AuthConfig` → extension-defined config schema
+- `internal/app/chat.go` — token exchange wiring → generic hook call, extension provides the logic
+
+**What stays in core**:
+- Standard auth types: `api_key`, `none`, `oauth_pkce` (these are universal)
+- Provider type registry and hook dispatch
+- Extension API for registering provider types
+
+**What goes to extensions**:
+- Token exchange URLs and logic
+- Custom auth headers/methods
+- Per-model URL resolution
+- Provider-specific error handling
+
+**Security note**: Extension code runs in-process (Lua VM). Token values are passed as strings. Extensions should not log tokens. The `slog` calls in `maas.go` printing token prefixes should be removed or guarded behind a debug flag.
