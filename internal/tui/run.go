@@ -37,11 +37,17 @@ func Run(ctx context.Context, runtime tauchat.ChatRuntime, cfg Config) error {
 	defer sub.Unsubscribe()
 
 	notifySub := cfg.notifyBusSubscription()
-	defer notifySub.Unsubscribe()
+	if notifySub != nil {
+		defer notifySub.Unsubscribe()
+	}
 
 	root := NewChatPanel(ctx, runtime, sub, notifySub, cfg)
 
-	app, err := gt.NewApp(gt.WithRootComponent(root), gt.WithMouse())
+	app, err := gt.NewApp(
+		gt.WithRootComponent(root),
+		gt.WithMouse(),
+		gt.WithInlineHeight(3),
+	)
 	if err != nil {
 		return fmt.Errorf("creating go-tui app: %w", err)
 	}

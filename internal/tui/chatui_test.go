@@ -203,18 +203,9 @@ func TestModelArgumentCompletions(t *testing.T) {
 	}
 }
 
-func TestApplySelectedCompletionMovesCursorToEnd(t *testing.T) {
+func TestApplySelectedCompletionUpdatesTextArea(t *testing.T) {
 	panel := newTestPanel(&fakeRuntime{})
-	panel.input = newChatInput(
-		panel.inputValue,
-		120,
-		"",
-		theme.BodyStyle(),
-		theme.DimStyle(),
-		theme.ColorPurple,
-		panel.handleSubmit,
-		panel.syncCompletions,
-	)
+	panel.input = gt.NewTextArea(gt.WithTextAreaValue(panel.inputValue))
 	panel.inputValue.Set("/mo")
 	panel.syncCompletions("/mo")
 
@@ -223,8 +214,8 @@ func TestApplySelectedCompletionMovesCursorToEnd(t *testing.T) {
 	if got := panel.inputValue.Get(); got != "/model " {
 		t.Fatalf("input = %q, want /model completion", got)
 	}
-	if got, want := panel.input.cursorPos.Get(), len([]rune("/model ")); got != want {
-		t.Fatalf("cursor = %d, want %d", got, want)
+	if got := panel.input.Text(); got != "/model " {
+		t.Fatalf("text area = %q, want /model completion", got)
 	}
 }
 
