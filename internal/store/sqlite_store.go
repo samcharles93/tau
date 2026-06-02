@@ -42,6 +42,13 @@ func NewSQLiteStore(dbPath, sessionsDir string) (*SQLiteStore, error) {
 		return nil, fmt.Errorf("store: enable foreign keys: %w", err)
 	}
 
+	// Serialise all database operations through a single connection.
+	// This is the canonical pattern for Go + SQLite: multiple connections
+	// to the same file cause SQLITE_BUSY even under WAL mode because each
+	// connection holds independent read/write locks at the pager level.
+	db.SetMaxOpenConns(1)
+	db.SetMaxIdleConns(1)
+
 	if err := Migrate(db); err != nil {
 		db.Close()
 		return nil, err
