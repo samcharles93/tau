@@ -1,0 +1,206 @@
+syntax = "proto3";
+package proto;
+option go_package = "github.com/samcharles93/tau/pkg/plugin/api";
+
+// Command represents an extension slash command.
+message Command {
+  string name = 1;
+  string description = 2;
+  string extension_name = 3;
+}
+
+// Diagnostic represents an extension diagnostic message.
+message Diagnostic {
+  string path = 1;
+  string extension_name = 2;
+  string severity = 3;
+  string message = 4;
+}
+
+// EventContext carries session/event metadata to extensions.
+message EventContext {
+  map<string, string> fields = 1;
+}
+
+// --- Metadata ---
+
+message GetMetadataRequest {}
+message GetMetadataResponse {
+  string name = 1;
+  repeated Command commands = 2;
+}
+
+// --- Commands ---
+
+message RunCommandRequest {
+  string name = 1;
+  string args = 2;
+}
+message RunCommandResponse {
+  string output = 1;
+}
+
+// --- Reload ---
+
+message ReloadRequest {}
+message ReloadResponse {
+  repeated Diagnostic diagnostics = 1;
+  repeated Command commands = 2;
+}
+
+// --- Events ---
+
+message DispatchEventRequest {
+  string event = 1;           // "session_start", "context", "before_tool_exec", etc.
+  string session_id = 2;
+  EventPayload payload = 3;
+}
+
+message DispatchEventResponse {
+  EventResponse response = 1;
+}
+
+// EventPayload carries typed data for each event kind.
+message EventPayload {
+  oneof kind {
+    SessionEventPayload session = 1;
+    ContextPayload context = 2;
+    BeforeLLMCallPayload before_llm_call = 3;
+    AfterLLMCallPayload after_llm_call = 4;
+    ToolCallPayload before_tool_exec = 5;
+    ToolResultPayload after_tool_exec = 6;
+    MessageDeltaPayload message_delta = 7;
+    TurnPayload turn = 8;
+    CompactionPayload compaction = 9;
+  }
+}
+
+// EventResponse is what plugins can return to modify behavior.
+message EventResponse {
+  repeated string inject_messages = 1;       // JSON-encoded ChatMessage to inject
+  repeated int32 remove_message_indices = 2;  // indices to remove from context
+  string inject_system_prompt = 3;            // appended to system prompt
+  string modified_tool_arguments = 4;         // JSON, for before_tool_exec
+  bool block_tool_execution = 5;
+  string block_reason = 6;
+  string modified_tool_result = 7;           // JSON, for after_tool_exec
+  map<string, string> add_headers = 8;        // for before_llm_call
+  string modified_model_id = 9;               // for before_llm_call
+  repeated Diagnostic diagnostics = 10;
+  bool suppress_default = 11;
+}
+
+// --- Event payload types ---
+
+message SessionEventPayload {
+  string session_id = 1;
+  string model_id = 2;
+  string provider = 3;
+}
+
+message ContextPayload {
+  repeated string messages = 1;  // JSON-encoded ChatMessage list
+}
+
+message BeforeLLMCallPayload {
+  string model_id = 1;
+  repeated string messages = 2;  // JSON-encoded ChatMessage list
+  map<string, string> headers = 3;
+  string parameters = 4;         // JSON-encoded ChatParameters
+}
+
+message AfterLLMCallPayload {
+  string model_id = 1;
+  string finish_reason = 2;
+  string usage = 3;              // JSON-encoded ChatUsage
+}
+
+message ToolCallPayload {
+  string tool_name = 1;
+  string arguments = 2;          // JSON
+  string call_id = 3;
+}
+
+message ToolResultPayload {
+  string tool_name = 1;
+  string arguments = 2;          // JSON
+  string result = 3;             // JSON
+  bool is_error = 4;
+  string call_id = 5;
+  string duration = 6;
+}
+
+message MessageDeltaPayload {
+  string role = 1;             // "assistant"
+  string delta = 2;            // the token text
+  string snapshot = 3;         // full text so far
+}
+
+message TurnPayload {
+  string direction = 1;        // "start" or "end"
+  int32 turn_number = 2;
+}
+
+message CompactionPayload {
+  string direction = 1;        // "before" or "after"
+  int32 message_count_before = 2;
+  int32 message_count_after = 3;
+}
+
+// --- Tools ---
+
+message ToolDefinition {
+  string name = 1;
+  string description = 2;
+  string input_schema = 3;  // JSON Schema as string
+}
+
+message GetToolsRequest {}
+message GetToolsResponse {
+  repeated ToolDefinition tools = 1;
+}
+
+message ExecuteToolRequest {
+  string tool_name = 1;
+  string arguments = 2;  // JSON string
+}
+message ExecuteToolResponse {
+  string content = 1;   // JSON string (tool result content)
+  bool is_error = 2;
+}
+
+// --- Logging ---
+
+message LogEntry {
+  string level = 1;        // "debug", "info", "warn", "error"
+  string message = 2;
+  map<string, string> fields = 3;  // structured fields
+}
+
+message LogRequest {
+  LogEntry entry = 1;
+}
+message LogResponse {}
+
+// --- Config ---
+
+message ConfigSchema {
+  message Field {
+    string type = 1;
+    string default = 2;
+    bool required = 3;
+  }
+  map<string, Field> fields = 1;
+}
+
+// --- Service ---
+
+service ExtensionService {
+  rpc GetMetadata(GetMetadataRequest) returns (GetMetadataResponse);
+  rpc RunCommand(RunCommandRequest) returns (RunCommandResponse);
+  rpc Reload(ReloadRequest) returns (ReloadResponse);
+  rpc DispatchEvent(DispatchEventRequest) returns (DispatchEventResponse);
+  rpc GetTools(GetToolsRequest) returns (GetToolsResponse);
+  rpc ExecuteTool(ExecuteToolRequest) returns (ExecuteToolResponse);
+  rpc Log(LogRequest) returns (LogResponse);
+}
