@@ -58,6 +58,6 @@ The project follows a **layered architecture** with a command/event boundary bet
 When the user mentions a design idea, architecture decision, or feature concept during conversation:
 
 - Elaborate on the idea with concrete implementation notes (file paths, types, wiring).
-- Save it as a new numbered section in `docs/IDEAS.md` with a descriptive heading.
+- Save it as a new numbered markdown document in section in `docs/ideas/<document-name>.md` with a descriptive heading.
 - Update existing sections if the idea refines or supersedes an earlier one.
 - Do not let ideas stay only in chat — they must be persisted to `docs/IDEAS.md` before the turn ends.
