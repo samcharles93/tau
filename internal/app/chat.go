@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/base64"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -16,14 +17,15 @@ import (
 	"github.com/samcharles93/tau/internal/agent/tools"
 	tauchat "github.com/samcharles93/tau/internal/chat"
 	tauconfig "github.com/samcharles93/tau/internal/config"
-	"github.com/samcharles93/tau/internal/extensions"
 	"github.com/samcharles93/tau/internal/platform"
+	"github.com/samcharles93/tau/internal/plugin"
 	"github.com/samcharles93/tau/internal/provider"
 	"github.com/samcharles93/tau/internal/pubsub"
 	"github.com/samcharles93/tau/internal/store"
 	"github.com/samcharles93/tau/internal/streaming"
 	"github.com/samcharles93/tau/internal/tui"
 	"github.com/samcharles93/tau/internal/tui/notify"
+	"github.com/samcharles93/tau/pkg/plugin/api"
 )
 
 // ChatOptions holds the parameters for launching an interactive chat session.
@@ -231,18 +233,18 @@ func pickModel(models []provider.Model, requestedModel, defaultModel, baseURL st
 		return tauchat.ChatModelRef{}, errors.New("chat model is required; pass --model or set default_model")
 	}
 
-	for _, model := range models {
-		if model.ID != selectedModel {
+	for _, m := range models {
+		if m.ID != selectedModel {
 			continue
 		}
-		if !model.Ready {
+		if !m.Ready {
 			return tauchat.ChatModelRef{}, fmt.Errorf("model %q is not ready", selectedModel)
 		}
 		return tauchat.ChatModelRef{
-			ID:     model.ID,
-			URL:    model.URL,
-			Ready:  model.Ready,
-			Config: model.Config,
+			ID:     m.ID,
+			URL:    m.URL,
+			Ready:  m.Ready,
+			Config: m.Config,
 		}, nil
 	}
 
@@ -270,139 +272,56 @@ func newCoordinator(ctx context.Context, opts ChatOptions, bearerToken string, s
 	if err := tools.RegisterBuiltins(registry, cwd); err != nil {
 		return nil, fmt.Errorf("registering built-in tools: %w", err)
 	}
-	extensionManager, err := extensions.NewManager(extensions.Config{
-		WorkingDir:       cwd,
-		Sources:          extensions.SourcesFromConfig(cwd, opts.Config.Extensions),
-		Disabled:         opts.Config.Extensions.Disabled,
-		ReservedCommands: tui.BuiltinCommandNames(),
-		Registry:         registry,
+
+	// Plugin manager — discovers and manages extension binaries.
+	pluginMgr, err := plugin.NewManager(plugin.Config{
+		ToolRegistry: registry,
+		Logger:       slog.Default(),
 	})
 	if err != nil {
-		return nil, fmt.Errorf("creating extension manager: %w", err)
+		return nil, fmt.Errorf("plugin manager: %w", err)
 	}
-	if err := extensionManager.Load(ctx); err != nil {
-		return nil, fmt.Errorf("loading extensions: %w", err)
+
+	registry.SetPluginToolExecutor(func(ctx context.Context, pluginName, toolName string, args json.RawMessage) (tools.Result, error) {
+		return pluginMgr.ExecutePluginTool(ctx, pluginName, toolName, args)
+	})
+
+	if err := pluginMgr.Load(ctx); err != nil {
+		slog.Warn("plugin manager load failed", "err", err)
 	}
 
 	coordinator, err := agent.NewCoordinator(ctx, agent.CoordinatorConfig{
-		TokenSource:     staticTokenSource(bearerToken),
-		Streamer:        streaming.OpenAIStreamer{Insecure: opts.Insecure},
-		Registry:        registry,
-		ShowReasoning:   opts.Config.UI.ShowReasoning,
-		InteractiveUI:   true,
-		SessionStore:    sessionStore,
-		AutoExportJSONL: true,
-		ExtensionReloader: extensionReloader{
-			manager: extensionManager,
+		TokenSource:       staticTokenSource(bearerToken),
+		Streamer:          streaming.OpenAIStreamer{Insecure: opts.Insecure},
+		Registry:          registry,
+		ShowReasoning:     opts.Config.UI.ShowReasoning,
+		InteractiveUI:     true,
+		SessionStore:      sessionStore,
+		AutoExportJSONL:   true,
+		ExtensionReloader: pluginMgr,
+		OnPluginEvent: func(event string, payload *api.EventPayload) *api.EventResponse {
+			return pluginMgr.DispatchEvent(ctx, event, payload)
 		},
 		OnSessionStart: func(eventContext map[string]any) {
-			extensionManager.Dispatch(extensions.EventSessionStart, eventContext)
+			sessionID := eventContext["session_id"].(string)
+			pluginMgr.DispatchEvent(ctx, "session_start", &api.EventPayload{
+				Kind: &api.EventPayload_Session{Session: &api.SessionEventPayload{SessionId: sessionID}},
+			})
 		},
 		OnSessionShutdown: func(eventContext map[string]any) {
-			extensionManager.Dispatch(extensions.EventSessionShutdown, eventContext)
-		},
-		OnToolStarted: func(eventContext map[string]any) {
-			extensionManager.Dispatch(extensions.EventToolCallStarted, eventContext)
-		},
-		OnToolCompleted: func(eventContext map[string]any) {
-			extensionManager.Dispatch(extensions.EventToolCallCompleted, eventContext)
-		},
-		OnReasoningDelta: func(eventContext map[string]any) {
-			extensionManager.Dispatch(extensions.EventReasoningDelta, eventContext)
+			sessionID := eventContext["session_id"].(string)
+			pluginMgr.DispatchEvent(ctx, "session_shutdown", &api.EventPayload{
+				Kind: &api.EventPayload_Session{Session: &api.SessionEventPayload{SessionId: sessionID}},
+			})
 		},
 		OnClose: func() {
-			extensionManager.Unload()
-			// SessionStore is closed by RunChat, not here.
+			pluginMgr.Unload()
 		},
-		StartupEvents: extensionStartupEvents(extensionManager.Snapshot()),
 	})
 	if err != nil {
-		extensionManager.Unload()
 		return nil, err
 	}
 	return coordinator, nil
-}
-
-func extensionStartupEvents(snapshot extensions.Snapshot) []tauchat.ChatEvent {
-	events := []tauchat.ChatEvent{tauchat.ExtensionCommandsChangedEvent{
-		Commands:   extensionCommands(snapshot.Commands),
-		OccurredAt: time.Now().UTC(),
-	}}
-	for _, diagnostic := range snapshot.Diagnostics {
-		if diagnostic.Severity != extensions.SeverityError {
-			continue
-		}
-		message := "Extension error"
-		if diagnostic.ExtensionName != "" {
-			message += " (" + diagnostic.ExtensionName + ")"
-		}
-		message += ": " + diagnostic.Message
-		events = append(events, tauchat.ChatRuntimeErrorEvent{
-			Message:    message,
-			Fatal:      false,
-			OccurredAt: time.Now().UTC(),
-		})
-	}
-	return events
-}
-
-type extensionReloader struct {
-	manager *extensions.Manager
-}
-
-func (r extensionReloader) ReloadExtensions(ctx context.Context, idle bool) (tauchat.ExtensionReloadResult, error) {
-	if r.manager == nil {
-		return tauchat.ExtensionReloadResult{}, errors.New("extension manager is not available")
-	}
-	if err := r.manager.ReloadIfIdle(ctx, idle); err != nil {
-		return tauchat.ExtensionReloadResult{}, err
-	}
-	snapshot := r.manager.Snapshot()
-	return tauchat.ExtensionReloadResult{
-		ExtensionCount: len(snapshot.Extensions),
-		Diagnostics:    extensionDiagnostics(snapshot.Diagnostics),
-		Commands:       extensionCommands(snapshot.Commands),
-	}, nil
-}
-
-func (r extensionReloader) ExtensionCommands() []tauchat.ExtensionCommand {
-	if r.manager == nil {
-		return nil
-	}
-	return extensionCommands(r.manager.Snapshot().Commands)
-}
-
-func (r extensionReloader) RunExtensionCommand(ctx context.Context, name, args string, uiBridge any) (string, error) {
-	if r.manager == nil {
-		return "", errors.New("extension manager is not available")
-	}
-	ui, _ := uiBridge.(tools.UIBridge)
-	return r.manager.ExecuteCommand(ctx, name, args, ui)
-}
-
-func extensionDiagnostics(diagnostics []extensions.Diagnostic) []tauchat.ExtensionDiagnostic {
-	out := make([]tauchat.ExtensionDiagnostic, 0, len(diagnostics))
-	for _, diagnostic := range diagnostics {
-		out = append(out, tauchat.ExtensionDiagnostic{
-			Path:          diagnostic.Path,
-			ExtensionName: diagnostic.ExtensionName,
-			Severity:      string(diagnostic.Severity),
-			Message:       diagnostic.Message,
-		})
-	}
-	return out
-}
-
-func extensionCommands(commands []extensions.Command) []tauchat.ExtensionCommand {
-	out := make([]tauchat.ExtensionCommand, 0, len(commands))
-	for _, command := range commands {
-		out = append(out, tauchat.ExtensionCommand{
-			Name:          command.Name,
-			Description:   command.Description,
-			ExtensionName: command.ExtensionName,
-		})
-	}
-	return out
 }
 
 func staticTokenSource(token string) platform.TokenSource {

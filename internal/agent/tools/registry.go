@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 	"sync"
 )
 
@@ -45,9 +46,10 @@ type Tool struct {
 
 // Registry holds all registered tools and provides thread-safe access.
 type Registry struct {
-	mu    sync.RWMutex
-	tools map[string]Tool
-	order []string // insertion order for deterministic iteration
+	mu                 sync.RWMutex
+	tools              map[string]Tool
+	order              []string // insertion order for deterministic iteration
+	pluginToolExecutor PluginToolExecutor
 }
 
 // NewRegistry creates an empty tool registry.
@@ -166,4 +168,74 @@ func (r *Registry) Count() int {
 	defer r.mu.RUnlock()
 
 	return len(r.tools)
+}
+
+// PluginToolDef describes a tool provided by a plugin.
+type PluginToolDef struct {
+	Name        string
+	Description string
+	InputSchema string // JSON Schema as string
+}
+
+// PluginToolExecutor is called by the registry when a plugin tool is executed.
+type PluginToolExecutor func(ctx context.Context, pluginName, toolName string, args json.RawMessage) (Result, error)
+
+// SetPluginToolExecutor sets the executor for plugin tools. The executor is
+// called whenever a plugin-registered tool is invoked by the agent.
+func (r *Registry) SetPluginToolExecutor(executor PluginToolExecutor) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.pluginToolExecutor = executor
+}
+
+// RegisterPluginTool registers a tool from a plugin in the registry.
+// The tool name is prefixed with the plugin name to avoid collisions.
+// Returns an error if the tool name is already registered.
+func (r *Registry) RegisterPluginTool(pluginName string, def PluginToolDef) error {
+	toolName := pluginName + "." + def.Name
+	reg := r // capture for closure
+	tool := Tool{
+		Schema: Schema{
+			Name:        toolName,
+			Description: "[" + pluginName + "] " + def.Description,
+		},
+		Execute: func(ctx context.Context, params json.RawMessage, ui UIBridge) (Result, error) {
+			reg.mu.RLock()
+			exec := reg.pluginToolExecutor
+			reg.mu.RUnlock()
+			if exec == nil {
+				return Result{IsError: true, Content: "plugin executor not available"}, nil
+			}
+			return exec(ctx, pluginName, def.Name, params)
+		},
+		Source: "plugin:" + pluginName,
+	}
+	if def.InputSchema != "" {
+		tool.Schema.Parameters = json.RawMessage(def.InputSchema)
+	}
+	return r.Replace(tool)
+}
+
+// UnregisterPluginTools removes all tools belonging to a plugin.
+// Plugin tools are identified by the "pluginName." prefix in their names.
+func (r *Registry) UnregisterPluginTools(pluginName string) {
+	prefix := pluginName + "."
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	for name := range r.tools {
+		if strings.HasPrefix(name, prefix) {
+			delete(r.tools, name)
+			r.order = removeFromOrder(r.order, name)
+		}
+	}
+}
+
+func removeFromOrder(order []string, name string) []string {
+	for i, n := range order {
+		if n == name {
+			return append(order[:i], order[i+1:]...)
+		}
+	}
+	return order
 }

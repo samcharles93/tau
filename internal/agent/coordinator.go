@@ -20,6 +20,7 @@ import (
 	"github.com/samcharles93/tau/internal/platform"
 	"github.com/samcharles93/tau/internal/pubsub"
 	"github.com/samcharles93/tau/internal/store"
+	"github.com/samcharles93/tau/pkg/plugin/api"
 )
 
 const (
@@ -66,6 +67,7 @@ type Coordinator struct {
 	onToolCompleted   func(map[string]any)
 	onReasoningDelta  func(map[string]any)
 	onClose           func()
+	onPluginEvent     func(event string, payload *api.EventPayload) *api.EventResponse
 	startupEvents     []chat.ChatEvent
 	startupEventsOnce sync.Once
 	commands          chan chat.ChatCommand
@@ -108,6 +110,11 @@ type CoordinatorConfig struct {
 	OnReasoningDelta  func(map[string]any)
 	OnClose           func()
 	StartupEvents     []chat.ChatEvent
+
+	// OnPluginEvent dispatches lifecycle events to the plugin manager.
+	// The coordinator fires this at turn boundaries, tool execution boundaries,
+	// and LLM request boundaries. Returns merged EventResponse, or nil if no plugins.
+	OnPluginEvent func(event string, payload *api.EventPayload) *api.EventResponse
 }
 
 // NewCoordinator creates and starts the agent coordinator.
@@ -151,6 +158,7 @@ func NewCoordinator(ctx context.Context, cfg CoordinatorConfig) (*Coordinator, e
 		onToolCompleted:   cfg.OnToolCompleted,
 		onReasoningDelta:  cfg.OnReasoningDelta,
 		onClose:           cfg.OnClose,
+		onPluginEvent:     cfg.OnPluginEvent,
 		startupEvents:     append([]chat.ChatEvent(nil), cfg.StartupEvents...),
 		commands:          make(chan chat.ChatCommand, commandBufferSize),
 		eventBus:          pubsub.New[chat.ChatEvent](),
@@ -634,6 +642,10 @@ func (c *Coordinator) runTurn(ctx context.Context, state chat.ChatSessionState) 
 	requestID := state.ActiveRequestID
 	now := time.Now().UTC()
 
+	c.dispatchPluginEvent("turn_start", &api.EventPayload{
+		Kind: &api.EventPayload_Turn{Turn: &api.TurnPayload{Direction: "start"}},
+	})
+
 	bearerToken, err := c.tokenSource(ctx, state.Provider)
 	if err != nil {
 		c.failTurn(sessionID, requestID, err, now)
@@ -654,6 +666,12 @@ func (c *Coordinator) runTurn(ctx context.Context, state chat.ChatSessionState) 
 		state.Tools = toolDefs
 		reasoningSnapshot := ""
 		toolCallSnapshots := make([]chat.ChatToolCall, 0)
+
+		c.dispatchPluginEvent("before_llm_call", &api.EventPayload{
+			Kind: &api.EventPayload_BeforeLlmCall{
+				BeforeLlmCall: &api.BeforeLLMCallPayload{ModelId: state.Model.ID},
+			},
+		})
 
 		result, err := c.streamer.StreamChatCompletionFull(ctx, state, bearerToken, chat.StreamCallbacks{
 			OnDelta: func(delta string) error {
@@ -693,6 +711,15 @@ func (c *Coordinator) runTurn(ctx context.Context, state chat.ChatSessionState) 
 			c.failTurn(sessionID, requestID, err, time.Now().UTC())
 			return
 		}
+
+		c.dispatchPluginEvent("after_llm_call", &api.EventPayload{
+			Kind: &api.EventPayload_AfterLlmCall{
+				AfterLlmCall: &api.AfterLLMCallPayload{
+					ModelId:      state.Model.ID,
+					FinishReason: result.FinishReason,
+				},
+			},
+		})
 
 		// No tool calls → final response. Complete the turn.
 		if len(result.ToolCalls) == 0 {
@@ -745,6 +772,26 @@ func (c *Coordinator) executeToolsParallel(ctx context.Context, sessionID, reque
 		})
 		c.dispatchToolStarted(sessionID, requestID, tc, startedAt)
 
+		c.dispatchPluginEvent("tool_execution_start", &api.EventPayload{
+			Kind: &api.EventPayload_BeforeToolExec{
+				BeforeToolExec: &api.ToolCallPayload{
+					ToolName:  tc.Function.Name,
+					Arguments: tc.Function.Arguments,
+					CallId:    tc.ID,
+				},
+			},
+		})
+
+		c.dispatchPluginEvent("before_tool_exec", &api.EventPayload{
+			Kind: &api.EventPayload_BeforeToolExec{
+				BeforeToolExec: &api.ToolCallPayload{
+					ToolName:  tc.Function.Name,
+					Arguments: tc.Function.Arguments,
+					CallId:    tc.ID,
+				},
+			},
+		})
+
 		tool, ok := c.registry.Get(tc.Function.Name)
 		if !ok {
 			result := tools.Result{
@@ -753,6 +800,25 @@ func (c *Coordinator) executeToolsParallel(ctx context.Context, sessionID, reque
 			}
 			results[i] = result
 			c.emitToolCompleted(sessionID, requestID, tc, result, startedAt, false)
+			c.dispatchPluginEvent("after_tool_exec", &api.EventPayload{
+				Kind: &api.EventPayload_AfterToolExec{
+					AfterToolExec: &api.ToolResultPayload{
+						ToolName:  tc.Function.Name,
+						Arguments: tc.Function.Arguments,
+						Result:    result.Content,
+						IsError:   result.IsError,
+						CallId:    tc.ID,
+					},
+				},
+			})
+			c.dispatchPluginEvent("tool_execution_end", &api.EventPayload{
+				Kind: &api.EventPayload_AfterToolExec{
+					AfterToolExec: &api.ToolResultPayload{
+						ToolName: tc.Function.Name,
+						CallId:   tc.ID,
+					},
+				},
+			})
 			return
 		}
 
@@ -764,6 +830,25 @@ func (c *Coordinator) executeToolsParallel(ctx context.Context, sessionID, reque
 			}
 			results[i] = result
 			c.emitToolCompleted(sessionID, requestID, tc, result, startedAt, false)
+			c.dispatchPluginEvent("after_tool_exec", &api.EventPayload{
+				Kind: &api.EventPayload_AfterToolExec{
+					AfterToolExec: &api.ToolResultPayload{
+						ToolName:  tc.Function.Name,
+						Arguments: tc.Function.Arguments,
+						Result:    result.Content,
+						IsError:   result.IsError,
+						CallId:    tc.ID,
+					},
+				},
+			})
+			c.dispatchPluginEvent("tool_execution_end", &api.EventPayload{
+				Kind: &api.EventPayload_AfterToolExec{
+					AfterToolExec: &api.ToolResultPayload{
+						ToolName: tc.Function.Name,
+						CallId:   tc.ID,
+					},
+				},
+			})
 			return
 		}
 
@@ -991,6 +1076,10 @@ func (c *Coordinator) completeTurn(sessionID, requestID string, result chat.Comp
 		Usage:        result.Usage,
 		CompletedAt:  at,
 	})
+
+	c.dispatchPluginEvent("turn_end", &api.EventPayload{
+		Kind: &api.EventPayload_Turn{Turn: &api.TurnPayload{Direction: "end"}},
+	})
 }
 
 func (c *Coordinator) cancelTurn(sessionID, requestID string, at time.Time) {
@@ -1050,6 +1139,13 @@ func (c *Coordinator) cancelAllSessions() {
 		c.dispatchSessionShutdown(state.SessionID)
 		c.persistSession(state, time.Since(state.CreatedAt))
 	}
+}
+
+func (c *Coordinator) dispatchPluginEvent(event string, payload *api.EventPayload) *api.EventResponse {
+	if c.onPluginEvent == nil {
+		return nil
+	}
+	return c.onPluginEvent(event, payload)
 }
 
 func (c *Coordinator) dispatchSessionStart(sessionID string) {

@@ -17,19 +17,17 @@ type Config struct {
 	DefaultProvider string           `yaml:"default_provider"`
 	DefaultModel    string           `yaml:"default_model"`
 	Providers       []ProviderConfig `yaml:"providers"`
-	Extensions      ExtensionConfig  `yaml:"extensions"`
 	UI              UIConfig         `yaml:"ui"`
 	Debug           bool             `yaml:"debug"`
 }
 
 func (c *Config) UnmarshalYAML(value *yaml.Node) error {
 	type rawConfig struct {
-		DefaultProvider string          `yaml:"default_provider"`
-		DefaultModel    string          `yaml:"default_model"`
-		Providers       yaml.Node       `yaml:"providers"`
-		Extensions      ExtensionConfig `yaml:"extensions"`
-		UI              UIConfig        `yaml:"ui"`
-		Debug           bool            `yaml:"debug"`
+		DefaultProvider string    `yaml:"default_provider"`
+		DefaultModel    string    `yaml:"default_model"`
+		Providers       yaml.Node `yaml:"providers"`
+		UI              UIConfig  `yaml:"ui"`
+		Debug           bool      `yaml:"debug"`
 	}
 	var raw rawConfig
 	if err := value.Decode(&raw); err != nil {
@@ -37,7 +35,6 @@ func (c *Config) UnmarshalYAML(value *yaml.Node) error {
 	}
 	c.DefaultProvider = raw.DefaultProvider
 	c.DefaultModel = raw.DefaultModel
-	c.Extensions = raw.Extensions
 	c.UI = raw.UI
 	c.Debug = raw.Debug
 	if raw.Providers.Kind != 0 {
@@ -69,41 +66,6 @@ func (c *UIConfig) UnmarshalYAML(value *yaml.Node) error {
 		c.ShowReasoning = *raw.ShowReasoning
 		c.showReasoningSet = true
 	}
-	return nil
-}
-
-// ExtensionConfig controls Tau extension discovery and loading.
-type ExtensionConfig struct {
-	Enabled      bool     `yaml:"enabled" json:"enabled"`
-	Paths        []string `yaml:"paths" json:"paths"`
-	Disabled     []string `yaml:"disabled" json:"disabled"`
-	AllowProject bool     `yaml:"allow_project" json:"allow_project"`
-
-	enabledSet      bool
-	allowProjectSet bool
-}
-
-func (c *ExtensionConfig) UnmarshalYAML(value *yaml.Node) error {
-	type rawExtensionConfig struct {
-		Enabled      *bool    `yaml:"enabled"`
-		Paths        []string `yaml:"paths"`
-		Disabled     []string `yaml:"disabled"`
-		AllowProject *bool    `yaml:"allow_project"`
-	}
-	var raw rawExtensionConfig
-	if err := value.Decode(&raw); err != nil {
-		return err
-	}
-	if raw.Enabled != nil {
-		c.Enabled = *raw.Enabled
-		c.enabledSet = true
-	}
-	if raw.AllowProject != nil {
-		c.AllowProject = *raw.AllowProject
-		c.allowProjectSet = true
-	}
-	c.Paths = append([]string(nil), raw.Paths...)
-	c.Disabled = append([]string(nil), raw.Disabled...)
 	return nil
 }
 
@@ -620,7 +582,7 @@ func firstNonNilAnyMap(values ...map[string]any) map[string]any {
 }
 
 func mergeConfigs(globalCfg, localCfg Config) Config {
-	merged := withDefaults(globalCfg)
+	merged := globalCfg
 	if strings.TrimSpace(localCfg.DefaultProvider) != "" {
 		merged.DefaultProvider = localCfg.DefaultProvider
 	}
@@ -654,33 +616,7 @@ func mergeConfigs(globalCfg, localCfg Config) Config {
 	for _, name := range order {
 		merged.Providers = append(merged.Providers, providers[name])
 	}
-	merged.Extensions = mergeExtensionConfigs(merged.Extensions, localCfg.Extensions)
 	merged.UI = mergeUIConfigs(merged.UI, localCfg.UI)
-	return merged
-}
-
-func withDefaults(cfg Config) Config {
-	if !cfg.Extensions.enabledSet {
-		cfg.Extensions.Enabled = true
-	}
-	if !cfg.Extensions.allowProjectSet {
-		cfg.Extensions.AllowProject = true
-	}
-	return cfg
-}
-
-func mergeExtensionConfigs(globalCfg, localCfg ExtensionConfig) ExtensionConfig {
-	merged := globalCfg
-	if localCfg.enabledSet {
-		merged.Enabled = localCfg.Enabled
-		merged.enabledSet = true
-	}
-	if localCfg.allowProjectSet {
-		merged.AllowProject = localCfg.AllowProject
-		merged.allowProjectSet = true
-	}
-	merged.Paths = append(append([]string(nil), globalCfg.Paths...), localCfg.Paths...)
-	merged.Disabled = append(append([]string(nil), globalCfg.Disabled...), localCfg.Disabled...)
 	return merged
 }
 
@@ -757,9 +693,4 @@ func ProviderNames(cfg Config) []string {
 		}
 	}
 	return names
-}
-
-// NormalizeExtensions applies extension defaults to an ExtensionConfig value.
-func NormalizeExtensions(cfg ExtensionConfig) ExtensionConfig {
-	return withDefaults(Config{Extensions: cfg}).Extensions
 }
