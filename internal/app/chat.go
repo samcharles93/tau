@@ -21,6 +21,7 @@ import (
 	"github.com/samcharles93/tau/internal/plugin"
 	"github.com/samcharles93/tau/internal/provider"
 	"github.com/samcharles93/tau/internal/pubsub"
+	"github.com/samcharles93/tau/internal/skills"
 	"github.com/samcharles93/tau/internal/store"
 	"github.com/samcharles93/tau/internal/streaming"
 	"github.com/samcharles93/tau/internal/tui"
@@ -54,6 +55,14 @@ func RunChat(ctx context.Context, opts ChatOptions) error {
 	if err != nil {
 		return err
 	}
+
+	// Build the full system prompt — project context (AGENTS.md) + user override.
+	cwd, _ := os.Getwd()
+	systemPrompt := opts.SystemPrompt
+	if systemPrompt == "" {
+		systemPrompt = "You are a helpful assistant."
+	}
+	systemPrompt = buildAgentSystemPrompt(systemPrompt, cwd)
 
 	// Initialize session store at the RunChat level so it outlives the
 	// coordinator (needed for --resume and exit summary).
@@ -109,7 +118,7 @@ func RunChat(ctx context.Context, opts ChatOptions) error {
 			model = loadedModel
 		}
 		// Start the session, then load the messages via LoadSessionCommand.
-		config := buildSessionConfig(opts, model)
+		config := buildSessionConfig(opts, model, systemPrompt)
 		config.SystemPrompt = loaded.SystemPrompt
 		if err := coordinator.Send(tauchat.StartChatSessionCommand{SessionID: sessionID, Config: config}); err != nil {
 			return err
@@ -121,7 +130,7 @@ func RunChat(ctx context.Context, opts ChatOptions) error {
 		resumeSummary = fmt.Sprintf("Session %s resumed (%d messages). Exit: save + resume with: tau --resume %s",
 			sessionID, len(loaded.Messages), sessionID)
 	} else {
-		config := buildSessionConfig(opts, model)
+		config := buildSessionConfig(opts, model, systemPrompt)
 		if err := coordinator.Send(tauchat.StartChatSessionCommand{SessionID: sessionID, Config: config}); err != nil {
 			return err
 		}
@@ -218,16 +227,34 @@ func buildModelRefresher(selectedProvider tauconfig.ProviderConfig, bearerToken 
 	}
 }
 
-func buildSessionConfig(opts ChatOptions, model tauchat.ChatModelRef) tauchat.ChatSessionConfig {
+func buildSessionConfig(opts ChatOptions, model tauchat.ChatModelRef, systemPrompt string) tauchat.ChatSessionConfig {
 	return tauchat.ChatSessionConfig{
 		Provider:     opts.Provider,
 		Model:        model,
-		SystemPrompt: opts.SystemPrompt,
+		SystemPrompt: systemPrompt,
 		Parameters: tauchat.ChatParameters{
 			MaxTokens:   opts.MaxTokens,
 			Temperature: opts.Temperature,
 		},
 	}
+}
+
+// buildAgentSystemPrompt builds the full system prompt for the agent,
+// combining project context (AGENTS.md), the skill catalog, working
+// directory info, and the user's system prompt override.
+func buildAgentSystemPrompt(userPrompt, cwd string) string {
+	contextFiles := agent.DiscoverContextFiles(cwd)
+
+	sources := skills.DefaultSources(cwd)
+	allSkills, _ := skills.Discover(sources)
+	activeSkills := skills.FilterDisabled(allSkills, nil)
+
+	return agent.BuildSystemPrompt(agent.PromptConfig{
+		ContextFiles: contextFiles,
+		Skills:       activeSkills,
+		CWD:          cwd,
+		AppendPrompt: userPrompt,
+	})
 }
 
 func pickModel(models []provider.Model, requestedModel, defaultModel, baseURL string) (tauchat.ChatModelRef, error) {

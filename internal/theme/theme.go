@@ -19,6 +19,15 @@ const (
 	HexDimGray   = "#a5a5b1"
 	HexGray800   = "#1F2937"
 	HexGreen     = "#00A300"
+
+	// Splash palette — warm Coral (Tau brand) and Lilac (π family).
+	HexCoral     = "#f8d1cf"
+	HexCoralDeep = "#e8a8a0"
+	HexCoralDim  = "#d4b8b4"
+	HexLilac     = "#f0ecff"
+	HexLilacMid  = "#c9c0e8"
+	HexLilacSoft = "#e8e4f8"
+	HexLilacDim  = "#9890c0"
 )
 
 var (
@@ -31,6 +40,14 @@ var (
 	ColorDimGray   = mustColor(HexDimGray)
 	ColorGray800   = mustColor(HexGray800)
 	ColorGreen     = mustColor(HexGreen)
+
+	ColorCoral     = mustColor(HexCoral)
+	ColorCoralDeep = mustColor(HexCoralDeep)
+	ColorCoralDim  = mustColor(HexCoralDim)
+	ColorLilac     = mustColor(HexLilac)
+	ColorLilacMid  = mustColor(HexLilacMid)
+	ColorLilacSoft = mustColor(HexLilacSoft)
+	ColorLilacDim  = mustColor(HexLilacDim)
 )
 
 func mustColor(hex string) gotui.Color {
