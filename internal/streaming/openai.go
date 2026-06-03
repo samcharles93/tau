@@ -35,6 +35,7 @@ func (s OpenAIStreamer) StreamChatCompletionFull(
 	ctx context.Context,
 	session chat.ChatSessionState,
 	bearerToken string,
+	extraHeaders map[string]string,
 	cb chat.StreamCallbacks,
 ) (chat.CompletionResult, error) {
 	requestBody, err := buildOpenAIRequestBody(session)
@@ -50,6 +51,10 @@ func (s OpenAIStreamer) StreamChatCompletionFull(
 	req.Header.Set("Authorization", "Bearer "+bearerToken)
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Accept", "text/event-stream")
+
+	for k, v := range extraHeaders {
+		req.Header.Set(k, v)
+	}
 
 	client := platform.NewHTTPClientWithTimeout(s.Insecure, s.timeout())
 	resp, err := client.Do(req)

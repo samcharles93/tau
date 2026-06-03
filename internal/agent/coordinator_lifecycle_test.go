@@ -21,6 +21,7 @@ func (noopStreamer) StreamChatCompletionFull(
 	context.Context,
 	chat.ChatSessionState,
 	string,
+	map[string]string,
 	chat.StreamCallbacks,
 ) (chat.CompletionResult, error) {
 	return chat.CompletionResult{}, nil
@@ -36,6 +37,7 @@ func (s *scriptedStreamer) StreamChatCompletionFull(
 	_ context.Context,
 	_ chat.ChatSessionState,
 	_ string,
+	_ map[string]string,
 	cb chat.StreamCallbacks,
 ) (chat.CompletionResult, error) {
 	s.calls++
@@ -645,6 +647,7 @@ func (*reasoningOnlyStreamer) StreamChatCompletionFull(
 	_ context.Context,
 	_ chat.ChatSessionState,
 	_ string,
+	_ map[string]string,
 	cb chat.StreamCallbacks,
 ) (chat.CompletionResult, error) {
 	_ = cb.OnReasoningDelta("hidden")
@@ -660,6 +663,7 @@ func (s *unknownToolStreamer) StreamChatCompletionFull(
 	_ context.Context,
 	_ chat.ChatSessionState,
 	_ string,
+	_ map[string]string,
 	cb chat.StreamCallbacks,
 ) (chat.CompletionResult, error) {
 	if s.done {
@@ -723,6 +727,7 @@ func (s *blockingFullStreamer) StreamChatCompletionFull(
 	ctx context.Context,
 	_ chat.ChatSessionState,
 	_ string,
+	_ map[string]string,
 	_ chat.StreamCallbacks,
 ) (chat.CompletionResult, error) {
 	s.once.Do(func() { close(s.started) })

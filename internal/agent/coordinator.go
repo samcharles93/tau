@@ -40,6 +40,7 @@ type Streamer interface {
 		ctx context.Context,
 		session chat.ChatSessionState,
 		bearerToken string,
+		extraHeaders map[string]string,
 		cb chat.StreamCallbacks,
 	) (chat.CompletionResult, error)
 }
@@ -667,13 +668,21 @@ func (c *Coordinator) runTurn(ctx context.Context, state chat.ChatSessionState) 
 		reasoningSnapshot := ""
 		toolCallSnapshots := make([]chat.ChatToolCall, 0)
 
-		c.dispatchPluginEvent("before_llm_call", &api.EventPayload{
+		pluginResp := c.dispatchPluginEvent("before_llm_call", &api.EventPayload{
 			Kind: &api.EventPayload_BeforeLlmCall{
-				BeforeLlmCall: &api.BeforeLLMCallPayload{ModelId: state.Model.ID},
+				BeforeLlmCall: &api.BeforeLLMCallPayload{
+					ModelId: state.Model.ID,
+					Headers: map[string]string{"Authorization": "Bearer " + bearerToken},
+				},
 			},
 		})
 
-		result, err := c.streamer.StreamChatCompletionFull(ctx, state, bearerToken, chat.StreamCallbacks{
+		var extraHeaders map[string]string
+		if pluginResp != nil && len(pluginResp.AddHeaders) > 0 {
+			extraHeaders = pluginResp.AddHeaders
+		}
+
+		result, err := c.streamer.StreamChatCompletionFull(ctx, state, bearerToken, extraHeaders, chat.StreamCallbacks{
 			OnDelta: func(delta string) error {
 				return c.appendDelta(sessionID, requestID, delta, time.Now().UTC())
 			},
