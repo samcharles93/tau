@@ -34,10 +34,21 @@ You are an agent for tau. Given the user's prompt, you should use the tools avai
 {{end}}
 {{- if .SkillsXML}}
 {{.SkillsXML}}
+The following skills provide specialized instructions for specific tasks.
+When a task matches a skill's description, use your read tool to load
+the SKILL.md at the listed location before proceeding. When a skill
+references relative paths, resolve them against the skill's directory
+(the parent of SKILL.md) and use absolute paths in tool calls.
+{{end}}
+{{- if .WorkspaceTree}}
+<workspace>
+{{.WorkspaceTree}}
+</workspace>
 {{end}}
 <env>
 Working directory: {{.WorkingDir}}
 Platform: {{.Platform}}
+Shell: {{.Shell}}
 Today's date: {{.Date}}
 Git repo: {{if .IsGitRepo}}yes{{else}}no{{end}}
 </env>

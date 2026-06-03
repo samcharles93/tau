@@ -2,9 +2,12 @@ package agent
 
 import (
 	"embed"
+	"fmt"
 	"os"
 	"path/filepath"
 	"runtime"
+	"slices"
+	"sort"
 	"strings"
 	"text/template"
 	"time"
@@ -72,15 +75,17 @@ type ContextFile struct {
 
 // promptData is the template execution context.
 type promptData struct {
-	Tools        []tools.Schema
-	ContextFiles []ContextFile
-	Guidelines   []string
-	SkillsXML    string
-	WorkingDir   string
-	Platform     string
-	Date         string
-	IsGitRepo    bool
-	AppendPrompt string
+	Tools         []tools.Schema
+	ContextFiles  []ContextFile
+	Guidelines    []string
+	SkillsXML     string
+	WorkingDir    string
+	WorkspaceTree string
+	Platform      string
+	Shell         string
+	Date          string
+	IsGitRepo     bool
+	AppendPrompt  string
 }
 
 // BuildSystemPrompt constructs the full system prompt from the given config
@@ -103,15 +108,17 @@ func BuildSystemPrompt(cfg PromptConfig) string {
 	}
 
 	data := promptData{
-		Tools:        cfg.Tools,
-		ContextFiles: cfg.ContextFiles,
-		Guidelines:   cfg.Guidelines,
-		SkillsXML:    skillsXML,
-		WorkingDir:   filepath.ToSlash(cfg.CWD),
-		Platform:     runtime.GOOS,
-		Date:         time.Now().Format("2006-01-02"),
-		IsGitRepo:    isGitRepo(cfg.CWD),
-		AppendPrompt: cfg.AppendPrompt,
+		Tools:         cfg.Tools,
+		ContextFiles:  cfg.ContextFiles,
+		Guidelines:    cfg.Guidelines,
+		SkillsXML:     skillsXML,
+		WorkingDir:    filepath.ToSlash(cfg.CWD),
+		WorkspaceTree: buildWorkspaceTree(cfg.CWD),
+		Platform:      runtime.GOOS,
+		Shell:         shellName(),
+		Date:          time.Now().Format("2006-01-02"),
+		IsGitRepo:     isGitRepo(cfg.CWD),
+		AppendPrompt:  cfg.AppendPrompt,
 	}
 
 	var b strings.Builder
@@ -156,7 +163,9 @@ func BuildCommandPrompt(templateName, cwd string) (string, error) {
 }
 
 // DiscoverContextFiles finds project-level context documents (AGENTS.md, etc.)
-// by searching standard locations relative to the working directory.
+// by walking from the git root (or CWD) down to the CWD, collecting every
+// matching file along the path in root→CWD order. This matches the Codex
+// hierarchical discovery spec.
 func DiscoverContextFiles(cwd string) []ContextFile {
 	if cwd == "" {
 		return nil
@@ -169,23 +178,135 @@ func DiscoverContextFiles(cwd string) []ContextFile {
 		".cursorrules",
 	}
 
-	var found []ContextFile
-	for _, relPath := range candidates {
-		fullPath := filepath.Join(cwd, relPath)
-		content, err := os.ReadFile(fullPath)
-		if err != nil {
-			continue
+	// Walk upward from CWD to find the git root.
+	root := cwd
+	for d := cwd; d != "" && d != string(filepath.Separator); d = filepath.Dir(d) {
+		if isGitRepo(d) {
+			root = d
+			break
 		}
-		trimmed := strings.TrimSpace(string(content))
-		if trimmed == "" {
-			continue
-		}
-		found = append(found, ContextFile{
-			Path:    relPath,
-			Content: trimmed,
-		})
 	}
+
+	// Build the list of directories from root down to CWD (inclusive).
+	var dirs []string
+	for d := cwd; ; d = filepath.Dir(d) {
+		dirs = append(dirs, d)
+		if d == root || d == string(filepath.Separator) || d == "" {
+			break
+		}
+	}
+	// Reverse so we go root→CWD.
+	slices.Reverse(dirs)
+
+	var found []ContextFile
+	seen := make(map[string]bool)
+	for _, d := range dirs {
+		for _, relPath := range candidates {
+			fullPath := filepath.Join(d, relPath)
+			if seen[fullPath] {
+				continue
+			}
+			seen[fullPath] = true
+			content, err := os.ReadFile(fullPath)
+			if err != nil {
+				continue
+			}
+			trimmed := strings.TrimSpace(string(content))
+			if trimmed == "" {
+				continue
+			}
+			displayPath, _ := filepath.Rel(cwd, fullPath)
+			if displayPath == "" {
+				displayPath = relPath
+			}
+			found = append(found, ContextFile{
+				Path:    displayPath,
+				Content: trimmed,
+			})
+		}
+	}
+
 	return found
+}
+
+// shellName returns the user's shell from $SHELL, or "unknown" if unset.
+func shellName() string {
+	sh := os.Getenv("SHELL")
+	if sh == "" {
+		return "unknown"
+	}
+	// Return just the basename for readability.
+	return filepath.Base(sh)
+}
+
+// buildWorkspaceTree returns a bounded directory tree for the given path,
+// showing up to 2 levels deep with at most 20 entries per directory.
+// Noisy directories (.git, node_modules, etc.) are filtered out.
+func buildWorkspaceTree(root string) string {
+	if root == "" {
+		return ""
+	}
+
+	var sb strings.Builder
+	collectTreeLines(root, 0, &sb)
+	return strings.TrimSpace(sb.String())
+}
+
+var noisyDirs = map[string]bool{
+	".git":          true,
+	"node_modules":  true,
+	"__pycache__":   true,
+	".pytest_cache": true,
+	".ruff_cache":   true,
+	"dist":          true,
+	"build":         true,
+	"out":           true,
+	"target":        true,
+	".next":         true,
+}
+
+func collectTreeLines(dir string, depth int, sb *strings.Builder) {
+	const maxDepth = 2
+	const maxEntries = 20
+
+	if depth >= maxDepth {
+		return
+	}
+
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return
+	}
+
+	// Directories first, then files.
+	sort.Slice(entries, func(i, j int) bool {
+		if entries[i].IsDir() != entries[j].IsDir() {
+			return entries[i].IsDir()
+		}
+		return entries[i].Name() < entries[j].Name()
+	})
+
+	count := 0
+	for _, entry := range entries {
+		name := entry.Name()
+		if strings.HasPrefix(name, ".") || noisyDirs[name] {
+			continue
+		}
+		if count >= maxEntries {
+			fmt.Fprintf(sb, "%s- ... %d more entries\n", strings.Repeat("  ", depth), len(entries)-count)
+			return
+		}
+		count++
+
+		suffix := ""
+		if entry.IsDir() {
+			suffix = "/"
+		}
+		fmt.Fprintf(sb, "%s- %s%s\n", strings.Repeat("  ", depth), name, suffix)
+		if entry.IsDir() {
+			collectTreeLines(filepath.Join(dir, name), depth+1, sb)
+		}
+	}
 }
 
 func isGitRepo(dir string) bool {

@@ -21,7 +21,7 @@ The project follows a **layered architecture** with a command/event boundary bet
 | Orchestration | `internal/app/` | Wires subsystems together for each use case (chat, token, models) |
 | Domain | `internal/chat/`, `internal/skills/`, `internal/agent/` | Core business logic, commands, events |
 | Presentation | `internal/tui/` | go-tui interactive terminal UI |
-| Infrastructure | `internal/platform/`, `internal/maas/`, `internal/config/`, `internal/pubsub/`, `internal/theme/`, `internal/store/` | Auth, HTTP, API clients, config, event bus, theming, persistence |
+| Infrastructure | `internal/platform/`, `internal/config/`, `internal/pubsub/`, `internal/theme/`, `internal/store/` | Auth, HTTP, API clients, config, event bus, theming, persistence |
 
 ### Package Responsibilities
 
@@ -30,7 +30,6 @@ The project follows a **layered architecture** with a command/event boundary bet
 - **`chat`** — Chat runtime: session lifecycle, streaming, command dispatch, event publishing via pubsub.
 - **`tui`** — go-tui interactive terminal UI. Consumes `chat.Runtime` events, sends commands.
 - **`platform`** — Endpoint resolution, OAuth PKCE flow, token caching, HTTP client factory.
-- **`maas`** — MaaS API integration: model discovery and token exchange.
 - **`config`** — Loads `~/.config/tau/config.yaml`; foundation package with no internal imports.
 - **`pubsub`** — Generic typed in-process pub/sub event bus (`Bus[T]`).
 - **`theme`** — Shared brand colour palette and semantic go-tui styles. Leaf dependency with zero internal imports. All UI code must import colours and styles from here — never define local colour hex literals.
@@ -42,7 +41,7 @@ The project follows a **layered architecture** with a command/event boundary bet
 
 1. **CLI → App → Domain/Infra** — never the reverse.
 2. **Domain packages** (`chat`, `skills`, `agent`) may import infrastructure (`platform`, `pubsub`, `config`) but never `cli`, `app`, or `tui`.
-3. **TUI** imports `chat`, `pubsub`, `theme`, and TUI-local packages only — never `app`, `cli`, `maas`, or `platform` directly.
+3. **TUI** imports `chat`, `pubsub`, `theme`, and TUI-local packages only — never `app`, `cli`, or `platform` directly.
 4. **Infrastructure** packages (`config`, `pubsub`, `theme`) have zero internal imports — they are leaf dependencies.
 5. **`app`** is the only package that may import both domain and infrastructure to wire them together.
 
