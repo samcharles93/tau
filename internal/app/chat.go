@@ -98,9 +98,15 @@ func RunChat(ctx context.Context, opts ChatOptions) error {
 			return fmt.Errorf("resume session %q: %w", resumeID, lErr)
 		}
 		sessionID = loaded.SessionID
-		// Use the loaded session's model if available.
+		// Use the loaded session's model if available, but rehydrate it through
+		// discovery/fallback so the runtime has the URL and model config. Stored
+		// sessions only persist the model ID.
 		if loaded.Model.ID != "" {
-			model = loaded.Model
+			loadedModel, pickErr := pickModel(allModels, loaded.Model.ID, "", opts.Provider.BaseURL)
+			if pickErr != nil {
+				return fmt.Errorf("resume session %q model %q: %w", resumeID, loaded.Model.ID, pickErr)
+			}
+			model = loadedModel
 		}
 		// Start the session, then load the messages via LoadSessionCommand.
 		config := buildSessionConfig(opts, model)

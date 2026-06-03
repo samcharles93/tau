@@ -17,6 +17,7 @@ const (
 	HexPurple    = "#9819D7"
 	HexLightGray = "#E8E8ED"
 	HexDimGray   = "#a5a5b1"
+	HexGray800   = "#1F2937"
 	HexGreen     = "#00A300"
 )
 
@@ -28,6 +29,7 @@ var (
 	ColorPurple    = mustColor(HexPurple)
 	ColorLightGray = mustColor(HexLightGray)
 	ColorDimGray   = mustColor(HexDimGray)
+	ColorGray800   = mustColor(HexGray800)
 	ColorGreen     = mustColor(HexGreen)
 )
 

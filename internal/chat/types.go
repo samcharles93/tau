@@ -296,9 +296,13 @@ type ListSessionsCommand struct {
 
 func (ListSessionsCommand) IsChatCommand() {}
 
-// LoadSessionCommand requests loading a saved session by ID.
+// LoadSessionCommand requests loading a saved session by ID. RuntimeSessionID
+// optionally identifies the currently-running session whose provider/model
+// config should be used as a template when activating a loaded session from the
+// TUI.
 type LoadSessionCommand struct {
-	SessionID string `json:"session_id"`
+	SessionID        string `json:"session_id"`
+	RuntimeSessionID string `json:"runtime_session_id,omitempty"`
 }
 
 func (LoadSessionCommand) IsChatCommand() {}

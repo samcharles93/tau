@@ -34,6 +34,74 @@ type completionItem struct {
 	AcceptsArgs bool
 }
 
+type completionTextArea struct {
+	textarea    *gt.TextArea
+	completions *gt.State[[]completionItem]
+	onUp        func()
+	onDown      func()
+}
+
+func newCompletionTextArea(
+	value *gt.State[string],
+	completions *gt.State[[]completionItem],
+	onSubmit func(string),
+	onUp func(),
+	onDown func(),
+) *completionTextArea {
+	return &completionTextArea{
+		textarea: gt.NewTextArea(
+			gt.WithTextAreaValue(value),
+			gt.WithTextAreaWidth(120),
+			gt.WithTextAreaMaxHeight(inlineTextAreaMaxRows),
+			gt.WithTextAreaPlaceholder("Send a message…"),
+			gt.WithTextAreaPlaceholderStyle(theme.DimStyle()),
+			gt.WithTextAreaTextStyle(theme.BodyStyle()),
+			gt.WithTextAreaFocusColor(theme.ColorPurple),
+			gt.WithTextAreaAutoFocus(true),
+			gt.WithTextAreaOnSubmit(onSubmit),
+		),
+		completions: completions,
+		onUp:        onUp,
+		onDown:      onDown,
+	}
+}
+
+func (i *completionTextArea) BindApp(app *gt.App) { i.textarea.BindApp(app) }
+
+func (i *completionTextArea) Render(app *gt.App) *gt.Element { return i.textarea.Render(app) }
+
+func (i *completionTextArea) Watchers() []gt.Watcher { return i.textarea.Watchers() }
+
+func (i *completionTextArea) IsFocused() bool { return i.textarea.IsFocused() }
+
+func (i *completionTextArea) Focus() { i.textarea.Focus() }
+
+func (i *completionTextArea) Clear() { i.textarea.Clear() }
+
+func (i *completionTextArea) SetText(value string) { i.textarea.SetText(value) }
+
+func (i *completionTextArea) Text() string { return i.textarea.Text() }
+
+func (i *completionTextArea) Height() int { return i.textarea.Height() }
+
+func (i *completionTextArea) KeyMap() gt.KeyMap {
+	if len(i.completions.Get()) == 0 {
+		return i.textarea.KeyMap()
+	}
+	km := make(gt.KeyMap, 0, len(i.textarea.KeyMap()))
+	for _, binding := range i.textarea.KeyMap() {
+		if binding.Pattern.Key == gt.KeyUp || binding.Pattern.Key == gt.KeyDown {
+			continue
+		}
+		km = append(km, binding)
+	}
+	km = append(km,
+		gt.OnFocused(gt.KeyUp, func(gt.KeyEvent) { i.onUp() }),
+		gt.OnFocused(gt.KeyDown, func(gt.KeyEvent) { i.onDown() }),
+	)
+	return km
+}
+
 // ChatPanel is the root go-tui component for the interactive chat UI.
 type ChatPanel struct {
 	ctx       context.Context
@@ -72,11 +140,11 @@ type ChatPanel struct {
 	sessionSummaries     *gt.State[[]tauchat.SessionSummary]
 	sessionListCursor    string
 	dumpTreeOnNextRender bool
-	input                *gt.TextArea
+	input                *completionTextArea
 	streamWriter         *gt.StreamWriter
 	streamContentWritten bool
-	streamPrefixWritten  bool
 	reasoningWritten     bool
+	startupDone          bool
 }
 
 // NewChatPanel creates a new go-tui chat panel with reactive state initialized.
@@ -184,10 +252,10 @@ func (c *ChatPanel) handleNotification(n notify.Notification) {
 	c.notice.Set(message)
 	if n.Level == notify.LevelError {
 		c.lastError.Set(message)
-		c.printAbove("error: %s", message)
+		c.printStyledAbove("%s", ansify(fmt.Sprintf("\nerror: %s", message), theme.ColorRed))
 		return
 	}
-	c.printAbove("notice: %s", message)
+	c.printStyledAbove("\n%s", ansify(message, theme.ColorDimGray))
 }
 
 func (c *ChatPanel) handleRuntimeEvent(event tauchat.ChatEvent) {
@@ -220,16 +288,16 @@ func (c *ChatPanel) handleRuntimeEvent(event tauchat.ChatEvent) {
 		if !c.matchesRequest(ev.SessionID, ev.RequestID) {
 			return
 		}
-		message := fmt.Sprintf("tool started: %s %s", ev.ToolName, ev.ArgumentsSummary)
+		message := fmt.Sprintf("\ntool started: %s %s", ev.ToolName, ev.ArgumentsSummary)
 		c.notice.Set(message)
-		c.printAbove("%s", message)
+		c.printStyledAbove("%s", ansify(message, theme.ColorDimGray))
 	case tauchat.ChatToolExecutionCompletedEvent:
 		if !c.matchesRequest(ev.SessionID, ev.RequestID) {
 			return
 		}
 		message := fmt.Sprintf("tool completed: %s %s (%s)", ev.ToolName, ev.Status, ev.Duration)
 		c.notice.Set(message)
-		c.printAbove("%s", message)
+		c.printStyledAbove("%s", ansify(message, theme.ColorDimGray))
 	case tauchat.ChatResponseCompletedEvent:
 		if ev.State.SessionID != c.cfg.SessionID {
 			return
@@ -246,7 +314,7 @@ func (c *ChatPanel) handleRuntimeEvent(event tauchat.ChatEvent) {
 		c.closeStream()
 		c.syncState(ev.State)
 		c.notice.Set("chat request cancelled")
-		c.printAbove("chat request cancelled")
+		c.printStyledAbove("%s", ansify("\nchat request cancelled", theme.ColorDimGray))
 	case tauchat.ChatRuntimeErrorEvent:
 		if ev.SessionID != "" && ev.SessionID != c.cfg.SessionID {
 			return
@@ -255,20 +323,20 @@ func (c *ChatPanel) handleRuntimeEvent(event tauchat.ChatEvent) {
 		c.lastError.Set(ev.Message)
 		c.notice.Set(ev.Message)
 		c.status.Set(tauchat.ChatSessionIdle)
-		c.printAbove("error: %s", ev.Message)
+		c.printStyledAbove("%s", ansify(fmt.Sprintf("\nerror: %s", ev.Message), theme.ColorRed))
 	case tauchat.ChatNotificationEvent:
 		c.notice.Set(ev.Message)
 		if ev.Level == tauchat.ChatNotificationError {
 			c.lastError.Set(ev.Message)
-			c.printAbove("error: %s", ev.Message)
+			c.printStyledAbove("%s", ansify(fmt.Sprintf("\nerror: %s", ev.Message), theme.ColorRed))
 			return
 		}
-		c.printAbove("notice: %s", ev.Message)
+		c.printStyledAbove("\n%s", ansify(ev.Message, theme.ColorDimGray))
 	case tauchat.ExtensionsReloadedEvent:
 		c.setExtensionCommands(ev.Result.Commands)
 		message := fmt.Sprintf("reloaded extensions: %d loaded", ev.Result.ExtensionCount)
 		c.notice.Set(message)
-		c.printAbove("%s", message)
+		c.printStyledAbove("\n%s", ansify(message, theme.ColorDimGray))
 	case tauchat.ExtensionCommandsChangedEvent:
 		c.setExtensionCommands(ev.Commands)
 	case tauchat.ExtensionCommandResultEvent:
@@ -276,7 +344,7 @@ func (c *ChatPanel) handleRuntimeEvent(event tauchat.ChatEvent) {
 	case tauchat.InteractivePromptRequestedEvent:
 		message := ev.Title + ": " + ev.Message
 		c.notice.Set(message)
-		c.printAbove("%s", message)
+		c.printStyledAbove("\n%s", ansify(message, theme.ColorDimGray))
 	case tauchat.SessionsListedEvent:
 		c.sessionSummaries.Set(ev.Sessions)
 		c.sessionListCursor = ev.NextCursor
@@ -285,17 +353,18 @@ func (c *ChatPanel) handleRuntimeEvent(event tauchat.ChatEvent) {
 			c.sessionListView.SetCursor(ev.NextCursor, ev.NextCursor != "")
 		}
 	case tauchat.SessionLoadedEvent:
+		c.cfg.SessionID = ev.State.SessionID
 		c.syncState(ev.State)
 		message := fmt.Sprintf("Session %s loaded (%d messages)", ev.State.SessionID, len(ev.State.Messages))
 		c.notice.Set(message)
 		c.showSessionList.Set(false)
-		c.printAbove("%s", message)
+		c.printStyledAbove("\n%s", ansify(message, theme.ColorDimGray))
 		c.printSessionMessages(ev.State.Messages)
 	case tauchat.SessionDeletedEvent:
 		message := "Session deleted: " + ev.SessionID
 		c.notice.Set(message)
 		c.showSessionInfo.Set(false)
-		c.printAbove("%s", message)
+		c.printStyledAbove("\n%s", ansify(message, theme.ColorDimGray))
 	case tauchat.SessionExportedEvent:
 		if ev.Path != "" {
 			c.notice.Set(fmt.Sprintf("Session exported to %s", ev.Path))
@@ -382,12 +451,11 @@ func (c *ChatPanel) writeAssistantDelta(delta string) {
 	if w == nil {
 		return
 	}
-	if c.reasoningWritten && !c.streamPrefixWritten {
+	if !c.streamContentWritten && !c.reasoningWritten {
 		_, _ = w.Write([]byte("\n"))
 	}
-	if !c.streamPrefixWritten {
-		_, _ = w.Write([]byte("Tau: "))
-		c.streamPrefixWritten = true
+	if c.reasoningWritten && c.streamContentWritten {
+		_, _ = w.Write([]byte("\n"))
 	}
 	_, _ = w.Write([]byte(delta))
 	c.streamContentWritten = true
@@ -410,11 +478,13 @@ func (c *ChatPanel) writeReasoningDelta(delta string) {
 
 func (c *ChatPanel) closeStream() {
 	if c.streamWriter != nil {
+		if c.streamContentWritten || c.reasoningWritten {
+			_, _ = c.streamWriter.Write([]byte("\n\n"))
+		}
 		_ = c.streamWriter.Close()
 	}
 	c.streamWriter = nil
 	c.streamContentWritten = false
-	c.streamPrefixWritten = false
 	c.reasoningWritten = false
 }
 
@@ -438,19 +508,90 @@ func (c *ChatPanel) printSessionMessages(messages []tauchat.ChatMessage) {
 }
 
 func (c *ChatPanel) printMessage(msg tauchat.ChatMessage) {
-	prefix := rolePrintLabel(msg.Role)
 	if c.showReasoning.Get() && strings.TrimSpace(msg.ReasoningContent) != "" {
-		c.printAbove("%s reasoning:\n%s", prefix, msg.ReasoningContent)
+		c.printStyledAbove("\n%s\n", ansify("reasoning:\n"+msg.ReasoningContent, theme.ColorDimGray))
 	}
 	if strings.TrimSpace(msg.Content) == "" {
 		return
 	}
-	c.printAbove("%s: %s", prefix, msg.Content)
+	switch msg.Role {
+	case tauchat.ChatRoleUser:
+		c.printStyledAbove("%s", c.userMessageBlock(msg.Content))
+	case tauchat.ChatRoleAssistant:
+		c.printStyledAbove("\n%s\n\n", msg.Content)
+	default:
+		c.printStyledAbove("\n%s\n\n", ansify(fmt.Sprintf("%s: %s", messageRoleLabel(msg.Role), msg.Content), theme.ColorDimGray))
+	}
+}
+
+func (c *ChatPanel) printStyledAbove(format string, args ...any) {
+	if c.app == nil {
+		return
+	}
+	c.app.PrintAboveStyled(format, args...)
+}
+
+// ansify wraps text in ANSI SGR sequences matching the given go-tui Style.
+// The result can be passed to PrintAboveStyled which preserves ANSI escapes.
+func ansify(text string, c gt.Color) string {
+	r, g, b := c.RGB()
+	return fmt.Sprintf("\033[38;2;%d;%d;%dm%s\033[0m", r, g, b, text)
+}
+
+func (c *ChatPanel) userMessageBlock(text string) string {
+	lines := wrapUserMessageLines(text, max(1, c.messageWidth()-2))
+	rows := make([]string, 0, len(lines)+2)
+	rows = append(rows, ansiBackgroundLine("", theme.ColorLightGray, theme.ColorGray800))
+	for _, line := range lines {
+		rows = append(rows, ansiBackgroundLine(" "+line, theme.ColorLightGray, theme.ColorGray800))
+	}
+	rows = append(rows, ansiBackgroundLine("", theme.ColorLightGray, theme.ColorGray800))
+	return strings.Join(rows, "\n")
+}
+
+func (c *ChatPanel) messageWidth() int {
+	if c.app != nil {
+		width, _ := c.app.Size()
+		if width > 0 {
+			return width
+		}
+	}
+	width := 1
+	for _, line := range strings.Split(c.inputValue.Get(), "\n") {
+		width = max(width, len([]rune(line))+2)
+	}
+	return width
+}
+
+func wrapUserMessageLines(text string, width int) []string {
+	if width < 1 {
+		width = 1
+	}
+	var out []string
+	for _, line := range strings.Split(text, "\n") {
+		runes := []rune(line)
+		if len(runes) == 0 {
+			out = append(out, "")
+			continue
+		}
+		for len(runes) > width {
+			out = append(out, string(runes[:width]))
+			runes = runes[width:]
+		}
+		out = append(out, string(runes))
+	}
+	return out
+}
+
+func ansiBackgroundLine(text string, fg gt.Color, bg gt.Color) string {
+	fr, fgG, fb := fg.RGB()
+	br, bgG, bb := bg.RGB()
+	return fmt.Sprintf("\033[38;2;%d;%d;%dm\033[48;2;%d;%d;%dm%s\033[K\033[0m", fr, fgG, fb, br, bgG, bb, text)
 }
 
 func (c *ChatPanel) printSessionSummaries(summaries []tauchat.SessionSummary, nextCursor string) {
 	if len(summaries) == 0 {
-		c.printAbove("Sessions: no saved sessions")
+		c.printStyledAbove("\n%s", ansify("Sessions: no saved sessions", theme.ColorDimGray))
 		return
 	}
 	var b strings.Builder
@@ -459,21 +600,19 @@ func (c *ChatPanel) printSessionSummaries(summaries []tauchat.SessionSummary, ne
 		fmt.Fprintf(&b, "- %s · %d messages · %s\n", summary.ID, summary.MessageCount, summary.ModelID)
 	}
 	if nextCursor != "" {
-		b.WriteString("More sessions available: run /session list again to fetch the next page.")
+		b.WriteString("More sessions available.")
 	}
-	c.printAbove("%s", strings.TrimRight(b.String(), "\n"))
+	c.printStyledAbove("\n%s", ansify(strings.TrimRight(b.String(), "\n"), theme.ColorDimGray))
 }
 
 func (c *ChatPanel) printSessionInfo(summary tauchat.SessionSummary) {
-	c.printAbove("Session %s\nModel: %s\nProvider: %s\nMessages: %d\nTokens: %d\nCreated: %s\nUpdated: %s",
-		summary.ID,
-		summary.ModelID,
-		summary.Provider,
-		summary.MessageCount,
-		summary.TotalTokens,
+	c.printStyledAbove("\n%s", ansify(fmt.Sprintf(
+		"Session %s\nModel: %s\nProvider: %s\nMessages: %d\nTokens: %d\nCreated: %s\nUpdated: %s",
+		summary.ID, summary.ModelID, summary.Provider,
+		summary.MessageCount, summary.TotalTokens,
 		summary.CreatedAt.Format(time.RFC3339),
 		summary.UpdatedAt.Format(time.RFC3339),
-	)
+	), theme.ColorDimGray))
 }
 
 func (c *ChatPanel) handleInputValueChanged(value string) {
@@ -525,6 +664,13 @@ func (c *ChatPanel) handleSettingsVisibilityChanged(open bool) {
 // scrollback. Settings temporarily switch to the alternate screen and render as
 // a conventional full-screen modal.
 func (c *ChatPanel) Render(app *gt.App) *gt.Element {
+	if !c.startupDone {
+		c.startupDone = true
+		// Schedule a blank line after the first render to mitigate the
+		// visual screen-clearing effect of go-tui's initial inline frame.
+		app.QueuePrintAboveln(" ")
+	}
+
 	if c.showSettings.Get() && app.IsInAlternateScreen() {
 		return c.renderFullscreenSettings(app)
 	}
@@ -727,16 +873,12 @@ func (c *ChatPanel) renderInput(app *gt.App) *gt.Element {
 	))
 	input := app.MountPersistent(c, 0, func() gt.Component {
 		if c.input == nil {
-			c.input = gt.NewTextArea(
-				gt.WithTextAreaValue(c.inputValue),
-				gt.WithTextAreaWidth(120),
-				gt.WithTextAreaMaxHeight(inlineTextAreaMaxRows),
-				gt.WithTextAreaPlaceholder("Send a message…"),
-				gt.WithTextAreaPlaceholderStyle(theme.DimStyle()),
-				gt.WithTextAreaTextStyle(theme.BodyStyle()),
-				gt.WithTextAreaFocusColor(theme.ColorPurple),
-				gt.WithTextAreaAutoFocus(true),
-				gt.WithTextAreaOnSubmit(c.handleSubmit),
+			c.input = newCompletionTextArea(
+				c.inputValue,
+				c.completions,
+				c.handleSubmit,
+				func() { c.selectCompletion(-1) },
+				func() { c.selectCompletion(1) },
 			)
 		}
 		return c.input
@@ -752,10 +894,6 @@ func (c *ChatPanel) renderStatusBar() *gt.Element {
 		gt.WithWidthPercent(100),
 		gt.WithFlexShrink(0),
 	)
-	statusBar.AddChild(gt.New(
-		gt.WithText(c.statusText()),
-		gt.WithTextStyle(c.statusStyle()),
-	))
 	if notice := strings.TrimSpace(c.notice.Get()); notice != "" {
 		statusBar.AddChild(gt.New(
 			gt.WithText(" · "+notice),
@@ -775,15 +913,6 @@ func (c *ChatPanel) renderStatusBar() *gt.Element {
 			gt.WithTruncate(true),
 		))
 	}
-	help := "enter send · ctrl+j newline · tab complete · ctrl+c quit"
-	if c.showHelp.Get() {
-		help = "/new · /model <id> · /system <prompt> · /reload · /refresh · /settings · /exit"
-	}
-	statusBar.AddChild(gt.New(
-		gt.WithText(help),
-		gt.WithTextStyle(theme.DimStyle()),
-		gt.WithTruncate(true),
-	))
 	return statusBar
 }
 
@@ -941,7 +1070,7 @@ func (c *ChatPanel) launchDebugView(name string) {
 func (c *ChatPanel) handleSessionCommand(rest string) {
 	parts := strings.Fields(strings.TrimSpace(rest))
 	if len(parts) == 0 {
-		// Bare "/session" — open session list.
+		// Bare "/session" — print session list.
 		c.openSessionList()
 		return
 	}
@@ -957,12 +1086,25 @@ func (c *ChatPanel) handleSessionCommand(rest string) {
 	case "list":
 		c.openSessionList()
 	default:
-		c.lastError.Set("usage: /session [list|info <id>|export <id> [path]|delete <id>]")
+		c.loadSession(parts[0])
 	}
 }
 
-func (c *ChatPanel) handleResumeCommand() {
-	c.openSessionList()
+func (c *ChatPanel) handleResumeCommand(rest string) {
+	id := strings.TrimSpace(rest)
+	if id == "" {
+		c.openSessionList()
+		return
+	}
+	c.loadSession(id)
+}
+
+func (c *ChatPanel) loadSession(id string) {
+	id = strings.TrimSpace(id)
+	if id == "" {
+		return
+	}
+	c.sendCommand(tauchat.LoadSessionCommand{SessionID: id, RuntimeSessionID: c.cfg.SessionID})
 }
 
 func (c *ChatPanel) openSessionList() {
@@ -1099,7 +1241,7 @@ func (c *ChatPanel) handleSubmitWithDepth(value string, depth int) {
 	}
 	c.clearInput()
 	c.lastError.Set("")
-	c.printAbove("You: %s", text)
+	c.printStyledAbove("%s", c.userMessageBlock(text))
 	if strings.HasPrefix(text, "/") {
 		c.handleSlashCommand(text)
 		return
@@ -1172,7 +1314,7 @@ func (c *ChatPanel) handleSlashCommand(text string) {
 	case "session":
 		c.handleSessionCommand(rest)
 	case "resume":
-		c.handleResumeCommand()
+		c.handleResumeCommand(rest)
 	case "debug":
 		if c.cfg.Debug {
 			c.handleDebugCommand(rest)
@@ -1307,10 +1449,18 @@ func (c *ChatPanel) renderCompletions() *gt.Element {
 		gt.WithFlexShrink(0),
 		gt.WithGap(0),
 	)
-	for i, item := range items {
-		if i >= inlineCompletionMaxRows {
-			break
-		}
+	// Compute visible window around the selected index.
+	maxRows := min(inlineCompletionMaxRows, len(items))
+	startRow := selected - maxRows/2
+	if startRow < 0 {
+		startRow = 0
+	}
+	if end := startRow + maxRows; end > len(items) {
+		startRow = len(items) - maxRows
+	}
+	endRow := startRow + maxRows
+	for i := startRow; i < endRow; i++ {
+		item := items[i]
 		prefix := "  "
 		style := theme.DimStyle()
 		if i == selected {
@@ -1380,7 +1530,7 @@ func (c *ChatPanel) commandCompletions(prefix string) []completionItem {
 			matches = append(matches, item)
 		}
 	}
-	return limitCompletions(matches)
+	return matches
 }
 
 func (c *ChatPanel) modelCompletions(prefix string) []completionItem {
@@ -1403,7 +1553,7 @@ func (c *ChatPanel) modelCompletions(prefix string) []completionItem {
 			Description: model.URL,
 		})
 	}
-	return limitCompletions(items)
+	return items
 }
 
 func (c *ChatPanel) reasoningCompletions(prefix string) []completionItem {
@@ -1464,7 +1614,7 @@ func (c *ChatPanel) debugCompletions(arg string) []completionItem {
 				matches = append(matches, item)
 			}
 		}
-		return limitCompletions(matches)
+		return matches
 	}
 
 	return nil
@@ -1541,17 +1691,9 @@ func builtinCompletionItems(debug bool) []completionItem {
 	return items
 }
 
-func limitCompletions(items []completionItem) []completionItem {
-	const maxCompletions = 8
-	if len(items) <= maxCompletions {
-		return items
-	}
-	return items[:maxCompletions]
-}
-
 // KeyMap defines app-level keyboard shortcuts.
 func (c *ChatPanel) KeyMap() gt.KeyMap {
-	return gt.KeyMap{
+	km := gt.KeyMap{
 		gt.On(gt.KeyEscape, func(ke gt.KeyEvent) {
 			if len(c.completions.Get()) > 0 {
 				c.closeCompletions()
@@ -1565,16 +1707,6 @@ func (c *ChatPanel) KeyMap() gt.KeyMap {
 		}),
 		gt.On(gt.KeyTab, func(ke gt.KeyEvent) {
 			c.applySelectedCompletion()
-		}),
-		gt.On(gt.KeyUp, func(ke gt.KeyEvent) {
-			if len(c.completions.Get()) > 0 {
-				c.selectCompletion(-1)
-			}
-		}),
-		gt.On(gt.KeyDown, func(ke gt.KeyEvent) {
-			if len(c.completions.Get()) > 0 {
-				c.selectCompletion(1)
-			}
 		}),
 		gt.On(gt.KeyCtrlC, func(ke gt.KeyEvent) {
 			switch {
@@ -1596,14 +1728,17 @@ func (c *ChatPanel) KeyMap() gt.KeyMap {
 			c.showReasoning.Set(!c.showReasoning.Get())
 		}),
 	}
+	if len(c.completions.Get()) > 0 {
+		km = append(km,
+			gt.OnPreemptStop(gt.KeyUp, func(gt.KeyEvent) { c.selectCompletion(-1) }),
+			gt.OnPreemptStop(gt.KeyDown, func(gt.KeyEvent) { c.selectCompletion(1) }),
+		)
+	}
+	return km
 }
 
-func rolePrintLabel(role tauchat.ChatRole) string {
+func messageRoleLabel(role tauchat.ChatRole) string {
 	switch role {
-	case tauchat.ChatRoleUser:
-		return "You"
-	case tauchat.ChatRoleAssistant:
-		return "Tau"
 	case tauchat.ChatRoleTool:
 		return "tool"
 	case tauchat.ChatRoleSystem:

@@ -45,7 +45,6 @@ func Run(ctx context.Context, runtime tauchat.ChatRuntime, cfg Config) error {
 
 	app, err := gt.NewApp(
 		gt.WithRootComponent(root),
-		gt.WithMouse(),
 		gt.WithInlineHeight(3),
 	)
 	if err != nil {

@@ -1303,6 +1303,34 @@ func (c *Coordinator) handleLoadSession(cmd chat.LoadSessionCommand) {
 		return
 	}
 
+	c.mu.Lock()
+	templateSession := c.sessions[cmd.RuntimeSessionID]
+	if templateSession == nil {
+		templateSession = c.sessions[cmd.SessionID]
+	}
+	if templateSession != nil {
+		// Store.Load reconstructs persistence fields only. Preserve live runtime
+		// config so future turns have a valid provider endpoint and parameters.
+		loaded.Provider = templateSession.state.Provider
+		loaded.Parameters = templateSession.state.Parameters
+		if loaded.Model.ID == templateSession.state.Model.ID || loaded.Model.URL == "" {
+			loaded.Model.URL = templateSession.state.Model.URL
+			loaded.Model.Config = templateSession.state.Model.Config
+		}
+		if loaded.Model.URL == "" {
+			loaded.Model.URL = strings.TrimRight(loaded.Provider.BaseURL, "/")
+		}
+	}
+	loaded.Status = chat.ChatSessionIdle
+	loaded.ActiveRequestID = ""
+	loaded.PendingAssistant = ""
+	loaded.LastError = ""
+	if current := c.sessions[cmd.SessionID]; current != nil && current.cancel != nil {
+		current.cancel()
+	}
+	c.sessions[cmd.SessionID] = &coordinatorSession{state: &loaded}
+	c.mu.Unlock()
+
 	c.emit(chat.SessionLoadedEvent{State: loaded})
 }
 

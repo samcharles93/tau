@@ -205,7 +205,13 @@ func TestModelArgumentCompletions(t *testing.T) {
 
 func TestApplySelectedCompletionUpdatesTextArea(t *testing.T) {
 	panel := newTestPanel(&fakeRuntime{})
-	panel.input = gt.NewTextArea(gt.WithTextAreaValue(panel.inputValue))
+	panel.input = newCompletionTextArea(
+		panel.inputValue,
+		panel.completions,
+		panel.handleSubmit,
+		func() { panel.selectCompletion(-1) },
+		func() { panel.selectCompletion(1) },
+	)
 	panel.inputValue.Set("/mo")
 	panel.syncCompletions("/mo")
 
