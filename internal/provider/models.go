@@ -99,10 +99,14 @@ func ConfiguredModels(provider config.ProviderConfig) []Model {
 		if id == "" {
 			continue
 		}
+		modelURL := baseURL
+		if cfg.URL != "" {
+			modelURL = strings.TrimRight(cfg.URL, "/")
+		}
 		models = append(models, Model{
 			ID:     id,
 			Name:   cfg.Name,
-			URL:    baseURL,
+			URL:    modelURL,
 			Ready:  true,
 			Config: cfg,
 		})

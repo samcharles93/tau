@@ -181,24 +181,29 @@ func (m *Manager) DispatchEvent(ctx context.Context, event string, payload *api.
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 
+	m.cfg.Logger.Debug("plugin manager: dispatching event", "event", event, "plugin_count", len(m.grpcClients))
+
 	var sessionID string
 	if s := payload.GetSession(); s != nil {
 		sessionID = s.SessionId
 	}
 
 	var responses []*api.EventResponse
-	for _, c := range m.grpcClients {
+	for name, c := range m.grpcClients {
 		resp, err := c.Client.DispatchEvent(ctx, &api.DispatchEventRequest{
 			Event:     event,
 			SessionId: sessionID,
 			Payload:   payload,
 		})
 		if err != nil {
-			m.cfg.Logger.Warn("plugin manager: dispatch failed", "event", event, "err", err)
+			m.cfg.Logger.Warn("plugin manager: dispatch failed", "event", event, "plugin", name, "err", err)
 			continue
 		}
 		if resp.Response != nil {
+			m.cfg.Logger.Debug("plugin manager: got response", "event", event, "plugin", name, "has_add_headers", len(resp.Response.AddHeaders) > 0)
 			responses = append(responses, resp.Response)
+		} else {
+			m.cfg.Logger.Debug("plugin manager: nil response", "event", event, "plugin", name)
 		}
 	}
 	return mergeResponses(responses)
@@ -337,8 +342,18 @@ func (m *Manager) startPlugin(ctx context.Context, pluginPath string) (*goplugin
 
 func isExecutable(path string) bool {
 	info, err := os.Stat(path)
-	if err != nil {
+	if err != nil || info.IsDir() {
 		return false
 	}
+
+	if isExecutableByPlatform(path, info) {
+		return true
+	}
+
+	// Fallback: Unix permission bits.
+	// On Windows, isExecutableByPlatform handles the check; the permission-bit
+	// fallback may produce false positives there (Go often reports 0777 for
+	// regular files on Windows), but any false-positive file would simply fail
+	// at launch time.
 	return info.Mode()&0o111 != 0
 }
