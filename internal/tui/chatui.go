@@ -742,60 +742,6 @@ func (c *ChatPanel) dumpElementTree(el *gt.Element, depth int, f *os.File) {
 	}
 }
 
-func (c *ChatPanel) renderHeader() *gt.Element {
-	header := gt.New(
-		gt.WithDisplay(gt.DisplayFlex),
-		gt.WithDirection(gt.Row),
-		gt.WithBorder(gt.BorderSingle),
-		gt.WithBorderStyle(theme.BorderStyle()),
-		gt.WithPaddingTRBL(0, 1, 0, 1),
-		gt.WithFlexShrink(0),
-	)
-	header.AddChild(gt.New(
-		gt.WithText("τ tau"),
-		gt.WithTextStyle(theme.BrandStyle()),
-	))
-	header.AddChild(gt.New(gt.WithFlexGrow(1)))
-	right := c.modelName.Get()
-	if c.cfg.Provider != "" {
-		right += " · " + c.cfg.Provider
-	}
-	header.AddChild(gt.New(
-		gt.WithText(right),
-		gt.WithTextStyle(theme.DimStyle()),
-	))
-	return header
-}
-
-func (c *ChatPanel) renderMessages() *gt.Element {
-	messageList := gt.New(
-		gt.WithDisplay(gt.DisplayFlex),
-		gt.WithDirection(gt.Column),
-		gt.WithFlexGrow(1),
-		gt.WithScrollable(gt.ScrollVertical),
-		gt.WithScrollOffset(0, c.scrollY.Get()),
-		gt.WithScrollbarHidden(true),
-		gt.WithPadding(1),
-		gt.WithGap(1),
-	)
-
-	messages := c.messages.Get()
-	for _, msg := range messages {
-		messageList.AddChild(c.renderMessage(msg))
-	}
-	if c.streamingContent.Get() != "" || c.streamingReasoning.Get() != "" {
-		messageList.AddChild(c.renderStreamingContent())
-	}
-	if len(messages) == 0 && c.streamingContent.Get() == "" {
-		messageList.AddChild(gt.New(
-			gt.WithText("Start a conversation…"),
-			gt.WithTextStyle(theme.DimStyle().Italic()),
-			gt.WithTextAlign(gt.TextAlignCenter),
-		))
-	}
-	return messageList
-}
-
 func (c *ChatPanel) renderMessage(msg tauchat.ChatMessage) *gt.Element {
 	block := gt.New(
 		gt.WithDisplay(gt.DisplayFlex),
@@ -837,29 +783,6 @@ func (c *ChatPanel) renderMessage(msg tauchat.ChatMessage) *gt.Element {
 	return block
 }
 
-func (c *ChatPanel) renderStreamingContent() *gt.Element {
-	content := c.streamingContent.Get()
-	reasoning := ""
-	if c.showReasoning.Get() {
-		reasoning = c.streamingReasoning.Get()
-	}
-	if c.status.Get() == tauchat.ChatSessionStreaming {
-		switch {
-		case content != "":
-			content += " ▌"
-		case reasoning != "":
-			reasoning += " ▌"
-		default:
-			content = "▌"
-		}
-	}
-	return c.renderMessage(tauchat.ChatMessage{
-		Role:             tauchat.ChatRoleAssistant,
-		Content:          content,
-		ReasoningContent: reasoning,
-	})
-}
-
 func (c *ChatPanel) renderInput(app *gt.App) *gt.Element {
 	inputContainer := gt.New(
 		gt.WithDisplay(gt.DisplayFlex),
@@ -895,6 +818,11 @@ func (c *ChatPanel) renderStatusBar() *gt.Element {
 		gt.WithWidthPercent(100),
 		gt.WithFlexShrink(0),
 	)
+	statusBar.AddChild(gt.New(
+		gt.WithText("τ tau"),
+		gt.WithTextStyle(theme.BrandStyle()),
+		gt.WithFlexShrink(0),
+	))
 	if notice := strings.TrimSpace(c.notice.Get()); notice != "" {
 		statusBar.AddChild(gt.New(
 			gt.WithText(" · "+notice),
@@ -999,15 +927,6 @@ func (c *ChatPanel) buildSettingsContent() *gt.Element {
 	return content
 }
 
-func (c *ChatPanel) renderDebugModal(app *gt.App) *gt.Element {
-	if c.debugView == nil || !c.showDebug.Get() {
-		return gt.New(gt.WithHidden(true))
-	}
-	return app.MountPersistent(c, 2, func() gt.Component {
-		return c.debugView
-	})
-}
-
 func (c *ChatPanel) handleDebugCommand(rest string) {
 	rest = strings.TrimSpace(rest)
 	parts := strings.Fields(rest)
@@ -1040,15 +959,6 @@ func (c *ChatPanel) launchDebugListView() {
 		c.debugListView.BindApp(c.app)
 	}
 	c.showDebugList.Set(true)
-}
-
-func (c *ChatPanel) renderDebugListModal(app *gt.App) *gt.Element {
-	if c.debugListView == nil || !c.showDebugList.Get() {
-		return gt.New(gt.WithHidden(true))
-	}
-	return app.MountPersistent(c, 3, func() gt.Component {
-		return c.debugListView
-	})
 }
 
 func (c *ChatPanel) launchDebugView(name string) {
@@ -1176,48 +1086,6 @@ func (c *ChatPanel) handleSessionDelete(rest string) {
 		return
 	}
 	c.sendCommand(tauchat.DeleteSessionCommand{SessionID: parts[1]})
-}
-
-func (c *ChatPanel) renderSessionListModal(app *gt.App) *gt.Element {
-	if c.sessionListView == nil || !c.showSessionList.Get() {
-		return gt.New(gt.WithHidden(true))
-	}
-	return app.MountPersistent(c, 4, func() gt.Component {
-		return c.sessionListView
-	})
-}
-
-func (c *ChatPanel) renderSessionInfoModal(app *gt.App) *gt.Element {
-	if c.sessionInfoView == nil || !c.showSessionInfo.Get() {
-		return gt.New(gt.WithHidden(true))
-	}
-	return app.MountPersistent(c, 5, func() gt.Component {
-		return c.sessionInfoView
-	})
-}
-
-func (c *ChatPanel) statusText() string {
-	switch c.status.Get() {
-	case tauchat.ChatSessionStreaming:
-		return "Streaming"
-	case tauchat.ChatSessionCancelling:
-		return "Cancelling"
-	case tauchat.ChatSessionClosed:
-		return "Closed"
-	default:
-		return "Ready"
-	}
-}
-
-func (c *ChatPanel) statusStyle() gt.Style {
-	switch c.status.Get() {
-	case tauchat.ChatSessionStreaming, tauchat.ChatSessionCancelling:
-		return theme.BrandStyle()
-	case tauchat.ChatSessionClosed:
-		return theme.DimStyle()
-	default:
-		return theme.ReadyStyle()
-	}
 }
 
 func (c *ChatPanel) handleSubmit(value string) {

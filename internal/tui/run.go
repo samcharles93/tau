@@ -4,6 +4,8 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"os"
+	"path/filepath"
 
 	gt "github.com/grindlemire/go-tui"
 	tauchat "github.com/samcharles93/tau/internal/chat"
@@ -65,9 +67,30 @@ func Run(ctx context.Context, runtime tauchat.ChatRuntime, cfg Config) error {
 	return nil
 }
 
+// splashMarker is a sentinel file created after the first splash run so
+// subsequent launches skip the animation. Set TAU_SPLASH=always to override.
+const splashMarker = ".splash_shown"
+
 // showSplash runs the τ glyph splash animation in its own full-screen go-tui
 // App. It blocks until the animation completes or the user presses q/Esc.
+// After the first run it is skipped unless TAU_SPLASH=always.
 func showSplash(_ context.Context) error {
+	if os.Getenv("TAU_SPLASH") != "always" {
+		home, _ := os.UserHomeDir()
+		if home != "" {
+			marker := filepath.Join(home, ".config", "tau", splashMarker)
+			if _, err := os.Stat(marker); err == nil {
+				return nil // already shown
+			}
+			// Ensure the config directory exists, then create the marker
+			// after the splash completes successfully.
+			defer func() {
+				os.MkdirAll(filepath.Dir(marker), 0o700)
+				os.WriteFile(marker, nil, 0o600)
+			}()
+		}
+	}
+
 	splashApp, err := gt.NewApp(
 		gt.WithRootComponent(splash.New()),
 	)
