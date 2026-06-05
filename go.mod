@@ -3,7 +3,7 @@ module github.com/samcharles93/tau
 go 1.25.8
 
 require (
-	github.com/grindlemire/go-tui v0.15.0
+	github.com/grindlemire/go-tui v0.15.1
 	github.com/hashicorp/go-hclog v1.6.3
 	github.com/hashicorp/go-plugin v1.8.0
 	github.com/pkg/browser v0.0.0-20240102092130-5ac0b6a4141c
