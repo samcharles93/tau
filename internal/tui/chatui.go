@@ -22,9 +22,9 @@ import (
 
 const (
 	inlineMinHeight         = 3
-	inlineMaxHeight         = 10
-	inlineTextAreaMaxRows   = 8
+	inlineTextAreaMaxRows   = 24
 	inlineCompletionMaxRows = 4
+	inlineMaxHeight         = inlineTextAreaMaxRows + inlineCompletionMaxRows + 2
 )
 
 type completionItem struct {
