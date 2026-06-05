@@ -145,6 +145,7 @@ type ChatPanel struct {
 	streamContentWritten bool
 	reasoningWritten     bool
 	startupDone          bool
+	lastSubmitTime       time.Time
 }
 
 // NewChatPanel creates a new go-tui chat panel with reactive state initialized.
@@ -1224,12 +1225,24 @@ func (c *ChatPanel) handleSubmit(value string) {
 }
 
 func (c *ChatPanel) handleSubmitWithDepth(value string, depth int) {
+	// Debounce rapid submits (rapid Enter, paste CR bytes).
+	if elapsed := time.Since(c.lastSubmitTime); elapsed < 300*time.Millisecond {
+		return
+	}
+	c.lastSubmitTime = time.Now()
+
 	text := strings.TrimSpace(value)
 	if text == "" {
 		return
 	}
 	if depth > 3 {
 		c.lastError.Set("autocomplete recursion limit exceeded")
+		return
+	}
+
+	// Prevent submitting while a request is already in flight.
+	if c.status.Get() == tauchat.ChatSessionStreaming {
+		c.notice.Set("a request is already in progress")
 		return
 	}
 	if c.shouldApplyCompletion(value) {

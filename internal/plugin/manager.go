@@ -3,6 +3,7 @@ package plugin
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"maps"
@@ -10,6 +11,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"sync"
+	"time"
 
 	"github.com/hashicorp/go-hclog"
 	goplugin "github.com/hashicorp/go-plugin"
@@ -21,10 +23,23 @@ import (
 
 // Config configures the plugin manager.
 type Config struct {
-	PluginsDir   string          // directory containing plugin binaries, e.g. ~/.config/tau/plugins
-	ToolRegistry *tools.Registry // tool registry for registering plugin tools
-	Logger       *slog.Logger
+	PluginsDir           string          // directory containing plugin binaries, e.g. ~/.config/tau/plugins
+	ToolRegistry         *tools.Registry // tool registry for registering plugin tools
+	Logger               *slog.Logger
+	EventDispatchTimeout time.Duration // per-plugin event dispatch timeout (0 = default)
+	ToolExecutionTimeout time.Duration // per-plugin tool execution timeout (0 = default)
 }
+
+const (
+	// DefaultEventDispatchTimeout is the maximum duration a single plugin may
+	// take to respond to a lifecycle event dispatch. Event handlers are expected
+	// to be fast (inspecting data only); 10s is generous for any plugin.
+	DefaultEventDispatchTimeout = 10 * time.Second
+
+	// DefaultToolExecutionTimeout is the maximum duration a single plugin tool
+	// execution may take. Tools may perform real work (I/O, network calls).
+	DefaultToolExecutionTimeout = 30 * time.Second
+)
 
 // Manager discovers, launches, and manages go-plugin extension binaries.
 // It implements chat.ExtensionReloader so it can be passed directly to the coordinator.
@@ -47,6 +62,12 @@ func NewManager(cfg Config) (*Manager, error) {
 	}
 	if cfg.Logger == nil {
 		cfg.Logger = slog.Default()
+	}
+	if cfg.EventDispatchTimeout <= 0 {
+		cfg.EventDispatchTimeout = DefaultEventDispatchTimeout
+	}
+	if cfg.ToolExecutionTimeout <= 0 {
+		cfg.ToolExecutionTimeout = DefaultToolExecutionTimeout
 	}
 	return &Manager{
 		cfg:         cfg,
@@ -163,11 +184,21 @@ func (m *Manager) ExecutePluginTool(ctx context.Context, pluginName, toolName st
 	}
 
 	argsJSON := string(args)
-	resp, err := c.Client.ExecuteTool(ctx, &api.ExecuteToolRequest{
+
+	pluginCtx, cancel := context.WithTimeoutCause(ctx, m.cfg.ToolExecutionTimeout,
+		fmt.Errorf("plugin %q timed out after %v executing tool %q", pluginName, m.cfg.ToolExecutionTimeout, toolName))
+	defer cancel()
+
+	resp, err := c.Client.ExecuteTool(pluginCtx, &api.ExecuteToolRequest{
 		ToolName:  toolName,
 		Arguments: argsJSON,
 	})
 	if err != nil {
+		if errors.Is(err, context.DeadlineExceeded) {
+			m.cfg.Logger.Warn("plugin manager: tool execution timed out", "plugin", pluginName, "tool", toolName, "timeout", m.cfg.ToolExecutionTimeout)
+		} else {
+			m.cfg.Logger.Warn("plugin manager: tool execution failed", "plugin", pluginName, "tool", toolName, "err", err)
+		}
 		return tools.Result{IsError: true, Content: err.Error()}, nil
 	}
 
@@ -193,13 +224,22 @@ func (m *Manager) DispatchEvent(ctx context.Context, event string, sessionID str
 		if !ok {
 			continue
 		}
-		resp, err := c.Client.DispatchEvent(ctx, &api.DispatchEventRequest{
+
+		pluginCtx, cancel := context.WithTimeoutCause(ctx, m.cfg.EventDispatchTimeout,
+			fmt.Errorf("plugin %q timed out after %v processing event %q", name, m.cfg.EventDispatchTimeout, event))
+		resp, err := c.Client.DispatchEvent(pluginCtx, &api.DispatchEventRequest{
 			Event:     event,
 			SessionId: sessionID,
 			Payload:   payload,
 		})
+		cancel()
+
 		if err != nil {
-			m.cfg.Logger.Warn("plugin manager: dispatch failed", "event", event, "plugin", name, "err", err)
+			if errors.Is(err, context.DeadlineExceeded) {
+				m.cfg.Logger.Warn("plugin manager: dispatch timed out", "event", event, "plugin", name, "timeout", m.cfg.EventDispatchTimeout)
+			} else {
+				m.cfg.Logger.Warn("plugin manager: dispatch failed", "event", event, "plugin", name, "err", err)
+			}
 			continue
 		}
 		if resp.Response != nil {

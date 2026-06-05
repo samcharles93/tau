@@ -328,6 +328,10 @@ func (c *Coordinator) handleSubmit(cmd chat.SubmitChatPromptCommand) {
 	}
 	if err := session.state.BeginTurn(cmd.RequestID, cmd.Prompt, now); err != nil {
 		c.mu.Unlock()
+		if strings.Contains(err.Error(), "already in flight") {
+			// Silently drop duplicate submits — the real turn is already running.
+			return
+		}
 		c.emit(chat.ChatRuntimeErrorEvent{
 			SessionID:  cmd.SessionID,
 			RequestID:  cmd.RequestID,
