@@ -332,20 +332,8 @@ func newCoordinator(ctx context.Context, opts ChatOptions, bearerToken string, s
 		SessionStore:      sessionStore,
 		AutoExportJSONL:   true,
 		ExtensionReloader: pluginMgr,
-		OnPluginEvent: func(event string, payload *api.EventPayload) *api.EventResponse {
-			return pluginMgr.DispatchEvent(ctx, event, payload)
-		},
-		OnSessionStart: func(eventContext map[string]any) {
-			sessionID := eventContext["session_id"].(string)
-			pluginMgr.DispatchEvent(ctx, "session_start", &api.EventPayload{
-				Kind: &api.EventPayload_Session{Session: &api.SessionEventPayload{SessionId: sessionID}},
-			})
-		},
-		OnSessionShutdown: func(eventContext map[string]any) {
-			sessionID := eventContext["session_id"].(string)
-			pluginMgr.DispatchEvent(ctx, "session_shutdown", &api.EventPayload{
-				Kind: &api.EventPayload_Session{Session: &api.SessionEventPayload{SessionId: sessionID}},
-			})
+		OnPluginEvent: func(event string, sessionID string, payload *api.EventPayload) *api.EventResponse {
+			return pluginMgr.DispatchEvent(ctx, event, sessionID, payload)
 		},
 		OnClose: func() {
 			pluginMgr.Unload()

@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -62,13 +63,11 @@ type Coordinator struct {
 	extensionReloader chat.ExtensionReloader
 	sessionStore      store.SessionStore
 	autoExportJSONL   bool
-	onSessionStart    func(map[string]any)
-	onSessionShutdown func(map[string]any)
 	onToolStarted     func(map[string]any)
 	onToolCompleted   func(map[string]any)
 	onReasoningDelta  func(map[string]any)
 	onClose           func()
-	onPluginEvent     func(event string, payload *api.EventPayload) *api.EventResponse
+	onPluginEvent     func(event string, sessionID string, payload *api.EventPayload) *api.EventResponse
 	startupEvents     []chat.ChatEvent
 	startupEventsOnce sync.Once
 	commands          chan chat.ChatCommand
@@ -104,8 +103,6 @@ type CoordinatorConfig struct {
 	ExtensionReloader chat.ExtensionReloader
 	SessionStore      store.SessionStore
 	AutoExportJSONL   bool
-	OnSessionStart    func(map[string]any)
-	OnSessionShutdown func(map[string]any)
 	OnToolStarted     func(map[string]any)
 	OnToolCompleted   func(map[string]any)
 	OnReasoningDelta  func(map[string]any)
@@ -114,8 +111,9 @@ type CoordinatorConfig struct {
 
 	// OnPluginEvent dispatches lifecycle events to the plugin manager.
 	// The coordinator fires this at turn boundaries, tool execution boundaries,
-	// and LLM request boundaries. Returns merged EventResponse, or nil if no plugins.
-	OnPluginEvent func(event string, payload *api.EventPayload) *api.EventResponse
+	// and LLM request boundaries. sessionID is the explicit session identity.
+	// Returns merged EventResponse, or nil if no plugins.
+	OnPluginEvent func(event string, sessionID string, payload *api.EventPayload) *api.EventResponse
 }
 
 // NewCoordinator creates and starts the agent coordinator.
@@ -153,8 +151,6 @@ func NewCoordinator(ctx context.Context, cfg CoordinatorConfig) (*Coordinator, e
 		extensionReloader: cfg.ExtensionReloader,
 		sessionStore:      cfg.SessionStore,
 		autoExportJSONL:   cfg.AutoExportJSONL,
-		onSessionStart:    cfg.OnSessionStart,
-		onSessionShutdown: cfg.OnSessionShutdown,
 		onToolStarted:     cfg.OnToolStarted,
 		onToolCompleted:   cfg.OnToolCompleted,
 		onReasoningDelta:  cfg.OnReasoningDelta,
@@ -304,7 +300,13 @@ func (c *Coordinator) handleStart(cmd chat.StartChatSessionCommand) {
 	snapshot := chat.CloneChatSessionState(state)
 	c.mu.Unlock()
 
-	c.dispatchSessionStart(snapshot.SessionID)
+	c.dispatchPluginEvent("session_start", snapshot.SessionID, &api.EventPayload{
+		Kind: &api.EventPayload_Session{Session: &api.SessionEventPayload{
+			SessionId: snapshot.SessionID,
+			ModelId:   snapshot.Model.ID,
+			Provider:  snapshot.Provider.Name,
+		}},
+	})
 	c.emit(chat.ChatSessionSnapshotEvent{State: snapshot})
 }
 
@@ -382,7 +384,8 @@ func (c *Coordinator) handleUpdate(cmd chat.UpdateChatSessionCommand) {
 	snapshot := chat.CloneChatSessionState(session.state)
 	c.mu.Unlock()
 
-	c.dispatchSessionShutdown(snapshot.SessionID)
+	// handleUpdate is a config change, not a session lifecycle transition.
+	// Session shutdown is dispatched by handleClose and cancelAllSessions.
 	c.emit(chat.ChatSessionSnapshotEvent{State: snapshot})
 }
 
@@ -494,6 +497,21 @@ func (c *Coordinator) handleClose(cmd chat.CloseChatSessionCommand) {
 	duration := now.Sub(snapshot.CreatedAt)
 	c.mu.Unlock()
 
+	sessionID := snapshot.SessionID
+	c.mu.Lock()
+	if _, exists := c.shutdown[sessionID]; !exists {
+		c.shutdown[sessionID] = struct{}{}
+		c.mu.Unlock()
+		c.dispatchPluginEvent("session_shutdown", sessionID, &api.EventPayload{
+			Kind: &api.EventPayload_Session{Session: &api.SessionEventPayload{
+				SessionId: sessionID,
+				ModelId:   snapshot.Model.ID,
+				Provider:  snapshot.Provider.Name,
+			}},
+		})
+	} else {
+		c.mu.Unlock()
+	}
 	c.persistSession(snapshot, duration)
 	c.emit(chat.ChatSessionSnapshotEvent{State: snapshot})
 }
@@ -643,7 +661,7 @@ func (c *Coordinator) runTurn(ctx context.Context, state chat.ChatSessionState) 
 	requestID := state.ActiveRequestID
 	now := time.Now().UTC()
 
-	c.dispatchPluginEvent("turn_start", &api.EventPayload{
+	c.dispatchPluginEvent("turn_start", sessionID, &api.EventPayload{
 		Kind: &api.EventPayload_Turn{Turn: &api.TurnPayload{Direction: "start"}},
 	})
 
@@ -668,11 +686,31 @@ func (c *Coordinator) runTurn(ctx context.Context, state chat.ChatSessionState) 
 		reasoningSnapshot := ""
 		toolCallSnapshots := make([]chat.ChatToolCall, 0)
 
-		pluginResp := c.dispatchPluginEvent("before_llm_call", &api.EventPayload{
+		// Emit context event with the full message list so plugins can
+		// observe and mutate conversation state before the LLM call.
+		contextResp := c.dispatchPluginEvent("context", sessionID, &api.EventPayload{
+			Kind: &api.EventPayload_Context{Context: &api.ContextPayload{
+				Messages: marshalMessages(state.Messages),
+			}},
+		})
+		if contextResp != nil {
+			c.applyPluginMessageModifications(&state, contextResp)
+			// Sync mutations back to the stored session so they persist
+			// across turn iterations (tool-call loops).
+			c.mu.Lock()
+			if s, ok := c.sessions[sessionID]; ok {
+				s.state.Messages = state.Messages
+			}
+			c.mu.Unlock()
+		}
+
+		pluginResp := c.dispatchPluginEvent("before_llm_call", sessionID, &api.EventPayload{
 			Kind: &api.EventPayload_BeforeLlmCall{
 				BeforeLlmCall: &api.BeforeLLMCallPayload{
-					ModelId: state.Model.ID,
-					Headers: map[string]string{"Authorization": "Bearer " + bearerToken},
+					ModelId:    state.Model.ID,
+					Headers:    map[string]string{"Authorization": "Bearer " + bearerToken},
+					Messages:   marshalMessages(state.Messages),
+					Parameters: marshalParameters(state.Parameters),
 				},
 			},
 		})
@@ -680,6 +718,18 @@ func (c *Coordinator) runTurn(ctx context.Context, state chat.ChatSessionState) 
 		var extraHeaders map[string]string
 		if pluginResp != nil && len(pluginResp.AddHeaders) > 0 {
 			extraHeaders = pluginResp.AddHeaders
+		}
+
+		// Apply LLM-boundary modifiers for this call only.
+		originalSystemPrompt := state.SystemPrompt
+		originalModelID := state.Model.ID
+		if pluginResp != nil {
+			if pluginResp.InjectSystemPrompt != "" {
+				state.SystemPrompt = state.SystemPrompt + "\n" + pluginResp.InjectSystemPrompt
+			}
+			if pluginResp.ModifiedModelId != "" {
+				state.Model.ID = pluginResp.ModifiedModelId
+			}
 		}
 
 		result, err := c.streamer.StreamChatCompletionFull(ctx, state, bearerToken, extraHeaders, chat.StreamCallbacks{
@@ -713,6 +763,9 @@ func (c *Coordinator) runTurn(ctx context.Context, state chat.ChatSessionState) 
 			},
 		})
 		if err != nil {
+			// Restore per-call overrides before error handling.
+			state.SystemPrompt = originalSystemPrompt
+			state.Model.ID = originalModelID
 			if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) || errors.Is(ctx.Err(), context.Canceled) {
 				c.cancelTurn(sessionID, requestID, time.Now().UTC())
 				return
@@ -721,10 +774,18 @@ func (c *Coordinator) runTurn(ctx context.Context, state chat.ChatSessionState) 
 			return
 		}
 
-		c.dispatchPluginEvent("after_llm_call", &api.EventPayload{
+		// Snapshot effective model ID before restoring, so after_llm_call
+		// reports the model that was actually used.
+		effectiveModelID := state.Model.ID
+
+		// Restore per-call overrides.
+		state.SystemPrompt = originalSystemPrompt
+		state.Model.ID = originalModelID
+
+		c.dispatchPluginEvent("after_llm_call", sessionID, &api.EventPayload{
 			Kind: &api.EventPayload_AfterLlmCall{
 				AfterLlmCall: &api.AfterLLMCallPayload{
-					ModelId:      state.Model.ID,
+					ModelId:      effectiveModelID,
 					FinishReason: result.FinishReason,
 				},
 			},
@@ -771,102 +832,130 @@ func (c *Coordinator) executeToolsParallel(ctx context.Context, sessionID, reque
 
 	executeTool := func(i int, tc chat.ChatToolCall) {
 		startedAt := time.Now().UTC()
+		effectiveArgs := tc.Function.Arguments
+
+		// Lifecycle event: tool execution is about to start.
+		c.dispatchPluginEvent("tool_execution_start", sessionID, &api.EventPayload{
+			Kind: &api.EventPayload_BeforeToolExec{
+				BeforeToolExec: &api.ToolCallPayload{
+					ToolName:  tc.Function.Name,
+					Arguments: tc.Function.Arguments,
+					CallId:    tc.ID,
+				},
+			},
+		})
+
+		// Mutation hook: plugins may block the tool or modify its arguments.
+		beforeResp := c.dispatchPluginEvent("before_tool_exec", sessionID, &api.EventPayload{
+			Kind: &api.EventPayload_BeforeToolExec{
+				BeforeToolExec: &api.ToolCallPayload{
+					ToolName:  tc.Function.Name,
+					Arguments: tc.Function.Arguments,
+					CallId:    tc.ID,
+				},
+			},
+		})
+
+		// Determine the result, applying permission gates and argument rewriting.
+		// The started event fires AFTER mutation hooks so it reflects effective args.
+		var result tools.Result
+		var toolErr error
+
+		switch {
+		case beforeResp != nil && beforeResp.BlockToolExecution:
+			reason := beforeResp.BlockReason
+			if reason == "" {
+				reason = "tool execution blocked by plugin"
+			}
+			result = tools.Result{Content: reason, IsError: true}
+
+		case beforeResp != nil && beforeResp.ModifiedToolArguments != "":
+			if !json.Valid([]byte(beforeResp.ModifiedToolArguments)) {
+				result = tools.Result{
+					Content: "plugin returned invalid modified_tool_arguments (not valid JSON)",
+					IsError: true,
+				}
+			} else {
+				effectiveArgs = beforeResp.ModifiedToolArguments
+				tool, ok := c.registry.Get(tc.Function.Name)
+				if !ok {
+					result = tools.Result{
+						Content: fmt.Sprintf("unknown tool: %s", tc.Function.Name),
+						IsError: true,
+					}
+				} else {
+					result, toolErr = tool.Execute(ctx, json.RawMessage(effectiveArgs), c.uiBridge)
+					if toolErr != nil {
+						result = tools.Result{
+							Content: fmt.Sprintf("tool execution error: %v", toolErr),
+							IsError: true,
+						}
+					}
+				}
+			}
+
+		default:
+			tool, ok := c.registry.Get(tc.Function.Name)
+			if !ok {
+				result = tools.Result{
+					Content: fmt.Sprintf("unknown tool: %s", tc.Function.Name),
+					IsError: true,
+				}
+			} else {
+				result, toolErr = tool.Execute(ctx, json.RawMessage(effectiveArgs), c.uiBridge)
+				if toolErr != nil {
+					result = tools.Result{
+						Content: fmt.Sprintf("tool execution error: %v", toolErr),
+						IsError: true,
+					}
+				}
+			}
+		}
+
+		// Emit started event with effective args AFTER plugin hooks.
 		c.emit(chat.ChatToolExecutionStartedEvent{
 			SessionID:        sessionID,
 			RequestID:        requestID,
 			CallID:           tc.ID,
 			ToolName:         tc.Function.Name,
-			ArgumentsSummary: summarizeForUI(tc.Function.Arguments),
+			ArgumentsSummary: summarizeForUI(effectiveArgs),
 			StartedAt:        startedAt,
 		})
+		// dispatchToolStarted uses the raw tc for call_id + tool_name;
+		// the args summary in the event context reflects the effective input.
 		c.dispatchToolStarted(sessionID, requestID, tc, startedAt)
 
-		c.dispatchPluginEvent("tool_execution_start", &api.EventPayload{
-			Kind: &api.EventPayload_BeforeToolExec{
-				BeforeToolExec: &api.ToolCallPayload{
+		// Mutation hook: plugins may modify the result. Dispatch on all paths.
+		afterResp := c.dispatchPluginEvent("after_tool_exec", sessionID, &api.EventPayload{
+			Kind: &api.EventPayload_AfterToolExec{
+				AfterToolExec: &api.ToolResultPayload{
 					ToolName:  tc.Function.Name,
-					Arguments: tc.Function.Arguments,
+					Arguments: effectiveArgs,
+					Result:    result.Content,
+					IsError:   result.IsError,
 					CallId:    tc.ID,
 				},
 			},
 		})
-
-		c.dispatchPluginEvent("before_tool_exec", &api.EventPayload{
-			Kind: &api.EventPayload_BeforeToolExec{
-				BeforeToolExec: &api.ToolCallPayload{
-					ToolName:  tc.Function.Name,
-					Arguments: tc.Function.Arguments,
-					CallId:    tc.ID,
-				},
-			},
-		})
-
-		tool, ok := c.registry.Get(tc.Function.Name)
-		if !ok {
-			result := tools.Result{
-				Content: fmt.Sprintf("unknown tool: %s", tc.Function.Name),
-				IsError: true,
-			}
-			results[i] = result
-			c.emitToolCompleted(sessionID, requestID, tc, result, startedAt, false)
-			c.dispatchPluginEvent("after_tool_exec", &api.EventPayload{
-				Kind: &api.EventPayload_AfterToolExec{
-					AfterToolExec: &api.ToolResultPayload{
-						ToolName:  tc.Function.Name,
-						Arguments: tc.Function.Arguments,
-						Result:    result.Content,
-						IsError:   result.IsError,
-						CallId:    tc.ID,
-					},
-				},
-			})
-			c.dispatchPluginEvent("tool_execution_end", &api.EventPayload{
-				Kind: &api.EventPayload_AfterToolExec{
-					AfterToolExec: &api.ToolResultPayload{
-						ToolName: tc.Function.Name,
-						CallId:   tc.ID,
-					},
-				},
-			})
-			return
+		if afterResp != nil && afterResp.ModifiedToolResult != "" {
+			result.Content = afterResp.ModifiedToolResult
 		}
 
-		result, err := tool.Execute(ctx, json.RawMessage(tc.Function.Arguments), c.uiBridge)
-		if err != nil {
-			result = tools.Result{
-				Content: fmt.Sprintf("tool execution error: %v", err),
-				IsError: true,
-			}
-			results[i] = result
-			c.emitToolCompleted(sessionID, requestID, tc, result, startedAt, false)
-			c.dispatchPluginEvent("after_tool_exec", &api.EventPayload{
-				Kind: &api.EventPayload_AfterToolExec{
-					AfterToolExec: &api.ToolResultPayload{
-						ToolName:  tc.Function.Name,
-						Arguments: tc.Function.Arguments,
-						Result:    result.Content,
-						IsError:   result.IsError,
-						CallId:    tc.ID,
-					},
-				},
-			})
-			c.dispatchPluginEvent("tool_execution_end", &api.EventPayload{
-				Kind: &api.EventPayload_AfterToolExec{
-					AfterToolExec: &api.ToolResultPayload{
-						ToolName: tc.Function.Name,
-						CallId:   tc.ID,
-					},
-				},
-			})
-			return
-		}
-
-		// Truncate tool output.
+		// Truncate after plugin modifications.
 		tr := tools.TruncateHead(result.Content, tools.DefaultMaxLines, tools.DefaultMaxBytes)
 		result.Content = tr.Content
 
 		results[i] = result
 		c.emitToolCompleted(sessionID, requestID, tc, result, startedAt, tr.Truncated)
+
+		c.dispatchPluginEvent("tool_execution_end", sessionID, &api.EventPayload{
+			Kind: &api.EventPayload_AfterToolExec{
+				AfterToolExec: &api.ToolResultPayload{
+					ToolName: tc.Function.Name,
+					CallId:   tc.ID,
+				},
+			},
+		})
 	}
 
 	if c.parallelToolCalls {
@@ -1086,7 +1175,7 @@ func (c *Coordinator) completeTurn(sessionID, requestID string, result chat.Comp
 		CompletedAt:  at,
 	})
 
-	c.dispatchPluginEvent("turn_end", &api.EventPayload{
+	c.dispatchPluginEvent("turn_end", sessionID, &api.EventPayload{
 		Kind: &api.EventPayload_Turn{Turn: &api.TurnPayload{Direction: "end"}},
 	})
 }
@@ -1145,43 +1234,76 @@ func (c *Coordinator) cancelAllSessions() {
 
 	for _, session := range sessions {
 		state := chat.CloneChatSessionState(session.state)
-		c.dispatchSessionShutdown(state.SessionID)
+		sessionID := state.SessionID
+		// Dedup shutdown events (preserving existing dedup logic).
+		c.mu.Lock()
+		if _, exists := c.shutdown[sessionID]; exists {
+			c.mu.Unlock()
+			c.persistSession(state, time.Since(state.CreatedAt))
+			continue
+		}
+		c.shutdown[sessionID] = struct{}{}
+		c.mu.Unlock()
+		c.dispatchPluginEvent("session_shutdown", sessionID, &api.EventPayload{
+			Kind: &api.EventPayload_Session{Session: &api.SessionEventPayload{
+				SessionId: sessionID,
+				ModelId:   state.Model.ID,
+				Provider:  state.Provider.Name,
+			}},
+		})
 		c.persistSession(state, time.Since(state.CreatedAt))
 	}
 }
 
-func (c *Coordinator) dispatchPluginEvent(event string, payload *api.EventPayload) *api.EventResponse {
+// marshalMessages serializes messages for plugin event payloads.
+func marshalMessages(msgs []chat.ChatMessage) []string {
+	out := make([]string, len(msgs))
+	for i, m := range msgs {
+		b, _ := json.Marshal(m)
+		out[i] = string(b)
+	}
+	return out
+}
+
+// marshalParameters serializes chat parameters for plugin event payloads.
+func marshalParameters(p chat.ChatParameters) string {
+	b, _ := json.Marshal(p)
+	return string(b)
+}
+
+// applyPluginMessageModifications applies message injections and removals from a
+// plugin EventResponse to the provided session state. It processes removals in
+// descending index order to avoid index shifting, then appends injected messages.
+// Malformed injected messages are skipped rather than failing the turn.
+func (c *Coordinator) applyPluginMessageModifications(state *chat.ChatSessionState, resp *api.EventResponse) {
+	if resp == nil || state == nil {
+		return
+	}
+	// Process removals in descending order to keep indices stable.
+	indices := make([]int32, len(resp.RemoveMessageIndices))
+	copy(indices, resp.RemoveMessageIndices)
+	sort.Slice(indices, func(i, j int) bool { return indices[i] > indices[j] })
+	for _, idx := range indices {
+		if int(idx) >= 0 && int(idx) < len(state.Messages) {
+			state.Messages = append(state.Messages[:idx], state.Messages[idx+1:]...)
+		}
+	}
+	// Inject messages.
+	for _, raw := range resp.InjectMessages {
+		var msg chat.ChatMessage
+		if err := json.Unmarshal([]byte(raw), &msg); err != nil {
+			slog.Warn("coordinator: failed to decode injected message", "err", err)
+			continue
+		}
+		state.Messages = append(state.Messages, msg)
+	}
+}
+
+func (c *Coordinator) dispatchPluginEvent(event string, sessionID string, payload *api.EventPayload) *api.EventResponse {
 	if c.onPluginEvent == nil {
 		return nil
 	}
-	return c.onPluginEvent(event, payload)
-}
-
-func (c *Coordinator) dispatchSessionStart(sessionID string) {
-	if c.onSessionStart == nil {
-		return
-	}
-	c.onSessionStart(map[string]any{
-		"event":      "session_start",
-		"session_id": sessionID,
-	})
-}
-
-func (c *Coordinator) dispatchSessionShutdown(sessionID string) {
-	if c.onSessionShutdown == nil {
-		return
-	}
-	c.mu.Lock()
-	if _, exists := c.shutdown[sessionID]; exists {
-		c.mu.Unlock()
-		return
-	}
-	c.shutdown[sessionID] = struct{}{}
-	c.mu.Unlock()
-	c.onSessionShutdown(map[string]any{
-		"event":      "session_shutdown",
-		"session_id": sessionID,
-	})
+	return c.onPluginEvent(event, sessionID, payload)
 }
 
 func (c *Coordinator) dispatchToolStarted(sessionID, requestID string, tc chat.ChatToolCall, startedAt time.Time) {

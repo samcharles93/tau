@@ -205,7 +205,7 @@ func (splash *splashScreen) resetScene() {
 	splash.asteroids = splash.asteroids[:0]
 	splash.explosions = splash.explosions[:0]
 	splash.nextAsteroidFrame = 10 + rand.Intn(18)
-	for asteroidIndex := 0; asteroidIndex < initialAsteroids; asteroidIndex++ {
+	for range initialAsteroids {
 		splash.asteroids = append(splash.asteroids, newAsteroid(true))
 	}
 }
@@ -228,7 +228,7 @@ func (splash *splashScreen) updateScene() {
 			splash.explosions = append(splash.explosions, newExplosion(hitCell.Column, hitCell.Row, intensity, splash.frame))
 			if splash.asteroids[asteroidIndex].Size > 0.9 {
 				fragmentCount := int(math.Round(splash.asteroids[asteroidIndex].Size * 1.6))
-				for fragmentIndex := 0; fragmentIndex < fragmentCount; fragmentIndex++ {
+				for range fragmentCount {
 					column := hitCell.Column + rand.Intn(5) - 2
 					row := hitCell.Row + rand.Intn(5) - 2
 					splash.explosions = append(splash.explosions, newExplosion(column, row, intensity*0.35, splash.frame))
@@ -282,7 +282,7 @@ func (splash *splashScreen) Render(app *tui.App) *tui.Element {
 	)
 
 	screen := splash.buildScreen()
-	for row := 0; row < gridHeight; row++ {
+	for row := range gridHeight {
 		canvas.AddChild(renderRow(screen[row]))
 	}
 
@@ -308,8 +308,8 @@ func (splash *splashScreen) Render(app *tui.App) *tui.Element {
 
 func (splash *splashScreen) buildScreen() [gridHeight][gridWidth]screenCell {
 	var screen [gridHeight][gridWidth]screenCell
-	for row := 0; row < gridHeight; row++ {
-		for column := 0; column < gridWidth; column++ {
+	for row := range gridHeight {
+		for column := range gridWidth {
 			screen[row][column] = screenCell{Character: ' ', Style: styleEmpty, Priority: 0}
 		}
 	}
@@ -470,7 +470,7 @@ func buildStars(tauLookup map[[2]int]bool) []star {
 	starCount := gridWidth * gridHeight / 34
 	stars := make([]star, 0, starCount)
 	characters := []rune{'·', '·', '·', '•', '⋆'}
-	for starIndex := 0; starIndex < starCount; starIndex++ {
+	for range starCount {
 		column := rand.Intn(gridWidth)
 		row := rand.Intn(gridHeight)
 		if tauLookup[[2]int{column, row}] {
@@ -583,7 +583,7 @@ func newExplosion(column int, row int, intensity float64, birthFrame int) explos
 	particleCount := 10 + int(math.Round(intensity*18))
 	particles := make([]impactParticle, 0, particleCount)
 	particleChars := []rune{'✦', '✧', '*', '·', '•', '◇', '◆'}
-	for particleIndex := 0; particleIndex < particleCount; particleIndex++ {
+	for range particleCount {
 		angle := rand.Float64() * 2 * math.Pi
 		speed := 0.12 + rand.Float64()*0.55*intensity
 		life := 8 + rand.Float64()*20
@@ -601,7 +601,7 @@ func newExplosion(column int, row int, intensity float64, birthFrame int) explos
 	ringCount := 3 + int(math.Round(intensity*4))
 	rings := make([]ringPhase, 0, ringCount)
 	maxRadius := 3 + intensity*8
-	for ringIndex := 0; ringIndex < ringCount; ringIndex++ {
+	for ringIndex := range ringCount {
 		rings = append(rings, ringPhase{
 			RadiusOffset: float64(ringIndex) * (maxRadius / float64(ringCount)) * 0.45,
 			Speed:        0.11 + rand.Float64()*0.17,
@@ -748,8 +748,8 @@ func buildTauShape() []tauCell {
 
 	seen := make(map[[2]int]bool)
 	cells := make([]tauCell, 0, 180)
-	for row := 0; row < gridHeight; row++ {
-		for column := 0; column < gridWidth; column++ {
+	for row := range gridHeight {
+		for column := range gridWidth {
 			cellPoint := point{Column: float64(column), Row: float64(row)}
 			bestDistance := math.MaxFloat64
 			bestRadius := 1.0
@@ -808,7 +808,7 @@ func sampleCurve(controlPoints []point) []point {
 		currentPoint := controlPoints[pointIndex]
 		nextPoint := controlPoints[pointIndex+1]
 		afterNextPoint := controlPoints[minInt(len(controlPoints)-1, pointIndex+2)]
-		for step := 0; step < 16; step++ {
+		for step := range 16 {
 			curveTime := float64(step) / 16.0
 			polyline = append(polyline, catmullRom(previousPoint, currentPoint, nextPoint, afterNextPoint, curveTime))
 		}

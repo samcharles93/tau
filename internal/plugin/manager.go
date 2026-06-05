@@ -32,6 +32,7 @@ type Manager struct {
 	cfg         Config
 	clients     map[string]*goplugin.Client // plugin name → client
 	grpcClients map[string]*api.GRPCClient  // plugin name → gRPC client
+	pluginOrder []string                    // load order, deterministic iteration
 	mu          sync.RWMutex
 }
 
@@ -91,6 +92,7 @@ func (m *Manager) Load(ctx context.Context) error {
 
 		m.clients[name] = client
 		m.grpcClients[name] = grpcClient
+		m.pluginOrder = append(m.pluginOrder, name)
 
 		// Discover and register tools.
 		toolCount := m.registerPluginTools(ctx, name, grpcClient)
@@ -176,20 +178,21 @@ func (m *Manager) ExecutePluginTool(ctx context.Context, pluginName, toolName st
 }
 
 // DispatchEvent sends a lifecycle event with a typed payload to all plugins.
+// sessionID is the explicit session identity, passed from the coordinator rather
+// than derived from the payload shape.
 // Returns the merged EventResponse from all plugins.
-func (m *Manager) DispatchEvent(ctx context.Context, event string, payload *api.EventPayload) *api.EventResponse {
+func (m *Manager) DispatchEvent(ctx context.Context, event string, sessionID string, payload *api.EventPayload) *api.EventResponse {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 
-	m.cfg.Logger.Debug("plugin manager: dispatching event", "event", event, "plugin_count", len(m.grpcClients))
-
-	var sessionID string
-	if s := payload.GetSession(); s != nil {
-		sessionID = s.SessionId
-	}
+	m.cfg.Logger.Debug("plugin manager: dispatching event", "event", event, "session_id", sessionID, "plugin_count", len(m.grpcClients))
 
 	var responses []*api.EventResponse
-	for name, c := range m.grpcClients {
+	for _, name := range m.pluginOrder {
+		c, ok := m.grpcClients[name]
+		if !ok {
+			continue
+		}
 		resp, err := c.Client.DispatchEvent(ctx, &api.DispatchEventRequest{
 			Event:     event,
 			SessionId: sessionID,
@@ -270,6 +273,7 @@ func (m *Manager) Unload() {
 	}
 	m.clients = make(map[string]*goplugin.Client)
 	m.grpcClients = make(map[string]*api.GRPCClient)
+	m.pluginOrder = nil
 }
 
 // registerPluginTools calls GetTools on the plugin and registers them in the
@@ -311,7 +315,7 @@ func (m *Manager) startPlugin(ctx context.Context, pluginPath string) (*goplugin
 			MagicCookieValue: "tau",
 		},
 		Plugins: map[string]goplugin.Plugin{
-			"extension": &ExtensionPlugin{Impl: nil},
+			"extension": &api.ExtensionPlugin{Impl: nil},
 		},
 		Cmd:              exec.CommandContext(ctx, pluginPath),
 		AllowedProtocols: []goplugin.Protocol{goplugin.ProtocolGRPC},

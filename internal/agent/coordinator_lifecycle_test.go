@@ -12,6 +12,7 @@ import (
 	"github.com/samcharles93/tau/internal/agent/tools"
 	"github.com/samcharles93/tau/internal/chat"
 	"github.com/samcharles93/tau/internal/config"
+	"github.com/samcharles93/tau/pkg/plugin/api"
 	"github.com/stretchr/testify/require"
 )
 
@@ -84,11 +85,18 @@ func TestCoordinatorDispatchesSessionLifecycleHooks(t *testing.T) {
 		},
 		Streamer: noopStreamer{},
 		Registry: tools.NewRegistry(),
-		OnSessionStart: func(ctx map[string]any) {
-			started <- ctx
-		},
-		OnSessionShutdown: func(ctx map[string]any) {
-			shutdown <- ctx
+		OnPluginEvent: func(event string, sessionID string, payload *api.EventPayload) *api.EventResponse {
+			ctx := map[string]any{
+				"event":      event,
+				"session_id": sessionID,
+			}
+			switch event {
+			case "session_start":
+				started <- ctx
+			case "session_shutdown":
+				shutdown <- ctx
+			}
+			return nil
 		},
 	})
 	require.NoError(t, err)

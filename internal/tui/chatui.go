@@ -252,10 +252,10 @@ func (c *ChatPanel) handleNotification(n notify.Notification) {
 	c.notice.Set(message)
 	if n.Level == notify.LevelError {
 		c.lastError.Set(message)
-		c.printStyledAbove("%s", ansify(fmt.Sprintf("\nerror: %s", message), theme.ColorRed))
+		c.printStyledAbovef("%s", ansify(fmt.Sprintf("\nerror: %s", message), theme.ColorRed))
 		return
 	}
-	c.printStyledAbove("\n%s", ansify(message, theme.ColorDimGray))
+	c.printStyledAbovef("\n%s", ansify(message, theme.ColorDimGray))
 }
 
 func (c *ChatPanel) handleRuntimeEvent(event tauchat.ChatEvent) {
@@ -290,14 +290,14 @@ func (c *ChatPanel) handleRuntimeEvent(event tauchat.ChatEvent) {
 		}
 		message := fmt.Sprintf("\ntool started: %s %s", ev.ToolName, ev.ArgumentsSummary)
 		c.notice.Set(message)
-		c.printStyledAbove("%s", ansify(message, theme.ColorDimGray))
+		c.printStyledAbovef("%s", ansify(message, theme.ColorDimGray))
 	case tauchat.ChatToolExecutionCompletedEvent:
 		if !c.matchesRequest(ev.SessionID, ev.RequestID) {
 			return
 		}
 		message := fmt.Sprintf("tool completed: %s %s (%s)", ev.ToolName, ev.Status, ev.Duration)
 		c.notice.Set(message)
-		c.printStyledAbove("%s", ansify(message, theme.ColorDimGray))
+		c.printStyledAbovef("%s", ansify(message, theme.ColorDimGray))
 	case tauchat.ChatResponseCompletedEvent:
 		if ev.State.SessionID != c.cfg.SessionID {
 			return
@@ -314,7 +314,7 @@ func (c *ChatPanel) handleRuntimeEvent(event tauchat.ChatEvent) {
 		c.closeStream()
 		c.syncState(ev.State)
 		c.notice.Set("chat request cancelled")
-		c.printStyledAbove("%s", ansify("\nchat request cancelled", theme.ColorDimGray))
+		c.printStyledAbovef("%s", ansify("\nchat request cancelled", theme.ColorDimGray))
 	case tauchat.ChatRuntimeErrorEvent:
 		if ev.SessionID != "" && ev.SessionID != c.cfg.SessionID {
 			return
@@ -323,20 +323,20 @@ func (c *ChatPanel) handleRuntimeEvent(event tauchat.ChatEvent) {
 		c.lastError.Set(ev.Message)
 		c.notice.Set(ev.Message)
 		c.status.Set(tauchat.ChatSessionIdle)
-		c.printStyledAbove("%s", ansify(fmt.Sprintf("\nerror: %s", ev.Message), theme.ColorRed))
+		c.printStyledAbovef("%s", ansify(fmt.Sprintf("\nerror: %s", ev.Message), theme.ColorRed))
 	case tauchat.ChatNotificationEvent:
 		c.notice.Set(ev.Message)
 		if ev.Level == tauchat.ChatNotificationError {
 			c.lastError.Set(ev.Message)
-			c.printStyledAbove("%s", ansify(fmt.Sprintf("\nerror: %s", ev.Message), theme.ColorRed))
+			c.printStyledAbovef("%s", ansify(fmt.Sprintf("\nerror: %s", ev.Message), theme.ColorRed))
 			return
 		}
-		c.printStyledAbove("\n%s", ansify(ev.Message, theme.ColorDimGray))
+		c.printStyledAbovef("\n%s", ansify(ev.Message, theme.ColorDimGray))
 	case tauchat.ExtensionsReloadedEvent:
 		c.setExtensionCommands(ev.Result.Commands)
 		message := fmt.Sprintf("reloaded extensions: %d loaded", ev.Result.ExtensionCount)
 		c.notice.Set(message)
-		c.printStyledAbove("\n%s", ansify(message, theme.ColorDimGray))
+		c.printStyledAbovef("\n%s", ansify(message, theme.ColorDimGray))
 	case tauchat.ExtensionCommandsChangedEvent:
 		c.setExtensionCommands(ev.Commands)
 	case tauchat.ExtensionCommandResultEvent:
@@ -344,7 +344,7 @@ func (c *ChatPanel) handleRuntimeEvent(event tauchat.ChatEvent) {
 	case tauchat.InteractivePromptRequestedEvent:
 		message := ev.Title + ": " + ev.Message
 		c.notice.Set(message)
-		c.printStyledAbove("\n%s", ansify(message, theme.ColorDimGray))
+		c.printStyledAbovef("\n%s", ansify(message, theme.ColorDimGray))
 	case tauchat.SessionsListedEvent:
 		c.sessionSummaries.Set(ev.Sessions)
 		c.sessionListCursor = ev.NextCursor
@@ -358,20 +358,20 @@ func (c *ChatPanel) handleRuntimeEvent(event tauchat.ChatEvent) {
 		message := fmt.Sprintf("Session %s loaded (%d messages)", ev.State.SessionID, len(ev.State.Messages))
 		c.notice.Set(message)
 		c.showSessionList.Set(false)
-		c.printStyledAbove("\n%s", ansify(message, theme.ColorDimGray))
+		c.printStyledAbovef("\n%s", ansify(message, theme.ColorDimGray))
 		c.printSessionMessages(ev.State.Messages)
 	case tauchat.SessionDeletedEvent:
 		message := "Session deleted: " + ev.SessionID
 		c.notice.Set(message)
 		c.showSessionInfo.Set(false)
-		c.printStyledAbove("\n%s", ansify(message, theme.ColorDimGray))
+		c.printStyledAbovef("\n%s", ansify(message, theme.ColorDimGray))
 	case tauchat.SessionExportedEvent:
 		if ev.Path != "" {
 			c.notice.Set(fmt.Sprintf("Session exported to %s", ev.Path))
 		} else {
 			c.notice.Set("Session exported to stdout")
 		}
-		c.printAbove("%s", c.notice.Get())
+		c.printAbovef("%s", c.notice.Get())
 	}
 }
 
@@ -426,7 +426,7 @@ func (c *ChatPanel) scrollToBottom() {
 	c.scrollY.Set(max(0, messageLines+streamingLines-1))
 }
 
-func (c *ChatPanel) printAbove(format string, args ...any) {
+func (c *ChatPanel) printAbovef(format string, args ...any) {
 	if c.app == nil {
 		return
 	}
@@ -509,22 +509,22 @@ func (c *ChatPanel) printSessionMessages(messages []tauchat.ChatMessage) {
 
 func (c *ChatPanel) printMessage(msg tauchat.ChatMessage) {
 	if c.showReasoning.Get() && strings.TrimSpace(msg.ReasoningContent) != "" {
-		c.printStyledAbove("\n%s\n", ansify("reasoning:\n"+msg.ReasoningContent, theme.ColorDimGray))
+		c.printStyledAbovef("\n%s\n", ansify("reasoning:\n"+msg.ReasoningContent, theme.ColorDimGray))
 	}
 	if strings.TrimSpace(msg.Content) == "" {
 		return
 	}
 	switch msg.Role {
 	case tauchat.ChatRoleUser:
-		c.printStyledAbove("%s", c.userMessageBlock(msg.Content))
+		c.printStyledAbovef("%s", c.userMessageBlock(msg.Content))
 	case tauchat.ChatRoleAssistant:
-		c.printStyledAbove("\n%s\n\n", msg.Content)
+		c.printStyledAbovef("\n%s\n\n", msg.Content)
 	default:
-		c.printStyledAbove("\n%s\n\n", ansify(fmt.Sprintf("%s: %s", messageRoleLabel(msg.Role), msg.Content), theme.ColorDimGray))
+		c.printStyledAbovef("\n%s\n\n", ansify(fmt.Sprintf("%s: %s", messageRoleLabel(msg.Role), msg.Content), theme.ColorDimGray))
 	}
 }
 
-func (c *ChatPanel) printStyledAbove(format string, args ...any) {
+func (c *ChatPanel) printStyledAbovef(format string, args ...any) {
 	if c.app == nil {
 		return
 	}
@@ -557,7 +557,7 @@ func (c *ChatPanel) messageWidth() int {
 		}
 	}
 	width := 1
-	for _, line := range strings.Split(c.inputValue.Get(), "\n") {
+	for line := range strings.SplitSeq(c.inputValue.Get(), "\n") {
 		width = max(width, len([]rune(line))+2)
 	}
 	return width
@@ -568,7 +568,7 @@ func wrapUserMessageLines(text string, width int) []string {
 		width = 1
 	}
 	var out []string
-	for _, line := range strings.Split(text, "\n") {
+	for line := range strings.SplitSeq(text, "\n") {
 		runes := []rune(line)
 		if len(runes) == 0 {
 			out = append(out, "")
@@ -591,7 +591,7 @@ func ansiBackgroundLine(text string, fg gt.Color, bg gt.Color) string {
 
 func (c *ChatPanel) printSessionSummaries(summaries []tauchat.SessionSummary, nextCursor string) {
 	if len(summaries) == 0 {
-		c.printStyledAbove("\n%s", ansify("Sessions: no saved sessions", theme.ColorDimGray))
+		c.printStyledAbovef("\n%s", ansify("Sessions: no saved sessions", theme.ColorDimGray))
 		return
 	}
 	var b strings.Builder
@@ -602,11 +602,11 @@ func (c *ChatPanel) printSessionSummaries(summaries []tauchat.SessionSummary, ne
 	if nextCursor != "" {
 		b.WriteString("More sessions available.")
 	}
-	c.printStyledAbove("\n%s", ansify(strings.TrimRight(b.String(), "\n"), theme.ColorDimGray))
+	c.printStyledAbovef("\n%s", ansify(strings.TrimRight(b.String(), "\n"), theme.ColorDimGray))
 }
 
 func (c *ChatPanel) printSessionInfo(summary tauchat.SessionSummary) {
-	c.printStyledAbove("\n%s", ansify(fmt.Sprintf(
+	c.printStyledAbovef("\n%s", ansify(fmt.Sprintf(
 		"Session %s\nModel: %s\nProvider: %s\nMessages: %d\nTokens: %d\nCreated: %s\nUpdated: %s",
 		summary.ID, summary.ModelID, summary.Provider,
 		summary.MessageCount, summary.TotalTokens,
@@ -1241,7 +1241,7 @@ func (c *ChatPanel) handleSubmitWithDepth(value string, depth int) {
 	}
 	c.clearInput()
 	c.lastError.Set("")
-	c.printStyledAbove("%s", c.userMessageBlock(text))
+	c.printStyledAbovef("%s", c.userMessageBlock(text))
 	if strings.HasPrefix(text, "/") {
 		c.handleSlashCommand(text)
 		return
@@ -1451,10 +1451,7 @@ func (c *ChatPanel) renderCompletions() *gt.Element {
 	)
 	// Compute visible window around the selected index.
 	maxRows := min(inlineCompletionMaxRows, len(items))
-	startRow := selected - maxRows/2
-	if startRow < 0 {
-		startRow = 0
-	}
+	startRow := max(selected-maxRows/2, 0)
 	if end := startRow + maxRows; end > len(items) {
 		startRow = len(items) - maxRows
 	}

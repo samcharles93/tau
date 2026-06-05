@@ -17,7 +17,7 @@ type Extension interface {
 	Reload(ctx context.Context) (diagnostics []*Diagnostic, commands []*Command, err error)
 	Tools(ctx context.Context) ([]*ToolDefinition, error)
 	ExecuteTool(ctx context.Context, toolName, arguments string) (content string, isError bool, err error)
-	DispatchEvent(ctx context.Context, event string, payload *EventPayload) *EventResponse
+	DispatchEvent(ctx context.Context, event string, sessionID string, payload *EventPayload) *EventResponse
 }
 
 // ExtensionPlugin is the go-plugin shim that adapts an Extension to gRPC.

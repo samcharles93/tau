@@ -34,7 +34,7 @@ func (s *GRPCServer) Reload(ctx context.Context, req *ReloadRequest) (*ReloadRes
 }
 
 func (s *GRPCServer) DispatchEvent(ctx context.Context, req *DispatchEventRequest) (*DispatchEventResponse, error) {
-	resp := s.Impl.DispatchEvent(ctx, req.Event, req.Payload)
+	resp := s.Impl.DispatchEvent(ctx, req.Event, req.SessionId, req.Payload)
 	return &DispatchEventResponse{Response: resp}, nil
 }
 
