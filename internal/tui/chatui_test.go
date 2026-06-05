@@ -225,6 +225,23 @@ func TestApplySelectedCompletionUpdatesTextArea(t *testing.T) {
 	}
 }
 
+func TestCompletionTextAreaHeightAllowsMoreThanEightRows(t *testing.T) {
+	input := gt.NewState("")
+	textarea := newCompletionTextArea(
+		input,
+		gt.NewState([]completionItem{}),
+		nil,
+		nil,
+		nil,
+	)
+
+	textarea.SetText(strings.Repeat("line\n", 11) + "line")
+
+	if got := textarea.Height(); got != 12 {
+		t.Fatalf("textarea height = %d, want 12", got)
+	}
+}
+
 func TestSettingsCommandOpensDialog(t *testing.T) {
 	panel := newTestPanel(&fakeRuntime{})
 
