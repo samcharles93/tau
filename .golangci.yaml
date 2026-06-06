@@ -1,34 +1,24 @@
 version: "2"
+
+run:
+  go: "1.25"
+
 linters:
   enable:
     - bodyclose
-    # - exhaustive
-    # - goconst
-    # - godot
-    # - godox
-    # - gomoddirectives
+    - errcheck
+    - govet
     - goprintffuncname
-    # - gosec
+    - ineffassign
     - misspell
-    # - nakedret
-    # - nestif
-    # - nilerr
     - noctx
     - nolintlint
-    # - prealloc
-    # - revive
     - rowserrcheck
     - sqlclosecheck
     - staticcheck
     - tparallel
-    # - unconvert
-    # - unparam
-    - whitespace
-    # - wrapcheck
-  disable:
-    - errcheck
-    - ineffassign
     - unused
+    - whitespace
   exclusions:
     generated: lax
     presets:
@@ -37,9 +27,20 @@ linters:
       - text: '(slog|log)\.\w+'
         linters:
           - noctx
+      - linters:
+          - errcheck
+        path: _test\.go
+      - linters:
+          - errcheck
+        text: "Error return value of `.*(Write|WriteString|WriteDirect|WriteStyled|WriteGradient|ExitRawMode|EnterRawMode|Interrupt|Kill|Shutdown|Close|Flush|sendNotification|InitGopls|Sync|Read|Fprintf)` is not checked"
+  settings:
+    staticcheck:
+      checks: ["SA*", "S*"]
+
 issues:
   max-issues-per-linter: 0
   max-same-issues: 0
+
 formatters:
   enable:
     - gofumpt
