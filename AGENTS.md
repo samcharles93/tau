@@ -52,6 +52,14 @@ The project follows a **layered architecture** with a command/event boundary bet
 - TUI subscribes to events and renders updates.
 - No external message broker; in-process channels provide sufficient decoupling.
 
+## Core Principles
+
+Tau is built on three pillars: **extensible**, **playful**, and **constant**.
+
+- **Extensible** — Tau provides primitives, not products. The session tree, event dispatch, schedule hook, tool registry, and plugin API are the platform. Everything else (GitHub polling, code review, deployment workflows) belongs in plugins or extensions. Before adding a feature, ask: *could this be a plugin?* If yes, don't hard-code it — expose the API surface and let plugins build on it. Tau is never done; it grows through its plugin ecosystem.
+- **Playful** — The tool should be a joy to use. Design interactions that delight. Error messages should be helpful, not cryptic. The TUI should feel responsive and alive. Status icons, colour, and layout should reward attention. If it feels like work, it's not done.
+- **Constant** — Using tau should produce strong, reliable outputs every time. Sessions are deterministic within their context. The agent loop is predictable and debuggable. Prompts are versioned templates, not ad-hoc strings. The system prompt and tool set produce consistent quality regardless of provider or model.
+
 ## Idea Capture
 
 When the user mentions a design idea, architecture decision, or feature concept during conversation:

@@ -1,35 +1,25 @@
-You are compacting the current conversation to preserve essential context while reducing token usage.
+You are compacting the active conversation history to optimize token usage while preserving vital technical context.
 
-**Critical**: The compacted summary will REPLACE all prior messages. Everything not captured here is lost. Be thorough but concise.
+**Critical**: The resulting summary will replace all prior messages in the context window. Anything left uncaptured is lost forever. Be highly accurate, clinical, and dense.
 
-Review the conversation and produce a structured summary:
+Analyze the preceding turns and generate a structured summary:
 
-## Task
+## Core Objective
+- The active, high-level task the user is executing (exact intent).
+- Current milestone state: what is finished, what is mid-flight, and what remains.
 
-- What the user is working on (exact intent)
-- Current status: what's done, what's in progress, what remains
+## State of the Files
+- Files modified: absolute path + a brief, single-sentence summary of changes.
+- Files analyzed: paths and the exact insights or constraints discovered within them.
+- Failed attempts: specific files, approaches, or commands that failed and *why* (to prevent looping).
 
-## Changes Made
-
-- Files modified (path + brief description of change)
-- Files read/analyzed (why they're relevant)
-- Key decisions and why they were made
-
-## Technical Context
-
-- Patterns being followed
-- Commands that worked / failed
-- Architecture constraints discovered
-- Environment details that matter
-
-## Next Steps
-
-Specific, actionable items in execution order. Include file paths and function names.
+## Technical Grounding
+- Discovered architecture constraints, imported packages, or patterns that must continue to be followed.
+- Exact commands that successfully built, linted, or tested the system.
 
 <rules>
-- Preserve ALL information needed to continue without re-reading files.
-- Include exact file paths, function names, and line numbers for code locations.
-- Capture the "why" behind decisions, not just the "what."
-- If something was tried and failed, record that — it prevents re-attempting.
-- No filler, no preamble, no conclusions. Just the facts.
+- No narrative filler, preamble, or pleasantries.
+- Every file path, function signature, and type name must be completely explicit.
+- Focus heavily on preserving the "why" behind active architectural choices.
+- Keep the output structurally tight for immediate ingestion by the next turn.
 </rules>

@@ -188,7 +188,7 @@ func TestBuildCommandPrompt_RubberDuck(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if !strings.Contains(prompt, "independent reviewer") {
+	if !strings.Contains(prompt, "adversarial code and architectural reviewer") {
 		t.Error("expected rubber-duck prompt content")
 	}
 }

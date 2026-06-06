@@ -1,32 +1,25 @@
-Analyze this codebase and create/update **AGENTS.md** to help future agents work effectively in this repository.
+Analyze this codebase and create or update the repository's **AGENTS.md** file to guide future automated agents working in this repository.
 
-**First**: Check if directory is empty or contains only config files. If so, stop and say "Directory appears empty or only contains config. Add source code first, then run /init to generate AGENTS.md."
+**Pre-flight Check**: Check if the workspace directory is completely empty or contains only base configuration files. If so, abort immediately and report: "Directory appears empty or only contains config. Add source code first, then run /init to generate AGENTS.md."
 
-**Goal**: Document what an agent needs to know to work in this codebase - commands, patterns, conventions, gotchas, overall architecture, how components fit together
+**Objective**: Document the non-obvious rules, specialized patterns, automation commands, and architectural boundaries an agent must know to work productively here without trial-and-error discovery.
 
-**Discovery process**:
+**Discovery Process**:
+1. Map out the tree structure using file discovery tools.
+2. Locate and check existing instruction assets (`.cursorrules`, `.cursor/rules/*`, `claude.md`, etc.). Only read if present.
+3. Identify project ecosystem from package managers, lockfiles, and configs (e.g., `go.mod`, `Taskfile.yaml`).
+4. Read highly representative domain, infrastructure, and entry-point source files to parse the architecture style.
 
-1. Check directory contents with `ls`
-2. Look for existing rule files (`.cursor/rules/*.md`, `.cursorrules`, `.github/copilot-instructions.md`, `claude.md`, `agents.md`) - only read if they exist
-3. Identify project type from config files and directory structure
-4. Find build/test/lint commands from config files, scripts, Makefiles, or CI configs
-5. Read representative source files to understand code patterns, architecture, control/data flow
-6. If AGENTS.md exists, read and improve it
+**Required Documentation Sections**:
+- **Essential Commands**: Build, test, lint, and generation workflows with necessary flags.
+- **Project Architecture**: High-level control flow, package communication rules, and layer descriptions.
+- **Strict Constraints**: Rigid patterns (e.g., no hardcoded strings, exact formatting engines like gofumpt, mandatory shared package utilization).
+- **Gotchas**: Non-obvious characteristics, hidden pitfalls, or unexpected framework patterns.
 
-**Content to include**:
-
-- Essential commands (build, test, run, deploy, etc.) - whatever is relevant for this project
-- Code organization and structure, application architecture and control/data flow
-- Naming conventions and style patterns
-- Testing approach and patterns
-- Important gotchas or non-obvious patterns
-- Any project-specific context from existing rule files
-
-**Note:** LLM agents learn and adapt to their context as they obtain it, so mentioning obvious details they would immediately pick up from reading a file or two is actively detrimental. Keep the principles of progressive disclosure in mind and focus primarily on non-obvious knowledge that saves the agent from trial-and-error discovery: gotchas, implicit conventions, commands with surprising flags, and context that isn't self-evident from the code in a single file.
-
-**Format**: Clear markdown sections. Use your judgment on structure based on what you find. Aim for completeness over brevity - include everything an agent would need to know.
-
-**Critical**: Only document what you actually observe. Never invent commands, patterns, or conventions. If you can't find something, don't include it.
+<rules>
+- Progressive Disclosure: Do NOT document standard, obvious details that an LLM would instantly see by opening a single file. Focus purely on cross-package architecture constraints and implicit codebase behavior.
+- Document only what you explicitly observe. Never extrapolate or guess commands, paths, or conventions.
+</rules>
 
 <env>
 Working directory: {{.WorkingDir}}
