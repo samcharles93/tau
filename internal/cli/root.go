@@ -52,7 +52,6 @@ func NewRootCommand(version string) *urfavecli.Command {
 				Usage:   "Show progress/debug messages on stderr",
 				Sources: urfavecli.EnvVars("TAU_VERBOSE"),
 			},
-
 			&urfavecli.StringFlag{
 				Name:  "model",
 				Usage: "Model ID to use for chat",
@@ -76,28 +75,46 @@ func NewRootCommand(version string) *urfavecli.Command {
 				Aliases: []string{"r"},
 				Usage:   "Resume a saved session (pass ID or 'latest' for most recent)",
 			},
+			&urfavecli.StringFlag{
+				Name:  "prompt",
+				Usage: "Single-shot mode: process prompt and exit",
+			},
 		},
 		Action: func(ctx context.Context, cmd *urfavecli.Command) error {
+			// Support provider/model syntax: --model openrouter/gpt-5.3
+			if modelArg := cmd.String("model"); strings.Contains(modelArg, "/") {
+				parts := strings.SplitN(modelArg, "/", 2)
+				if parts[0] != "" && parts[1] != "" {
+					_ = cmd.Set("provider", parts[0])
+					_ = cmd.Set("model", parts[1])
+				}
+			}
+
 			cfg, selectedProvider, err := loadProvider(cmd)
 			if err != nil {
 				return err
 			}
-
 			initLogging(cmd.Bool("verbose") || cfg.Debug)
-
-			resumeID := cmd.String("resume")
-
-			return app.RunChat(ctx, app.ChatOptions{
-				Config:          cfg,
-				Provider:        selectedProvider,
-				Insecure:        cmd.Bool("insecure"),
-				Model:           cmd.String("model"),
-				SystemPrompt:    cmd.String("system-prompt"),
-				MaxTokens:       cmd.Int("max-tokens"),
-				Temperature:     cmd.Float("temperature"),
-				Version:         version,
-				ResumeSessionID: resumeID,
-			})
+			opts := chatOptionsFromCmd(cmd, cfg, selectedProvider, version)
+			prompt := cmd.String("prompt")
+			if prompt != "" {
+				return app.RunSingleShot(ctx, opts, prompt)
+			}
+			return app.RunChat(ctx, opts)
 		},
+	}
+}
+
+func chatOptionsFromCmd(cmd *urfavecli.Command, cfg tauconfig.Config, provider tauconfig.ProviderConfig, version string) app.ChatOptions {
+	return app.ChatOptions{
+		Config:          cfg,
+		Provider:        provider,
+		Insecure:        cmd.Bool("insecure"),
+		Model:           cmd.String("model"),
+		SystemPrompt:    cmd.String("system-prompt"),
+		MaxTokens:       cmd.Int("max-tokens"),
+		Temperature:     cmd.Float("temperature"),
+		Version:         version,
+		ResumeSessionID: cmd.String("resume"),
 	}
 }

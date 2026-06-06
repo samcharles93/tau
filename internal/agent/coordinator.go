@@ -68,6 +68,8 @@ type Coordinator struct {
 	onReasoningDelta  func(map[string]any)
 	onClose           func()
 	onPluginEvent     func(event string, sessionID string, payload *api.EventPayload) *api.EventResponse
+	scheduleInterval  time.Duration
+	scheduleDone      chan struct{}
 	startupEvents     []chat.ChatEvent
 	startupEventsOnce sync.Once
 	commands          chan chat.ChatCommand
@@ -114,6 +116,11 @@ type CoordinatorConfig struct {
 	// and LLM request boundaries. sessionID is the explicit session identity.
 	// Returns merged EventResponse, or nil if no plugins.
 	OnPluginEvent func(event string, sessionID string, payload *api.EventPayload) *api.EventResponse
+
+	// ScheduleInterval, if > 0, causes the coordinator to fire a "schedule"
+	// lifecycle event to plugins at this interval. Plugins can use this to
+	// poll external services, refresh state, or trigger background work.
+	ScheduleInterval time.Duration
 }
 
 // NewCoordinator creates and starts the agent coordinator.
@@ -156,6 +163,7 @@ func NewCoordinator(ctx context.Context, cfg CoordinatorConfig) (*Coordinator, e
 		onReasoningDelta:  cfg.OnReasoningDelta,
 		onClose:           cfg.OnClose,
 		onPluginEvent:     cfg.OnPluginEvent,
+		scheduleInterval:  cfg.ScheduleInterval,
 		startupEvents:     append([]chat.ChatEvent(nil), cfg.StartupEvents...),
 		commands:          make(chan chat.ChatCommand, commandBufferSize),
 		eventBus:          pubsub.New[chat.ChatEvent](),
@@ -175,6 +183,10 @@ func NewCoordinator(ctx context.Context, cfg CoordinatorConfig) (*Coordinator, e
 		defer close(c.loopDone)
 		c.loop()
 	}()
+
+	if c.scheduleInterval > 0 {
+		c.startSchedule()
+	}
 
 	return c, nil
 }
@@ -214,6 +226,13 @@ func (c *Coordinator) Close() {
 		c.cancel()
 		c.cancelInteractivePrompts()
 		<-c.loopDone
+		if c.scheduleDone != nil {
+			select {
+			case <-c.scheduleDone:
+			case <-time.After(time.Second):
+				slog.Warn("coordinator: schedule goroutine did not exit within 1s")
+			}
+		}
 		if c.onClose != nil {
 			c.onClose()
 		}
@@ -233,6 +252,32 @@ func (c *Coordinator) loop() {
 			c.handleCommand(cmd)
 		}
 	}
+}
+
+// startSchedule launches a background goroutine that fires a "schedule"
+// lifecycle event to plugins at the configured interval. Plugins can use
+// this to poll external services or trigger background work.
+func (c *Coordinator) startSchedule() {
+	c.scheduleDone = make(chan struct{})
+	slog.Info("coordinator: schedule events enabled",
+		"interval", c.scheduleInterval.String())
+
+	go func() {
+		defer close(c.scheduleDone)
+		ticker := time.NewTicker(c.scheduleInterval)
+		defer ticker.Stop()
+
+		for {
+			select {
+			case <-c.ctx.Done():
+				return
+			case <-ticker.C:
+				if c.onPluginEvent != nil {
+					c.onPluginEvent("schedule", "", nil)
+				}
+			}
+		}
+	}()
 }
 
 func (c *Coordinator) handleCommand(cmd chat.ChatCommand) {

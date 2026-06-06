@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"gopkg.in/yaml.v3"
 )
@@ -393,6 +394,30 @@ func LocalPath(cwd string) string {
 		cwd, _ = os.Getwd()
 	}
 	return filepath.Join(cwd, localConfigName)
+}
+
+// SessionsDir returns the directory where session JSONL exports are stored.
+func SessionsDir() string {
+	return filepath.Join(Dir(), "sessions")
+}
+
+// SessionsDBPath returns the path to the SQLite session store.
+func SessionsDBPath() string {
+	return filepath.Join(Dir(), "sessions.db")
+}
+
+// ScheduleIntervalFromEnv returns the schedule interval from TAU_SCHEDULE_INTERVAL.
+// Returns 0 if unset or invalid.
+func ScheduleIntervalFromEnv() time.Duration {
+	raw := os.Getenv("TAU_SCHEDULE_INTERVAL")
+	if raw == "" {
+		return 0
+	}
+	d, err := time.ParseDuration(raw)
+	if err != nil {
+		return 0
+	}
+	return d
 }
 
 func configDir() string {

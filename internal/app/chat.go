@@ -9,7 +9,6 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
-	"path/filepath"
 	"strings"
 	"time"
 
@@ -66,11 +65,11 @@ func RunChat(ctx context.Context, opts ChatOptions) error {
 
 	// Initialize session store at the RunChat level so it outlives the
 	// coordinator (needed for --resume and exit summary).
-	sessionsDir := filepath.Join(tauconfig.Dir(), "sessions")
+	sessionsDir := tauconfig.SessionsDir()
 	if err := os.MkdirAll(sessionsDir, 0o755); err != nil {
 		slog.Warn("session store: could not create sessions dir", "err", err)
 	}
-	storePath := filepath.Join(tauconfig.Dir(), "sessions.db")
+	storePath := tauconfig.SessionsDBPath()
 	sessionStore, storeErr := store.NewSQLiteStore(storePath, sessionsDir)
 	if storeErr != nil {
 		slog.Warn("session store unavailable, sessions will not be persisted", "err", storeErr)
@@ -300,6 +299,27 @@ func buildModelRefs(models []provider.Model) []tauchat.ChatModelRef {
 // newCoordinator creates and returns an agent coordinator with the standard
 // tool registry, config, and session persistence.
 func newCoordinator(ctx context.Context, opts ChatOptions, bearerToken string, sessionStore store.SessionStore) (*agent.Coordinator, error) {
+	return buildCoordinator(ctx, coordinatorConfig{
+		ChatOptions:      opts,
+		BearerToken:      bearerToken,
+		SessionStore:     sessionStore,
+		InteractiveUI:    true,
+		ScheduleInterval: tauconfig.ScheduleIntervalFromEnv(),
+	})
+}
+
+// coordinatorConfig holds all parameters for building a coordinator instance,
+// shared between interactive and headless modes.
+type coordinatorConfig struct {
+	ChatOptions      ChatOptions
+	BearerToken      string
+	SessionStore     store.SessionStore
+	InteractiveUI    bool
+	ScheduleInterval time.Duration
+}
+
+// buildCoordinator creates a coordinator with the full plugin/tool setup.
+func buildCoordinator(ctx context.Context, cfg coordinatorConfig) (*agent.Coordinator, error) {
 	cwd, _ := os.Getwd()
 	registry := tools.NewRegistry()
 	if err := tools.RegisterBuiltins(registry, cwd); err != nil {
@@ -324,13 +344,14 @@ func newCoordinator(ctx context.Context, opts ChatOptions, bearerToken string, s
 	}
 
 	coordinator, err := agent.NewCoordinator(ctx, agent.CoordinatorConfig{
-		TokenSource:       staticTokenSource(bearerToken),
-		Streamer:          streaming.OpenAIStreamer{Insecure: opts.Insecure},
+		TokenSource:       staticTokenSource(cfg.BearerToken),
+		Streamer:          streaming.OpenAIStreamer{Insecure: cfg.ChatOptions.Insecure},
 		Registry:          registry,
-		ShowReasoning:     opts.Config.UI.ShowReasoning,
-		InteractiveUI:     true,
-		SessionStore:      sessionStore,
+		ShowReasoning:     cfg.ChatOptions.Config.UI.ShowReasoning,
+		InteractiveUI:     cfg.InteractiveUI,
+		SessionStore:      cfg.SessionStore,
 		AutoExportJSONL:   true,
+		ScheduleInterval:  cfg.ScheduleInterval,
 		ExtensionReloader: pluginMgr,
 		OnPluginEvent: func(event string, sessionID string, payload *api.EventPayload) *api.EventResponse {
 			return pluginMgr.DispatchEvent(ctx, event, sessionID, payload)
