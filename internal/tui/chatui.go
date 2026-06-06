@@ -128,14 +128,16 @@ type ChatPanel struct {
 	completions          *gt.State[[]completionItem]
 	completionIndex      *gt.State[int]
 	showSettings         *gt.State[bool]
-	settingsModal        *gt.Modal
+	selectedModelIndex   *gt.State[int]
 	showDebug            *gt.State[bool]
 	debugView            *views.DebugView
 	showDebugList        *gt.State[bool]
 	debugListView        *views.DebugListView
 	showSessionList      *gt.State[bool]
 	showSessionInfo      *gt.State[bool]
+	showSessionTree      *gt.State[bool]
 	sessionListView      *views.SessionListView
+	sessionTreeView      *views.SessionTreeView
 	sessionSummaries     *gt.State[[]tauchat.SessionSummary]
 	sessionListCursor    string
 	dumpTreeOnNextRender bool
@@ -184,19 +186,10 @@ func NewChatPanel(
 		showDebugList:      gt.NewState(false),
 		showSessionList:    gt.NewState(false),
 		showSessionInfo:    gt.NewState(false),
+		showSessionTree:    gt.NewState(false),
 		sessionSummaries:   gt.NewState([]tauchat.SessionSummary{}),
+		selectedModelIndex: gt.NewState(0),
 	}
-	panel.settingsModal = gt.NewModal(
-		gt.WithModalOpen(panel.showSettings),
-		gt.WithModalBackdrop("dim"),
-		gt.WithModalTrapFocus(true),
-		gt.WithModalElementOptions(
-			gt.WithDisplay(gt.DisplayFlex),
-			gt.WithDirection(gt.Column),
-			gt.WithJustify(gt.JustifyCenter),
-			gt.WithAlign(gt.AlignCenter),
-		),
-	)
 	return panel
 }
 
@@ -220,11 +213,12 @@ func (c *ChatPanel) BindApp(app *gt.App) {
 	c.completions.BindApp(app)
 	c.completionIndex.BindApp(app)
 	c.showSettings.BindApp(app)
-	c.settingsModal.BindApp(app)
+	c.selectedModelIndex.BindApp(app)
 	c.showDebug.BindApp(app)
 	c.showDebugList.BindApp(app)
 	c.showSessionList.BindApp(app)
 	c.showSessionInfo.BindApp(app)
+	c.showSessionTree.BindApp(app)
 	c.sessionSummaries.BindApp(app)
 }
 
@@ -239,7 +233,6 @@ func (c *ChatPanel) Watchers() []gt.Watcher {
 	}
 	watchers = append(watchers,
 		gt.OnChange(c.inputValue, c.handleInputValueChanged),
-		gt.OnChange(c.showSettings, c.handleSettingsVisibilityChanged),
 	)
 	return watchers
 }
@@ -348,7 +341,10 @@ func (c *ChatPanel) handleRuntimeEvent(event tauchat.ChatEvent) {
 	case tauchat.SessionsListedEvent:
 		c.sessionSummaries.Set(ev.Sessions)
 		c.sessionListCursor = ev.NextCursor
-		c.printSessionSummaries(ev.Sessions, ev.NextCursor)
+		// Suppress text output when the tree view is active.
+		if !c.showSessionTree.Get() {
+			c.printSessionSummaries(ev.Sessions, ev.NextCursor)
+		}
 		if c.sessionListView != nil {
 			c.sessionListView.SetCursor(ev.NextCursor, ev.NextCursor != "")
 		}
@@ -639,26 +635,6 @@ func (c *ChatPanel) adjustInlineHeight() {
 	c.app.SetInlineHeight(clamp(height, inlineMinHeight, inlineMaxHeight))
 }
 
-func (c *ChatPanel) handleSettingsVisibilityChanged(open bool) {
-	if c.app == nil {
-		return
-	}
-	if open {
-		if !c.app.IsInAlternateScreen() {
-			if err := c.app.EnterAlternateScreen(); err != nil {
-				c.lastError.Set("enter settings screen: " + err.Error())
-			}
-		}
-		return
-	}
-	if c.app.IsInAlternateScreen() {
-		if err := c.app.ExitAlternateScreen(); err != nil {
-			c.lastError.Set("exit settings screen: " + err.Error())
-		}
-	}
-	c.adjustInlineHeight()
-}
-
 // Render builds the go-tui element tree. In inline mode the root is only the
 // input widget; conversation output is printed/streamed above it into terminal
 // scrollback. Settings temporarily switch to the alternate screen and render as
@@ -669,10 +645,6 @@ func (c *ChatPanel) Render(app *gt.App) *gt.Element {
 		// Schedule a blank line after the first render to mitigate the
 		// visual screen-clearing effect of go-tui's initial inline frame.
 		app.QueuePrintAboveln(" ")
-	}
-
-	if c.showSettings.Get() && app.IsInAlternateScreen() {
-		return c.renderFullscreenSettings(app)
 	}
 
 	root := gt.New(
@@ -694,6 +666,13 @@ func (c *ChatPanel) Render(app *gt.App) *gt.Element {
 	root.AddChild(c.renderInput(app))
 	root.AddChild(c.renderStatusBar())
 
+	if c.showSettings.Get() {
+		root.AddChild(c.renderSettingsOverlay(app))
+	}
+	if c.sessionTreeView != nil && c.showSessionTree.Get() {
+		root.AddChild(c.sessionTreeView.Render(app))
+	}
+
 	if c.dumpTreeOnNextRender {
 		c.dumpTreeOnNextRender = false
 		c.writeTreeDump(root)
@@ -702,15 +681,111 @@ func (c *ChatPanel) Render(app *gt.App) *gt.Element {
 	return root
 }
 
-func (c *ChatPanel) renderFullscreenSettings(app *gt.App) *gt.Element {
-	root := gt.New(
+// renderSettingsOverlay returns an interactive settings overlay rendered inline
+// (no alternate screen). Model selection is interactive — up/down to navigate,
+// Enter to switch models, Ctrl+R or Enter on reasoning to toggle, Esc to close.
+func (c *ChatPanel) renderSettingsOverlay(app *gt.App) *gt.Element {
+	overlay := gt.New(
+		gt.WithOverlay(true),
+		gt.WithDisplay(gt.DisplayFlex),
+		gt.WithJustify(gt.JustifyCenter),
+		gt.WithAlign(gt.AlignCenter),
+	)
+
+	modal := gt.New(
 		gt.WithDisplay(gt.DisplayFlex),
 		gt.WithDirection(gt.Column),
-		gt.WithWidthPercent(100),
-		gt.WithHeightPercent(100),
+		gt.WithWidth(56),
+		gt.WithBorder(gt.BorderRounded),
+		gt.WithBorderStyle(theme.BrandStyle()),
+		gt.WithPadding(1),
+		gt.WithGap(1),
 	)
-	root.AddChild(c.renderSettingsModal(app))
-	return root
+
+	// Title.
+	modal.AddChild(gt.New(
+		gt.WithText("Settings"),
+		gt.WithTextStyle(theme.BrandStyle()),
+	))
+
+	// Provider.
+	modal.AddChild(gt.New(
+		gt.WithText("Provider: "+c.cfg.Provider),
+		gt.WithTextStyle(theme.BodyStyle()),
+		gt.WithTruncate(true),
+	))
+
+	// Current model.
+	modal.AddChild(gt.New(
+		gt.WithText("Model: "+c.modelName.Get()),
+		gt.WithTextStyle(theme.BodyStyle()),
+		gt.WithTruncate(true),
+	))
+
+	// Model list with selection.
+	modelList := gt.New(
+		gt.WithDisplay(gt.DisplayFlex),
+		gt.WithDirection(gt.Column),
+		gt.WithGap(0),
+		gt.WithMaxHeight(12),
+		gt.WithScrollable(gt.ScrollVertical),
+	)
+	currentModel := c.modelName.Get()
+	selIdx := c.selectedModelIndex.Get()
+	avail := c.availableModels.Get()
+	for i, model := range avail {
+		prefix := "  "
+		style := theme.DimStyle()
+		if model.ID == currentModel {
+			prefix = "✓ "
+			style = theme.BrandStyle()
+		} else if i == selIdx && model.Ready {
+			prefix = "› "
+			style = theme.BodyStyle()
+		}
+		if !model.Ready {
+			style = theme.DimStyle().Italic()
+		}
+		label := prefix + model.ID
+		if !model.Ready {
+			label += " (not ready)"
+		}
+		modelList.AddChild(gt.New(
+			gt.WithText(label),
+			gt.WithTextStyle(style),
+			gt.WithTruncate(true),
+		))
+	}
+	modal.AddChild(modelList)
+
+	// Reasoning toggle.
+	reasoning := "off"
+	if c.showReasoning.Get() {
+		reasoning = "on"
+	}
+	modal.AddChild(gt.New(
+		gt.WithText("Reasoning: "+reasoning+"  (Enter to toggle · Ctrl+R)"),
+		gt.WithTextStyle(theme.BodyStyle()),
+		gt.WithTruncate(true),
+	))
+
+	// Session info.
+	if c.cfg.SessionID != "" {
+		modal.AddChild(gt.New(
+			gt.WithText("Session: "+c.cfg.SessionID),
+			gt.WithTextStyle(theme.DimStyle()),
+			gt.WithTruncate(true),
+		))
+	}
+
+	// Footer.
+	modal.AddChild(gt.New(
+		gt.WithText("↑↓: navigate  Enter: select/toggle  Esc: close"),
+		gt.WithTextStyle(theme.DimStyle().Italic()),
+	))
+
+	overlay.AddChild(modal)
+	return overlay
 }
 
 func (c *ChatPanel) writeTreeDump(root *gt.Element) {
@@ -844,88 +919,6 @@ func (c *ChatPanel) renderStatusBar() *gt.Element {
 	return statusBar
 }
 
-func (c *ChatPanel) renderSettingsModal(app *gt.App) *gt.Element {
-	modalEl := app.MountPersistent(c, 1, func() gt.Component {
-		return c.settingsModal
-	})
-	modalEl.AddChild(c.buildSettingsContent())
-	return modalEl
-}
-
-func (c *ChatPanel) buildSettingsContent() *gt.Element {
-	content := gt.New(
-		gt.WithDisplay(gt.DisplayFlex),
-		gt.WithDirection(gt.Column),
-		gt.WithWidth(56),
-		gt.WithBorder(gt.BorderRounded),
-		gt.WithBorderStyle(theme.BrandStyle()),
-		gt.WithPadding(1),
-		gt.WithGap(1),
-	)
-	content.AddChild(gt.New(
-		gt.WithText("Settings"),
-		gt.WithTextStyle(theme.BrandStyle()),
-	))
-	content.AddChild(gt.New(
-		gt.WithText("Model: "+c.modelName.Get()),
-		gt.WithTextStyle(theme.BodyStyle()),
-		gt.WithTruncate(true),
-	))
-	if c.cfg.Provider != "" {
-		content.AddChild(gt.New(
-			gt.WithText("Provider: "+c.cfg.Provider),
-			gt.WithTextStyle(theme.BodyStyle()),
-			gt.WithTruncate(true),
-		))
-	}
-	reasoning := "off"
-	if c.showReasoning.Get() {
-		reasoning = "on"
-	}
-	content.AddChild(gt.New(
-		gt.WithText("Reasoning: "+reasoning+"  (Ctrl+R toggles)"),
-		gt.WithTextStyle(theme.BodyStyle()),
-		gt.WithTruncate(true),
-	))
-	content.AddChild(gt.New(
-		gt.WithText("Available models:"),
-		gt.WithTextStyle(theme.BodyStyle()),
-	))
-	modelList := gt.New(
-		gt.WithDisplay(gt.DisplayFlex),
-		gt.WithDirection(gt.Column),
-		gt.WithGap(0),
-		gt.WithMaxHeight(12),
-		gt.WithScrollable(gt.ScrollVertical),
-	)
-	currentModel := c.modelName.Get()
-	for _, model := range c.availableModels.Get() {
-		prefix := "  "
-		style := theme.DimStyle()
-		if model.ID == currentModel {
-			prefix = "› "
-			style = theme.BrandStyle()
-		} else if !model.Ready {
-			style = theme.DimStyle().Italic()
-		}
-		label := prefix + model.ID
-		if !model.Ready {
-			label += " (not ready)"
-		}
-		modelList.AddChild(gt.New(
-			gt.WithText(label),
-			gt.WithTextStyle(style),
-			gt.WithTruncate(true),
-		))
-	}
-	content.AddChild(modelList)
-	content.AddChild(gt.New(
-		gt.WithText("Esc closes this dialog."),
-		gt.WithTextStyle(theme.DimStyle().Italic()),
-	))
-	return content
-}
-
 func (c *ChatPanel) handleDebugCommand(rest string) {
 	rest = strings.TrimSpace(rest)
 	parts := strings.Fields(rest)
@@ -995,6 +988,8 @@ func (c *ChatPanel) handleSessionCommand(rest string) {
 		c.handleSessionDelete(rest)
 	case "list":
 		c.openSessionList()
+	case "tree":
+		c.openSessionTree()
 	default:
 		c.loadSession(parts[0])
 	}
@@ -1041,6 +1036,33 @@ func (c *ChatPanel) openSessionList() {
 	// Fetch the first page.
 	c.sendCommand(tauchat.ListSessionsCommand{Limit: 10})
 	c.showSessionList.Set(true)
+}
+
+func (c *ChatPanel) openSessionTree() {
+	if c.app == nil {
+		return
+	}
+
+	// Close the flat session list if it's open — only one session view at a time.
+	c.showSessionList.Set(false)
+
+	c.sessionTreeView = views.NewSessionTreeView(
+		c.sessionSummaries,
+		func(summary tauchat.SessionSummary) {
+			c.sendCommand(tauchat.LoadSessionCommand{SessionID: summary.ID})
+		},
+		func() {
+			c.showSessionTree.Set(false)
+		},
+		func() {
+			c.sendCommand(tauchat.ListSessionsCommand{Limit: views.SessionTreeFetchLimit})
+		},
+	)
+	c.sessionTreeView.BindApp(c.app)
+
+	// Fetch sessions for tree building.
+	c.sendCommand(tauchat.ListSessionsCommand{Limit: views.SessionTreeFetchLimit})
+	c.showSessionTree.Set(true)
 }
 
 func (c *ChatPanel) handleSessionInfo(rest string) {
@@ -1383,6 +1405,8 @@ func (c *ChatPanel) completionItems(value string) []completionItem {
 		return c.modelCompletions(strings.TrimSpace(argPrefix))
 	case "reasoning":
 		return c.reasoningCompletions(strings.TrimSpace(argPrefix))
+	case "session":
+		return c.sessionCompletions(strings.TrimSpace(argPrefix))
 	case "debug":
 		return c.debugCompletions(argPrefix)
 	default:
@@ -1438,6 +1462,24 @@ func (c *ChatPanel) reasoningCompletions(prefix string) []completionItem {
 		{Value: "/reasoning on", Label: "on", Description: "show reasoning before Tau responses"},
 		{Value: "/reasoning off", Label: "off", Description: "hide reasoning"},
 		{Value: "/reasoning toggle", Label: "toggle", Description: "toggle reasoning visibility"},
+	}
+	prefix = strings.ToLower(prefix)
+	matches := make([]completionItem, 0, len(options))
+	for _, item := range options {
+		if prefix == "" || strings.HasPrefix(item.Label, prefix) {
+			matches = append(matches, item)
+		}
+	}
+	return matches
+}
+
+func (c *ChatPanel) sessionCompletions(prefix string) []completionItem {
+	options := []completionItem{
+		{Value: "/session list", Label: "list", Description: "show saved sessions"},
+		{Value: "/session tree", Label: "tree", Description: "show session tree dashboard"},
+		{Value: "/session info ", Label: "info", Description: "show session details", AcceptsArgs: true},
+		{Value: "/session export ", Label: "export", Description: "export a session", AcceptsArgs: true},
+		{Value: "/session delete ", Label: "delete", Description: "delete a session", AcceptsArgs: true},
 	}
 	prefix = strings.ToLower(prefix)
 	matches := make([]completionItem, 0, len(options))
@@ -1572,6 +1614,10 @@ func builtinCompletionItems(debug bool) []completionItem {
 func (c *ChatPanel) KeyMap() gt.KeyMap {
 	km := gt.KeyMap{
 		gt.On(gt.KeyEscape, func(ke gt.KeyEvent) {
+			if c.showSettings.Get() {
+				c.showSettings.Set(false)
+				return
+			}
 			if len(c.completions.Get()) > 0 {
 				c.closeCompletions()
 				return
@@ -1586,6 +1632,10 @@ func (c *ChatPanel) KeyMap() gt.KeyMap {
 			c.applySelectedCompletion()
 		}),
 		gt.On(gt.KeyCtrlC, func(ke gt.KeyEvent) {
+			if c.showSettings.Get() {
+				c.showSettings.Set(false)
+				return
+			}
 			switch {
 			case c.status.Get() == tauchat.ChatSessionStreaming:
 				c.status.Set(tauchat.ChatSessionCancelling)
@@ -1602,6 +1652,49 @@ func (c *ChatPanel) KeyMap() gt.KeyMap {
 			}
 		}),
 		gt.On(gt.KeyCtrlR, func(ke gt.KeyEvent) {
+			c.showReasoning.Set(!c.showReasoning.Get())
+		}),
+		// Settings navigation — preempt-stop so textarea cursor keys don't
+		// consume these when the settings overlay is active.
+		gt.OnPreemptStop(gt.KeyUp, func(ke gt.KeyEvent) {
+			if !c.showSettings.Get() || len(c.completions.Get()) > 0 {
+				return
+			}
+			models := c.availableModels.Get()
+			if len(models) == 0 {
+				return
+			}
+			idx := c.selectedModelIndex.Get() - 1
+			if idx < 0 {
+				idx = len(models) - 1
+			}
+			c.selectedModelIndex.Set(idx)
+		}),
+		gt.OnPreemptStop(gt.KeyDown, func(ke gt.KeyEvent) {
+			if !c.showSettings.Get() || len(c.completions.Get()) > 0 {
+				return
+			}
+			models := c.availableModels.Get()
+			if len(models) == 0 {
+				return
+			}
+			idx := c.selectedModelIndex.Get() + 1
+			if idx >= len(models) {
+				idx = 0
+			}
+			c.selectedModelIndex.Set(idx)
+		}),
+		gt.On(gt.KeyEnter, func(ke gt.KeyEvent) {
+			if !c.showSettings.Get() {
+				return
+			}
+			models := c.availableModels.Get()
+			if len(models) > 0 {
+				idx := c.selectedModelIndex.Get()
+				if idx >= 0 && idx < len(models) && models[idx].Ready {
+					c.handleModelCommand(models[idx].ID)
+				}
+			}
 			c.showReasoning.Set(!c.showReasoning.Get())
 		}),
 	}

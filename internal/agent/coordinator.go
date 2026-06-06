@@ -1437,19 +1437,20 @@ func (c *Coordinator) handleListSessions(cmd chat.ListSessionsCommand) {
 	wireSummaries := make([]chat.SessionSummary, len(summaries))
 	for i, s := range summaries {
 		wireSummaries[i] = chat.SessionSummary{
-			ID:           s.ID,
-			ModelID:      s.ModelID,
-			Provider:     s.Provider,
-			CreatedAt:    s.CreatedAt,
-			UpdatedAt:    s.UpdatedAt,
-			Status:       s.Status,
-			MessageCount: s.MessageCount,
-			InputTokens:  s.InputTokens,
-			OutputTokens: s.OutputTokens,
-			TotalTokens:  s.TotalTokens,
-			Cost:         s.Cost,
-			DurationMs:   s.DurationMs,
-			SystemPrompt: s.SystemPrompt,
+			ID:              s.ID,
+			ModelID:         s.ModelID,
+			Provider:        s.Provider,
+			CreatedAt:       s.CreatedAt,
+			UpdatedAt:       s.UpdatedAt,
+			Status:          s.Status,
+			MessageCount:    s.MessageCount,
+			InputTokens:     s.InputTokens,
+			OutputTokens:    s.OutputTokens,
+			TotalTokens:     s.TotalTokens,
+			Cost:            s.Cost,
+			DurationMs:      s.DurationMs,
+			SystemPrompt:    s.SystemPrompt,
+			ParentSessionID: s.ParentSessionID,
 		}
 	}
 

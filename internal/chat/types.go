@@ -521,19 +521,20 @@ func (InteractivePromptRequestedEvent) IsChatEvent() {}
 // SessionSummary is the wire type for session list rows. It carries
 // metadata without the full message history.
 type SessionSummary struct {
-	ID           string    `json:"id"`
-	ModelID      string    `json:"model_id"`
-	Provider     string    `json:"provider"`
-	CreatedAt    time.Time `json:"created_at"`
-	UpdatedAt    time.Time `json:"updated_at"`
-	Status       string    `json:"status"`
-	MessageCount int       `json:"message_count"`
-	InputTokens  int       `json:"input_tokens"`
-	OutputTokens int       `json:"output_tokens"`
-	TotalTokens  int       `json:"total_tokens"`
-	Cost         float64   `json:"cost"`
-	DurationMs   int64     `json:"duration_ms"`
-	SystemPrompt string    `json:"system_prompt,omitempty"`
+	ID              string    `json:"id"`
+	ModelID         string    `json:"model_id"`
+	Provider        string    `json:"provider"`
+	CreatedAt       time.Time `json:"created_at"`
+	UpdatedAt       time.Time `json:"updated_at"`
+	Status          string    `json:"status"`
+	MessageCount    int       `json:"message_count"`
+	InputTokens     int       `json:"input_tokens"`
+	OutputTokens    int       `json:"output_tokens"`
+	TotalTokens     int       `json:"total_tokens"`
+	Cost            float64   `json:"cost"`
+	DurationMs      int64     `json:"duration_ms"`
+	SystemPrompt    string    `json:"system_prompt,omitempty"`
+	ParentSessionID string    `json:"parent_session_id,omitempty"`
 }
 
 // SessionsListedEvent carries paginated session summaries back to the TUI.
