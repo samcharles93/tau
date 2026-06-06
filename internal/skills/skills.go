@@ -17,6 +17,7 @@ import (
 
 const (
 	SkillFileName          = "SKILL.md"
+	SkillFileNameLower     = "skill.md"
 	MaxNameLength          = 64
 	MaxDescriptionLength   = 1024
 	MaxCompatibilityLength = 500
@@ -32,6 +33,11 @@ const (
 )
 
 var skillNamePattern = regexp.MustCompile(`^[a-z0-9]+(?:-[a-z0-9]+)*$`)
+
+// skillFileRegex matches a SKILL.md file regardless of case. Anchored
+// at both ends so we don't match names like "not-skill.md" or
+// "skill.md.bak".
+var skillFileRegex = regexp.MustCompile(`(?i)^skill\.md$`)
 
 type Scope string
 
@@ -161,7 +167,7 @@ func Discover(sources []Source) ([]*Skill, []Diagnostic) {
 				return nil
 			}
 
-			if entry.Name() != SkillFileName {
+			if !skillFileRegex.MatchString(entry.Name()) {
 				return nil
 			}
 
@@ -307,6 +313,61 @@ func HasErrors(diagnostics []Diagnostic) bool {
 		}
 	}
 	return false
+}
+
+// bundledResourcesHint returns a compact hint about bundled resources
+// (scripts/, references/, assets/) found in the skill directory. Per the
+// Agent Skills spec, this is Tier 1 metadata — it surfaces resource
+// existence without eagerly loading any of them.
+func bundledResourcesHint(skill *Skill) string {
+	if skill == nil || skill.Path == "" {
+		return ""
+	}
+	var hints []string
+	for _, dir := range []string{"scripts", "references", "assets"} {
+		entries, err := os.ReadDir(filepath.Join(skill.Path, dir))
+		if err != nil || len(entries) == 0 {
+			continue
+		}
+		hints = append(hints, fmt.Sprintf("%s:%d", dir, len(entries)))
+	}
+	if len(hints) == 0 {
+		return ""
+	}
+	return fmt.Sprintf("[bundled: %s]", strings.Join(hints, ", "))
+}
+
+// ToPromptIndex renders the skill catalog as a compact, scannable
+// one-line-per-skill index (Tier 1 of progressive disclosure per the
+// Agent Skills spec). The agent can quickly scan name + description,
+// then use read to load the full SKILL.md if relevant.
+func ToPromptIndex(skillSet []*Skill) string {
+	if len(skillSet) == 0 {
+		return ""
+	}
+
+	var builder strings.Builder
+	builder.WriteString("<available_skills>\n")
+	for _, skill := range skillSet {
+		if skill == nil || skill.DisableModelInvocation {
+			continue
+		}
+		line := fmt.Sprintf("  - %s: %s (%s)",
+			escapeXML(skill.Name),
+			escapeXML(skill.Description),
+			escapeXML(skill.SkillFilePath),
+		)
+		if skill.Compatibility != "" {
+			line += fmt.Sprintf(" [compat: %s]", escapeXML(skill.Compatibility))
+		}
+		if hint := bundledResourcesHint(skill); hint != "" {
+			line += fmt.Sprintf(" %s", hint)
+		}
+		line += "\n"
+		builder.WriteString(line)
+	}
+	builder.WriteString("</available_skills>")
+	return builder.String()
 }
 
 // ToPromptXML renders the tier-1 skill catalog for prompt injection.

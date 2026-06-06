@@ -28,6 +28,12 @@ func TestBuildSystemPrompt_Default(t *testing.T) {
 	if !strings.Contains(prompt, "Today's date:") {
 		t.Error("expected date in env section")
 	}
+	if strings.Contains(prompt, "Session:") {
+		t.Error("should not contain session ID when not configured")
+	}
+	if strings.Contains(prompt, "Model:") {
+		t.Error("should not contain model name when not configured")
+	}
 }
 
 func TestBuildSystemPrompt_CustomPrompt(t *testing.T) {
@@ -104,15 +110,23 @@ func TestBuildSystemPrompt_WithSkills(t *testing.T) {
 	prompt := BuildSystemPrompt(PromptConfig{
 		CWD: "/tmp",
 		Skills: []*skills.Skill{
-			{Name: "web-search", Description: "Search the web for information"},
+			{Name: "web-search", Description: "Search the web for information", SkillFilePath: "/skills/web-search/SKILL.md"},
 		},
 	})
 
 	if !strings.Contains(prompt, "<available_skills>") {
-		t.Error("expected skills XML")
+		t.Error("expected skills index")
 	}
 	if !strings.Contains(prompt, "web-search") {
 		t.Error("expected skill name in output")
+	}
+	// Compact format: one line with name, description, path.
+	if !strings.Contains(prompt, "- web-search: Search the web for information (/skills/web-search/SKILL.md)") {
+		t.Error("expected compact one-line skill index format")
+	}
+	// Verbose XML per-skill tags should NOT appear.
+	if strings.Contains(prompt, "<skill>") {
+		t.Error("should not contain verbose <skill> XML tags")
 	}
 }
 
@@ -124,6 +138,35 @@ func TestBuildSystemPrompt_AppendPrompt(t *testing.T) {
 
 	if !strings.Contains(prompt, "IMPORTANT: always respond in haiku") {
 		t.Error("expected append prompt in output")
+	}
+}
+
+func TestBuildSystemPrompt_SessionMetadata(t *testing.T) {
+	prompt := BuildSystemPrompt(PromptConfig{
+		CWD:       "/tmp/project",
+		ModelName: "claude-sonnet-4",
+		SessionID: "session_abc123",
+	})
+
+	if !strings.Contains(prompt, "Session: session_abc123") {
+		t.Error("expected session ID in env section")
+	}
+	if !strings.Contains(prompt, "Model: claude-sonnet-4") {
+		t.Error("expected model name in env section")
+	}
+}
+
+func TestBuildSystemPrompt_TemplateParseError(t *testing.T) {
+	prompt := BuildSystemPrompt(PromptConfig{
+		CustomPrompt: "{{.NoSuchField}}",
+	})
+
+	if !strings.Contains(prompt, "prompt template error") {
+		t.Error("expected error comment in output for nonexistent template field")
+	}
+	// Raw source should still be present so the agent can see it.
+	if !strings.Contains(prompt, "{{.NoSuchField}}") {
+		t.Error("expected raw template source in error output")
 	}
 }
 
@@ -197,6 +240,19 @@ func TestBuildCommandPrompt_NotFound(t *testing.T) {
 	_, err := BuildCommandPrompt("nonexistent.md.tpl", "/tmp")
 	if err == nil {
 		t.Error("expected error for nonexistent template")
+	}
+}
+
+func TestBuildCommandPrompt_TemplateParseError(t *testing.T) {
+	// Syntax error: unmatched delimiter.
+	prompt, err := BuildCommandPrompt("plan.md.tpl", "/tmp")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	// With a valid template there should be no error comment.
+	if strings.Contains(prompt, "prompt template") {
+		t.Error("expected clean output for valid template, got error comment")
 	}
 }
 

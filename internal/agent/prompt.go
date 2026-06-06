@@ -65,6 +65,12 @@ type PromptConfig struct {
 
 	// AppendPrompt is appended after the generated prompt.
 	AppendPrompt string
+
+	// ModelName is the model identifier for this session (optional metadata).
+	ModelName string
+
+	// SessionID is the current session identifier (optional metadata).
+	SessionID string
 }
 
 // ContextFile is a project context document read from disk.
@@ -78,13 +84,15 @@ type promptData struct {
 	Tools         []tools.Schema
 	ContextFiles  []ContextFile
 	Guidelines    []string
-	SkillsXML     string
+	SkillsIndex   string
 	WorkingDir    string
 	WorkspaceTree string
 	Platform      string
 	Shell         string
 	Date          string
 	IsGitRepo     bool
+	ModelName     string
+	SessionID     string
 	AppendPrompt  string
 }
 
@@ -102,28 +110,30 @@ func BuildSystemPrompt(cfg PromptConfig) string {
 		return tplSource
 	}
 
-	var skillsXML string
+	var skillsIndex string
 	if len(cfg.Skills) > 0 {
-		skillsXML = skills.ToPromptXML(cfg.Skills)
+		skillsIndex = skills.ToPromptIndex(cfg.Skills)
 	}
 
 	data := promptData{
 		Tools:         cfg.Tools,
 		ContextFiles:  cfg.ContextFiles,
 		Guidelines:    cfg.Guidelines,
-		SkillsXML:     skillsXML,
+		SkillsIndex:   skillsIndex,
 		WorkingDir:    filepath.ToSlash(cfg.CWD),
 		WorkspaceTree: buildWorkspaceTree(cfg.CWD),
 		Platform:      runtime.GOOS,
 		Shell:         shellName(),
 		Date:          time.Now().Format("2006-01-02"),
 		IsGitRepo:     isGitRepo(cfg.CWD),
+		ModelName:     cfg.ModelName,
+		SessionID:     cfg.SessionID,
 		AppendPrompt:  cfg.AppendPrompt,
 	}
 
 	var b strings.Builder
 	if err := t.Execute(&b, data); err != nil {
-		return tplSource
+		return fmt.Sprintf("<!-- prompt template error: %v -->\n%s", err, tplSource)
 	}
 
 	return b.String()
@@ -140,7 +150,7 @@ func BuildCommandPrompt(templateName, cwd string) (string, error) {
 
 	t, err := template.New(templateName).Parse(string(content))
 	if err != nil {
-		return string(content), nil
+		return fmt.Sprintf("<!-- prompt template parse error: %v -->\n%s", err, content), nil
 	}
 
 	data := struct {
@@ -157,7 +167,7 @@ func BuildCommandPrompt(templateName, cwd string) (string, error) {
 
 	var b strings.Builder
 	if err := t.Execute(&b, data); err != nil {
-		return string(content), nil
+		return fmt.Sprintf("<!-- prompt template exec error: %v -->\n%s", err, content), nil
 	}
 	return b.String(), nil
 }

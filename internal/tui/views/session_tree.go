@@ -136,13 +136,12 @@ func (v *SessionTreeView) Render(app *gt.App) *gt.Element {
 		gt.WithTextStyle(theme.DimStyle().Italic()),
 	))
 
-	// Render the detail popup (SessionInfoView modal).
+	// Render the detail popup (SessionInfoView modal). Overlays work in
+	// alternate-screen mode which the caller (ChatPanel) manages.
 	detailEl := v.detailView.Render(app)
+	root.AddChild(detailEl)
 
-	wrapper := gt.New(gt.WithOverlay(true))
-	wrapper.AddChild(root)
-	wrapper.AddChild(detailEl)
-	return wrapper
+	return root
 }
 
 func (v *SessionTreeView) renderNode(node *treeNode, selected bool) *gt.Element {

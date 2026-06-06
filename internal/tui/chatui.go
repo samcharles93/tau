@@ -129,6 +129,7 @@ type ChatPanel struct {
 	completionIndex      *gt.State[int]
 	showSettings         *gt.State[bool]
 	selectedModelIndex   *gt.State[int]
+	settingsModal        *gt.Modal
 	showDebug            *gt.State[bool]
 	debugView            *views.DebugView
 	showDebugList        *gt.State[bool]
@@ -190,6 +191,17 @@ func NewChatPanel(
 		sessionSummaries:   gt.NewState([]tauchat.SessionSummary{}),
 		selectedModelIndex: gt.NewState(0),
 	}
+	panel.settingsModal = gt.NewModal(
+		gt.WithModalOpen(panel.showSettings),
+		gt.WithModalBackdrop("dim"),
+		gt.WithModalTrapFocus(false),
+		gt.WithModalElementOptions(
+			gt.WithDisplay(gt.DisplayFlex),
+			gt.WithDirection(gt.Column),
+			gt.WithJustify(gt.JustifyCenter),
+			gt.WithAlign(gt.AlignCenter),
+		),
+	)
 	return panel
 }
 
@@ -214,6 +226,7 @@ func (c *ChatPanel) BindApp(app *gt.App) {
 	c.completionIndex.BindApp(app)
 	c.showSettings.BindApp(app)
 	c.selectedModelIndex.BindApp(app)
+	c.settingsModal.BindApp(app)
 	c.showDebug.BindApp(app)
 	c.showDebugList.BindApp(app)
 	c.showSessionList.BindApp(app)
@@ -233,6 +246,8 @@ func (c *ChatPanel) Watchers() []gt.Watcher {
 	}
 	watchers = append(watchers,
 		gt.OnChange(c.inputValue, c.handleInputValueChanged),
+		gt.OnChange(c.showSettings, c.handleSettingsVisibilityChanged),
+		gt.OnChange(c.showSessionTree, c.handleSessionTreeVisibilityChanged),
 	)
 	return watchers
 }
@@ -647,6 +662,13 @@ func (c *ChatPanel) Render(app *gt.App) *gt.Element {
 		app.QueuePrintAboveln(" ")
 	}
 
+	if c.showSettings.Get() && app.IsInAlternateScreen() {
+		return c.renderFullscreenSettings(app)
+	}
+	if c.showSessionTree.Get() && app.IsInAlternateScreen() {
+		return c.renderFullscreenSessionTree(app)
+	}
+
 	root := gt.New(
 		gt.WithDisplay(gt.DisplayFlex),
 		gt.WithDirection(gt.Column),
@@ -666,13 +688,6 @@ func (c *ChatPanel) Render(app *gt.App) *gt.Element {
 	root.AddChild(c.renderInput(app))
 	root.AddChild(c.renderStatusBar())
 
-	if c.showSettings.Get() {
-		root.AddChild(c.renderSettingsOverlay(app))
-	}
-	if c.sessionTreeView != nil && c.showSessionTree.Get() {
-		root.AddChild(c.sessionTreeView.Render(app))
-	}
-
 	if c.dumpTreeOnNextRender {
 		c.dumpTreeOnNextRender = false
 		c.writeTreeDump(root)
@@ -684,15 +699,37 @@ func (c *ChatPanel) Render(app *gt.App) *gt.Element {
 // renderSettingsOverlay returns an interactive settings overlay rendered inline
 // (no alternate screen). Model selection is interactive — up/down to navigate,
 // Enter to switch models, Ctrl+R or Enter on reasoning to toggle, Esc to close.
-func (c *ChatPanel) renderSettingsOverlay(app *gt.App) *gt.Element {
-	overlay := gt.New(
-		gt.WithOverlay(true),
+// renderFullscreenSettings returns the settings view for alternate-screen mode.
+// The modal uses trapFocus=false so global keybindings (Ctrl+R, Ctrl+C)
+// propagate to ChatPanel.KeyMap instead of being swallowed.
+func (c *ChatPanel) renderFullscreenSettings(app *gt.App) *gt.Element {
+	root := gt.New(
 		gt.WithDisplay(gt.DisplayFlex),
-		gt.WithJustify(gt.JustifyCenter),
-		gt.WithAlign(gt.AlignCenter),
+		gt.WithDirection(gt.Column),
+		gt.WithWidthPercent(100),
+		gt.WithHeightPercent(100),
 	)
 
-	modal := gt.New(
+	modalEl := app.MountPersistent(c, 1, func() gt.Component {
+		return c.settingsModal
+	})
+	modalEl.AddChild(c.buildSettingsContent())
+	root.AddChild(modalEl)
+	return root
+}
+
+// renderFullscreenSessionTree returns the session tree dashboard for
+// alternate-screen mode.
+func (c *ChatPanel) renderFullscreenSessionTree(app *gt.App) *gt.Element {
+	if c.sessionTreeView == nil {
+		return gt.New(gt.WithText("tree view not initialised"))
+	}
+	return c.sessionTreeView.Render(app)
+}
+
+// buildSettingsContent returns the interactive settings UI content.
+func (c *ChatPanel) buildSettingsContent() *gt.Element {
+	content := gt.New(
 		gt.WithDisplay(gt.DisplayFlex),
 		gt.WithDirection(gt.Column),
 		gt.WithWidth(56),
@@ -703,20 +740,20 @@ func (c *ChatPanel) renderSettingsOverlay(app *gt.App) *gt.Element {
 	)
 
 	// Title.
-	modal.AddChild(gt.New(
+	content.AddChild(gt.New(
 		gt.WithText("Settings"),
 		gt.WithTextStyle(theme.BrandStyle()),
 	))
 
 	// Provider.
-	modal.AddChild(gt.New(
+	content.AddChild(gt.New(
 		gt.WithText("Provider: "+c.cfg.Provider),
 		gt.WithTextStyle(theme.BodyStyle()),
 		gt.WithTruncate(true),
 	))
 
 	// Current model.
-	modal.AddChild(gt.New(
+	content.AddChild(gt.New(
 		gt.WithText("Model: "+c.modelName.Get()),
 		gt.WithTextStyle(theme.BodyStyle()),
 		gt.WithTruncate(true),
@@ -756,22 +793,22 @@ func (c *ChatPanel) renderSettingsOverlay(app *gt.App) *gt.Element {
 			gt.WithTruncate(true),
 		))
 	}
-	modal.AddChild(modelList)
+	content.AddChild(modelList)
 
 	// Reasoning toggle.
 	reasoning := "off"
 	if c.showReasoning.Get() {
 		reasoning = "on"
 	}
-	modal.AddChild(gt.New(
-		gt.WithText("Reasoning: "+reasoning+"  (Enter to toggle · Ctrl+R)"),
+	content.AddChild(gt.New(
+		gt.WithText("Reasoning: "+reasoning+"  (↑↓ models  Enter switch/toggle  Ctrl+R)"),
 		gt.WithTextStyle(theme.BodyStyle()),
 		gt.WithTruncate(true),
 	))
 
 	// Session info.
 	if c.cfg.SessionID != "" {
-		modal.AddChild(gt.New(
+		content.AddChild(gt.New(
 			gt.WithText("Session: "+c.cfg.SessionID),
 			gt.WithTextStyle(theme.DimStyle()),
 			gt.WithTruncate(true),
@@ -779,13 +816,61 @@ func (c *ChatPanel) renderSettingsOverlay(app *gt.App) *gt.Element {
 	}
 
 	// Footer.
-	modal.AddChild(gt.New(
-		gt.WithText("↑↓: navigate  Enter: select/toggle  Esc: close"),
+	content.AddChild(gt.New(
+		gt.WithText("↑↓: navigate models  Enter: switch/toggle  Esc: close"),
 		gt.WithTextStyle(theme.DimStyle().Italic()),
 	))
 
-	overlay.AddChild(modal)
-	return overlay
+	return content
+}
+
+// handleSettingsVisibilityChanged manages alternate-screen entry/exit for the
+// settings view. Overlays are unsupported in inline mode per go-tui's design:
+// registerOverlay silently drops them unless the app is in alternate screen.
+func (c *ChatPanel) handleSettingsVisibilityChanged(open bool) {
+	if c.app == nil {
+		return
+	}
+	if open {
+		// Close tree view if open — only one alternate-screen view at a time.
+		c.showSessionTree.Set(false)
+		if !c.app.IsInAlternateScreen() {
+			if err := c.app.EnterAlternateScreen(); err != nil {
+				c.lastError.Set("enter settings screen: " + err.Error())
+			}
+		}
+		return
+	}
+	if c.app.IsInAlternateScreen() {
+		if err := c.app.ExitAlternateScreen(); err != nil {
+			c.lastError.Set(err.Error())
+		}
+	}
+	c.adjustInlineHeight()
+}
+
+// handleSessionTreeVisibilityChanged manages alternate-screen entry/exit
+// for the session tree dashboard.
+func (c *ChatPanel) handleSessionTreeVisibilityChanged(open bool) {
+	if c.app == nil {
+		return
+	}
+	if open {
+		// Close settings if open — only one alternate-screen view at a time.
+		c.showSettings.Set(false)
+		if !c.app.IsInAlternateScreen() {
+			if err := c.app.EnterAlternateScreen(); err != nil {
+				c.lastError.Set("enter tree screen: " + err.Error())
+			}
+		}
+		return
+	}
+	if c.app.IsInAlternateScreen() {
+		if err := c.app.ExitAlternateScreen(); err != nil {
+			c.lastError.Set(err.Error())
+		}
+	}
+	c.adjustInlineHeight()
 }
 
 func (c *ChatPanel) writeTreeDump(root *gt.Element) {
