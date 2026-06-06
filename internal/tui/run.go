@@ -85,8 +85,8 @@ func showSplash(_ context.Context) error {
 			// Ensure the config directory exists, then create the marker
 			// after the splash completes successfully.
 			defer func() {
-				os.MkdirAll(filepath.Dir(marker), 0o700)
-				os.WriteFile(marker, nil, 0o600)
+				_ = os.MkdirAll(filepath.Dir(marker), 0o700)
+				_ = os.WriteFile(marker, nil, 0o600)
 			}()
 		}
 	}

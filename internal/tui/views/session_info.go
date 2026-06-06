@@ -11,6 +11,8 @@ import (
 )
 
 // SessionInfoView shows formatted session metadata in a modal.
+// TODO(session-tree): wire this into the session tree dashboard as the
+// detail panel — it's currently not mounted by any view.
 type SessionInfoView struct {
 	show    *gt.State[bool]
 	summary *gt.State[tauchat.SessionSummary]

@@ -173,6 +173,10 @@ type ChatSessionConfig struct {
 	Model        ChatModelRef          `json:"model"`
 	SystemPrompt string                `json:"system_prompt"`
 	Parameters   ChatParameters        `json:"parameters"`
+	// ParentSessionID links this session to its parent for conversation
+	// branching / traceability. Empty string means this is a root session.
+	// The relationship is immutable after session creation.
+	ParentSessionID string `json:"parent_session_id,omitempty"`
 }
 
 func (c ChatSessionConfig) withDefaults() ChatSessionConfig {
@@ -634,6 +638,9 @@ type ChatSessionState struct {
 	LastUsage        ChatUsage             `json:"last_usage"`
 	CreatedAt        time.Time             `json:"created_at"`
 	UpdatedAt        time.Time             `json:"updated_at"`
+	// ParentSessionID links this session to its parent for conversation
+	// branching / traceability. Empty means root session. Immutable after creation.
+	ParentSessionID string `json:"parent_session_id,omitempty"`
 }
 
 func NewChatSessionState(sessionID string, cfg ChatSessionConfig, now time.Time) (*ChatSessionState, error) {
@@ -647,14 +654,15 @@ func NewChatSessionState(sessionID string, cfg ChatSessionConfig, now time.Time)
 	}
 	now = normalizeChatTime(now)
 	return &ChatSessionState{
-		SessionID:    sessionID,
-		Provider:     cfg.Provider,
-		Model:        cfg.Model,
-		SystemPrompt: cfg.SystemPrompt,
-		Parameters:   cfg.Parameters,
-		Status:       ChatSessionIdle,
-		CreatedAt:    now,
-		UpdatedAt:    now,
+		SessionID:       sessionID,
+		Provider:        cfg.Provider,
+		Model:           cfg.Model,
+		SystemPrompt:    cfg.SystemPrompt,
+		Parameters:      cfg.Parameters,
+		ParentSessionID: cfg.ParentSessionID,
+		Status:          ChatSessionIdle,
+		CreatedAt:       now,
+		UpdatedAt:       now,
 	}, nil
 }
 

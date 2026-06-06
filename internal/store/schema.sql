@@ -24,11 +24,13 @@ CREATE TABLE IF NOT EXISTS sessions (
     total_tokens  INTEGER NOT NULL DEFAULT 0,
     cost          REAL    NOT NULL DEFAULT 0.0,
     duration_ms   INTEGER NOT NULL DEFAULT 0,
-    system_prompt TEXT    NOT NULL DEFAULT ''
+    system_prompt       TEXT    NOT NULL DEFAULT '',
+    parent_session_id   TEXT    REFERENCES sessions(id) ON DELETE SET NULL  -- orphans children when parent is deleted
 );
 
 CREATE INDEX idx_sessions_created ON sessions(created_at DESC);
 CREATE INDEX idx_sessions_status  ON sessions(status);
+CREATE INDEX idx_sessions_parent  ON sessions(parent_session_id);
 
 -- messages stores the full conversation history.
 CREATE TABLE IF NOT EXISTS messages (

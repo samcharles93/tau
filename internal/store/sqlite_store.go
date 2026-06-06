@@ -72,20 +72,22 @@ func (s *SQLiteStore) Save(ctx context.Context, state chat.ChatSessionState, dur
 		INSERT INTO sessions (
 			id, model_id, provider, created_at, updated_at, status,
 			message_count, input_tokens, output_tokens, cache_read,
-			cache_write, total_tokens, cost, duration_ms, system_prompt
-		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+			cache_write, total_tokens, cost, duration_ms, system_prompt,
+			parent_session_id
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		ON CONFLICT(id) DO UPDATE SET
-			updated_at     = excluded.updated_at,
-			status         = excluded.status,
-			message_count  = excluded.message_count,
-			input_tokens   = excluded.input_tokens,
-			output_tokens  = excluded.output_tokens,
-			cache_read     = excluded.cache_read,
-			cache_write    = excluded.cache_write,
-			total_tokens   = excluded.total_tokens,
-			cost           = excluded.cost,
-			duration_ms    = excluded.duration_ms,
-			system_prompt  = excluded.system_prompt
+			updated_at        = excluded.updated_at,
+			status            = excluded.status,
+			message_count     = excluded.message_count,
+			input_tokens      = excluded.input_tokens,
+			output_tokens     = excluded.output_tokens,
+			cache_read        = excluded.cache_read,
+			cache_write       = excluded.cache_write,
+			total_tokens      = excluded.total_tokens,
+			cost              = excluded.cost,
+			duration_ms       = excluded.duration_ms,
+			system_prompt     = excluded.system_prompt,
+			parent_session_id = excluded.parent_session_id
 	`,
 		state.SessionID,
 		state.Model.ID,
@@ -102,6 +104,7 @@ func (s *SQLiteStore) Save(ctx context.Context, state chat.ChatSessionState, dur
 		cost,
 		duration.Milliseconds(),
 		state.SystemPrompt,
+		nullString(state.ParentSessionID),
 	)
 	if err != nil {
 		return fmt.Errorf("store: upsert session: %w", err)
@@ -149,15 +152,16 @@ func (s *SQLiteStore) Save(ctx context.Context, state chat.ChatSessionState, dur
 func (s *SQLiteStore) Load(ctx context.Context, id string) (chat.ChatSessionState, error) {
 	var row struct {
 		modelID, provider, createdStr, updatedStr, status, systemPrompt string
+		parentID                                                        sql.NullString
 		messageCount                                                    int
 	}
 	err := s.db.QueryRowContext(ctx, `
 		SELECT model_id, provider, created_at, updated_at, status, system_prompt,
-		       message_count
+		       message_count, parent_session_id
 		FROM sessions WHERE id = ?
 	`, id).Scan(
 		&row.modelID, &row.provider, &row.createdStr, &row.updatedStr,
-		&row.status, &row.systemPrompt, &row.messageCount,
+		&row.status, &row.systemPrompt, &row.messageCount, &row.parentID,
 	)
 	if err != nil {
 		if err == sql.ErrNoRows {
@@ -202,14 +206,15 @@ func (s *SQLiteStore) Load(ctx context.Context, id string) (chat.ChatSessionStat
 	}
 
 	return chat.ChatSessionState{
-		SessionID:    id,
-		Model:        chat.ChatModelRef{ID: row.modelID},
-		Provider:     config.ProviderConfig{Name: row.provider},
-		SystemPrompt: row.systemPrompt,
-		Status:       chat.ChatSessionStatus(row.status),
-		Messages:     messages,
-		CreatedAt:    createdAt,
-		UpdatedAt:    updatedAt,
+		SessionID:       id,
+		Model:           chat.ChatModelRef{ID: row.modelID},
+		Provider:        config.ProviderConfig{Name: row.provider},
+		SystemPrompt:    row.systemPrompt,
+		ParentSessionID: row.parentID.String,
+		Status:          chat.ChatSessionStatus(row.status),
+		Messages:        messages,
+		CreatedAt:       createdAt,
+		UpdatedAt:       updatedAt,
 	}, nil
 }
 
@@ -224,7 +229,7 @@ func (s *SQLiteStore) List(ctx context.Context, limit int, cursor string) ([]Ses
 	query := `
 		SELECT id, model_id, provider, created_at, updated_at, status,
 		       message_count, input_tokens, output_tokens, total_tokens,
-		       cost, duration_ms, system_prompt
+		       cost, duration_ms, system_prompt, parent_session_id
 		FROM sessions
 	`
 	var args []any
@@ -245,17 +250,20 @@ func (s *SQLiteStore) List(ctx context.Context, limit int, cursor string) ([]Ses
 	var summaries []SessionSummary
 	for rows.Next() {
 		var createdStr, updatedStr string
+		var parentID sql.NullString
 		var sum SessionSummary
 		if err := rows.Scan(
 			&sum.ID, &sum.ModelID, &sum.Provider,
 			&createdStr, &updatedStr, &sum.Status,
 			&sum.MessageCount, &sum.InputTokens, &sum.OutputTokens,
 			&sum.TotalTokens, &sum.Cost, &sum.DurationMs, &sum.SystemPrompt,
+			&parentID,
 		); err != nil {
 			return nil, "", fmt.Errorf("store: scan session row: %w", err)
 		}
 		sum.CreatedAt, _ = time.Parse(time.RFC3339, createdStr)
 		sum.UpdatedAt, _ = time.Parse(time.RFC3339, updatedStr)
+		sum.ParentSessionID = parentID.String
 		summaries = append(summaries, sum)
 	}
 	if err := rows.Err(); err != nil {
@@ -264,8 +272,12 @@ func (s *SQLiteStore) List(ctx context.Context, limit int, cursor string) ([]Ses
 
 	var nextCursor string
 	if len(summaries) > limit {
-		// The last item in summaries is the extra row used for detection —
-		// the next page starts from its created_at.
+		// The extra row at index `limit` tells us there is a next page.
+		// Use the last *visible* row's timestamp as the cursor so the
+		// extra row is included in the following page.
+		// NOTE: when multiple sessions share the same created_at, a
+		// composite (created_at, id) cursor would be more robust; the
+		// current single-column cursor may skip rows in that edge case.
 		nextCursor = summaries[limit-1].CreatedAt.UTC().Format(time.RFC3339)
 		summaries = summaries[:limit]
 	}
@@ -420,4 +432,11 @@ func calculateCost(cfg config.ModelConfig, usage chat.ChatUsage) float64 {
 	inputCost := float64(usage.PromptTokens) * cost.Input / 1_000_000
 	outputCost := float64(usage.CompletionTokens) * cost.Output / 1_000_000
 	return inputCost + outputCost
+}
+
+func nullString(s string) any {
+	if s == "" {
+		return nil
+	}
+	return s
 }

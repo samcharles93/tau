@@ -136,7 +136,6 @@ type ChatPanel struct {
 	showSessionList      *gt.State[bool]
 	showSessionInfo      *gt.State[bool]
 	sessionListView      *views.SessionListView
-	sessionInfoView      *views.SessionInfoView
 	sessionSummaries     *gt.State[[]tauchat.SessionSummary]
 	sessionListCursor    string
 	dumpTreeOnNextRender bool
