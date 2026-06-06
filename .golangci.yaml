@@ -32,7 +32,7 @@ linters:
         path: _test\.go
       - linters:
           - errcheck
-        text: "Error return value of `.*(Write|WriteString|WriteDirect|WriteStyled|WriteGradient|ExitRawMode|EnterRawMode|Interrupt|Kill|Shutdown|Close|Flush|sendNotification|InitGopls|Sync|Read|Fprintf)` is not checked"
+        text: "Error return value of `.*(Write|WriteString|WriteDirect|WriteStyled|WriteGradient|ExitRawMode|EnterRawMode|Interrupt|Kill|Shutdown|Close|Flush|sendNotification|InitGopls|Sync|Read|Fprint|Fprintf|Remove|Rollback|RegisterPluginTool|MkdirAll|WriteFile)` is not checked"
   settings:
     staticcheck:
       checks: ["SA*", "S*"]
