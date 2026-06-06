@@ -5,6 +5,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/samcharles93/tau/internal/app"
 	tauconfig "github.com/samcharles93/tau/internal/config"
