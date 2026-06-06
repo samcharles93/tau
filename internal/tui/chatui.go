@@ -1135,6 +1135,7 @@ func (c *ChatPanel) openSessionTree() {
 		c.sessionSummaries,
 		func(summary tauchat.SessionSummary) {
 			c.sendCommand(tauchat.LoadSessionCommand{SessionID: summary.ID})
+			c.showSessionTree.Set(false)
 		},
 		func() {
 			c.showSessionTree.Set(false)
@@ -1703,6 +1704,10 @@ func (c *ChatPanel) KeyMap() gt.KeyMap {
 				c.showSettings.Set(false)
 				return
 			}
+			if c.showSessionTree.Get() {
+				c.showSessionTree.Set(false)
+				return
+			}
 			if len(c.completions.Get()) > 0 {
 				c.closeCompletions()
 				return
@@ -1717,8 +1722,9 @@ func (c *ChatPanel) KeyMap() gt.KeyMap {
 			c.applySelectedCompletion()
 		}),
 		gt.On(gt.KeyCtrlC, func(ke gt.KeyEvent) {
-			if c.showSettings.Get() {
+			if c.showSettings.Get() || c.showSessionTree.Get() {
 				c.showSettings.Set(false)
+				c.showSessionTree.Set(false)
 				return
 			}
 			switch {
@@ -1739,48 +1745,109 @@ func (c *ChatPanel) KeyMap() gt.KeyMap {
 		gt.On(gt.KeyCtrlR, func(ke gt.KeyEvent) {
 			c.showReasoning.Set(!c.showReasoning.Get())
 		}),
-		// Settings navigation — preempt-stop so textarea cursor keys don't
-		// consume these when the settings overlay is active.
+		// Alternate-screen navigation. Preempt-stop so textarea cursor keys
+		// don't consume these when settings or tree is active.
 		gt.OnPreemptStop(gt.KeyUp, func(ke gt.KeyEvent) {
-			if !c.showSettings.Get() || len(c.completions.Get()) > 0 {
+			if c.showSettings.Get() && len(c.completions.Get()) == 0 {
+				models := c.availableModels.Get()
+				if len(models) == 0 {
+					return
+				}
+				idx := c.selectedModelIndex.Get() - 1
+				if idx < 0 {
+					idx = len(models) - 1
+				}
+				c.selectedModelIndex.Set(idx)
 				return
 			}
-			models := c.availableModels.Get()
-			if len(models) == 0 {
-				return
-			}
-			idx := c.selectedModelIndex.Get() - 1
-			if idx < 0 {
-				idx = len(models) - 1
-			}
-			c.selectedModelIndex.Set(idx)
-		}),
-		gt.OnPreemptStop(gt.KeyDown, func(ke gt.KeyEvent) {
-			if !c.showSettings.Get() || len(c.completions.Get()) > 0 {
-				return
-			}
-			models := c.availableModels.Get()
-			if len(models) == 0 {
-				return
-			}
-			idx := c.selectedModelIndex.Get() + 1
-			if idx >= len(models) {
-				idx = 0
-			}
-			c.selectedModelIndex.Set(idx)
-		}),
-		gt.On(gt.KeyEnter, func(ke gt.KeyEvent) {
-			if !c.showSettings.Get() {
-				return
-			}
-			models := c.availableModels.Get()
-			if len(models) > 0 {
-				idx := c.selectedModelIndex.Get()
-				if idx >= 0 && idx < len(models) && models[idx].Ready {
-					c.handleModelCommand(models[idx].ID)
+			if c.showSessionTree.Get() && c.sessionTreeView != nil {
+				// Delegate to tree view's KeyMap Up handler.
+				treeKM := c.sessionTreeView.KeyMap()
+				for _, b := range treeKM {
+					if b.Pattern.Key == gt.KeyUp {
+						b.Handler(ke)
+						return
+					}
 				}
 			}
-			c.showReasoning.Set(!c.showReasoning.Get())
+		}),
+		gt.OnPreemptStop(gt.KeyDown, func(ke gt.KeyEvent) {
+			if c.showSettings.Get() && len(c.completions.Get()) == 0 {
+				models := c.availableModels.Get()
+				if len(models) == 0 {
+					return
+				}
+				idx := c.selectedModelIndex.Get() + 1
+				if idx >= len(models) {
+					idx = 0
+				}
+				c.selectedModelIndex.Set(idx)
+				return
+			}
+			if c.showSessionTree.Get() && c.sessionTreeView != nil {
+				treeKM := c.sessionTreeView.KeyMap()
+				for _, b := range treeKM {
+					if b.Pattern.Key == gt.KeyDown {
+						b.Handler(ke)
+						return
+					}
+				}
+			}
+		}),
+		gt.OnPreemptStop(gt.KeyLeft, func(ke gt.KeyEvent) {
+			if c.showSessionTree.Get() && c.sessionTreeView != nil {
+				treeKM := c.sessionTreeView.KeyMap()
+				for _, b := range treeKM {
+					if b.Pattern.Key == gt.KeyLeft {
+						b.Handler(ke)
+						return
+					}
+				}
+			}
+		}),
+		gt.OnPreemptStop(gt.KeyRight, func(ke gt.KeyEvent) {
+			if c.showSessionTree.Get() && c.sessionTreeView != nil {
+				treeKM := c.sessionTreeView.KeyMap()
+				for _, b := range treeKM {
+					if b.Pattern.Key == gt.KeyRight {
+						b.Handler(ke)
+						return
+					}
+				}
+			}
+		}),
+		gt.OnPreemptStop(gt.Rune('f'), func(ke gt.KeyEvent) {
+			if c.showSessionTree.Get() && c.sessionTreeView != nil {
+				treeKM := c.sessionTreeView.KeyMap()
+				for _, b := range treeKM {
+					if b.Pattern.Rune == 'f' {
+						b.Handler(ke)
+						return
+					}
+				}
+			}
+		}),
+		gt.On(gt.KeyEnter, func(ke gt.KeyEvent) {
+			if c.showSettings.Get() {
+				models := c.availableModels.Get()
+				if len(models) > 0 {
+					idx := c.selectedModelIndex.Get()
+					if idx >= 0 && idx < len(models) && models[idx].Ready {
+						c.handleModelCommand(models[idx].ID)
+					}
+				}
+				c.showReasoning.Set(!c.showReasoning.Get())
+				return
+			}
+			if c.showSessionTree.Get() && c.sessionTreeView != nil {
+				treeKM := c.sessionTreeView.KeyMap()
+				for _, b := range treeKM {
+					if b.Pattern.Key == gt.KeyEnter {
+						b.Handler(ke)
+						return
+					}
+				}
+			}
 		}),
 	}
 	if len(c.completions.Get()) > 0 {
