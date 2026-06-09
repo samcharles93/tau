@@ -28,7 +28,11 @@ The project follows a **layered architecture** with a command/event boundary bet
 - **`app`** — Service/orchestration layer. Resolves tokens, discovers models, creates the chat runtime, and launches the TUI or one-shot stream. CLI commands call `app.*` functions.
 - **`cli`** — Thin command definitions using urfave/cli. Parses flags and delegates to `app`.
 - **`chat`** — Chat runtime: session lifecycle, streaming, command dispatch, event publishing via pubsub.
-- **`tui`** — go-tui interactive terminal UI. Consumes `chat.Runtime` events, sends commands.
+- **`tui`** — go-tui interactive terminal UI. Consumes `chat.Runtime` events, sends commands. The UI presentation is divided into:
+  - **Core (`internal/tui/`)**: Handles app bootstrapping, event watchers, state lifecycle, and main layout structure.
+  - **Views (`internal/tui/views/`)**: Fully-encapsulated fullscreen screens/modals (SettingsView, SessionTreeView, SessionListView, DebugView) that react to state changes and receive delegated keyboard/mouse inputs.
+  - **Components (`internal/tui/components/`)**: Small, reusable UI elements/widgets (e.g. lists, select dropdowns, toggles) that can be imported and composed into views.
+  - **Layouts (`internal/tui/layouts/`)**: Shared layouts defining structural frames and spacing (flex blocks, grids) for terminal rendering.
 - **`platform`** — Endpoint resolution, OAuth PKCE flow, token caching, HTTP client factory.
 - **`config`** — Loads `~/.config/tau/config.yaml`; foundation package with no internal imports.
 - **`pubsub`** — Generic typed in-process pub/sub event bus (`Bus[T]`).
@@ -44,6 +48,7 @@ The project follows a **layered architecture** with a command/event boundary bet
 3. **TUI** imports `chat`, `pubsub`, `theme`, and TUI-local packages only — never `app`, `cli`, or `platform` directly.
 4. **Infrastructure** packages (`config`, `pubsub`, `theme`) have zero internal imports — they are leaf dependencies.
 5. **`app`** is the only package that may import both domain and infrastructure to wire them together.
+6. **TUI Subpackage Dependencies**: Core TUI imports `views`, `components`, and `layouts`. Views import/compose `components` and `layouts`. Components and layouts must remain leaf dependencies within the TUI package (i.e. never import `views` or core TUI files) to ensure they are fully reusable across different pages and views.
 
 ### Communication Pattern
 
