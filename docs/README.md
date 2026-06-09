@@ -14,23 +14,23 @@ By default, running `tau` starts an interactive chat session using your default 
 
 The following flags can be passed to the root `tau` command:
 
-*   **`--provider`, `-p` `<name>`**  
+* **`--provider`, `-p` `<name>`**  
     Specify the configured provider name to use (e.g., `openai`, `openrouter`). Can also be set via the `TAU_PROVIDER` environment variable.
-*   **`--model` `<model-id>`**  
+* **`--model` `<model-id>`**  
     Specify the model ID to use for the chat session (e.g., `gpt-5.5`, `claude-4.6-sonnet`). You can also specify the provider and model together in the format `--model provider/model-id` (e.g. `--model openrouter/nvidia/nemotron-3-ultra-550b-a55b`).
-*   **`--system-prompt` `<prompt>`**  
+* **`--system-prompt` `<prompt>`**  
     Override the default system prompt for this chat session.
-*   **`--max-tokens` `<number>`**  
+* **`--max-tokens` `<number>`**  
     Set the maximum completion tokens per response.
-*   **`--temperature` `<float>`**  
+* **`--temperature` `<float>`**  
     Set the sampling temperature for model responses (controls creativity/randomness).
-*   **`--resume`, `-r` `<session-id>|latest`**  
+* **`--resume`, `-r` `<session-id>|latest`**  
     Resume a saved chat session. Provide a specific session UUID, or `latest` to resume the most recent session.
-*   **`--prompt` `<prompt>`**  
+* **`--prompt` `<prompt>`**  
     Run Tau in single-shot mode: process the prompt, print the model's response to stdout, and exit.
-*   **`--insecure`**  
+* **`--insecure`**  
     Skip TLS certificate verification. Can also be set via the `TAU_INSECURE` environment variable.
-*   **`--verbose`**  
+* **`--verbose`**  
     Show progress and debug messages on `stderr`. Can also be set via the `TAU_VERBOSE` environment variable.
 
 ## Subcommands
@@ -44,7 +44,8 @@ tau models [flags]
 ```
 
 **Flags:**
-*   **`--json`**  
+
+* **`--json`**  
     Output the list of models as JSON instead of a formatted table.
 
 ### `sessions`
