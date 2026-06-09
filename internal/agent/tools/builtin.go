@@ -14,6 +14,8 @@ func RegisterBuiltins(reg *Registry, cwd string) error {
 		NewGrepTool(cwd),
 		NewFindTool(cwd),
 		NewLsTool(cwd),
+		NewSearchDocsTool(),
+		NewReadDocTool(),
 	}
 
 	for _, tool := range builtins {

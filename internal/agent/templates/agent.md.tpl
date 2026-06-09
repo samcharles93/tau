@@ -53,6 +53,9 @@ directory.
 </workspace>
 {{- end}}
 
+You have access to Tau's documentation via `list_tau_docs`, `search_tau_docs`, and `read_tau_doc`.
+Use them whenever the user's question relates to Tau — usage, configuration, errors, skills, or capabilities.
+
 <env>
 Working directory: {{.WorkingDir}}
 Platform: {{.Platform}}

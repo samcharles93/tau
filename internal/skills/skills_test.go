@@ -159,6 +159,7 @@ func TestToPromptIndex_IncludesBundledResources(t *testing.T) {
 	require.NotContains(t, index, "assets")
 }
 
+// Test that if bundled resources are present but empty, the [bundled:] section is omitted entirely rather than showing empty categories.
 func TestToPromptIndex_OmitsBundledWhenEmpty(t *testing.T) {
 	t.Parallel()
 
@@ -173,14 +174,14 @@ func TestToPromptIndex_OmitsBundledWhenEmpty(t *testing.T) {
 	require.NotContains(t, index, "[bundled:")
 }
 
+// Test that the discovery process correctly identifies skill files regardless of the case of "SKILL.md".
 func TestDiscover_CaseInsensitiveSkillMD(t *testing.T) {
 	t.Parallel()
 
-	// The discovery scan should match SKILL.md, Skill.md, sKill.md,
-	// and skill.md — not just the canonical uppercase form.
 	cases := []string{"SKILL.md", "Skill.md", "sKill.md", "skill.md"}
 	for _, filename := range cases {
 		t.Run(filename, func(t *testing.T) {
+			t.Parallel()
 			root := t.TempDir()
 			skillDir := filepath.Join(root, "test-skill")
 			require.NoError(t, os.MkdirAll(skillDir, 0o755))
@@ -195,6 +196,7 @@ func TestDiscover_CaseInsensitiveSkillMD(t *testing.T) {
 	}
 }
 
+// Test that files with names that contain "skill.md" but aren't exactly "SKILL.md" (case-insensitive) are not mistakenly identified as skill files.
 func TestDiscover_RejectsSimilarFilenames(t *testing.T) {
 	t.Parallel()
 
@@ -203,6 +205,7 @@ func TestDiscover_RejectsSimilarFilenames(t *testing.T) {
 	bad := []string{"not-skill.md", "skill.md.bak", "my-skill.md", "skill.mdx"}
 	for _, filename := range bad {
 		t.Run(filename, func(t *testing.T) {
+			t.Parallel()
 			root := t.TempDir()
 			skillDir := filepath.Join(root, "real-skill")
 			require.NoError(t, os.MkdirAll(skillDir, 0o755))

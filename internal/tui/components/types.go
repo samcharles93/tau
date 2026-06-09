@@ -30,3 +30,14 @@ type DebugControl struct {
 	Options []string
 	State   *gt.State[string]
 }
+
+// TreeItem is one entry in a Tree component.
+type TreeItem struct {
+	ID          string
+	Label       string
+	Description string
+	Depth       int
+	Expanded    bool
+	HasChildren bool
+	Disabled    bool
+}
