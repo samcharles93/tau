@@ -14,6 +14,7 @@ import (
 	"github.com/samcharles93/tau/internal/agent/tools"
 	tauchat "github.com/samcharles93/tau/internal/chat"
 	tauconfig "github.com/samcharles93/tau/internal/config"
+	"github.com/samcharles93/tau/internal/eventbus"
 	"github.com/samcharles93/tau/internal/plugin"
 	"github.com/samcharles93/tau/internal/provider"
 	"github.com/samcharles93/tau/internal/skills"
@@ -152,24 +153,28 @@ func buildModelRefs(models []provider.Model) []tauchat.ChatModelRef {
 
 // newCoordinator creates and returns an agent coordinator with the standard
 // tool registry, config, and session persistence.
-func newCoordinator(ctx context.Context, opts ChatOptions, bearerToken string, sessionStore store.SessionStore) (*agent.Coordinator, error) {
+func newCoordinator(ctx context.Context, opts ChatOptions, bearerToken string, sessionStore store.SessionStore, startupEvents []tauchat.ChatEvent, bus *eventbus.Bus) (*agent.Coordinator, error) {
 	return buildCoordinator(ctx, coordinatorConfig{
+		Bus:              bus,
 		ChatOptions:      opts,
 		BearerToken:      bearerToken,
 		SessionStore:     sessionStore,
 		InteractiveUI:    true,
 		ScheduleInterval: tauconfig.ScheduleIntervalFromEnv(),
+		StartupEvents:    startupEvents,
 	})
 }
 
 // coordinatorConfig holds all parameters for building a coordinator instance,
 // shared between interactive and headless modes.
 type coordinatorConfig struct {
+	Bus              *eventbus.Bus
 	ChatOptions      ChatOptions
 	BearerToken      string
 	SessionStore     store.SessionStore
 	InteractiveUI    bool
 	ScheduleInterval time.Duration
+	StartupEvents    []tauchat.ChatEvent
 }
 
 // buildCoordinator creates a coordinator with the full plugin/tool setup.
@@ -198,6 +203,7 @@ func buildCoordinator(ctx context.Context, cfg coordinatorConfig) (*agent.Coordi
 	}
 
 	coordinator, err := agent.NewCoordinator(ctx, agent.CoordinatorConfig{
+		Bus:              cfg.Bus,
 		TokenSource:       staticTokenSource(cfg.BearerToken),
 		Streamer:          provider.OpenAIStreamer{Insecure: cfg.ChatOptions.Insecure},
 		Registry:          registry,
@@ -206,6 +212,7 @@ func buildCoordinator(ctx context.Context, cfg coordinatorConfig) (*agent.Coordi
 		SessionStore:      cfg.SessionStore,
 		AutoExportJSONL:   true,
 		ScheduleInterval:  cfg.ScheduleInterval,
+		StartupEvents:     cfg.StartupEvents,
 		ExtensionReloader: pluginMgr,
 		OnPluginEvent: func(event string, sessionID string, payload *api.EventPayload) *api.EventResponse {
 			return pluginMgr.DispatchEvent(ctx, event, sessionID, payload)

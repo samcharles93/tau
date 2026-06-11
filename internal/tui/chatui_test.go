@@ -7,7 +7,7 @@ import (
 
 	gt "github.com/grindlemire/go-tui"
 	tauchat "github.com/samcharles93/tau/internal/chat"
-	"github.com/samcharles93/tau/internal/pubsub"
+	"github.com/samcharles93/tau/internal/eventbus"
 )
 
 type fakeRuntime struct {
@@ -19,14 +19,13 @@ func (r *fakeRuntime) Send(cmd tauchat.ChatCommand) error {
 	return nil
 }
 
-func (r *fakeRuntime) SubscribeEvents(int) (*pubsub.Subscription[tauchat.ChatEvent], error) {
-	return nil, nil
-}
-
 func (r *fakeRuntime) Close() {}
 
 func newTestPanel(runtime *fakeRuntime) *ChatPanel {
-	return NewChatPanel(context.Background(), runtime, nil, nil, TUIConfig{
+	bus := eventbus.New()
+	client := bus.Client("test")
+	chatSub := eventbus.Subscribe[tauchat.ChatEvent](client)
+	return NewChatPanel(context.Background(), runtime, chatSub, TUIConfig{
 		SessionID: "session_1",
 		ModelName: "model-a",
 		AvailableModels: []tauchat.ChatModelRef{

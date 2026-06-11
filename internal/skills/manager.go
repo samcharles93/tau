@@ -1,14 +1,11 @@
 package skills
 
 import (
-	"context"
 	"errors"
 	"sync"
 
-	"github.com/samcharles93/tau/internal/pubsub"
+	"github.com/samcharles93/tau/internal/eventbus"
 )
-
-const managerEventTopic = "skills.manager.events"
 
 // Event represents a refreshed skill snapshot.
 type Event struct {
@@ -24,17 +21,26 @@ type DiscoveryConfig struct {
 	DisabledSkills []string
 }
 
-// Manager owns a workspace-scoped skill catalog and publishes refresh events.
+// Manager owns a workspace-scoped skill catalog and publishes refresh events
+// through the event bus. Callers subscribe to [Event] on the bus directly.
 type Manager struct {
 	mu           sync.RWMutex
 	allSkills    []*Skill
 	activeSkills []*Skill
 	diagnostics  []Diagnostic
-	bus          *pubsub.Bus[Event]
+	bus          *eventbus.Bus
+	client       *eventbus.Client
+	pub          *eventbus.Publisher[Event]
 }
 
-func NewManager() *Manager {
-	return &Manager{bus: pubsub.New[Event]()}
+// NewManager creates a skill manager attached to the given event bus.
+func NewManager(bus *eventbus.Bus) *Manager {
+	client := bus.Client("skills")
+	return &Manager{
+		bus:    bus,
+		client: client,
+		pub:    eventbus.Publish[Event](client),
+	}
 }
 
 func (m *Manager) Refresh(cfg DiscoveryConfig) (Event, error) {
@@ -59,8 +65,8 @@ func (m *Manager) Refresh(cfg DiscoveryConfig) (Event, error) {
 	m.diagnostics = cloneDiagnostics(snapshot.Diagnostics)
 	m.mu.Unlock()
 
-	if m.bus != nil {
-		_ = m.bus.Publish(context.Background(), managerEventTopic, snapshot)
+	if m.pub != nil {
+		m.pub.Publish(snapshot)
 	}
 
 	return snapshot, nil
@@ -81,16 +87,10 @@ func (m *Manager) Snapshot() Event {
 	}
 }
 
-func (m *Manager) Subscribe(buffer int) (*pubsub.Subscription[Event], error) {
-	if m == nil || m.bus == nil {
-		return nil, errors.New("skills manager bus is not available")
-	}
-	return m.bus.Subscribe(managerEventTopic, buffer)
-}
-
+// Close closes the manager's event bus client.
 func (m *Manager) Close() {
-	if m == nil || m.bus == nil {
+	if m == nil {
 		return
 	}
-	m.bus.Close()
+	m.client.Close()
 }

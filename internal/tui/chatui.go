@@ -11,7 +11,7 @@ import (
 	gt "github.com/grindlemire/go-tui"
 
 	tauchat "github.com/samcharles93/tau/internal/chat"
-	"github.com/samcharles93/tau/internal/pubsub"
+	"github.com/samcharles93/tau/internal/eventbus"
 	"github.com/samcharles93/tau/internal/theme"
 	"github.com/samcharles93/tau/internal/tui/notify"
 	"github.com/samcharles93/tau/internal/tui/views"
@@ -28,10 +28,10 @@ const (
 type ChatPanel struct {
 	ctx       context.Context
 	runtime   tauchat.ChatRuntime
-	eventSub  *pubsub.Subscription[tauchat.ChatEvent]
+	chatSub   *eventbus.Subscriber[tauchat.ChatEvent]
 	cfg       TUIConfig
 	app       *gt.App
-	notifySub *pubsub.Subscription[notify.Notification]
+	notifyQueue *notify.Queue
 
 	messages             *gt.State[[]tauchat.ChatMessage]
 	streamingContent     *gt.State[string]
@@ -76,8 +76,7 @@ type ChatPanel struct {
 func NewChatPanel(
 	ctx context.Context,
 	runtime tauchat.ChatRuntime,
-	eventSub *pubsub.Subscription[tauchat.ChatEvent],
-	notifySub *pubsub.Subscription[notify.Notification],
+	chatSub *eventbus.Subscriber[tauchat.ChatEvent],
 	cfg TUIConfig,
 ) *ChatPanel {
 	commands := make(map[string]tauchat.ExtensionCommand)
@@ -85,9 +84,9 @@ func NewChatPanel(
 	panel := &ChatPanel{
 		ctx:                ctx,
 		runtime:            runtime,
-		eventSub:           eventSub,
-		notifySub:          notifySub,
+		chatSub:            chatSub,
 		cfg:                cfg,
+		notifyQueue:        notify.NewQueue(),
 		messages:           gt.NewState(make([]tauchat.ChatMessage, 0)),
 		streamingContent:   gt.NewState(""),
 		streamingReasoning: gt.NewState(""),
@@ -158,35 +157,19 @@ func (c *ChatPanel) BindApp(app *gt.App) {
 	c.sessionSummaries.BindApp(app)
 }
 
-// Watchers bridges runtime and notification channels into the go-tui event loop.
+// Watchers bridges runtime event channels into the go-tui event loop.
 func (c *ChatPanel) Watchers() []gt.Watcher {
 	watchers := make([]gt.Watcher, 0, 4)
-	if c.eventSub != nil && c.eventSub.Channel() != nil {
-		watchers = append(watchers, gt.Watch(c.eventSub.Channel(), c.handleRuntimeEvent))
-	}
-	if c.notifySub != nil && c.notifySub.Channel() != nil {
-		watchers = append(watchers, gt.Watch(c.notifySub.Channel(), c.handleNotification))
+	if c.chatSub != nil {
+		watchers = append(watchers, gt.Watch(c.chatSub.Events(), c.handleRuntimeEvent))
 	}
 	watchers = append(watchers,
 		gt.OnChange(c.inputValue, c.handleInputValueChanged),
 		gt.OnChange(c.showSettings, c.handleSettingsVisibilityChanged),
 		gt.OnChange(c.showSessionTree, c.handleSessionTreeVisibilityChanged),
+		gt.OnTimer(time.Second, c.applyNotifyQueue),
 	)
 	return watchers
-}
-
-func (c *ChatPanel) handleNotification(n notify.Notification) {
-	message := strings.TrimSpace(n.Message)
-	if message == "" {
-		return
-	}
-	c.notice.Set(message)
-	if n.Level == notify.LevelError {
-		c.lastError.Set(message)
-		c.printStyledAbovef("%s", ansify(fmt.Sprintf("\nerror: %s", message), theme.ColorRed))
-		return
-	}
-	c.printStyledAbovef("\n%s", ansify(message, theme.ColorDimGray))
 }
 
 func (c *ChatPanel) handleRuntimeEvent(event tauchat.ChatEvent) {
@@ -256,13 +239,18 @@ func (c *ChatPanel) handleRuntimeEvent(event tauchat.ChatEvent) {
 		c.status.Set(tauchat.ChatSessionIdle)
 		c.printStyledAbovef("%s", ansify(fmt.Sprintf("\nerror: %s", ev.Message), theme.ColorRed))
 	case tauchat.ChatNotificationEvent:
-		c.notice.Set(ev.Message)
+		c.notifyQueue.Push(notify.Notification{
+			Message:  ev.Message,
+			Level:    notifyLevelFromChat(ev.Level),
+			Duration: notifyDurationFromChat(ev.Level),
+		})
+		c.applyNotifyQueue()
 		if ev.Level == tauchat.ChatNotificationError {
 			c.lastError.Set(ev.Message)
 			c.printStyledAbovef("%s", ansify(fmt.Sprintf("\nerror: %s", ev.Message), theme.ColorRed))
-			return
+		} else {
+			c.printStyledAbovef("\n%s", ansify(ev.Message, theme.ColorDimGray))
 		}
-		c.printStyledAbovef("\n%s", ansify(ev.Message, theme.ColorDimGray))
 	case tauchat.ExtensionsReloadedEvent:
 		c.setExtensionCommands(ev.Result.Commands)
 		message := fmt.Sprintf("reloaded extensions: %d loaded", ev.Result.ExtensionCount)
@@ -306,6 +294,45 @@ func (c *ChatPanel) handleRuntimeEvent(event tauchat.ChatEvent) {
 			c.notice.Set("Session exported to stdout")
 		}
 		c.printAbovef("%s", c.notice.Get())
+	}
+}
+
+// applyNotifyQueue drains expired entries from the notification queue
+// and updates the notice state with the current front.
+func (c *ChatPanel) applyNotifyQueue() {
+	if c.notifyQueue == nil {
+		return
+	}
+	current := c.notifyQueue.Current()
+	if current == nil {
+		c.notice.Set("")
+		return
+	}
+	c.notice.Set(current.Message)
+}
+
+// notifyLevelFromChat maps the chat notification level to the notify package level.
+func notifyLevelFromChat(level tauchat.ChatNotificationLevel) notify.Level {
+	switch level {
+	case tauchat.ChatNotificationError:
+		return notify.LevelError
+	case tauchat.ChatNotificationWarn:
+		return notify.LevelWarn
+	default:
+		return notify.LevelInfo
+	}
+}
+
+// notifyDurationFromChat returns the auto-dismiss duration for a chat notification level.
+// Errors do not auto-dismiss (0); warnings get 8 seconds; info gets 5 seconds.
+func notifyDurationFromChat(level tauchat.ChatNotificationLevel) time.Duration {
+	switch level {
+	case tauchat.ChatNotificationError:
+		return 0 // errors persist until dismissed by the user
+	case tauchat.ChatNotificationWarn:
+		return 8 * time.Second
+	default:
+		return 5 * time.Second
 	}
 }
 

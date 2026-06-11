@@ -3,33 +3,14 @@ package tui
 import (
 	"context"
 	"fmt"
-	"log/slog"
 	"os"
 	"path/filepath"
 
 	gt "github.com/grindlemire/go-tui"
 	tauchat "github.com/samcharles93/tau/internal/chat"
-	"github.com/samcharles93/tau/internal/pubsub"
-	"github.com/samcharles93/tau/internal/tui/notify"
+	"github.com/samcharles93/tau/internal/eventbus"
 	"github.com/samcharles93/tau/internal/tui/splash"
 )
-
-// eventBufferSize is the subscriber buffer for runtime events in
-// interactive mode. Larger than one-shot because streaming deltas
-// arrive at high frequency while the TUI renders.
-const eventBufferSize = 128
-
-func (cfg TUIConfig) notifyBusSubscription() *pubsub.Subscription[notify.Notification] {
-	if cfg.NotifyBus == nil {
-		return nil
-	}
-	notifySub, err := cfg.NotifyBus.Subscribe("notifications", notifyBufferSize)
-	if err != nil {
-		slog.Warn("notification subscription failed", "err", err)
-		return nil
-	}
-	return notifySub
-}
 
 // Run launches the interactive chat TUI. It blocks until the user exits.
 func Run(ctx context.Context, runtime tauchat.ChatRuntime, cfg TUIConfig) error {
@@ -39,18 +20,17 @@ func Run(ctx context.Context, runtime tauchat.ChatRuntime, cfg TUIConfig) error 
 		return err
 	}
 
-	sub, err := runtime.SubscribeEvents(eventBufferSize)
-	if err != nil {
-		return err
-	}
-	defer sub.Unsubscribe()
-
-	notifySub := cfg.notifyBusSubscription()
-	if notifySub != nil {
-		defer notifySub.Unsubscribe()
+	if cfg.Bus == nil {
+		return fmt.Errorf("event bus is required for TUI")
 	}
 
-	root := NewChatPanel(ctx, runtime, sub, notifySub, cfg)
+	tuiClient := cfg.Bus.Client("tui")
+	defer tuiClient.Close()
+
+	chatSub := eventbus.Subscribe[tauchat.ChatEvent](tuiClient)
+	defer chatSub.Close()
+
+	root := NewChatPanel(ctx, runtime, chatSub, cfg)
 
 	app, err := gt.NewApp(
 		gt.WithRootComponent(root),

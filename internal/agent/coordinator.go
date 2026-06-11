@@ -18,14 +18,13 @@ import (
 
 	"github.com/samcharles93/tau/internal/agent/tools"
 	"github.com/samcharles93/tau/internal/chat"
+	"github.com/samcharles93/tau/internal/eventbus"
 	"github.com/samcharles93/tau/internal/provider"
-	"github.com/samcharles93/tau/internal/pubsub"
 	"github.com/samcharles93/tau/internal/store"
 	"github.com/samcharles93/tau/pkg/plugin/api"
 )
 
 const (
-	coordinatorEventTopic        = "agent.coordinator.events"
 	commandBufferSize            = 16
 	defaultMaxToolLoopIterations = 50
 	toolSummaryMaxBytes          = 600
@@ -48,10 +47,13 @@ type Streamer interface {
 
 // Coordinator is the agent runtime that replaces chat.Runtime.
 // It receives commands from the TUI, runs the agentic turn loop,
-// and publishes events via pubsub.
+// and publishes events via the event bus.
 type Coordinator struct {
 	ctx               context.Context
 	cancel            context.CancelFunc
+	bus               *eventbus.Bus
+	client            *eventbus.Client
+	chatPub           *eventbus.Publisher[chat.ChatEvent]
 	tokenSource       TokenSource
 	streamer          Streamer
 	registry          *tools.Registry
@@ -73,7 +75,6 @@ type Coordinator struct {
 	startupEvents     []chat.ChatEvent
 	startupEventsOnce sync.Once
 	commands          chan chat.ChatCommand
-	eventBus          *pubsub.Bus[chat.ChatEvent]
 
 	mu       sync.Mutex
 	sessions map[string]*coordinatorSession
@@ -95,6 +96,7 @@ type coordinatorSession struct {
 
 // CoordinatorConfig holds the dependencies for creating a Coordinator.
 type CoordinatorConfig struct {
+	Bus               *eventbus.Bus
 	TokenSource       TokenSource
 	Streamer          Streamer
 	Registry          *tools.Registry
@@ -134,6 +136,9 @@ func NewCoordinator(ctx context.Context, cfg CoordinatorConfig) (*Coordinator, e
 	if cfg.Streamer == nil {
 		return nil, errors.New("agent streamer is required")
 	}
+	if cfg.Bus == nil {
+		return nil, errors.New("agent event bus is required")
+	}
 
 	ctx, cancel := context.WithCancel(ctx)
 	maxIter := cfg.MaxToolIterations
@@ -145,9 +150,15 @@ func NewCoordinator(ctx context.Context, cfg CoordinatorConfig) (*Coordinator, e
 		parallel = *cfg.ParallelToolCalls
 	}
 
+	client := cfg.Bus.Client("coordinator")
+	chatPub := eventbus.Publish[chat.ChatEvent](client)
+
 	c := &Coordinator{
 		ctx:               ctx,
 		cancel:            cancel,
+		bus:               cfg.Bus,
+		client:            client,
+		chatPub:           chatPub,
 		tokenSource:       cfg.TokenSource,
 		streamer:          cfg.Streamer,
 		registry:          cfg.Registry,
@@ -166,7 +177,6 @@ func NewCoordinator(ctx context.Context, cfg CoordinatorConfig) (*Coordinator, e
 		scheduleInterval:  cfg.ScheduleInterval,
 		startupEvents:     append([]chat.ChatEvent(nil), cfg.StartupEvents...),
 		commands:          make(chan chat.ChatCommand, commandBufferSize),
-		eventBus:          pubsub.New[chat.ChatEvent](),
 		sessions:          make(map[string]*coordinatorSession),
 		shutdown:          make(map[string]struct{}),
 		prompts:           make(map[string]chan interactivePromptResponse),
@@ -191,15 +201,16 @@ func NewCoordinator(ctx context.Context, cfg CoordinatorConfig) (*Coordinator, e
 	return c, nil
 }
 
-// SubscribeEvents returns a subscription for coordinator events.
-func (c *Coordinator) SubscribeEvents(buffer int) (*pubsub.Subscription[chat.ChatEvent], error) {
-	sub, err := c.eventBus.Subscribe(coordinatorEventTopic, buffer)
-	if err != nil {
-		return nil, err
-	}
+// SubscribeEvents returns a typed subscriber for coordinator events.
+// The subscriber's Events channel carries [chat.ChatEvent] values in
+// publication order. Startup events (configured via
+// CoordinatorConfig.StartupEvents) are delivered when the first
+// subscriber connects.
+func (c *Coordinator) SubscribeEvents() (*eventbus.Subscriber[chat.ChatEvent], error) {
+	sub := eventbus.Subscribe[chat.ChatEvent](c.client)
 	c.startupEventsOnce.Do(func() {
 		for _, event := range c.startupEvents {
-			c.emit(event)
+			c.chatPub.Publish(event)
 		}
 	})
 	return sub, nil
@@ -236,7 +247,7 @@ func (c *Coordinator) Close() {
 		if c.onClose != nil {
 			c.onClose()
 		}
-		c.eventBus.Close()
+		c.client.Close()
 		close(c.done)
 	})
 }
@@ -1390,15 +1401,11 @@ func (c *Coordinator) dispatchToolCompleted(event chat.ChatToolExecutionComplete
 }
 
 func (c *Coordinator) emit(event chat.ChatEvent) {
-	if err := c.eventBus.Publish(c.ctx, coordinatorEventTopic, event); err != nil {
-		slog.Debug("coordinator: failed to publish event", "error", err)
-	}
+	c.chatPub.Publish(event)
 }
 
 func (c *Coordinator) emitMustDeliver(event chat.ChatEvent) {
-	if err := c.eventBus.PublishMustDeliver(coordinatorEventTopic, event); err != nil {
-		slog.Error("coordinator: failed to deliver event", "error", err)
-	}
+	c.chatPub.Publish(event)
 }
 
 func normalizedTime(at time.Time) time.Time {

@@ -9,7 +9,6 @@ import (
 	"time"
 
 	"github.com/samcharles93/tau/internal/config"
-	"github.com/samcharles93/tau/internal/pubsub"
 )
 
 const (
@@ -331,9 +330,9 @@ func (ExportSessionCommand) IsChatCommand() {}
 type ChatEvent interface{ IsChatEvent() }
 
 // ChatRuntime is the interface the TUI uses to interact with the coordinator.
+// Events are published through the event bus; the TUI subscribes directly.
 type ChatRuntime interface {
 	Send(cmd ChatCommand) error
-	SubscribeEvents(buffer int) (*pubsub.Subscription[ChatEvent], error)
 	Close()
 }
 

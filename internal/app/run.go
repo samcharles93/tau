@@ -9,11 +9,10 @@ import (
 
 	tauchat "github.com/samcharles93/tau/internal/chat"
 	tauconfig "github.com/samcharles93/tau/internal/config"
+	"github.com/samcharles93/tau/internal/eventbus"
 	"github.com/samcharles93/tau/internal/provider"
-	"github.com/samcharles93/tau/internal/pubsub"
 	"github.com/samcharles93/tau/internal/store"
 	"github.com/samcharles93/tau/internal/tui"
-	"github.com/samcharles93/tau/internal/tui/notify"
 )
 
 // RunChat orchestrates an interactive chat session: resolves tokens and model,
@@ -47,7 +46,25 @@ func RunChat(ctx context.Context, opts ChatOptions) error {
 		sessionStore = nil
 	}
 
-	coordinator, err := newCoordinator(ctx, opts, bearerToken, sessionStore)
+	// Create the central event bus. All subsystems (coordinator, TUI, skills)
+	// communicate through this bus as named clients. The bus enforces total
+	// ordering of published events and typed routing via Go generics.
+	bus := eventbus.New()
+	defer bus.Close()
+
+	// Collect startup notifications for the coordinator event stream so the
+	// TUI receives them on first subscribe. Model discovery failures are
+	// surfaced here rather than through a separate pubsub bus.
+	var startupEvents []tauchat.ChatEvent
+	if discoverErr != nil {
+		startupEvents = append(startupEvents, tauchat.ChatNotificationEvent{
+			Message:    "Model discovery failed: " + discoverErr.Error() + " (`/refresh` to retry)",
+			Level:      tauchat.ChatNotificationWarn,
+			OccurredAt: time.Now().UTC(),
+		})
+	}
+
+	coordinator, err := newCoordinator(ctx, opts, bearerToken, sessionStore, startupEvents, bus)
 	if err != nil {
 		if sessionStore != nil {
 			sessionStore.Close()
@@ -106,9 +123,6 @@ func RunChat(ctx context.Context, opts ChatOptions) error {
 		}
 	}
 
-	notifyBus := pubsub.New[notify.Notification]()
-	defer notifyBus.Close()
-
 	available := buildModelRefs(allModels)
 
 	// Build a refresher closure that captures the provider and token so the
@@ -121,20 +135,10 @@ func RunChat(ctx context.Context, opts ChatOptions) error {
 		Provider:           opts.Provider.Name,
 		AvailableModels:    available,
 		AvailableProviders: tauconfig.ProviderNames(opts.Config),
-		NotifyBus:          notifyBus,
+		Bus:                bus,
 		RefreshModels:      refresher,
 		ShowReasoning:      opts.Config.UI.ShowReasoning,
 		Debug:              isDevel(opts.Version, opts.Config),
-	}
-
-	// If model discovery failed at startup, notify the user in the TUI
-	// rather than refusing to start.
-	if discoverErr != nil {
-		_ = notifyBus.Publish(ctx, "notifications", notify.Notification{
-			Message:  "Model discovery failed: " + discoverErr.Error() + " (`/refresh` to retry)",
-			Level:    notify.LevelWarn,
-			Duration: 8 * time.Second,
-		})
 	}
 
 	tuiErr := tui.Run(ctx, coordinator, tuiCfg)

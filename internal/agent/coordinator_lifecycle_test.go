@@ -12,9 +12,18 @@ import (
 	"github.com/samcharles93/tau/internal/agent/tools"
 	"github.com/samcharles93/tau/internal/chat"
 	"github.com/samcharles93/tau/internal/config"
+	"github.com/samcharles93/tau/internal/eventbus"
 	"github.com/samcharles93/tau/pkg/plugin/api"
 	"github.com/stretchr/testify/require"
 )
+
+// newTestBus returns a Bus that is automatically closed when the test completes.
+func newTestBus(t *testing.T) *eventbus.Bus {
+	t.Helper()
+	bus := eventbus.New()
+	t.Cleanup(bus.Close)
+	return bus
+}
 
 type noopStreamer struct{}
 
@@ -80,6 +89,7 @@ func TestCoordinatorDispatchesSessionLifecycleHooks(t *testing.T) {
 	shutdown := make(chan map[string]any, 1)
 
 	coordinator, err := NewCoordinator(context.Background(), CoordinatorConfig{
+			Bus: newTestBus(t),
 		TokenSource: func(context.Context, config.ProviderConfig) (string, error) {
 			return "", nil
 		},
@@ -116,6 +126,7 @@ func TestCoordinatorDispatchesSessionLifecycleHooks(t *testing.T) {
 
 func TestCoordinatorPublishesStartupEventsOnSubscribe(t *testing.T) {
 	coordinator, err := NewCoordinator(context.Background(), CoordinatorConfig{
+			Bus: newTestBus(t),
 		TokenSource: func(context.Context, config.ProviderConfig) (string, error) {
 			return "", nil
 		},
@@ -128,12 +139,12 @@ func TestCoordinatorPublishesStartupEventsOnSubscribe(t *testing.T) {
 	require.NoError(t, err)
 	defer coordinator.Close()
 
-	sub, err := coordinator.SubscribeEvents(1)
+	sub, err := coordinator.SubscribeEvents()
 	require.NoError(t, err)
-	defer sub.Unsubscribe()
+	defer sub.Close()
 
 	select {
-	case event := <-sub.Channel():
+	case event := <-sub.Events():
 		runtimeErr, ok := event.(chat.ChatRuntimeErrorEvent)
 		require.True(t, ok)
 		require.Equal(t, "extension failed", runtimeErr.Message)
@@ -157,6 +168,7 @@ func TestCoordinatorPublishesToolAndReasoningObservabilityEvents(t *testing.T) {
 	parallel := false
 
 	coordinator, err := NewCoordinator(context.Background(), CoordinatorConfig{
+			Bus: newTestBus(t),
 		TokenSource: func(context.Context, config.ProviderConfig) (string, error) {
 			return "", nil
 		},
@@ -182,9 +194,9 @@ func TestCoordinatorPublishesToolAndReasoningObservabilityEvents(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	sub, err := coordinator.SubscribeEvents(16)
+	sub, err := coordinator.SubscribeEvents()
 	require.NoError(t, err)
-	defer sub.Unsubscribe()
+	defer sub.Close()
 	defer coordinator.Close()
 
 	startTestSession(t, coordinator)
@@ -199,7 +211,7 @@ func TestCoordinatorPublishesToolAndReasoningObservabilityEvents(t *testing.T) {
 	deadline := time.After(time.Second)
 	for !sawReasoning || !sawDelta || !sawStarted || !sawToolCompleted || !sawResponseCompleted {
 		select {
-		case event := <-sub.Channel():
+		case event := <-sub.Events():
 			switch ev := event.(type) {
 			case chat.ChatReasoningDeltaEvent:
 				require.Equal(t, "session-1", ev.SessionID)
@@ -252,6 +264,7 @@ func TestCoordinatorEmitsReasoningEventWhenHookExposureDisabled(t *testing.T) {
 	var hooksMu sync.Mutex
 	var reasoningHooks []map[string]any
 	coordinator, err := NewCoordinator(context.Background(), CoordinatorConfig{
+			Bus: newTestBus(t),
 		TokenSource: func(context.Context, config.ProviderConfig) (string, error) {
 			return "", nil
 		},
@@ -265,9 +278,9 @@ func TestCoordinatorEmitsReasoningEventWhenHookExposureDisabled(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	sub, err := coordinator.SubscribeEvents(8)
+	sub, err := coordinator.SubscribeEvents()
 	require.NoError(t, err)
-	defer sub.Unsubscribe()
+	defer sub.Close()
 	defer coordinator.Close()
 
 	startTestSession(t, coordinator)
@@ -282,7 +295,7 @@ func TestCoordinatorEmitsReasoningEventWhenHookExposureDisabled(t *testing.T) {
 	deadline := time.After(time.Second)
 	for !sawReasoning || !sawCompleted {
 		select {
-		case event := <-sub.Channel():
+		case event := <-sub.Events():
 			switch ev := event.(type) {
 			case chat.ChatReasoningDeltaEvent:
 				require.Equal(t, "hidden", ev.Snapshot)
@@ -303,6 +316,7 @@ func TestCoordinatorEmitsReasoningEventWhenHookExposureDisabled(t *testing.T) {
 
 func TestCoordinatorUnknownToolPublishesCompletedError(t *testing.T) {
 	coordinator, err := NewCoordinator(context.Background(), CoordinatorConfig{
+			Bus: newTestBus(t),
 		TokenSource: func(context.Context, config.ProviderConfig) (string, error) {
 			return "", nil
 		},
@@ -312,9 +326,9 @@ func TestCoordinatorUnknownToolPublishesCompletedError(t *testing.T) {
 	require.NoError(t, err)
 	defer coordinator.Close()
 
-	sub, err := coordinator.SubscribeEvents(16)
+	sub, err := coordinator.SubscribeEvents()
 	require.NoError(t, err)
-	defer sub.Unsubscribe()
+	defer sub.Close()
 
 	startTestSession(t, coordinator)
 	require.NoError(t, coordinator.Send(chat.SubmitChatPromptCommand{
@@ -327,7 +341,7 @@ func TestCoordinatorUnknownToolPublishesCompletedError(t *testing.T) {
 	deadline := time.After(time.Second)
 	for {
 		select {
-		case event := <-sub.Channel():
+		case event := <-sub.Events():
 			completed, ok := event.(chat.ChatToolExecutionCompletedEvent)
 			if !ok {
 				continue
@@ -355,6 +369,7 @@ func TestCoordinatorReloadExtensionsWhileIdle(t *testing.T) {
 		},
 	}
 	coordinator, err := NewCoordinator(context.Background(), CoordinatorConfig{
+			Bus: newTestBus(t),
 		TokenSource: func(context.Context, config.ProviderConfig) (string, error) {
 			return "", nil
 		},
@@ -365,9 +380,9 @@ func TestCoordinatorReloadExtensionsWhileIdle(t *testing.T) {
 	require.NoError(t, err)
 	defer coordinator.Close()
 
-	sub, err := coordinator.SubscribeEvents(8)
+	sub, err := coordinator.SubscribeEvents()
 	require.NoError(t, err)
-	defer sub.Unsubscribe()
+	defer sub.Close()
 
 	startTestSession(t, coordinator)
 	require.NoError(t, coordinator.Send(chat.ReloadExtensionsCommand{RequestedAt: time.Now().UTC()}))
@@ -376,7 +391,7 @@ func TestCoordinatorReloadExtensionsWhileIdle(t *testing.T) {
 	deadline := time.After(time.Second)
 	for !sawReload || !sawSuccess {
 		select {
-		case event := <-sub.Channel():
+		case event := <-sub.Events():
 			switch ev := event.(type) {
 			case chat.ExtensionsReloadedEvent:
 				require.Equal(t, 2, ev.Result.ExtensionCount)
@@ -399,6 +414,7 @@ func TestCoordinatorReloadExtensionsWhileActiveRejects(t *testing.T) {
 	reloader := &fakeExtensionReloader{}
 	streamer := &blockingFullStreamer{started: make(chan struct{})}
 	coordinator, err := NewCoordinator(context.Background(), CoordinatorConfig{
+			Bus: newTestBus(t),
 		TokenSource: func(context.Context, config.ProviderConfig) (string, error) {
 			return "", nil
 		},
@@ -409,9 +425,9 @@ func TestCoordinatorReloadExtensionsWhileActiveRejects(t *testing.T) {
 	require.NoError(t, err)
 	defer coordinator.Close()
 
-	sub, err := coordinator.SubscribeEvents(16)
+	sub, err := coordinator.SubscribeEvents()
 	require.NoError(t, err)
-	defer sub.Unsubscribe()
+	defer sub.Close()
 
 	startTestSession(t, coordinator)
 	require.NoError(t, coordinator.Send(chat.SubmitChatPromptCommand{
@@ -430,7 +446,7 @@ func TestCoordinatorReloadExtensionsWhileActiveRejects(t *testing.T) {
 	deadline := time.After(time.Second)
 	for {
 		select {
-		case event := <-sub.Channel():
+		case event := <-sub.Events():
 			notification, ok := event.(chat.ChatNotificationEvent)
 			if !ok {
 				continue
@@ -447,6 +463,7 @@ func TestCoordinatorReloadExtensionsWhileActiveRejects(t *testing.T) {
 
 func TestCoordinatorConfirmBridgeResponseAndCancel(t *testing.T) {
 	coordinator, err := NewCoordinator(context.Background(), CoordinatorConfig{
+			Bus: newTestBus(t),
 		TokenSource: func(context.Context, config.ProviderConfig) (string, error) {
 			return "", nil
 		},
@@ -457,9 +474,9 @@ func TestCoordinatorConfirmBridgeResponseAndCancel(t *testing.T) {
 	require.NoError(t, err)
 	defer coordinator.Close()
 
-	sub, err := coordinator.SubscribeEvents(4)
+	sub, err := coordinator.SubscribeEvents()
 	require.NoError(t, err)
-	defer sub.Unsubscribe()
+	defer sub.Close()
 
 	resultCh := make(chan bool, 1)
 	errCh := make(chan error, 1)
@@ -474,7 +491,7 @@ func TestCoordinatorConfirmBridgeResponseAndCancel(t *testing.T) {
 
 	var requestID string
 	select {
-	case event := <-sub.Channel():
+	case event := <-sub.Events():
 		request, ok := event.(chat.InteractivePromptRequestedEvent)
 		require.True(t, ok)
 		require.Equal(t, chat.InteractivePromptConfirm, request.Kind)
@@ -501,7 +518,7 @@ func TestCoordinatorConfirmBridgeResponseAndCancel(t *testing.T) {
 		errCh <- err
 	}()
 	select {
-	case event := <-sub.Channel():
+	case event := <-sub.Events():
 		request := event.(chat.InteractivePromptRequestedEvent)
 		require.NoError(t, coordinator.Send(chat.RespondInteractivePromptCommand{
 			RequestID: request.RequestID,
@@ -520,6 +537,7 @@ func TestCoordinatorConfirmBridgeResponseAndCancel(t *testing.T) {
 
 func TestCoordinatorQuestionBridgeResponse(t *testing.T) {
 	coordinator, err := NewCoordinator(context.Background(), CoordinatorConfig{
+			Bus: newTestBus(t),
 		TokenSource: func(context.Context, config.ProviderConfig) (string, error) {
 			return "", nil
 		},
@@ -530,9 +548,9 @@ func TestCoordinatorQuestionBridgeResponse(t *testing.T) {
 	require.NoError(t, err)
 	defer coordinator.Close()
 
-	sub, err := coordinator.SubscribeEvents(4)
+	sub, err := coordinator.SubscribeEvents()
 	require.NoError(t, err)
-	defer sub.Unsubscribe()
+	defer sub.Close()
 
 	resultCh := make(chan string, 1)
 	errCh := make(chan error, 1)
@@ -547,7 +565,7 @@ func TestCoordinatorQuestionBridgeResponse(t *testing.T) {
 
 	var requestID string
 	select {
-	case event := <-sub.Channel():
+	case event := <-sub.Events():
 		request, ok := event.(chat.InteractivePromptRequestedEvent)
 		require.True(t, ok)
 		require.Equal(t, chat.InteractivePromptQuestion, request.Kind)
@@ -571,6 +589,7 @@ func TestCoordinatorQuestionBridgeResponse(t *testing.T) {
 
 func TestCoordinatorPromptBridgeUnblocksOnClose(t *testing.T) {
 	coordinator, err := NewCoordinator(context.Background(), CoordinatorConfig{
+			Bus: newTestBus(t),
 		TokenSource: func(context.Context, config.ProviderConfig) (string, error) {
 			return "", nil
 		},
@@ -580,9 +599,9 @@ func TestCoordinatorPromptBridgeUnblocksOnClose(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	sub, err := coordinator.SubscribeEvents(4)
+	sub, err := coordinator.SubscribeEvents()
 	require.NoError(t, err)
-	defer sub.Unsubscribe()
+	defer sub.Close()
 
 	errCh := make(chan error, 1)
 	go func() {
@@ -591,7 +610,7 @@ func TestCoordinatorPromptBridgeUnblocksOnClose(t *testing.T) {
 	}()
 
 	select {
-	case event := <-sub.Channel():
+	case event := <-sub.Events():
 		_, ok := event.(chat.InteractivePromptRequestedEvent)
 		require.True(t, ok)
 	case <-time.After(time.Second):
@@ -612,6 +631,7 @@ func TestCoordinatorPromptBridgeUnblocksOnClose(t *testing.T) {
 func TestCoordinatorRunsExtensionCommand(t *testing.T) {
 	reloader := &fakeExtensionReloader{commandOutput: "hello from extension"}
 	coordinator, err := NewCoordinator(context.Background(), CoordinatorConfig{
+			Bus: newTestBus(t),
 		TokenSource: func(context.Context, config.ProviderConfig) (string, error) {
 			return "", nil
 		},
@@ -623,16 +643,16 @@ func TestCoordinatorRunsExtensionCommand(t *testing.T) {
 	require.NoError(t, err)
 	defer coordinator.Close()
 
-	sub, err := coordinator.SubscribeEvents(8)
+	sub, err := coordinator.SubscribeEvents()
 	require.NoError(t, err)
-	defer sub.Unsubscribe()
+	defer sub.Close()
 	startTestSession(t, coordinator)
 	require.NoError(t, coordinator.Send(chat.RunExtensionCommandCommand{Name: "hello", Args: "sam"}))
 
 	deadline := time.After(time.Second)
 	for {
 		select {
-		case event := <-sub.Channel():
+		case event := <-sub.Events():
 			result, ok := event.(chat.ExtensionCommandResultEvent)
 			if !ok {
 				continue

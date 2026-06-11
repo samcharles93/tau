@@ -4,6 +4,7 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/samcharles93/tau/internal/eventbus"
 	"github.com/stretchr/testify/require"
 )
 
@@ -31,12 +32,12 @@ description: Review code. Use when the user asks for a review.
 Review instructions.
 `)
 
-	manager := NewManager()
+	bus := eventbus.New()
+	manager := NewManager(bus)
 	defer manager.Close()
 
-	subscription, err := manager.Subscribe(1)
-	require.NoError(t, err)
-	defer subscription.Unsubscribe()
+	sub := eventbus.Subscribe[Event](bus.Client("test"))
+	defer sub.Close()
 
 	snapshot, err := manager.Refresh(DiscoveryConfig{WorkingDir: workingDir, DisabledSkills: []string{"code-review"}})
 	require.NoError(t, err)
@@ -44,7 +45,7 @@ Review instructions.
 	require.Len(t, snapshot.ActiveSkills, 1)
 	require.Equal(t, "pdf-processing", snapshot.ActiveSkills[0].Name)
 
-	event, ok := <-subscription.Channel()
+	event, ok := <-sub.Events()
 	require.True(t, ok)
 	require.Len(t, event.ActiveSkills, 1)
 }

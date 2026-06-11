@@ -9,6 +9,7 @@ import (
 
 	tauchat "github.com/samcharles93/tau/internal/chat"
 	tauconfig "github.com/samcharles93/tau/internal/config"
+	"github.com/samcharles93/tau/internal/eventbus"
 	"github.com/samcharles93/tau/internal/provider"
 	"github.com/samcharles93/tau/internal/store"
 )
@@ -48,6 +49,7 @@ func RunStdIn(ctx context.Context, opts ChatOptions, prompt string) error {
 	}
 
 	coordinator, err := buildCoordinator(ctx, coordinatorConfig{
+		Bus:              eventbus.New(),
 		ChatOptions:      opts,
 		BearerToken:      bearerToken,
 		SessionStore:     sessionStore,
@@ -81,11 +83,11 @@ func RunStdIn(ctx context.Context, opts ChatOptions, prompt string) error {
 		slog.Warn("model discovery failed", "err", discoverErr)
 	}
 
-	sub, err := coordinator.SubscribeEvents(32)
+	sub, err := coordinator.SubscribeEvents()
 	if err != nil {
 		return err
 	}
-	defer sub.Unsubscribe()
+	defer sub.Close()
 
 	requestID, err := newID()
 	if err != nil {
@@ -108,7 +110,7 @@ func RunStdIn(ctx context.Context, opts ChatOptions, prompt string) error {
 		case <-ctx.Done():
 			fmt.Fprintln(os.Stderr, "\ntimed out")
 			return ctx.Err()
-		case event, ok := <-sub.Channel():
+		case event, ok := <-sub.Events():
 			if !ok {
 				return nil
 			}

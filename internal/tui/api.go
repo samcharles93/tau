@@ -4,12 +4,8 @@ import (
 	"context"
 
 	tauchat "github.com/samcharles93/tau/internal/chat"
-	"github.com/samcharles93/tau/internal/pubsub"
-	"github.com/samcharles93/tau/internal/tui/notify"
+	"github.com/samcharles93/tau/internal/eventbus"
 )
-
-// notifyBufferSize is the subscriber buffer for external TUI notifications.
-const notifyBufferSize = 16
 
 // ModelRefresher is a function the app layer provides that re-discovers
 // available models from the configured provider. The TUI calls it asynchronously when the
@@ -24,7 +20,7 @@ type TUIConfig struct {
 	Provider           string
 	AvailableModels    []tauchat.ChatModelRef
 	AvailableProviders []string
-	NotifyBus          *pubsub.Bus[notify.Notification]
+	Bus                *eventbus.Bus
 	RefreshModels      ModelRefresher
 	ShowReasoning      bool
 	Debug              bool
