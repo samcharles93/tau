@@ -104,18 +104,17 @@ func BuildSystemPrompt(cfg PromptConfig) string {
 		tplSource = cfg.CustomPrompt
 	}
 
-	t, err := template.New("agent").Parse(tplSource)
-	if err != nil {
-		// Fallback: return the raw template source on parse failure.
-		return tplSource
-	}
+	data := buildPromptData(cfg)
+	return renderPromptTemplate("agent", tplSource, data)
+}
 
+func buildPromptData(cfg PromptConfig) promptData {
 	var skillsIndex string
 	if len(cfg.Skills) > 0 {
 		skillsIndex = skills.ToPromptIndex(cfg.Skills)
 	}
 
-	data := promptData{
+	return promptData{
 		Tools:         cfg.Tools,
 		ContextFiles:  cfg.ContextFiles,
 		Guidelines:    cfg.Guidelines,
@@ -130,52 +129,41 @@ func BuildSystemPrompt(cfg PromptConfig) string {
 		SessionID:     cfg.SessionID,
 		AppendPrompt:  cfg.AppendPrompt,
 	}
+}
+
+func renderPromptTemplate(templateName, source string, data promptData) string {
+	t, err := template.New(templateName).Parse(source)
+	if err != nil {
+		return fmt.Sprintf("<!-- prompt template parse error: %v -->\n%s", err, source)
+	}
 
 	var b strings.Builder
 	if err := t.Execute(&b, data); err != nil {
-		return fmt.Sprintf("<!-- prompt template error: %v -->\n%s", err, tplSource)
+		return fmt.Sprintf("<!-- prompt template error: %v -->\n%s", err, source)
 	}
 
 	return b.String()
 }
 
-// BuildCommandPrompt renders a built-in command template by name.
+// BuildPrompt renders a built-in command template by name.
 // The name should match a filename in templates/ (e.g. "plan.md.tpl").
 // Returns the rendered prompt, or an error if the template is not found.
-func BuildCommandPrompt(templateName, cwd string) (string, error) {
+func BuildPrompt(templateName, cwd string) (string, error) {
 	content, err := templateFS.ReadFile("templates/" + templateName)
 	if err != nil {
 		return "", err
 	}
 
-	t, err := template.New(templateName).Parse(string(content))
-	if err != nil {
-		return fmt.Sprintf("<!-- prompt template parse error: %v -->\n%s", err, content), nil
-	}
-
-	data := struct {
-		WorkingDir string
-		Platform   string
-		Date       string
-		IsGitRepo  bool
-	}{
-		WorkingDir: filepath.ToSlash(cwd),
-		Platform:   runtime.GOOS,
-		Date:       time.Now().Format("2006-01-02"),
-		IsGitRepo:  isGitRepo(cwd),
-	}
-
-	var b strings.Builder
-	if err := t.Execute(&b, data); err != nil {
-		return fmt.Sprintf("<!-- prompt template exec error: %v -->\n%s", err, content), nil
-	}
-	return b.String(), nil
+	return renderPromptTemplate(
+		templateName,
+		string(content),
+		buildPromptData(PromptConfig{CWD: cwd}),
+	), nil
 }
 
 // DiscoverContextFiles finds project-level context documents (AGENTS.md, etc.)
-// by walking from the git root (or CWD) down to the CWD, collecting every
-// matching file along the path in root→CWD order. This matches the Codex
-// hierarchical discovery spec.
+// by walking parent directories from CWD up to the filesystem root and
+// collecting every matching file in root→CWD order.
 func DiscoverContextFiles(cwd string) []ContextFile {
 	if cwd == "" {
 		return nil
@@ -188,20 +176,11 @@ func DiscoverContextFiles(cwd string) []ContextFile {
 		".cursorrules",
 	}
 
-	// Walk upward from CWD to find the git root.
-	root := cwd
-	for d := cwd; d != "" && d != string(filepath.Separator); d = filepath.Dir(d) {
-		if isGitRepo(d) {
-			root = d
-			break
-		}
-	}
-
-	// Build the list of directories from root down to CWD (inclusive).
+	// Build the list of directories from filesystem root down to CWD (inclusive).
 	var dirs []string
 	for d := cwd; ; d = filepath.Dir(d) {
 		dirs = append(dirs, d)
-		if d == root || d == string(filepath.Separator) || d == "" {
+		if d == string(filepath.Separator) || d == "" {
 			break
 		}
 	}

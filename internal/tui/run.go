@@ -19,7 +19,7 @@ import (
 // arrive at high frequency while the TUI renders.
 const eventBufferSize = 128
 
-func (cfg Config) notifyBusSubscription() *pubsub.Subscription[notify.Notification] {
+func (cfg TUIConfig) notifyBusSubscription() *pubsub.Subscription[notify.Notification] {
 	if cfg.NotifyBus == nil {
 		return nil
 	}
@@ -32,7 +32,7 @@ func (cfg Config) notifyBusSubscription() *pubsub.Subscription[notify.Notificati
 }
 
 // Run launches the interactive chat TUI. It blocks until the user exits.
-func Run(ctx context.Context, runtime tauchat.ChatRuntime, cfg Config) error {
+func Run(ctx context.Context, runtime tauchat.ChatRuntime, cfg TUIConfig) error {
 	// Show the τ glyph splash animation first. When the animation completes
 	// (or the user presses q/Esc), the splash app exits and we proceed to chat.
 	if err := showSplash(ctx); err != nil {

@@ -9,6 +9,7 @@ import (
 
 	"github.com/samcharles93/tau/internal/app"
 	tauconfig "github.com/samcharles93/tau/internal/config"
+	taulogger "github.com/samcharles93/tau/internal/logger"
 	urfavecli "github.com/urfave/cli/v3"
 )
 
@@ -22,8 +23,10 @@ func initLogging(debug bool) {
 	if debug {
 		level = slog.LevelDebug
 	}
-	handler := slog.NewTextHandler(logFile, &slog.HandlerOptions{Level: level})
-	slog.SetDefault(slog.New(handler))
+	taulogger.SetDefault(logFile, taulogger.Options{
+		Level:  level,
+		Format: taulogger.FormatText,
+	})
 }
 
 func NewRootCommand(version string) *urfavecli.Command {
@@ -55,11 +58,7 @@ func NewRootCommand(version string) *urfavecli.Command {
 			},
 			&urfavecli.StringFlag{
 				Name:  "model",
-				Usage: "Model ID to use for chat",
-			},
-			&urfavecli.StringFlag{
-				Name:  "system-prompt",
-				Usage: "Override the system prompt for this chat session",
+				Usage: "Model ID to use for chat (supports provider:model, e.g. openrouter:nvidia/nemotron-3-ultra)",
 			},
 			&urfavecli.IntFlag{
 				Name:  "max-tokens",
@@ -82,12 +81,15 @@ func NewRootCommand(version string) *urfavecli.Command {
 			},
 		},
 		Action: func(ctx context.Context, cmd *urfavecli.Command) error {
-			// Support provider/model syntax: --model openrouter/gpt-5.3
-			if modelArg := cmd.String("model"); strings.Contains(modelArg, "/") {
-				parts := strings.SplitN(modelArg, "/", 2)
-				if parts[0] != "" && parts[1] != "" {
-					_ = cmd.Set("provider", parts[0])
-					_ = cmd.Set("model", parts[1])
+			// Support explicit provider:model syntax (preferred), e.g.
+			// --model openrouter:nvidia/nemotron-3-ultra.
+			// Also support legacy provider/model syntax for compatibility.
+			if cmd.String("provider") == "" {
+				if providerPart, modelPart, ok := splitProviderModel(cmd.String("model")); ok {
+					if providerPart != "" && modelPart != "" {
+						_ = cmd.Set("provider", providerPart)
+						_ = cmd.Set("model", modelPart)
+					}
 				}
 			}
 
@@ -99,11 +101,36 @@ func NewRootCommand(version string) *urfavecli.Command {
 			opts := chatOptionsFromCmd(cmd, cfg, selectedProvider, version)
 			prompt := cmd.String("prompt")
 			if prompt != "" {
-				return app.RunSingleShot(ctx, opts, prompt)
+				return app.RunStdIn(ctx, opts, prompt)
 			}
 			return app.RunChat(ctx, opts)
 		},
 	}
+}
+
+func splitProviderModel(raw string) (providerPart string, modelPart string, ok bool) {
+	model := strings.TrimSpace(raw)
+	if model == "" {
+		return "", "", false
+	}
+
+	// Preferred syntax: provider:model
+	if provider, nestedModel, found := strings.Cut(model, ":"); found {
+		if provider == "" || nestedModel == "" {
+			return "", "", false
+		}
+		return provider, nestedModel, true
+	}
+
+	// Backward compatibility: provider/model with nested paths preserved.
+	if provider, nestedModel, found := strings.Cut(model, "/"); found {
+		if provider == "" || nestedModel == "" {
+			return "", "", false
+		}
+		return provider, nestedModel, true
+	}
+
+	return "", "", false
 }
 
 func chatOptionsFromCmd(cmd *urfavecli.Command, cfg tauconfig.Config, provider tauconfig.ProviderConfig, version string) app.ChatOptions {
@@ -112,7 +139,6 @@ func chatOptionsFromCmd(cmd *urfavecli.Command, cfg tauconfig.Config, provider t
 		Provider:        provider,
 		Insecure:        cmd.Bool("insecure"),
 		Model:           cmd.String("model"),
-		SystemPrompt:    cmd.String("system-prompt"),
 		MaxTokens:       cmd.Int("max-tokens"),
 		Temperature:     cmd.Float("temperature"),
 		Version:         version,

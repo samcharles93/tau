@@ -26,7 +26,7 @@ func (r *fakeRuntime) SubscribeEvents(int) (*pubsub.Subscription[tauchat.ChatEve
 func (r *fakeRuntime) Close() {}
 
 func newTestPanel(runtime *fakeRuntime) *ChatPanel {
-	return NewChatPanel(context.Background(), runtime, nil, nil, Config{
+	return NewChatPanel(context.Background(), runtime, nil, nil, TUIConfig{
 		SessionID: "session_1",
 		ModelName: "model-a",
 		AvailableModels: []tauchat.ChatModelRef{

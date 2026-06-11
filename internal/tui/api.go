@@ -2,7 +2,6 @@ package tui
 
 import (
 	"context"
-	"strings"
 
 	tauchat "github.com/samcharles93/tau/internal/chat"
 	"github.com/samcharles93/tau/internal/pubsub"
@@ -18,8 +17,8 @@ const notifyBufferSize = 16
 // packages (per dependency rules).
 type ModelRefresher func(ctx context.Context) ([]tauchat.ChatModelRef, error)
 
-// Config holds parameters for constructing the TUI model.
-type Config struct {
+// TUIConfig holds parameters for constructing the TUI model.
+type TUIConfig struct {
 	SessionID          string
 	ModelName          string
 	Provider           string
@@ -29,29 +28,4 @@ type Config struct {
 	RefreshModels      ModelRefresher
 	ShowReasoning      bool
 	Debug              bool
-}
-
-// BuiltinCommandNames returns built-in slash command names without the leading slash.
-func BuiltinCommandNames() []string {
-	commands := []string{
-		"new",
-		"system",
-		"model",
-		"refresh",
-		"reload",
-		"reasoning",
-		"settings",
-		"session",
-		"resume",
-		"debug",
-		"exit",
-	}
-	names := make([]string, 0, len(commands))
-	for _, command := range commands {
-		name := strings.TrimPrefix(strings.ToLower(strings.TrimSpace(command)), "/")
-		if name != "" {
-			names = append(names, name)
-		}
-	}
-	return names
 }

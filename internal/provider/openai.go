@@ -1,7 +1,7 @@
 // Package streaming provides HTTP-based streaming implementations for
 // LLM chat completions. It is infrastructure — the agent coordinator
 // depends on the Streamer interface and this package satisfies it.
-package streaming
+package provider
 
 import (
 	"bufio"
@@ -17,7 +17,6 @@ import (
 
 	"github.com/samcharles93/tau/internal/chat"
 	"github.com/samcharles93/tau/internal/config"
-	"github.com/samcharles93/tau/internal/platform"
 )
 
 const defaultStreamTimeout = 120 * time.Second
@@ -56,7 +55,7 @@ func (s OpenAIStreamer) StreamChatCompletionFull(
 		req.Header.Set(k, v)
 	}
 
-	client := platform.NewHTTPClientWithTimeout(s.Insecure, s.timeout())
+	client := NewHTTPClientWithTimeout(s.Insecure, s.timeout())
 	resp, err := client.Do(req)
 	if err != nil {
 		return chat.CompletionResult{}, fmt.Errorf("chat request failed: %w", err)

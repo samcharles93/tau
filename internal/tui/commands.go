@@ -6,6 +6,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/google/uuid"
 	gt "github.com/grindlemire/go-tui"
 	tauchat "github.com/samcharles93/tau/internal/chat"
 	"github.com/samcharles93/tau/internal/tui/views"
@@ -117,7 +118,7 @@ func (c *ChatPanel) openSessionList() {
 		c.sessionSummaries,
 		selected,
 		func(summary tauchat.SessionSummary) {
-			c.sendCommand(tauchat.LoadSessionCommand{SessionID: summary.ID})
+			c.loadSession(summary.ID)
 		},
 		func() {
 			c.sendCommand(tauchat.ListSessionsCommand{Limit: 10, Cursor: c.sessionListCursor})
@@ -141,7 +142,7 @@ func (c *ChatPanel) openSessionTree() {
 	c.sessionTreeView = views.NewSessionTreeView(
 		c.sessionSummaries,
 		func(summary tauchat.SessionSummary) {
-			c.sendCommand(tauchat.LoadSessionCommand{SessionID: summary.ID})
+			c.loadSession(summary.ID)
 			c.showSessionTree.Set(false)
 		},
 		func() {
@@ -241,11 +242,15 @@ func (c *ChatPanel) handleSubmitWithDepth(value string, depth int) {
 		c.handleSlashCommand(text)
 		return
 	}
-	requestID, err := newID("req")
+
+	reqID, err := uuid.NewV7()
 	if err != nil {
 		c.lastError.Set(err.Error())
 		return
 	}
+
+	requestID := reqID.String()
+
 	if err := c.runtime.Send(tauchat.SubmitChatPromptCommand{
 		SessionID:   c.cfg.SessionID,
 		RequestID:   requestID,
@@ -345,10 +350,8 @@ func (c *ChatPanel) handleReasoningCommand(parts []string) {
 		c.showReasoning.Set(true)
 	case "off", "false", "no":
 		c.showReasoning.Set(false)
-	case "toggle":
-		c.showReasoning.Set(!c.showReasoning.Get())
 	default:
-		c.lastError.Set("usage: /reasoning on|off|toggle")
+		c.showReasoning.Set(!c.showReasoning.Get())
 	}
 }
 

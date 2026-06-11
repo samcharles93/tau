@@ -6,10 +6,10 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"os"
 	"strings"
 
 	"github.com/samcharles93/tau/internal/config"
-	"github.com/samcharles93/tau/internal/platform"
 )
 
 // Model represents a model returned by an OpenAI-compatible models endpoint.
@@ -31,6 +31,17 @@ type modelData struct {
 
 // DiscoverModels fetches available models from GET {base_url}/v1/models.
 func DiscoverModels(ctx context.Context, provider config.ProviderConfig, bearerToken string, insecure bool) ([]Model, error) {
+	if catalogEnabled() {
+		catalogModels, err := discoverModelsFromCatalog(ctx, provider, insecure)
+		if err == nil {
+			return mergeModels(ConfiguredModels(provider), catalogModels), nil
+		}
+	}
+
+	return discoverModelsLegacy(ctx, provider, bearerToken, insecure)
+}
+
+func discoverModelsLegacy(ctx context.Context, provider config.ProviderConfig, bearerToken string, insecure bool) ([]Model, error) {
 	baseURL := strings.TrimRight(provider.BaseURL, "/")
 	configured := ConfiguredModels(provider)
 	url := baseURL + "/v1/models"
@@ -40,7 +51,7 @@ func DiscoverModels(ctx context.Context, provider config.ProviderConfig, bearerT
 	}
 	req.Header.Set("Authorization", "Bearer "+bearerToken)
 
-	client := platform.NewHTTPClient(insecure)
+	client := NewHTTPClient(insecure)
 	resp, err := client.Do(req)
 	if err != nil {
 		if len(configured) > 0 {
@@ -72,12 +83,8 @@ func DiscoverModels(ctx context.Context, provider config.ProviderConfig, bearerT
 	if err := json.Unmarshal(body, &response); err != nil {
 		return nil, fmt.Errorf("invalid JSON from models endpoint: %w", err)
 	}
-	models := make([]Model, 0, len(configured)+len(response.Data))
-	seen := make(map[string]struct{}, len(configured)+len(response.Data))
-	for _, model := range configured {
-		models = append(models, model)
-		seen[model.ID] = struct{}{}
-	}
+	models := make([]Model, 0, len(response.Data))
+	seen := make(map[string]struct{}, len(response.Data))
 	for _, item := range response.Data {
 		if strings.TrimSpace(item.ID) == "" {
 			continue
@@ -86,8 +93,9 @@ func DiscoverModels(ctx context.Context, provider config.ProviderConfig, bearerT
 			continue
 		}
 		models = append(models, Model{ID: item.ID, URL: baseURL, Ready: true})
+		seen[item.ID] = struct{}{}
 	}
-	return models, nil
+	return mergeModels(configured, models), nil
 }
 
 // ConfiguredModels returns ready model refs declared directly in provider config.
@@ -112,4 +120,29 @@ func ConfiguredModels(provider config.ProviderConfig) []Model {
 		})
 	}
 	return models
+}
+
+func mergeModels(configured, discovered []Model) []Model {
+	models := make([]Model, 0, len(configured)+len(discovered))
+	seen := make(map[string]struct{}, len(configured)+len(discovered))
+	for _, model := range configured {
+		models = append(models, model)
+		seen[model.ID] = struct{}{}
+	}
+	for _, model := range discovered {
+		if strings.TrimSpace(model.ID) == "" {
+			continue
+		}
+		if _, exists := seen[model.ID]; exists {
+			continue
+		}
+		models = append(models, model)
+		seen[model.ID] = struct{}{}
+	}
+	return models
+}
+
+func catalogEnabled() bool {
+	value := strings.ToLower(strings.TrimSpace(os.Getenv("TAU_MODELS_CATALOG_ENABLED")))
+	return value == "1" || value == "true" || value == "yes" || value == "on"
 }
