@@ -2,8 +2,6 @@ package app
 
 import (
 	"context"
-	"crypto/rand"
-	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -85,7 +83,7 @@ func RunChat(ctx context.Context, opts ChatOptions) error {
 	}
 	defer coordinator.Close()
 
-	sessionID, err := newID("session")
+	sessionID, err := newID()
 	if err != nil {
 		return err
 	}
@@ -379,15 +377,6 @@ func staticTokenSource(token string) platform.TokenSource {
 		}
 		return trimmed, nil
 	}
-}
-
-func newID(prefix string) (string, error) {
-	bytes := make([]byte, 12)
-	if _, err := rand.Read(bytes); err != nil {
-		return "", fmt.Errorf("generating %s id: %w", prefix, err)
-	}
-	suffix := base64.RawURLEncoding.EncodeToString(bytes)
-	return prefix + "_" + suffix, nil
 }
 
 func isDevel(version string, cfg tauconfig.Config) bool {

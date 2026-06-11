@@ -11,3 +11,5 @@ dist/
 .task/
 
 /plugins/
+
+/.claude/

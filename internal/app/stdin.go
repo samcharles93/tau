@@ -13,13 +13,14 @@ import (
 	"github.com/samcharles93/tau/internal/store"
 )
 
-const singleShotTimeout = 5 * time.Minute
+const stdInTimeout = 60 * time.Minute
 
-// RunSingleShot processes a single prompt in non-interactive mode and exits.
-func RunSingleShot(ctx context.Context, opts ChatOptions, prompt string) error {
-	ctx, cancel := context.WithTimeout(ctx, singleShotTimeout)
+// RunStdIn processes a prompt in non-interactive mode and exits.
+func RunStdIn(ctx context.Context, opts ChatOptions, prompt string) error {
+	ctx, cancel := context.WithTimeout(ctx, stdInTimeout)
 	defer cancel()
 
+	// TODO: This makes no sense
 	bearerToken, err := provider.ResolveBearerToken(ctx, opts.Provider, opts.Insecure)
 	if err != nil {
 		return err
@@ -30,13 +31,10 @@ func RunSingleShot(ctx context.Context, opts ChatOptions, prompt string) error {
 	if err != nil {
 		return err
 	}
+	// END TODO
 
 	cwd, _ := os.Getwd()
-	systemPrompt := opts.SystemPrompt
-	if systemPrompt == "" {
-		systemPrompt = "You are a helpful assistant."
-	}
-	systemPrompt = buildAgentSystemPrompt(systemPrompt, cwd)
+	systemPrompt := buildAgentSystemPrompt("", cwd)
 
 	sessionsDir := tauconfig.SessionsDir()
 	if err := os.MkdirAll(sessionsDir, 0o755); err != nil {
@@ -69,7 +67,7 @@ func RunSingleShot(ctx context.Context, opts ChatOptions, prompt string) error {
 		}
 	}()
 
-	sessionID, err := newID("oneshot")
+	sessionID, err := newID()
 	if err != nil {
 		return err
 	}
@@ -89,7 +87,7 @@ func RunSingleShot(ctx context.Context, opts ChatOptions, prompt string) error {
 	}
 	defer sub.Unsubscribe()
 
-	requestID, err := newID("req")
+	requestID, err := newID()
 	if err != nil {
 		return err
 	}
