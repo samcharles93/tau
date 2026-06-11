@@ -70,7 +70,7 @@ Tau is a provider-agnostic, OpenAI-compatible chat client with an interactive te
 
 ## Architecture
 
-```
+```flow
 cmd/tau/main.go (binary entry point)
         │ delegates to cli
         ▼
@@ -105,7 +105,7 @@ internal/app/ (orchestration: creates eventbus.Bus, wires subsystems as Clients)
 
 ### Communication Flow
 
-```
+```flow
 ┌──────────────────────────────────────────────────────────────────┐
 │                        eventbus.Bus                               │
 │                                                                   │
@@ -302,7 +302,7 @@ Use this section to quickly find the right files for a given change.
 ### Event Bus Usage Table
 
 | Client | Publisher Type | Subscriber Type | Where Created | Where Subscribed |
-|--------|---------------|-----------------|---------------|------------------|
+| ------ | -------------- | --------------- | ------------- | ---------------- |
 | `"coordinator"` | `ChatEvent` | — | `agent.NewCoordinator` | — |
 | `"tui"` | — | `ChatEvent` | `tui.Run` | `tui.ChatPanel.Watchers` |
 | `"skills"` | `skills.Event` | — | `skills.NewManager` | (nothing yet) |
@@ -510,7 +510,7 @@ type ExtensionReloader interface {
 
 ## TUI Subpackage Architecture
 
-```
+```tree
 internal/tui/
 ├── chatui.go          # ChatPanel — root component, event routing, state management
 ├── run.go             # Run() entry point, splash display
@@ -546,7 +546,7 @@ internal/tui/
 
 ## Event Flow (End to End)
 
-```
+```flow
 User types "/model gpt-4" → Tab
         │
         ▼

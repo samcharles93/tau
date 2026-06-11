@@ -567,6 +567,22 @@ type SessionExportedEvent struct {
 
 func (SessionExportedEvent) IsChatEvent() {}
 
+// ScheduleTickEvent is published on the event bus at a configurable
+// interval (TAU_SCHEDULE_INTERVAL). Subscribers (e.g. plugin manager)
+// use it to poll external services or trigger background work.
+type ScheduleTickEvent struct {
+	OccurredAt time.Time
+}
+
+// PluginLifecycleEvent is published on the event bus for fire-and-forget
+// plugin lifecycle notifications. It is not a ChatEvent — it routes as a
+// separate bus topic consumed by the plugin manager.
+type PluginLifecycleEvent struct {
+	Event     string
+	SessionID string
+	Payload   any // *api.EventPayload at rest; kept as any to avoid chat→api import
+}
+
 // ChatCompletionRequest is the wire format sent to the OpenAI-compatible endpoint.
 type ChatCompletionRequest struct {
 	Model       string        `json:"model"`

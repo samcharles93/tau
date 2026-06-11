@@ -54,7 +54,6 @@ func RunStdIn(ctx context.Context, opts ChatOptions, prompt string) error {
 		BearerToken:      bearerToken,
 		SessionStore:     sessionStore,
 		InteractiveUI:    false,
-		ScheduleInterval: 0, // no schedule ticks for single-shot
 	})
 	if err != nil {
 		if sessionStore != nil {

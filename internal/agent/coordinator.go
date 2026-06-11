@@ -54,24 +54,19 @@ type Coordinator struct {
 	bus               *eventbus.Bus
 	client            *eventbus.Client
 	chatPub           *eventbus.Publisher[chat.ChatEvent]
+	pluginPub         *eventbus.Publisher[chat.PluginLifecycleEvent]
 	tokenSource       TokenSource
 	streamer          Streamer
 	registry          *tools.Registry
 	maxToolIterations int
 	parallelToolCalls bool
-	showReasoning     bool
 	interactiveUI     bool
 	uiBridge          tools.UIBridge
 	extensionReloader chat.ExtensionReloader
 	sessionStore      store.SessionStore
 	autoExportJSONL   bool
-	onToolStarted     func(map[string]any)
-	onToolCompleted   func(map[string]any)
-	onReasoningDelta  func(map[string]any)
 	onClose           func()
 	onPluginEvent     func(event string, sessionID string, payload *api.EventPayload) *api.EventResponse
-	scheduleInterval  time.Duration
-	scheduleDone      chan struct{}
 	startupEvents     []chat.ChatEvent
 	startupEventsOnce sync.Once
 	commands          chan chat.ChatCommand
@@ -102,14 +97,10 @@ type CoordinatorConfig struct {
 	Registry          *tools.Registry
 	MaxToolIterations int   // 0 → default (50)
 	ParallelToolCalls *bool // nil → default (true)
-	ShowReasoning     bool
 	InteractiveUI     bool
 	ExtensionReloader chat.ExtensionReloader
 	SessionStore      store.SessionStore
 	AutoExportJSONL   bool
-	OnToolStarted     func(map[string]any)
-	OnToolCompleted   func(map[string]any)
-	OnReasoningDelta  func(map[string]any)
 	OnClose           func()
 	StartupEvents     []chat.ChatEvent
 
@@ -118,11 +109,6 @@ type CoordinatorConfig struct {
 	// and LLM request boundaries. sessionID is the explicit session identity.
 	// Returns merged EventResponse, or nil if no plugins.
 	OnPluginEvent func(event string, sessionID string, payload *api.EventPayload) *api.EventResponse
-
-	// ScheduleInterval, if > 0, causes the coordinator to fire a "schedule"
-	// lifecycle event to plugins at this interval. Plugins can use this to
-	// poll external services, refresh state, or trigger background work.
-	ScheduleInterval time.Duration
 }
 
 // NewCoordinator creates and starts the agent coordinator.
@@ -152,6 +138,7 @@ func NewCoordinator(ctx context.Context, cfg CoordinatorConfig) (*Coordinator, e
 
 	client := cfg.Bus.Client("coordinator")
 	chatPub := eventbus.Publish[chat.ChatEvent](client)
+	pluginPub := eventbus.Publish[chat.PluginLifecycleEvent](client)
 
 	c := &Coordinator{
 		ctx:               ctx,
@@ -159,22 +146,18 @@ func NewCoordinator(ctx context.Context, cfg CoordinatorConfig) (*Coordinator, e
 		bus:               cfg.Bus,
 		client:            client,
 		chatPub:           chatPub,
+		pluginPub:         pluginPub,
 		tokenSource:       cfg.TokenSource,
 		streamer:          cfg.Streamer,
 		registry:          cfg.Registry,
 		maxToolIterations: maxIter,
 		parallelToolCalls: parallel,
-		showReasoning:     cfg.ShowReasoning,
 		interactiveUI:     cfg.InteractiveUI,
 		extensionReloader: cfg.ExtensionReloader,
 		sessionStore:      cfg.SessionStore,
 		autoExportJSONL:   cfg.AutoExportJSONL,
-		onToolStarted:     cfg.OnToolStarted,
-		onToolCompleted:   cfg.OnToolCompleted,
-		onReasoningDelta:  cfg.OnReasoningDelta,
 		onClose:           cfg.OnClose,
 		onPluginEvent:     cfg.OnPluginEvent,
-		scheduleInterval:  cfg.ScheduleInterval,
 		startupEvents:     append([]chat.ChatEvent(nil), cfg.StartupEvents...),
 		commands:          make(chan chat.ChatCommand, commandBufferSize),
 		sessions:          make(map[string]*coordinatorSession),
@@ -193,10 +176,6 @@ func NewCoordinator(ctx context.Context, cfg CoordinatorConfig) (*Coordinator, e
 		defer close(c.loopDone)
 		c.loop()
 	}()
-
-	if c.scheduleInterval > 0 {
-		c.startSchedule()
-	}
 
 	return c, nil
 }
@@ -237,13 +216,6 @@ func (c *Coordinator) Close() {
 		c.cancel()
 		c.cancelInteractivePrompts()
 		<-c.loopDone
-		if c.scheduleDone != nil {
-			select {
-			case <-c.scheduleDone:
-			case <-time.After(time.Second):
-				slog.Warn("coordinator: schedule goroutine did not exit within 1s")
-			}
-		}
 		if c.onClose != nil {
 			c.onClose()
 		}
@@ -263,32 +235,6 @@ func (c *Coordinator) loop() {
 			c.handleCommand(cmd)
 		}
 	}
-}
-
-// startSchedule launches a background goroutine that fires a "schedule"
-// lifecycle event to plugins at the configured interval. Plugins can use
-// this to poll external services or trigger background work.
-func (c *Coordinator) startSchedule() {
-	c.scheduleDone = make(chan struct{})
-	slog.Info("coordinator: schedule events enabled",
-		"interval", c.scheduleInterval.String())
-
-	go func() {
-		defer close(c.scheduleDone)
-		ticker := time.NewTicker(c.scheduleInterval)
-		defer ticker.Stop()
-
-		for {
-			select {
-			case <-c.ctx.Done():
-				return
-			case <-ticker.C:
-				if c.onPluginEvent != nil {
-					c.onPluginEvent("schedule", "", nil)
-				}
-			}
-		}
-	}()
 }
 
 func (c *Coordinator) handleCommand(cmd chat.ChatCommand) {
@@ -356,7 +302,7 @@ func (c *Coordinator) handleStart(cmd chat.StartChatSessionCommand) {
 	snapshot := chat.CloneChatSessionState(state)
 	c.mu.Unlock()
 
-	c.dispatchPluginEvent("session_start", snapshot.SessionID, &api.EventPayload{
+	c.publishPluginLifecycleEvent("session_start", snapshot.SessionID, &api.EventPayload{
 		Kind: &api.EventPayload_Session{Session: &api.SessionEventPayload{
 			SessionId: snapshot.SessionID,
 			ModelId:   snapshot.Model.ID,
@@ -562,7 +508,7 @@ func (c *Coordinator) handleClose(cmd chat.CloseChatSessionCommand) {
 	if _, exists := c.shutdown[sessionID]; !exists {
 		c.shutdown[sessionID] = struct{}{}
 		c.mu.Unlock()
-		c.dispatchPluginEvent("session_shutdown", sessionID, &api.EventPayload{
+		c.publishPluginLifecycleEvent("session_shutdown", sessionID, &api.EventPayload{
 			Kind: &api.EventPayload_Session{Session: &api.SessionEventPayload{
 				SessionId: sessionID,
 				ModelId:   snapshot.Model.ID,
@@ -721,7 +667,7 @@ func (c *Coordinator) runTurn(ctx context.Context, state chat.ChatSessionState) 
 	requestID := state.ActiveRequestID
 	now := time.Now().UTC()
 
-	c.dispatchPluginEvent("turn_start", sessionID, &api.EventPayload{
+	c.publishPluginLifecycleEvent("turn_start", sessionID, &api.EventPayload{
 		Kind: &api.EventPayload_Turn{Turn: &api.TurnPayload{Direction: "start"}},
 	})
 
@@ -748,7 +694,7 @@ func (c *Coordinator) runTurn(ctx context.Context, state chat.ChatSessionState) 
 
 		// Emit context event with the full message list so plugins can
 		// observe and mutate conversation state before the LLM call.
-		contextResp := c.dispatchPluginEvent("context", sessionID, &api.EventPayload{
+		contextResp := c.dispatchPluginRequestResponse("context", sessionID, &api.EventPayload{
 			Kind: &api.EventPayload_Context{Context: &api.ContextPayload{
 				Messages: marshalMessages(state.Messages),
 			}},
@@ -764,7 +710,7 @@ func (c *Coordinator) runTurn(ctx context.Context, state chat.ChatSessionState) 
 			c.mu.Unlock()
 		}
 
-		pluginResp := c.dispatchPluginEvent("before_llm_call", sessionID, &api.EventPayload{
+		pluginResp := c.dispatchPluginRequestResponse("before_llm_call", sessionID, &api.EventPayload{
 			Kind: &api.EventPayload_BeforeLlmCall{
 				BeforeLlmCall: &api.BeforeLLMCallPayload{
 					ModelId:    state.Model.ID,
@@ -842,7 +788,7 @@ func (c *Coordinator) runTurn(ctx context.Context, state chat.ChatSessionState) 
 		state.SystemPrompt = originalSystemPrompt
 		state.Model.ID = originalModelID
 
-		c.dispatchPluginEvent("after_llm_call", sessionID, &api.EventPayload{
+		c.publishPluginLifecycleEvent("after_llm_call", sessionID, &api.EventPayload{
 			Kind: &api.EventPayload_AfterLlmCall{
 				AfterLlmCall: &api.AfterLLMCallPayload{
 					ModelId:      effectiveModelID,
@@ -895,7 +841,7 @@ func (c *Coordinator) executeToolsParallel(ctx context.Context, sessionID, reque
 		effectiveArgs := tc.Function.Arguments
 
 		// Lifecycle event: tool execution is about to start.
-		c.dispatchPluginEvent("tool_execution_start", sessionID, &api.EventPayload{
+		c.publishPluginLifecycleEvent("tool_execution_start", sessionID, &api.EventPayload{
 			Kind: &api.EventPayload_BeforeToolExec{
 				BeforeToolExec: &api.ToolCallPayload{
 					ToolName:  tc.Function.Name,
@@ -906,7 +852,7 @@ func (c *Coordinator) executeToolsParallel(ctx context.Context, sessionID, reque
 		})
 
 		// Mutation hook: plugins may block the tool or modify its arguments.
-		beforeResp := c.dispatchPluginEvent("before_tool_exec", sessionID, &api.EventPayload{
+		beforeResp := c.dispatchPluginRequestResponse("before_tool_exec", sessionID, &api.EventPayload{
 			Kind: &api.EventPayload_BeforeToolExec{
 				BeforeToolExec: &api.ToolCallPayload{
 					ToolName:  tc.Function.Name,
@@ -981,12 +927,9 @@ func (c *Coordinator) executeToolsParallel(ctx context.Context, sessionID, reque
 			ArgumentsSummary: summarizeForUI(effectiveArgs),
 			StartedAt:        startedAt,
 		})
-		// dispatchToolStarted uses the raw tc for call_id + tool_name;
-		// the args summary in the event context reflects the effective input.
-		c.dispatchToolStarted(sessionID, requestID, tc, startedAt)
 
 		// Mutation hook: plugins may modify the result. Dispatch on all paths.
-		afterResp := c.dispatchPluginEvent("after_tool_exec", sessionID, &api.EventPayload{
+		afterResp := c.dispatchPluginRequestResponse("after_tool_exec", sessionID, &api.EventPayload{
 			Kind: &api.EventPayload_AfterToolExec{
 				AfterToolExec: &api.ToolResultPayload{
 					ToolName:  tc.Function.Name,
@@ -1008,7 +951,7 @@ func (c *Coordinator) executeToolsParallel(ctx context.Context, sessionID, reque
 		results[i] = result
 		c.emitToolCompleted(sessionID, requestID, tc, result, startedAt, tr.Truncated)
 
-		c.dispatchPluginEvent("tool_execution_end", sessionID, &api.EventPayload{
+		c.publishPluginLifecycleEvent("tool_execution_end", sessionID, &api.EventPayload{
 			Kind: &api.EventPayload_AfterToolExec{
 				AfterToolExec: &api.ToolResultPayload{
 					ToolName: tc.Function.Name,
@@ -1082,14 +1025,6 @@ func (c *Coordinator) emitReasoningDelta(sessionID, requestID, delta, snapshot s
 		Snapshot:   snapshot,
 		ReceivedAt: at,
 	})
-	if c.showReasoning && c.onReasoningDelta != nil {
-		c.onReasoningDelta(map[string]any{
-			"event":      "reasoning_delta",
-			"session_id": sessionID,
-			"request_id": requestID,
-			"delta":      summarizeForUI(delta),
-		})
-	}
 }
 
 func (c *Coordinator) emitToolCompleted(
@@ -1118,7 +1053,6 @@ func (c *Coordinator) emitToolCompleted(
 		CompletedAt:   completedAt,
 	}
 	c.emit(event)
-	c.dispatchToolCompleted(event)
 }
 
 func summarizeForUI(value string) string {
@@ -1235,7 +1169,7 @@ func (c *Coordinator) completeTurn(sessionID, requestID string, result chat.Comp
 		CompletedAt:  at,
 	})
 
-	c.dispatchPluginEvent("turn_end", sessionID, &api.EventPayload{
+	c.publishPluginLifecycleEvent("turn_end", sessionID, &api.EventPayload{
 		Kind: &api.EventPayload_Turn{Turn: &api.TurnPayload{Direction: "end"}},
 	})
 }
@@ -1304,7 +1238,7 @@ func (c *Coordinator) cancelAllSessions() {
 		}
 		c.shutdown[sessionID] = struct{}{}
 		c.mu.Unlock()
-		c.dispatchPluginEvent("session_shutdown", sessionID, &api.EventPayload{
+		c.publishPluginLifecycleEvent("session_shutdown", sessionID, &api.EventPayload{
 			Kind: &api.EventPayload_Session{Session: &api.SessionEventPayload{
 				SessionId: sessionID,
 				ModelId:   state.Model.ID,
@@ -1359,44 +1293,24 @@ func (c *Coordinator) applyPluginMessageModifications(state *chat.ChatSessionSta
 	}
 }
 
-func (c *Coordinator) dispatchPluginEvent(event string, sessionID string, payload *api.EventPayload) *api.EventResponse {
+// dispatchPluginRequestResponse dispatches a request-response lifecycle
+// event to plugins via the configured callback. Use publishPluginLifecycleEvent
+// for fire-and-forget notifications that don't need a response.
+func (c *Coordinator) dispatchPluginRequestResponse(event string, sessionID string, payload *api.EventPayload) *api.EventResponse {
 	if c.onPluginEvent == nil {
 		return nil
 	}
 	return c.onPluginEvent(event, sessionID, payload)
 }
 
-func (c *Coordinator) dispatchToolStarted(sessionID, requestID string, tc chat.ChatToolCall, startedAt time.Time) {
-	if c.onToolStarted == nil {
-		return
-	}
-	c.onToolStarted(map[string]any{
-		"event":             "tool_call_started",
-		"session_id":        sessionID,
-		"request_id":        requestID,
-		"call_id":           tc.ID,
-		"tool_name":         tc.Function.Name,
-		"arguments_summary": summarizeForUI(tc.Function.Arguments),
-		"started_at":        startedAt.Format(time.RFC3339Nano),
-	})
-}
-
-func (c *Coordinator) dispatchToolCompleted(event chat.ChatToolExecutionCompletedEvent) {
-	if c.onToolCompleted == nil {
-		return
-	}
-	c.onToolCompleted(map[string]any{
-		"event":          "tool_call_completed",
-		"session_id":     event.SessionID,
-		"request_id":     event.RequestID,
-		"call_id":        event.CallID,
-		"tool_name":      event.ToolName,
-		"status":         event.Status,
-		"duration_ms":    event.Duration.Milliseconds(),
-		"result_summary": event.ResultSummary,
-		"is_error":       event.IsError,
-		"truncated":      event.Truncated,
-		"completed_at":   event.CompletedAt.Format(time.RFC3339Nano),
+// publishPluginLifecycleEvent publishes a fire-and-forget lifecycle
+// notification on the event bus. Plugin manager (or any subscriber)
+// receives these asynchronously.
+func (c *Coordinator) publishPluginLifecycleEvent(event, sessionID string, payload *api.EventPayload) {
+	c.pluginPub.Publish(chat.PluginLifecycleEvent{
+		Event:     event,
+		SessionID: sessionID,
+		Payload:   payload,
 	})
 }
 

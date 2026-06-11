@@ -155,26 +155,24 @@ func buildModelRefs(models []provider.Model) []tauchat.ChatModelRef {
 // tool registry, config, and session persistence.
 func newCoordinator(ctx context.Context, opts ChatOptions, bearerToken string, sessionStore store.SessionStore, startupEvents []tauchat.ChatEvent, bus *eventbus.Bus) (*agent.Coordinator, error) {
 	return buildCoordinator(ctx, coordinatorConfig{
-		Bus:              bus,
-		ChatOptions:      opts,
-		BearerToken:      bearerToken,
-		SessionStore:     sessionStore,
-		InteractiveUI:    true,
-		ScheduleInterval: tauconfig.ScheduleIntervalFromEnv(),
-		StartupEvents:    startupEvents,
+		Bus:           bus,
+		ChatOptions:   opts,
+		BearerToken:   bearerToken,
+		SessionStore:  sessionStore,
+		InteractiveUI: true,
+		StartupEvents: startupEvents,
 	})
 }
 
 // coordinatorConfig holds all parameters for building a coordinator instance,
 // shared between interactive and headless modes.
 type coordinatorConfig struct {
-	Bus              *eventbus.Bus
-	ChatOptions      ChatOptions
-	BearerToken      string
-	SessionStore     store.SessionStore
-	InteractiveUI    bool
-	ScheduleInterval time.Duration
-	StartupEvents    []tauchat.ChatEvent
+	Bus           *eventbus.Bus
+	ChatOptions   ChatOptions
+	BearerToken   string
+	SessionStore  store.SessionStore
+	InteractiveUI bool
+	StartupEvents []tauchat.ChatEvent
 }
 
 // buildCoordinator creates a coordinator with the full plugin/tool setup.
@@ -202,16 +200,48 @@ func buildCoordinator(ctx context.Context, cfg coordinatorConfig) (*agent.Coordi
 		slog.Warn("plugin manager load failed", "err", err)
 	}
 
+	// Subscribe the plugin manager to fire-and-forget lifecycle events
+	// published on the bus. Request-response events (context,
+	// before_llm_call, before_tool_exec, after_tool_exec) continue
+	// through the OnPluginEvent callback below.
+	pluginBusClient := cfg.Bus.Client("plugin-manager")
+	eventbus.SubscribeFunc(pluginBusClient, func(evt tauchat.PluginLifecycleEvent) {
+		payload, _ := evt.Payload.(*api.EventPayload)
+		pluginMgr.DispatchEvent(ctx, evt.Event, evt.SessionID, payload)
+	})
+
+	// Schedule ticks: if TAU_SCHEDULE_INTERVAL is set, publish a
+	// ScheduleTickEvent on the bus at that interval. The plugin manager
+	// (and any other subscriber) receives these for background work.
+	scheduleInterval := tauconfig.ScheduleIntervalFromEnv()
+	if scheduleInterval > 0 {
+		slog.Info("schedule events enabled", "interval", scheduleInterval)
+		schedulePub := eventbus.Publish[tauchat.ScheduleTickEvent](pluginBusClient)
+		eventbus.SubscribeFunc(pluginBusClient, func(evt tauchat.ScheduleTickEvent) {
+			pluginMgr.DispatchEvent(ctx, "schedule", "", nil)
+		})
+		go func() {
+			ticker := time.NewTicker(scheduleInterval)
+			defer ticker.Stop()
+			for {
+				select {
+				case <-ctx.Done():
+					return
+				case now := <-ticker.C:
+					schedulePub.Publish(tauchat.ScheduleTickEvent{OccurredAt: now.UTC()})
+				}
+			}
+		}()
+	}
+
 	coordinator, err := agent.NewCoordinator(ctx, agent.CoordinatorConfig{
-		Bus:              cfg.Bus,
+		Bus:               cfg.Bus,
 		TokenSource:       staticTokenSource(cfg.BearerToken),
 		Streamer:          provider.OpenAIStreamer{Insecure: cfg.ChatOptions.Insecure},
 		Registry:          registry,
-		ShowReasoning:     cfg.ChatOptions.Config.UI.ShowReasoning,
 		InteractiveUI:     cfg.InteractiveUI,
 		SessionStore:      cfg.SessionStore,
 		AutoExportJSONL:   true,
-		ScheduleInterval:  cfg.ScheduleInterval,
 		StartupEvents:     cfg.StartupEvents,
 		ExtensionReloader: pluginMgr,
 		OnPluginEvent: func(event string, sessionID string, payload *api.EventPayload) *api.EventResponse {

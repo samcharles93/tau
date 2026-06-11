@@ -88,24 +88,32 @@ func TestCoordinatorDispatchesSessionLifecycleHooks(t *testing.T) {
 	started := make(chan map[string]any, 1)
 	shutdown := make(chan map[string]any, 1)
 
+	bus := newTestBus(t)
+	// Subscribe to fire-and-forget lifecycle events via the bus.
+	pluginSub := eventbus.SubscribeFunc(bus.Client("test-observer"), func(evt chat.PluginLifecycleEvent) {
+		ctx := map[string]any{
+			"event":      evt.Event,
+			"session_id": evt.SessionID,
+		}
+		switch evt.Event {
+		case "session_start":
+			started <- ctx
+		case "session_shutdown":
+			shutdown <- ctx
+		}
+	})
+	defer pluginSub.Close()
+
 	coordinator, err := NewCoordinator(context.Background(), CoordinatorConfig{
-			Bus: newTestBus(t),
+		Bus: bus,
 		TokenSource: func(context.Context, config.ProviderConfig) (string, error) {
 			return "", nil
 		},
 		Streamer: noopStreamer{},
 		Registry: tools.NewRegistry(),
 		OnPluginEvent: func(event string, sessionID string, payload *api.EventPayload) *api.EventResponse {
-			ctx := map[string]any{
-				"event":      event,
-				"session_id": sessionID,
-			}
-			switch event {
-			case "session_start":
-				started <- ctx
-			case "session_shutdown":
-				shutdown <- ctx
-			}
+			// Request-response events only; fire-and-forget events go
+			// through the bus subscription above.
 			return nil
 		},
 	})
@@ -126,7 +134,7 @@ func TestCoordinatorDispatchesSessionLifecycleHooks(t *testing.T) {
 
 func TestCoordinatorPublishesStartupEventsOnSubscribe(t *testing.T) {
 	coordinator, err := NewCoordinator(context.Background(), CoordinatorConfig{
-			Bus: newTestBus(t),
+		Bus: newTestBus(t),
 		TokenSource: func(context.Context, config.ProviderConfig) (string, error) {
 			return "", nil
 		},
@@ -162,35 +170,17 @@ func TestCoordinatorPublishesToolAndReasoningObservabilityEvents(t *testing.T) {
 		},
 	}))
 	streamer := &scriptedStreamer{}
-	var hooksMu sync.Mutex
-	var toolHooks []map[string]any
-	var reasoningHooks []map[string]any
 	parallel := false
 
+	bus := newTestBus(t)
 	coordinator, err := NewCoordinator(context.Background(), CoordinatorConfig{
-			Bus: newTestBus(t),
+		Bus: bus,
 		TokenSource: func(context.Context, config.ProviderConfig) (string, error) {
 			return "", nil
 		},
 		Streamer:          streamer,
 		Registry:          registry,
 		ParallelToolCalls: &parallel,
-		ShowReasoning:     true,
-		OnToolStarted: func(ctx map[string]any) {
-			hooksMu.Lock()
-			defer hooksMu.Unlock()
-			toolHooks = append(toolHooks, ctx)
-		},
-		OnToolCompleted: func(ctx map[string]any) {
-			hooksMu.Lock()
-			defer hooksMu.Unlock()
-			toolHooks = append(toolHooks, ctx)
-		},
-		OnReasoningDelta: func(ctx map[string]any) {
-			hooksMu.Lock()
-			defer hooksMu.Unlock()
-			reasoningHooks = append(reasoningHooks, ctx)
-		},
 	})
 	require.NoError(t, err)
 
@@ -251,30 +241,16 @@ func TestCoordinatorPublishesToolAndReasoningObservabilityEvents(t *testing.T) {
 			t.Fatal("timed out waiting for observability events")
 		}
 	}
-	hooksMu.Lock()
-	defer hooksMu.Unlock()
-	require.Len(t, reasoningHooks, 1)
-	require.Equal(t, "reasoning_delta", reasoningHooks[0]["event"])
-	require.Len(t, toolHooks, 2)
-	require.Equal(t, "tool_call_started", toolHooks[0]["event"])
-	require.Equal(t, "tool_call_completed", toolHooks[1]["event"])
 }
 
-func TestCoordinatorEmitsReasoningEventWhenHookExposureDisabled(t *testing.T) {
-	var hooksMu sync.Mutex
-	var reasoningHooks []map[string]any
+func TestCoordinatorEmitsReasoningDeltaEvent(t *testing.T) {
 	coordinator, err := NewCoordinator(context.Background(), CoordinatorConfig{
-			Bus: newTestBus(t),
+		Bus: newTestBus(t),
 		TokenSource: func(context.Context, config.ProviderConfig) (string, error) {
 			return "", nil
 		},
 		Streamer: &reasoningOnlyStreamer{},
 		Registry: tools.NewRegistry(),
-		OnReasoningDelta: func(ctx map[string]any) {
-			hooksMu.Lock()
-			defer hooksMu.Unlock()
-			reasoningHooks = append(reasoningHooks, ctx)
-		},
 	})
 	require.NoError(t, err)
 
@@ -309,14 +285,11 @@ func TestCoordinatorEmitsReasoningEventWhenHookExposureDisabled(t *testing.T) {
 			t.Fatal("timed out waiting for reasoning event")
 		}
 	}
-	hooksMu.Lock()
-	defer hooksMu.Unlock()
-	require.Empty(t, reasoningHooks)
 }
 
 func TestCoordinatorUnknownToolPublishesCompletedError(t *testing.T) {
 	coordinator, err := NewCoordinator(context.Background(), CoordinatorConfig{
-			Bus: newTestBus(t),
+		Bus: newTestBus(t),
 		TokenSource: func(context.Context, config.ProviderConfig) (string, error) {
 			return "", nil
 		},
@@ -369,7 +342,7 @@ func TestCoordinatorReloadExtensionsWhileIdle(t *testing.T) {
 		},
 	}
 	coordinator, err := NewCoordinator(context.Background(), CoordinatorConfig{
-			Bus: newTestBus(t),
+		Bus: newTestBus(t),
 		TokenSource: func(context.Context, config.ProviderConfig) (string, error) {
 			return "", nil
 		},
@@ -414,7 +387,7 @@ func TestCoordinatorReloadExtensionsWhileActiveRejects(t *testing.T) {
 	reloader := &fakeExtensionReloader{}
 	streamer := &blockingFullStreamer{started: make(chan struct{})}
 	coordinator, err := NewCoordinator(context.Background(), CoordinatorConfig{
-			Bus: newTestBus(t),
+		Bus: newTestBus(t),
 		TokenSource: func(context.Context, config.ProviderConfig) (string, error) {
 			return "", nil
 		},
@@ -463,7 +436,7 @@ func TestCoordinatorReloadExtensionsWhileActiveRejects(t *testing.T) {
 
 func TestCoordinatorConfirmBridgeResponseAndCancel(t *testing.T) {
 	coordinator, err := NewCoordinator(context.Background(), CoordinatorConfig{
-			Bus: newTestBus(t),
+		Bus: newTestBus(t),
 		TokenSource: func(context.Context, config.ProviderConfig) (string, error) {
 			return "", nil
 		},
@@ -537,7 +510,7 @@ func TestCoordinatorConfirmBridgeResponseAndCancel(t *testing.T) {
 
 func TestCoordinatorQuestionBridgeResponse(t *testing.T) {
 	coordinator, err := NewCoordinator(context.Background(), CoordinatorConfig{
-			Bus: newTestBus(t),
+		Bus: newTestBus(t),
 		TokenSource: func(context.Context, config.ProviderConfig) (string, error) {
 			return "", nil
 		},
@@ -589,7 +562,7 @@ func TestCoordinatorQuestionBridgeResponse(t *testing.T) {
 
 func TestCoordinatorPromptBridgeUnblocksOnClose(t *testing.T) {
 	coordinator, err := NewCoordinator(context.Background(), CoordinatorConfig{
-			Bus: newTestBus(t),
+		Bus: newTestBus(t),
 		TokenSource: func(context.Context, config.ProviderConfig) (string, error) {
 			return "", nil
 		},
@@ -631,7 +604,7 @@ func TestCoordinatorPromptBridgeUnblocksOnClose(t *testing.T) {
 func TestCoordinatorRunsExtensionCommand(t *testing.T) {
 	reloader := &fakeExtensionReloader{commandOutput: "hello from extension"}
 	coordinator, err := NewCoordinator(context.Background(), CoordinatorConfig{
-			Bus: newTestBus(t),
+		Bus: newTestBus(t),
 		TokenSource: func(context.Context, config.ProviderConfig) (string, error) {
 			return "", nil
 		},
