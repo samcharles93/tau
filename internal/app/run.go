@@ -11,6 +11,7 @@ import (
 	tauconfig "github.com/samcharles93/tau/internal/config"
 	"github.com/samcharles93/tau/internal/eventbus"
 	"github.com/samcharles93/tau/internal/provider"
+	commandreg "github.com/samcharles93/tau/internal/registry"
 	"github.com/samcharles93/tau/internal/store"
 	"github.com/samcharles93/tau/internal/tui"
 )
@@ -64,14 +65,16 @@ func RunChat(ctx context.Context, opts ChatOptions) error {
 		})
 	}
 
-	coordinator, err := newCoordinator(ctx, opts, bearerToken, sessionStore, startupEvents, bus)
+	result, err := newCoordinator(ctx, opts, bearerToken, sessionStore, startupEvents, bus)
 	if err != nil {
 		if sessionStore != nil {
 			sessionStore.Close()
 		}
 		return err
 	}
+	coordinator := result.Coordinator
 	defer coordinator.Close()
+	defer result.CommandRegistry.Close()
 
 	sessionID, err := newID()
 	if err != nil {
@@ -129,12 +132,17 @@ func RunChat(ctx context.Context, opts ChatOptions) error {
 	// TUI can re-discover models without importing infrastructure packages.
 	refresher := buildModelRefresher(opts.Provider, bearerToken, opts.Insecure)
 
+	// Command registry owns command state; TUI initialises from snapshot
+	// and receives deltas via CommandsChangedEvent on the bus.
+	initialCommands := commandRefsFromRegistry(result.CommandRegistry.All())
+
 	tuiCfg := tui.TUIConfig{
 		SessionID:          sessionID,
 		ModelName:          model.ID,
 		Provider:           opts.Provider.Name,
 		AvailableModels:    available,
 		AvailableProviders: tauconfig.ProviderNames(opts.Config),
+		InitialCommands:    initialCommands,
 		Bus:                bus,
 		RefreshModels:      refresher,
 		ShowReasoning:      opts.Config.UI.ShowReasoning,
@@ -153,4 +161,20 @@ func RunChat(ctx context.Context, opts ChatOptions) error {
 	}
 
 	return tuiErr
+}
+
+// commandRefsFromRegistry filters registry commands to the subset the TUI
+// needs (built-in + custom; skill commands use the /skill: prefix and are
+// included as-is from MergeSkills).
+func commandRefsFromRegistry(cmds []commandreg.Command) []tauchat.CommandRef {
+	refs := make([]tauchat.CommandRef, 0, len(cmds))
+	for _, c := range cmds {
+		refs = append(refs, tauchat.CommandRef{
+			Name:        c.Name,
+			Label:       c.Label,
+			Description: c.Description,
+			AcceptsArgs: c.AcceptsArgs,
+		})
+	}
+	return refs
 }

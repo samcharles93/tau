@@ -20,8 +20,11 @@ type TUIConfig struct {
 	Provider           string
 	AvailableModels    []tauchat.ChatModelRef
 	AvailableProviders []string
-	Bus                *eventbus.Bus
-	RefreshModels      ModelRefresher
-	ShowReasoning      bool
-	Debug              bool
+	// InitialCommands is the command registry snapshot at startup.
+	// The registry owns command state; bus events deliver deltas.
+	InitialCommands []tauchat.CommandRef
+	Bus             *eventbus.Bus
+	RefreshModels   ModelRefresher
+	ShowReasoning   bool
+	Debug           bool
 }

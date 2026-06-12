@@ -152,28 +152,50 @@ func buildModelRefs(models []provider.Model) []tauchat.ChatModelRef {
 	return refs
 }
 
+// newCoordinatorResult bundles a coordinator with its command registry so
+// the caller can seed the TUI with the initial command snapshot before the
+// bus delivers the first CommandsChangedEvent.
+type newCoordinatorResult struct {
+	Coordinator     *agent.Coordinator
+	CommandRegistry *commandreg.Registry
+}
+
 // newCoordinator creates and returns an agent coordinator with the standard
 // tool registry, config, and session persistence.
-func newCoordinator(ctx context.Context, opts ChatOptions, bearerToken string, sessionStore store.SessionStore, startupEvents []tauchat.ChatEvent, bus *eventbus.Bus) (*agent.Coordinator, error) {
-	return buildCoordinator(ctx, coordinatorConfig{
-		Bus:           bus,
-		ChatOptions:   opts,
-		BearerToken:   bearerToken,
-		SessionStore:  sessionStore,
-		InteractiveUI: true,
-		StartupEvents: startupEvents,
+func newCoordinator(ctx context.Context, opts ChatOptions, bearerToken string, sessionStore store.SessionStore, startupEvents []tauchat.ChatEvent, bus *eventbus.Bus) (*newCoordinatorResult, error) {
+	cwd, _ := os.Getwd()
+	cmdRegClient := bus.Client("command-registry")
+	cmdReg := commandreg.New(cwd, cmdRegClient)
+
+	coordinator, err := buildCoordinator(ctx, coordinatorConfig{
+		Bus:             bus,
+		ChatOptions:     opts,
+		BearerToken:     bearerToken,
+		SessionStore:    sessionStore,
+		InteractiveUI:   true,
+		StartupEvents:   startupEvents,
+		CommandRegistry: cmdReg,
 	})
+	if err != nil {
+		cmdReg.Close()
+		return nil, err
+	}
+	return &newCoordinatorResult{
+		Coordinator:     coordinator,
+		CommandRegistry: cmdReg,
+	}, nil
 }
 
 // coordinatorConfig holds all parameters for building a coordinator instance,
 // shared between interactive and headless modes.
 type coordinatorConfig struct {
-	Bus           *eventbus.Bus
-	ChatOptions   ChatOptions
-	BearerToken   string
-	SessionStore  store.SessionStore
-	InteractiveUI bool
-	StartupEvents []tauchat.ChatEvent
+	Bus             *eventbus.Bus
+	ChatOptions     ChatOptions
+	BearerToken     string
+	SessionStore    store.SessionStore
+	InteractiveUI   bool
+	StartupEvents   []tauchat.ChatEvent
+	CommandRegistry *commandreg.Registry
 }
 
 // buildCoordinator creates a coordinator with the full plugin/tool setup.
@@ -235,15 +257,17 @@ func buildCoordinator(ctx context.Context, cfg coordinatorConfig) (*agent.Coordi
 		}()
 	}
 
-	// Command registry — discovers built-in, custom, and skill commands
-	// and publishes them on the bus so the TUI can render completions.
-	cmdRegClient := cfg.Bus.Client("command-registry")
-	cmdReg := commandreg.New(cwd, cmdRegClient)
-	cmdReg.Discover()
-	// Discover skills once and share with the registry to avoid redundant
-	// filesystem walks (the prompt builder also uses skill discovery).
-	allSkills, _ := skills.Discover(skills.DefaultSources(cwd))
-	cmdReg.MergeSkills(allSkills)
+	// Command registry — the caller creates this and passes it in so the
+	// initial command snapshot can be seeded into the TUI before the bus
+	// delivers the first CommandsChangedEvent.
+	if cfg.CommandRegistry != nil {
+		cfg.CommandRegistry.Discover()
+		// Discover skills once and share with the registry to avoid
+		// redundant filesystem walks (the prompt builder also uses
+		// skill discovery).
+		allSkills, _ := skills.Discover(skills.DefaultSources(cwd))
+		cfg.CommandRegistry.MergeSkills(allSkills)
+	}
 
 	coordinator, err := agent.NewCoordinator(ctx, agent.CoordinatorConfig{
 		Bus:               cfg.Bus,
@@ -260,7 +284,6 @@ func buildCoordinator(ctx context.Context, cfg coordinatorConfig) (*agent.Coordi
 		},
 		OnClose: func() {
 			pluginMgr.Unload()
-			cmdReg.Close()
 		},
 	})
 	if err != nil {

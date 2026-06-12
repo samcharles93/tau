@@ -101,7 +101,7 @@ func NewChatPanel(
 		modelName:          gt.NewState(cfg.ModelName),
 		availableModels:    gt.NewState(models),
 		extensionCommands:  gt.NewState(commands),
-		registryCommands:   gt.NewState([]tauchat.CommandRef{}),
+		registryCommands:   gt.NewState(slices.Clone(cfg.InitialCommands)),
 		activeRequestID:    gt.NewState(""),
 		completions:        gt.NewState(make([]completionItem, 0)),
 		completionIndex:    gt.NewState(0),
