@@ -179,6 +179,12 @@ func (s *Subscriber[T]) dispatchTyped(
 			vals.Add(val)
 		case <-ctx.Done():
 			return false
+		case <-s.core.stop.Done():
+			// Subscriber closed; discard the current event
+			// and continue pumping so that other subscribers
+			// on the same client are not starved.
+			vals.Drop()
+			return true
 		case ch := <-snapshot:
 			ch <- vals.Snapshot()
 		case <-s.core.slow.C:
@@ -317,6 +323,12 @@ func dispatchFunc(
 			case <-callDone:
 			}
 			return false
+		case <-core.stop.Done():
+			// Subscriber closed; discard the current event
+			// and continue pumping so that other subscribers
+			// on the same client are not starved.
+			vals.Drop()
+			return true
 		case ch := <-snapshot:
 			ch <- vals.Snapshot()
 		case <-core.slow.C:
@@ -369,7 +381,7 @@ func SubscribeFunc[T any](c *Client, f func(T)) *SubscriberFunc[T] {
 	}
 
 	r := c.subscribeStateLocked()
-	s := newSubscriberFunc[T](r, f)
+	s := newSubscriberFunc(r, f)
 	r.addSubscriber(s.core)
 	return s
 }

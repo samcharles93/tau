@@ -49,11 +49,11 @@ func RunStdIn(ctx context.Context, opts ChatOptions, prompt string) error {
 	}
 
 	coordinator, err := buildCoordinator(ctx, coordinatorConfig{
-		Bus:              eventbus.New(),
-		ChatOptions:      opts,
-		BearerToken:      bearerToken,
-		SessionStore:     sessionStore,
-		InteractiveUI:    false,
+		Bus:           eventbus.New(),
+		ChatOptions:   opts,
+		BearerToken:   bearerToken,
+		SessionStore:  sessionStore,
+		InteractiveUI: false,
 	})
 	if err != nil {
 		if sessionStore != nil {

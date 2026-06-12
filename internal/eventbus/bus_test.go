@@ -128,4 +128,3 @@ func TestBusCloseStopsDelivery(t *testing.T) {
 	// is not closed (by design — reading from a closed channel
 	// panics, and the typed send would panic too).
 }
-

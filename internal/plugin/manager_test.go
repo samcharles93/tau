@@ -86,6 +86,7 @@ func TestDispatchEvent_AllSuccess(t *testing.T) {
 	resp := m.DispatchEvent(context.Background(), "test_event", "session-1", nil)
 	if resp == nil {
 		t.Fatal("expected non-nil merged response")
+		return
 	}
 	if resp.InjectSystemPrompt != "from-a\nfrom-b" {
 		t.Errorf("expected merged system prompt %q, got %q", "from-a\nfrom-b", resp.InjectSystemPrompt)
@@ -116,6 +117,7 @@ func TestDispatchEvent_OneTimeout_OneSuccess(t *testing.T) {
 	resp := m.DispatchEvent(context.Background(), "test_event", "session-1", nil)
 	if resp == nil {
 		t.Fatal("expected non-nil response from fast plugin")
+		return
 	}
 	if resp.InjectSystemPrompt != "from-fast" {
 		t.Errorf("expected InjectSystemPrompt %q, got %q", "from-fast", resp.InjectSystemPrompt)

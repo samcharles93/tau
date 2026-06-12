@@ -194,9 +194,6 @@ func TestSessionTree_KeyUpDownNavigation(t *testing.T) {
 	km := v.KeyMap()
 	down := findBinding(km, gt.KeyDown)
 	up := findBinding(km, gt.KeyUp)
-	if down == nil || up == nil {
-		t.Fatal("missing up/down key bindings")
-	}
 
 	// Down: 0 → 1 → 2 → 0.
 	down.Handler(gt.KeyEvent{Key: gt.KeyDown})
@@ -242,9 +239,6 @@ func TestSessionTree_EnterExpandAndSelect(t *testing.T) {
 
 	km := v.KeyMap()
 	enter := findBinding(km, gt.KeyEnter)
-	if enter == nil {
-		t.Fatal("missing Enter binding")
-	}
 
 	items := v.visibleItems.Get()
 	// "parent" should be first (newest), then "leaf".
@@ -323,9 +317,6 @@ func TestSessionTree_LeftRightNavigation(t *testing.T) {
 	km := v.KeyMap()
 	right := findBinding(km, gt.KeyRight)
 	left := findBinding(km, gt.KeyLeft)
-	if right == nil || left == nil {
-		t.Fatal("missing left/right bindings")
-	}
 
 	// Right on collapsed parent → expands.
 	v.selected.Set(0)
@@ -355,9 +346,6 @@ func TestSessionTree_FilterKey(t *testing.T) {
 
 	km := v.KeyMap()
 	f := findBindingRune(km, 'f')
-	if f == nil {
-		t.Fatal("missing 'f' binding")
-	}
 
 	if v.filter.Get() != "all" {
 		t.Fatalf("initial = %s", v.filter.Get())
@@ -390,9 +378,6 @@ func TestSessionTree_DetailPopup(t *testing.T) {
 
 	// Esc closes detail.
 	esc := findBinding(km, gt.KeyEscape)
-	if esc == nil {
-		t.Fatal("missing Esc binding")
-	}
 	esc.Handler(gt.KeyEvent{Key: gt.KeyEscape})
 	if v.showDetail.Get() {
 		t.Error("detail should close on Esc")

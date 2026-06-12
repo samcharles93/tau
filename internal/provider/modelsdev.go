@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"maps"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -50,7 +51,7 @@ type catalogModel struct {
 	Reasoning bool        `json:"reasoning,omitempty"`
 	Context   int         `json:"context,omitempty"`
 	Output    int         `json:"output,omitempty"`
-	Cost      catalogCost `json:"cost,omitempty"`
+	Cost      catalogCost `json:"cost"`
 }
 
 type catalogCost struct {
@@ -300,9 +301,7 @@ func readCatalogOverrides(path string) (map[string]catalogProvider, error) {
 
 func mergeCatalogProviders(base, overrides map[string]catalogProvider) map[string]catalogProvider {
 	merged := make(map[string]catalogProvider, len(base)+len(overrides))
-	for key, provider := range base {
-		merged[key] = provider
-	}
+	maps.Copy(merged, base)
 	for key, provider := range overrides {
 		if existing, ok := merged[key]; ok {
 			merged[key] = mergeCatalogProvider(existing, provider)

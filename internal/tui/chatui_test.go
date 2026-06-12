@@ -235,9 +235,6 @@ func TestKeyMap_EscClosesSettings(t *testing.T) {
 
 	km := panel.KeyMap()
 	esc := findKeyBinding(km, gt.KeyEscape)
-	if esc == nil {
-		t.Fatal("missing Esc binding")
-	}
 	esc.Handler(gt.KeyEvent{Key: gt.KeyEscape})
 
 	if panel.showSettings.Get() {
@@ -251,9 +248,6 @@ func TestKeyMap_EscClosesTree(t *testing.T) {
 
 	km := panel.KeyMap()
 	esc := findKeyBinding(km, gt.KeyEscape)
-	if esc == nil {
-		t.Fatal("missing Esc binding")
-	}
 	esc.Handler(gt.KeyEvent{Key: gt.KeyEscape})
 
 	if panel.showSessionTree.Get() {
@@ -312,9 +306,6 @@ func TestKeyMap_SettingsUpDownNavigatesModels(t *testing.T) {
 	km := panel.KeyMap()
 	down := findKeyBinding(km, gt.KeyDown)
 	up := findKeyBinding(km, gt.KeyUp)
-	if down == nil || up == nil {
-		t.Fatal("missing up/down bindings")
-	}
 
 	// Down: 0 → 1.
 	panel.selectedModelIndex.Set(0)
@@ -346,9 +337,6 @@ func TestKeyMap_SettingsEnterSwitchesModel(t *testing.T) {
 
 	km := panel.KeyMap()
 	enter := findKeyBinding(km, gt.KeyEnter)
-	if enter == nil {
-		t.Fatal("missing Enter binding")
-	}
 	enter.Handler(gt.KeyEvent{Key: gt.KeyEnter})
 
 	// Should have sent UpdateChatSessionCommand with model-b.

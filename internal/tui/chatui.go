@@ -26,11 +26,11 @@ const (
 
 // ChatPanel is the root go-tui component for the interactive chat UI.
 type ChatPanel struct {
-	ctx       context.Context
-	runtime   tauchat.ChatRuntime
-	chatSub   *eventbus.Subscriber[tauchat.ChatEvent]
-	cfg       TUIConfig
-	app       *gt.App
+	ctx         context.Context
+	runtime     tauchat.ChatRuntime
+	chatSub     *eventbus.Subscriber[tauchat.ChatEvent]
+	cfg         TUIConfig
+	app         *gt.App
 	notifyQueue *notify.Queue
 
 	messages             *gt.State[[]tauchat.ChatMessage]

@@ -2,8 +2,8 @@ package eventbus
 
 import (
 	"context"
-	"log/slog"
 	"reflect"
+	"slices"
 	"sync"
 	"time"
 )
@@ -118,7 +118,8 @@ func (b *Bus) pump(ctx context.Context) {
 			dests := b.dests(val.Type)
 
 			for _, d := range dests {
-				evt := DeliveredEvent{Type: val.Type,
+				evt := DeliveredEvent{
+					Type:  val.Type,
 					Event: val.Event,
 					From:  val.From,
 					To:    d.client,
@@ -176,7 +177,10 @@ func (b *Bus) shouldPublish(t reflect.Type) bool {
 func (b *Bus) subscribe(t reflect.Type, q *subscribeState) (cancel func()) {
 	b.topicsMu.Lock()
 	defer b.topicsMu.Unlock()
-	b.topics[t] = append(b.topics[t], q)
+	// Clone before appending: the pump goroutine iterates the slice
+	// returned by dests without holding the lock, so an in-place
+	// append would race.
+	b.topics[t] = append(slices.Clone(b.topics[t]), q)
 	return func() {
 		b.unsubscribe(t, q)
 	}
@@ -199,35 +203,17 @@ func (b *Bus) unsubscribe(t reflect.Type, q *subscribeState) {
 	}
 }
 
-// snapshotPublishQueue returns a snapshot of the publish queue.
-func (b *Bus) snapshotPublishQueue() []PublishedEvent {
-	resp := make(chan []PublishedEvent)
-	select {
-	case b.snapshot <- resp:
-		return <-resp
-	case <-b.router.Done():
-		return nil
-	}
-}
-
 // --- client set helpers ---
 
 type clientSet map[*Client]struct{}
 
-func (s clientSet) Add(c *Client)   { s[c] = struct{}{} }
-func (s clientSet) slice() []*Client {
-	out := make([]*Client, 0, len(s))
-	for c := range s {
-		out = append(out, c)
-	}
-	return out
-}
+func (s clientSet) Add(c *Client) { s[c] = struct{}{} }
 
 // --- publisher set helpers ---
 
 type publisherSet map[publisher]struct{}
 
-func (s publisherSet) Add(p publisher)  { s[p] = struct{}{} }
+func (s publisherSet) Add(p publisher)    { s[p] = struct{}{} }
 func (s publisherSet) Delete(p publisher) { delete(s, p) }
 
 // --- worker ---
@@ -301,7 +287,3 @@ func (s *stopFlag) Done() <-chan struct{} {
 // slowSubscriberTimeout is how long a subscriber can block before a
 // warning is logged.
 const slowSubscriberTimeout = 5 * time.Second
-
-func logf(format string, args ...any) {
-	slog.Debug(format, args...)
-}

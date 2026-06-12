@@ -51,12 +51,6 @@ func (c *Client) isClosed() bool { return c.pubs == nil && c.sub == nil }
 // Done returns a channel that is closed when Close is called.
 func (c *Client) Done() <-chan struct{} { return c.stop.Done() }
 
-func (c *Client) subscribeState() *subscribeState {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	return c.subscribeStateLocked()
-}
-
 func (c *Client) subscribeStateLocked() *subscribeState {
 	if c.sub == nil {
 		c.sub = newSubscribeState(c)
