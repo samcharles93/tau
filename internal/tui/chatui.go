@@ -46,6 +46,7 @@ type ChatPanel struct {
 	modelName            *gt.State[string]
 	availableModels      *gt.State[[]tauchat.ChatModelRef]
 	extensionCommands    *gt.State[map[string]tauchat.ExtensionCommand]
+	registryCommands     *gt.State[[]tauchat.CommandRef]
 	activeRequestID      *gt.State[string]
 	completions          *gt.State[[]completionItem]
 	completionIndex      *gt.State[int]
@@ -100,6 +101,7 @@ func NewChatPanel(
 		modelName:          gt.NewState(cfg.ModelName),
 		availableModels:    gt.NewState(models),
 		extensionCommands:  gt.NewState(commands),
+		registryCommands:   gt.NewState([]tauchat.CommandRef{}),
 		activeRequestID:    gt.NewState(""),
 		completions:        gt.NewState(make([]completionItem, 0)),
 		completionIndex:    gt.NewState(0),
@@ -143,6 +145,7 @@ func (c *ChatPanel) BindApp(app *gt.App) {
 	c.modelName.BindApp(app)
 	c.availableModels.BindApp(app)
 	c.extensionCommands.BindApp(app)
+	c.registryCommands.BindApp(app)
 	c.activeRequestID.BindApp(app)
 	c.completions.BindApp(app)
 	c.completionIndex.BindApp(app)
@@ -258,6 +261,8 @@ func (c *ChatPanel) handleRuntimeEvent(event tauchat.ChatEvent) {
 		c.printStyledAbovef("\n%s", ansify(message, theme.ColorDimGray))
 	case tauchat.ExtensionCommandsChangedEvent:
 		c.setExtensionCommands(ev.Commands)
+	case tauchat.CommandsChangedEvent:
+		c.registryCommands.Set(ev.Commands)
 	case tauchat.ExtensionCommandResultEvent:
 		c.appendMessage(tauchat.ChatMessage{Role: tauchat.ChatRoleTool, Content: ev.Output})
 	case tauchat.InteractivePromptRequestedEvent:
@@ -559,12 +564,17 @@ func (c *ChatPanel) renderInput(app *gt.App) *gt.Element {
 	))
 	input := app.MountPersistent(c, 0, func() gt.Component {
 		if c.input == nil {
+			w, _ := app.Size()
+			if w < 40 {
+				w = 120 // sensible fallback
+			}
 			c.input = newCompletionTextArea(
 				c.inputValue,
 				c.completions,
 				c.handleSubmit,
 				func() { c.selectCompletion(-1) },
 				func() { c.selectCompletion(1) },
+				w,
 			)
 		}
 		return c.input

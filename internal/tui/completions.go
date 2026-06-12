@@ -20,6 +20,7 @@ type completionItem struct {
 
 type completionTextArea struct {
 	textarea    *gt.TextArea
+	value       *gt.State[string]
 	completions *gt.State[[]completionItem]
 	onUp        func()
 	onDown      func()
@@ -31,11 +32,12 @@ func newCompletionTextArea(
 	onSubmit func(string),
 	onUp func(),
 	onDown func(),
+	width int,
 ) *completionTextArea {
 	return &completionTextArea{
 		textarea: gt.NewTextArea(
 			gt.WithTextAreaValue(value),
-			gt.WithTextAreaWidth(120),
+			gt.WithTextAreaWidth(width),
 			gt.WithTextAreaMaxHeight(inlineTextAreaMaxRows),
 			gt.WithTextAreaPlaceholder("Send a message…"),
 			gt.WithTextAreaPlaceholderStyle(theme.DimStyle()),
@@ -44,6 +46,7 @@ func newCompletionTextArea(
 			gt.WithTextAreaAutoFocus(true),
 			gt.WithTextAreaOnSubmit(onSubmit),
 		),
+		value:       value,
 		completions: completions,
 		onUp:        onUp,
 		onDown:      onDown,
@@ -69,21 +72,32 @@ func (i *completionTextArea) Text() string { return i.textarea.Text() }
 func (i *completionTextArea) Height() int { return i.textarea.Height() }
 
 func (i *completionTextArea) KeyMap() gt.KeyMap {
+	km := i.textarea.KeyMap()
+	insertNewline := gt.On(gt.KeyEnter.Shift(), func(ke gt.KeyEvent) {
+		// Append a newline at the end of the text.  Without
+		// access to the TextArea's internal cursor position we
+		// can't insert at the exact cursor, but the common case
+		// (typing then Shift+Enter) puts the cursor at the end.
+		v := i.value.Get()
+		i.value.Set(v + "\n")
+	})
 	if len(i.completions.Get()) == 0 {
-		return i.textarea.KeyMap()
+		km = append(km, insertNewline)
+		return km
 	}
-	km := make(gt.KeyMap, 0, len(i.textarea.KeyMap()))
-	for _, binding := range i.textarea.KeyMap() {
+	out := make(gt.KeyMap, 0, len(km)+3)
+	for _, binding := range km {
 		if binding.Pattern.Key == gt.KeyUp || binding.Pattern.Key == gt.KeyDown {
 			continue
 		}
-		km = append(km, binding)
+		out = append(out, binding)
 	}
-	km = append(km,
+	out = append(out,
 		gt.OnFocused(gt.KeyUp, func(gt.KeyEvent) { i.onUp() }),
 		gt.OnFocused(gt.KeyDown, func(gt.KeyEvent) { i.onDown() }),
 	)
-	return km
+	out = append(out, insertNewline)
+	return out
 }
 
 func (c *ChatPanel) renderCompletions() *gt.Element {
@@ -162,7 +176,9 @@ func (c *ChatPanel) completionItems(value string) []completionItem {
 }
 
 func (c *ChatPanel) commandCompletions(prefix string) []completionItem {
-	commands := builtinCompletionItems(c.cfg.Debug)
+	// Start with registry-published commands.
+	commands := registryCompletions(c.cfg.Debug, c.registryCommands.Get())
+	// Merge extension commands from plugins.
 	for _, ext := range c.sortedExtensionCommands() {
 		commands = append(commands, completionItem{
 			Value:       "/" + ext.Name,
@@ -338,21 +354,26 @@ func (c *ChatPanel) closeCompletions() {
 	c.completionIndex.Set(0)
 }
 
-func builtinCompletionItems(debug bool) []completionItem {
-	items := []completionItem{
-		{Value: "/new", Label: "/new", Description: "start a new conversation"},
-		{Value: "/system ", Label: "/system", Description: "set system prompt", AcceptsArgs: true},
-		{Value: "/model ", Label: "/model", Description: "switch model", AcceptsArgs: true},
-		{Value: "/refresh", Label: "/refresh", Description: "refresh models"},
-		{Value: "/reload", Label: "/reload", Description: "reload extensions while idle"},
-		{Value: "/reasoning ", Label: "/reasoning", Description: "show or hide reasoning", AcceptsArgs: true},
-		{Value: "/settings", Label: "/settings", Description: "show settings help"},
-		{Value: "/session ", Label: "/session", Description: "manage saved sessions", AcceptsArgs: true},
-		{Value: "/resume", Label: "/resume", Description: "resume a saved session"},
+// registryCompletions converts [tauchat.CommandRef] values from the registry
+// into completionItem values for the TUI. The debug command is only included
+// when debug mode is active.
+func registryCompletions(debug bool, refs []tauchat.CommandRef) []completionItem {
+	items := make([]completionItem, 0, len(refs))
+	for _, ref := range refs {
+		if ref.Name == "debug" && !debug {
+			continue
+		}
+		label := ref.Label
+		value := label
+		if ref.AcceptsArgs {
+			value += " "
+		}
+		items = append(items, completionItem{
+			Value:       value,
+			Label:       label,
+			Description: ref.Description,
+			AcceptsArgs: ref.AcceptsArgs,
+		})
 	}
-	if debug {
-		items = append(items, completionItem{Value: "/debug ", Label: "/debug", Description: "preview TUI components (developer)", AcceptsArgs: true})
-	}
-	items = append(items, completionItem{Value: "/exit", Label: "/exit", Description: "quit"})
 	return items
 }

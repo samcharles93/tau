@@ -17,6 +17,7 @@ import (
 	"github.com/samcharles93/tau/internal/eventbus"
 	"github.com/samcharles93/tau/internal/plugin"
 	"github.com/samcharles93/tau/internal/provider"
+	commandreg "github.com/samcharles93/tau/internal/registry"
 	"github.com/samcharles93/tau/internal/skills"
 	"github.com/samcharles93/tau/internal/store"
 	"github.com/samcharles93/tau/internal/tui"
@@ -234,6 +235,16 @@ func buildCoordinator(ctx context.Context, cfg coordinatorConfig) (*agent.Coordi
 		}()
 	}
 
+	// Command registry — discovers built-in, custom, and skill commands
+	// and publishes them on the bus so the TUI can render completions.
+	cmdRegClient := cfg.Bus.Client("command-registry")
+	cmdReg := commandreg.New(cwd, cmdRegClient)
+	cmdReg.Discover()
+	// Discover skills once and share with the registry to avoid redundant
+	// filesystem walks (the prompt builder also uses skill discovery).
+	allSkills, _ := skills.Discover(skills.DefaultSources(cwd))
+	cmdReg.MergeSkills(allSkills)
+
 	coordinator, err := agent.NewCoordinator(ctx, agent.CoordinatorConfig{
 		Bus:               cfg.Bus,
 		TokenSource:       staticTokenSource(cfg.BearerToken),
@@ -249,6 +260,7 @@ func buildCoordinator(ctx context.Context, cfg coordinatorConfig) (*agent.Coordi
 		},
 		OnClose: func() {
 			pluginMgr.Unload()
+			cmdReg.Close()
 		},
 	})
 	if err != nil {

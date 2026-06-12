@@ -138,16 +138,18 @@ func (c *ChatPanel) userMessageBlock(text string) string {
 
 func (c *ChatPanel) messageWidth() int {
 	if c.app != nil {
-		width, _ := c.app.Size()
-		if width > 0 {
-			return width
+		if w, _ := c.app.Size(); w > 0 {
+			return w
+		}
+		// Size() returned 0 despite a non-nil app; try the
+		// terminal directly as a fallback.
+		if w, _ := c.app.Terminal().Size(); w > 0 {
+			return w
 		}
 	}
-	width := 1
-	for line := range strings.SplitSeq(c.inputValue.Get(), "\n") {
-		width = max(width, len([]rune(line))+2)
-	}
-	return width
+	// Last resort: a conservative default that prevents
+	// messages from being narrower than a typical terminal.
+	return 120
 }
 
 func wrapUserMessageLines(text string, width int) []string {
@@ -157,15 +159,26 @@ func wrapUserMessageLines(text string, width int) []string {
 	var out []string
 	for line := range strings.SplitSeq(text, "\n") {
 		runes := []rune(line)
-		if len(runes) == 0 {
-			out = append(out, "")
-			continue
-		}
 		for len(runes) > width {
-			out = append(out, string(runes[:width]))
-			runes = runes[width:]
+			// Prefer breaking at a word boundary so we
+			// don't split words mid-grapheme.
+			breakAt := width
+			for i := width - 1; i >= width/2; i-- {
+				if runes[i] == ' ' {
+					breakAt = i + 1 // include the space on this line
+					break
+				}
+			}
+			out = append(out, strings.TrimRight(string(runes[:breakAt]), " "))
+			runes = runes[breakAt:]
+			// Drop leading spaces on continuation lines.
+			for len(runes) > 0 && runes[0] == ' ' {
+				runes = runes[1:]
+			}
 		}
-		out = append(out, string(runes))
+		if len(runes) > 0 {
+			out = append(out, string(runes))
+		}
 	}
 	return out
 }

@@ -5,6 +5,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/google/go-cmp/cmp"
 	gt "github.com/grindlemire/go-tui"
 	tauchat "github.com/samcharles93/tau/internal/chat"
 	"github.com/samcharles93/tau/internal/eventbus"
@@ -25,7 +26,7 @@ func newTestPanel(runtime *fakeRuntime) *ChatPanel {
 	bus := eventbus.New()
 	client := bus.Client("test")
 	chatSub := eventbus.Subscribe[tauchat.ChatEvent](client)
-	return NewChatPanel(context.Background(), runtime, chatSub, TUIConfig{
+	panel := NewChatPanel(context.Background(), runtime, chatSub, TUIConfig{
 		SessionID: "session_1",
 		ModelName: "model-a",
 		AvailableModels: []tauchat.ChatModelRef{
@@ -34,6 +35,34 @@ func newTestPanel(runtime *fakeRuntime) *ChatPanel {
 			{ID: "model-c", URL: "https://example.invalid/c", Ready: false},
 		},
 	})
+	// Seed the registry commands state — in production this arrives via
+	// CommandsChangedEvent on the bus, but tests skip the bus wiring.
+	panel.registryCommands.Set(testRegistryCommands())
+	return panel
+}
+
+// testRegistryCommands returns a minimal built-in command set for tests.
+func testRegistryCommands() []tauchat.CommandRef {
+	return []tauchat.CommandRef{
+		{Name: "new", Label: "/new", Description: "start a new conversation"},
+		{Name: "system", Label: "/system", Description: "set system prompt", AcceptsArgs: true},
+		{Name: "model", Label: "/model", Description: "switch model", AcceptsArgs: true},
+		{Name: "refresh", Label: "/refresh", Description: "refresh models"},
+		{Name: "reload", Label: "/reload", Description: "reload extensions while idle"},
+		{Name: "reasoning", Label: "/reasoning", Description: "show or hide reasoning", AcceptsArgs: true},
+		{Name: "settings", Label: "/settings", Description: "show settings help"},
+		{Name: "session", Label: "/session", Description: "manage saved sessions", AcceptsArgs: true},
+		{Name: "resume", Label: "/resume", Description: "resume a saved session"},
+		{Name: "debug", Label: "/debug", Description: "preview TUI components (developer)", AcceptsArgs: true},
+		{Name: "exit", Label: "/exit", Description: "quit"},
+		{Name: "quit", Label: "/quit", Description: "quit"},
+		{Name: "q", Label: "/q", Description: "quit"},
+		{Name: "help", Label: "/help", Description: "toggle help"},
+		{Name: "?", Label: "/?", Description: "toggle help"},
+		{Name: "clear", Label: "/clear", Description: "start a new conversation"},
+		{Name: "reset", Label: "/reset", Description: "start a new conversation"},
+		{Name: "models", Label: "/models", Description: "refresh models"},
+	}
 }
 
 func TestHandleSubmitSendsPrompt(t *testing.T) {
@@ -168,6 +197,7 @@ func TestApplySelectedCompletionUpdatesTextArea(t *testing.T) {
 		panel.handleSubmit,
 		func() { panel.selectCompletion(-1) },
 		func() { panel.selectCompletion(1) },
+		120,
 	)
 	panel.inputValue.Set("/mo")
 	panel.syncCompletions("/mo")
@@ -190,6 +220,7 @@ func TestCompletionTextAreaHeightAllowsMoreThanEightRows(t *testing.T) {
 		nil,
 		nil,
 		nil,
+		120,
 	)
 
 	textarea.SetText(strings.Repeat("line\n", 11) + "line")
@@ -400,6 +431,73 @@ func TestSessionTreeCommandDispatches(t *testing.T) {
 }
 
 // --- helpers ---
+
+func TestWrapUserMessageLines(t *testing.T) {
+	tests := []struct {
+		name  string
+		text  string
+		width int
+		want  []string
+	}{
+		{
+			name:  "no wrap needed",
+			text:  "hello",
+			width: 10,
+			want:  []string{"hello"},
+		},
+		{
+			name:  "wraps at word boundary",
+			text:  "causing a cluttered look on the TUI",
+			width: 20,
+			want: []string{
+				"causing a cluttered",
+				"look on the TUI",
+			},
+		},
+		{
+			name:  "long word exceeds width falls back to hard break",
+			text:  "supercalifragilisticexpialidocious is fun",
+			width: 10,
+			want: []string{
+				"supercalif",
+				"ragilistic",
+				"expialidoc",
+				"ious is",
+				"fun",
+			},
+		},
+		{
+			name:  "preserves existing line breaks",
+			text:  "line one\nline two",
+			width: 20,
+			want:  []string{"line one", "line two"},
+		},
+		{
+			name:  "multiple spaces collapsed at break",
+			text:  "hello    world is big",
+			width: 10,
+			want: []string{
+				"hello",
+				"world is",
+				"big",
+			},
+		},
+		{
+			name:  "empty text",
+			text:  "",
+			width: 10,
+			want:  nil,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := wrapUserMessageLines(tt.text, tt.width)
+			if diff := cmp.Diff(tt.want, got); diff != "" {
+				t.Errorf("wrapUserMessageLines mismatch (-want +got):\n%s", diff)
+			}
+		})
+	}
+}
 
 func findKeyBinding(km gt.KeyMap, key gt.Key) *gt.KeyBinding {
 	for i := range km {

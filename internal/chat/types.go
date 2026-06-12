@@ -492,6 +492,26 @@ type ExtensionCommandsChangedEvent struct {
 
 func (ExtensionCommandsChangedEvent) IsChatEvent() {}
 
+// CommandRef is a lightweight command descriptor published by the registry
+// so that consumers (TUI, etc.) can render completions without importing
+// the full registry package.
+type CommandRef struct {
+	Name        string `json:"name"`
+	Label       string `json:"label"`
+	Description string `json:"description,omitempty"`
+	AcceptsArgs bool   `json:"accepts_args,omitempty"`
+}
+
+// CommandsChangedEvent is published by the command registry whenever the
+// set of available non-extension commands changes (startup, reload, etc.).
+// Extension commands continue to arrive via [ExtensionCommandsChangedEvent].
+type CommandsChangedEvent struct {
+	Commands   []CommandRef `json:"commands"`
+	OccurredAt time.Time    `json:"occurred_at"`
+}
+
+func (CommandsChangedEvent) IsChatEvent() {}
+
 type ExtensionCommandResultEvent struct {
 	Name       string    `json:"name"`
 	Output     string    `json:"output"`
