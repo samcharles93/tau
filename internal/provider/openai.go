@@ -115,13 +115,20 @@ func messagesHaveReasoningContent(messages []chat.ChatMessage) bool {
 func encodeMessages(messages []chat.ChatMessage, compat config.CompatConfig) []map[string]any {
 	encoded := make([]map[string]any, 0, len(messages))
 	for _, message := range messages {
-		item := map[string]any{"role": message.Role}
-		if message.Content != "" ||
+		item := map[string]any{"role": string(message.Role)}
+
+		// Determine if we need to explicitly include the 'content' field.
+		// The API generally requires 'content' or 'tool_calls' to be set.
+		includeContent := message.Content != "" ||
+			(message.Role == chat.ChatRoleAssistant && len(message.ToolCalls) == 0) ||
 			(compat.RequiresAssistantContentForToolCalls &&
 				message.Role == chat.ChatRoleAssistant &&
-				len(message.ToolCalls) > 0) {
+				len(message.ToolCalls) > 0)
+
+		if includeContent {
 			item["content"] = message.Content
 		}
+
 		if len(message.ToolCalls) > 0 {
 			item["tool_calls"] = message.ToolCalls
 		}

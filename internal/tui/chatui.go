@@ -18,10 +18,10 @@ import (
 )
 
 const (
-	inlineMinHeight         = 3
+	inlineMinHeight         = 5
 	inlineTextAreaMaxRows   = 24
 	inlineCompletionMaxRows = 4
-	inlineMaxHeight         = inlineTextAreaMaxRows + inlineCompletionMaxRows + 2
+	inlineMaxHeight         = inlineTextAreaMaxRows + inlineCompletionMaxRows + 4
 )
 
 // ChatPanel is the root go-tui component for the interactive chat UI.
@@ -436,9 +436,9 @@ func (c *ChatPanel) adjustInlineHeight() {
 	}
 	height := inlineMinHeight
 	if c.input != nil {
-		height = c.input.Height() + 1
+		height = c.input.Height() + 3 // +1 for cursor, +2 for top margin
 	} else if value := c.inputValue.Get(); value != "" {
-		height = strings.Count(value, "\n") + 2
+		height = strings.Count(value, "\n") + 4 // +2 for cursor, +2 for top margin
 	}
 	if completions := len(c.completions.Get()); completions > 0 {
 		height += min(completions, inlineCompletionMaxRows)
@@ -474,6 +474,7 @@ func (c *ChatPanel) Render(app *gt.App) *gt.Element {
 		gt.WithDisplay(gt.DisplayFlex),
 		gt.WithDirection(gt.Column),
 		gt.WithWidthPercent(100),
+		gt.WithMarginTRBL(2, 0, 0, 0), // 2 lines of spacing above the input area
 	)
 
 	if completions := c.renderCompletions(); completions != nil {
