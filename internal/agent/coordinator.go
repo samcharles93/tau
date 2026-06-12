@@ -85,8 +85,10 @@ type Coordinator struct {
 }
 
 type coordinatorSession struct {
-	state  *chat.ChatSessionState
-	cancel context.CancelFunc
+	state           *chat.ChatSessionState
+	cancel          context.CancelFunc
+	steeringMu      sync.Mutex
+	pendingSteering []string
 }
 
 // CoordinatorConfig holds the dependencies for creating a Coordinator.
@@ -243,6 +245,8 @@ func (c *Coordinator) handleCommand(cmd chat.ChatCommand) {
 		c.handleStart(command)
 	case chat.SubmitChatPromptCommand:
 		c.handleSubmit(command)
+	case chat.SteerChatPromptCommand:
+		c.handleSteer(command)
 	case chat.UpdateChatSessionCommand:
 		c.handleUpdate(command)
 	case chat.CancelChatRequestCommand:
@@ -474,6 +478,57 @@ func (c *Coordinator) handleReset(cmd chat.ResetChatSessionCommand) {
 	c.emit(chat.ChatSessionSnapshotEvent{State: snapshot})
 }
 
+func (c *Coordinator) handleSteer(cmd chat.SteerChatPromptCommand) {
+	c.mu.Lock()
+	session, ok := c.sessions[cmd.SessionID]
+	if !ok {
+		c.mu.Unlock()
+		c.emit(chat.ChatRuntimeErrorEvent{
+			SessionID:  cmd.SessionID,
+			RequestID:  cmd.RequestID,
+			Message:    "session not found",
+			Fatal:      false,
+			OccurredAt: time.Now().UTC(),
+		})
+		return
+	}
+	session.steeringMu.Lock()
+	session.pendingSteering = append(session.pendingSteering, cmd.Prompt)
+	session.steeringMu.Unlock()
+	c.mu.Unlock()
+}
+
+func (c *Coordinator) injectSteering(sessionID string) {
+	c.mu.Lock()
+	session, ok := c.sessions[sessionID]
+	if !ok {
+		c.mu.Unlock()
+		return
+	}
+
+	session.steeringMu.Lock()
+	steers := session.pendingSteering
+	session.pendingSteering = nil
+	session.steeringMu.Unlock()
+
+	if len(steers) == 0 {
+		c.mu.Unlock()
+		return
+	}
+
+	for _, prompt := range steers {
+		session.state.Messages = append(session.state.Messages, chat.ChatMessage{
+			Role:    chat.ChatRoleUser,
+			Content: prompt,
+		})
+	}
+	snapshot := chat.CloneChatSessionState(session.state)
+	c.mu.Unlock()
+
+	// Emit snapshot so TUI sees the injected user messages.
+	c.emit(chat.ChatSessionSnapshotEvent{State: snapshot})
+}
+
 func (c *Coordinator) handleClose(cmd chat.CloseChatSessionCommand) {
 	now := normalizedTime(cmd.RequestedAt)
 
@@ -686,6 +741,11 @@ func (c *Coordinator) runTurn(ctx context.Context, state chat.ChatSessionState) 
 			c.cancelTurn(sessionID, requestID, time.Now().UTC())
 			return
 		}
+
+		// Inject any steering messages that arrived during tool execution
+		// or at the turn start.
+		c.injectSteering(sessionID)
+		state = c.getSessionState(sessionID)
 
 		// Inject tools into the session state for this call.
 		state.Tools = toolDefs

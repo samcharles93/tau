@@ -84,6 +84,122 @@ func (s *scriptedStreamer) StreamChatCompletionFull(
 	return chat.CompletionResult{FinishReason: "stop"}, nil
 }
 
+type testSteerStreamer struct {
+	calls         int
+	onCall        func(chat.ChatSessionState)
+	firstCallDone chan struct{}
+	steerSent     chan struct{}
+}
+
+func (s *testSteerStreamer) StreamChatCompletionFull(
+	ctx context.Context,
+	session chat.ChatSessionState,
+	bearerToken string,
+	extraHeaders map[string]string,
+	cb chat.StreamCallbacks,
+) (chat.CompletionResult, error) {
+	s.calls++
+	s.onCall(session)
+	if s.calls == 1 {
+		close(s.firstCallDone)
+		return chat.CompletionResult{
+			ToolCalls: []chat.ChatToolCall{
+				{ID: "call_1", Type: "function", Function: chat.ChatFunctionCall{Name: "test_tool"}},
+			},
+		}, nil
+	}
+	if s.calls == 2 {
+		// Return a second tool call so the turn loop enters another
+		// iteration, giving injectSteering a chance to pick up the
+		// steer that was sent after firstCallDone.
+		<-s.steerSent
+		return chat.CompletionResult{
+			ToolCalls: []chat.ChatToolCall{
+				{ID: "call_2", Type: "function", Function: chat.ChatFunctionCall{Name: "test_tool"}},
+			},
+		}, nil
+	}
+	return chat.CompletionResult{FinishReason: "stop"}, nil
+}
+
+func TestCoordinatorSteeringInjection(t *testing.T) {
+	bus := newTestBus(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+
+	firstCallDone := make(chan struct{})
+	steerSent := make(chan struct{})
+
+	var lastMessages []chat.ChatMessage
+	streamer := &testSteerStreamer{
+		onCall: func(session chat.ChatSessionState) {
+			lastMessages = session.Messages
+		},
+		firstCallDone: firstCallDone,
+		steerSent:     steerSent,
+	}
+
+	reg := tools.NewRegistry()
+	reg.Register(tools.Tool{
+		Schema: tools.Schema{Name: "test_tool"},
+		Execute: func(ctx context.Context, args json.RawMessage, bridge tools.UIBridge) (tools.Result, error) {
+			return tools.Result{Content: "tool result"}, nil
+		},
+	})
+
+	c, err := NewCoordinator(ctx, CoordinatorConfig{
+		Bus: bus,
+		TokenSource: func(ctx context.Context, p config.ProviderConfig) (string, error) {
+			return "token", nil
+		},
+		Streamer: streamer,
+		Registry: reg,
+	})
+	require.NoError(t, err)
+
+	sessionID := "session_steer"
+	err = c.Send(chat.StartChatSessionCommand{
+		SessionID: sessionID,
+		Config: chat.ChatSessionConfig{
+			Provider: config.ProviderConfig{Name: "test", BaseURL: "http://test"},
+			Model:    chat.ChatModelRef{ID: "test-model", URL: "http://test"},
+		},
+	})
+	require.NoError(t, err)
+
+	err = c.Send(chat.SubmitChatPromptCommand{
+		SessionID:   sessionID,
+		RequestID:   "req_1",
+		Prompt:      "initial prompt",
+		SubmittedAt: time.Now().UTC(),
+	})
+	require.NoError(t, err)
+
+	<-firstCallDone
+
+	err = c.Send(chat.SteerChatPromptCommand{
+		SessionID:   sessionID,
+		RequestID:   "req_1",
+		Prompt:      "steering message",
+		SubmittedAt: time.Now().UTC(),
+	})
+	require.NoError(t, err)
+	close(steerSent)
+
+	// Wait for coordinator turn loop to complete.
+	time.Sleep(100 * time.Millisecond)
+
+	// The last messages should contain the steering message.
+	found := false
+	for _, msg := range lastMessages {
+		if msg.Role == chat.ChatRoleUser && msg.Content == "steering message" {
+			found = true
+			break
+		}
+	}
+	require.True(t, found, "steering message should be injected in conversation history")
+}
+
 func TestCoordinatorDispatchesSessionLifecycleHooks(t *testing.T) {
 	started := make(chan map[string]any, 1)
 	shutdown := make(chan map[string]any, 1)

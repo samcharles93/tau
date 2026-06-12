@@ -207,6 +207,63 @@ func (c *ChatPanel) handleSubmit(value string) {
 	c.handleSubmitWithDepth(value, 0)
 }
 
+func (c *ChatPanel) handleSteerSubmit(value string) {
+	// Debounce rapid submits.
+	if elapsed := time.Since(c.lastSubmitTime); elapsed < 300*time.Millisecond {
+		return
+	}
+	c.lastSubmitTime = time.Now()
+
+	text := strings.TrimSpace(value)
+	if text == "" {
+		return
+	}
+
+	// If idle, Alt+Enter is just a normal submit.
+	if c.status.Get() == tauchat.ChatSessionIdle {
+		c.handleSubmit(value)
+		return
+	}
+
+	c.clearInput()
+	c.lastError.Set("")
+	c.printStyledAbovef("%s", c.userMessageBlock(text))
+
+	reqID, err := uuid.NewV7()
+	if err != nil {
+		c.lastError.Set(err.Error())
+		return
+	}
+
+	if err := c.runtime.Send(tauchat.SteerChatPromptCommand{
+		SessionID:   c.cfg.SessionID,
+		RequestID:   reqID.String(),
+		Prompt:      text,
+		SubmittedAt: time.Now().UTC(),
+	}); err != nil {
+		c.lastError.Set(err.Error())
+	}
+}
+
+func (c *ChatPanel) popQueueToInput() {
+	if c.inputValue.Get() != "" {
+		return // only pop if input is empty
+	}
+
+	var text string
+	c.outgoingQueue.Update(func(q []string) []string {
+		if len(q) == 0 {
+			return q
+		}
+		text = q[len(q)-1]
+		return q[:len(q)-1]
+	})
+
+	if text != "" {
+		c.setInputText(text)
+	}
+}
+
 func (c *ChatPanel) handleSubmitWithDepth(value string, depth int) {
 	// Debounce rapid submits (rapid Enter, paste CR bytes).
 	if elapsed := time.Since(c.lastSubmitTime); elapsed < 300*time.Millisecond {
@@ -223,11 +280,16 @@ func (c *ChatPanel) handleSubmitWithDepth(value string, depth int) {
 		return
 	}
 
-	// Prevent submitting while a request is already in flight.
-	if c.status.Get() == tauchat.ChatSessionStreaming {
-		c.notice.Set("a request is already in progress")
+	// If the agent is busy, add to the outgoing queue instead of submitting immediately.
+	if c.status.Get() == tauchat.ChatSessionStreaming || c.status.Get() == tauchat.ChatSessionCancelling {
+		c.outgoingQueue.Update(func(q []string) []string {
+			return append(q, text)
+		})
+		c.clearInput()
+		c.notice.Set(fmt.Sprintf("queued: %s", text))
 		return
 	}
+
 	if c.shouldApplyCompletion(value) {
 		completed, acceptsArgs := c.applySelectedCompletion()
 		if completed != "" && !acceptsArgs {

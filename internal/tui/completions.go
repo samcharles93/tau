@@ -19,17 +19,21 @@ type completionItem struct {
 }
 
 type completionTextArea struct {
-	textarea    *gt.TextArea
-	value       *gt.State[string]
-	completions *gt.State[[]completionItem]
-	onUp        func()
-	onDown      func()
+	textarea      *gt.TextArea
+	value         *gt.State[string]
+	completions   *gt.State[[]completionItem]
+	onUp          func()
+	onDown        func()
+	onSteerSubmit func(string)
+	onPopQueue    func()
 }
 
 func newCompletionTextArea(
 	value *gt.State[string],
 	completions *gt.State[[]completionItem],
 	onSubmit func(string),
+	onSteerSubmit func(string),
+	onPopQueue func(),
 	onUp func(),
 	onDown func(),
 	width int,
@@ -46,10 +50,12 @@ func newCompletionTextArea(
 			gt.WithTextAreaAutoFocus(true),
 			gt.WithTextAreaOnSubmit(onSubmit),
 		),
-		value:       value,
-		completions: completions,
-		onUp:        onUp,
-		onDown:      onDown,
+		value:         value,
+		completions:   completions,
+		onUp:          onUp,
+		onDown:        onDown,
+		onSteerSubmit: onSteerSubmit,
+		onPopQueue:    onPopQueue,
 	}
 }
 
@@ -81,11 +87,18 @@ func (i *completionTextArea) KeyMap() gt.KeyMap {
 		v := i.value.Get()
 		i.value.Set(v + "\n")
 	})
+	steerSubmit := gt.OnFocused(gt.KeyEnter.Alt(), func(ke gt.KeyEvent) {
+		i.onSteerSubmit(i.value.Get())
+	})
+	popQueue := gt.OnFocused(gt.KeyUp.Alt(), func(ke gt.KeyEvent) {
+		i.onPopQueue()
+	})
+
 	if len(i.completions.Get()) == 0 {
-		km = append(km, insertNewline)
+		km = append(km, insertNewline, steerSubmit, popQueue)
 		return km
 	}
-	out := make(gt.KeyMap, 0, len(km)+3)
+	out := make(gt.KeyMap, 0, len(km)+5)
 	for _, binding := range km {
 		if binding.Pattern.Key == gt.KeyUp || binding.Pattern.Key == gt.KeyDown {
 			continue
@@ -96,7 +109,7 @@ func (i *completionTextArea) KeyMap() gt.KeyMap {
 		gt.OnFocused(gt.KeyUp, func(gt.KeyEvent) { i.onUp() }),
 		gt.OnFocused(gt.KeyDown, func(gt.KeyEvent) { i.onDown() }),
 	)
-	out = append(out, insertNewline)
+	out = append(out, insertNewline, steerSubmit, popQueue)
 	return out
 }
 

@@ -281,6 +281,15 @@ type RunExtensionCommandCommand struct {
 
 func (RunExtensionCommandCommand) IsChatCommand() {}
 
+type SteerChatPromptCommand struct {
+	SessionID   string    `json:"session_id"`
+	RequestID   string    `json:"request_id"`
+	Prompt      string    `json:"prompt"`
+	SubmittedAt time.Time `json:"submitted_at"`
+}
+
+func (SteerChatPromptCommand) IsChatCommand() {}
+
 type RespondInteractivePromptCommand struct {
 	RequestID   string    `json:"request_id"`
 	Response    string    `json:"response,omitempty"`

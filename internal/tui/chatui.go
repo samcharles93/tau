@@ -71,6 +71,7 @@ type ChatPanel struct {
 	reasoningWritten     bool
 	startupDone          bool
 	lastSubmitTime       time.Time
+	outgoingQueue        *gt.State[[]string]
 }
 
 // NewChatPanel creates a new go-tui chat panel with reactive state initialized.
@@ -112,6 +113,7 @@ func NewChatPanel(
 		showSessionInfo:    gt.NewState(false),
 		showSessionTree:    gt.NewState(false),
 		sessionSummaries:   gt.NewState([]tauchat.SessionSummary{}),
+		outgoingQueue:      gt.NewState([]string{}),
 		selectedModelIndex: gt.NewState(0),
 	}
 	panel.settingsView = views.NewSettingsView(
@@ -147,6 +149,7 @@ func (c *ChatPanel) BindApp(app *gt.App) {
 	c.extensionCommands.BindApp(app)
 	c.registryCommands.BindApp(app)
 	c.activeRequestID.BindApp(app)
+	c.outgoingQueue.BindApp(app)
 	c.completions.BindApp(app)
 	c.completionIndex.BindApp(app)
 	c.showSettings.BindApp(app)
@@ -224,6 +227,7 @@ func (c *ChatPanel) handleRuntimeEvent(event tauchat.ChatEvent) {
 		}
 		c.closeStream()
 		c.syncState(ev.State)
+		c.drainQueue()
 	case tauchat.ChatResponseCancelledEvent:
 		if ev.State.SessionID != c.cfg.SessionID {
 			return
@@ -232,6 +236,7 @@ func (c *ChatPanel) handleRuntimeEvent(event tauchat.ChatEvent) {
 		c.syncState(ev.State)
 		c.notice.Set("chat request cancelled")
 		c.printStyledAbovef("%s", ansify("\nchat request cancelled", theme.ColorDimGray))
+		c.drainQueue()
 	case tauchat.ChatRuntimeErrorEvent:
 		if ev.SessionID != "" && ev.SessionID != c.cfg.SessionID {
 			return
@@ -241,6 +246,7 @@ func (c *ChatPanel) handleRuntimeEvent(event tauchat.ChatEvent) {
 		c.notice.Set(ev.Message)
 		c.status.Set(tauchat.ChatSessionIdle)
 		c.printStyledAbovef("%s", ansify(fmt.Sprintf("\nerror: %s", ev.Message), theme.ColorRed))
+		c.drainQueue()
 	case tauchat.ChatNotificationEvent:
 		c.notifyQueue.Push(notify.Notification{
 			Message:  ev.Message,
@@ -349,6 +355,33 @@ func (c *ChatPanel) matchesRequest(sessionID, requestID string) bool {
 	return active == "" || requestID == "" || active == requestID
 }
 
+func (c *ChatPanel) drainQueue() {
+	var next string
+	c.outgoingQueue.Update(func(q []string) []string {
+		if len(q) == 0 {
+			return q
+		}
+		next = q[0]
+		return q[1:]
+	})
+
+	if next != "" {
+		// Run in a goroutine because handleSubmit might trigger more events
+		// and we want to avoid blocking the event loop.
+		go func() {
+			if c.app != nil {
+				// We use app.QueueUpdate because we are updating state from a goroutine.
+				c.app.QueueUpdate(func() {
+					c.handleSubmit(next)
+				})
+			} else {
+				// Fallback for tests or un-bound panel.
+				c.handleSubmit(next)
+			}
+		}()
+	}
+}
+
 func (c *ChatPanel) syncState(state tauchat.ChatSessionState) {
 	if state.SessionID != c.cfg.SessionID {
 		return
@@ -453,6 +486,9 @@ func (c *ChatPanel) Render(app *gt.App) *gt.Element {
 			gt.WithTruncate(true),
 		))
 	}
+	if queue := c.renderQueue(); queue != nil {
+		root.AddChild(queue)
+	}
 	root.AddChild(c.renderInput(app))
 	root.AddChild(c.renderStatusBar())
 
@@ -550,6 +586,28 @@ func (c *ChatPanel) dumpElementTree(el *gt.Element, depth int, f *os.File) {
 	}
 }
 
+func (c *ChatPanel) renderQueue() *gt.Element {
+	queue := c.outgoingQueue.Get()
+	if len(queue) == 0 {
+		return nil
+	}
+
+	el := gt.New(
+		gt.WithDisplay(gt.DisplayFlex),
+		gt.WithDirection(gt.Column),
+		gt.WithWidthPercent(100),
+	)
+
+	for _, msg := range queue {
+		el.AddChild(gt.New(
+			gt.WithText("queued: "+msg),
+			gt.WithTextStyle(theme.DimStyle()),
+			gt.WithTruncate(true),
+		))
+	}
+	return el
+}
+
 func (c *ChatPanel) renderInput(app *gt.App) *gt.Element {
 	inputContainer := gt.New(
 		gt.WithDisplay(gt.DisplayFlex),
@@ -572,6 +630,8 @@ func (c *ChatPanel) renderInput(app *gt.App) *gt.Element {
 				c.inputValue,
 				c.completions,
 				c.handleSubmit,
+				c.handleSteerSubmit,
+				c.popQueueToInput,
 				func() { c.selectCompletion(-1) },
 				func() { c.selectCompletion(1) },
 				w,

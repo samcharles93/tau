@@ -4,6 +4,7 @@ import (
 	"context"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/google/go-cmp/cmp"
 	gt "github.com/grindlemire/go-tui"
@@ -84,6 +85,114 @@ func TestHandleSubmitSendsPrompt(t *testing.T) {
 	}
 	if cmd.SessionID != "session_1" || cmd.Prompt != "hello" || cmd.RequestID == "" {
 		t.Fatalf("command = %#v, want populated prompt for session_1", cmd)
+	}
+}
+
+func TestHandleSubmitQueuesWhenBusy(t *testing.T) {
+	runtime := &fakeRuntime{}
+	panel := newTestPanel(runtime)
+
+	// Set status to busy.
+	panel.status.Set(tauchat.ChatSessionStreaming)
+
+	panel.handleSubmit("queued message")
+
+	// Reset lastSubmitTime so the drained submit isn't debounced.
+	panel.lastSubmitTime = time.Time{}
+
+	// Verify it was queued and not sent.
+	if len(runtime.commands) != 0 {
+		t.Fatalf("commands = %d, want 0 (queued)", len(runtime.commands))
+	}
+	queue := panel.outgoingQueue.Get()
+	if len(queue) != 1 || queue[0] != "queued message" {
+		t.Fatalf("queue = %v, want ['queued message']", queue)
+	}
+
+	// Now simulate completion and verify it drains.
+	panel.handleRuntimeEvent(tauchat.ChatResponseCompletedEvent{
+		State: tauchat.ChatSessionState{
+			SessionID: "session_1",
+			Status:    tauchat.ChatSessionIdle,
+		},
+		RequestID: panel.activeRequestID.Get(),
+	})
+
+	// Wait for the goroutine in drainQueue to trigger handleSubmit.
+	// In a real test environment we might need more robust sync,
+	// but let's see if this works with a small sleep or just checking commands.
+	time.Sleep(10 * time.Millisecond)
+
+	if len(runtime.commands) != 1 {
+		t.Fatalf("commands = %d, want 1 (drained)", len(runtime.commands))
+	}
+	cmd, ok := runtime.commands[0].(tauchat.SubmitChatPromptCommand)
+	if !ok {
+		t.Fatalf("command = %#v, want SubmitChatPromptCommand", runtime.commands[0])
+	}
+	if cmd.Prompt != "queued message" {
+		t.Fatalf("prompt = %q, want 'queued message'", cmd.Prompt)
+	}
+	if len(panel.outgoingQueue.Get()) != 0 {
+		t.Fatalf("queue = %v, want empty", panel.outgoingQueue.Get())
+	}
+}
+
+func TestHandleSteerSubmitSendsSteer(t *testing.T) {
+	runtime := &fakeRuntime{}
+	panel := newTestPanel(runtime)
+
+	// Set status to busy.
+	panel.status.Set(tauchat.ChatSessionStreaming)
+
+	panel.handleSteerSubmit("steering message")
+
+	if len(runtime.commands) != 1 {
+		t.Fatalf("commands = %d, want 1", len(runtime.commands))
+	}
+	cmd, ok := runtime.commands[0].(tauchat.SteerChatPromptCommand)
+	if !ok {
+		t.Fatalf("command = %#v, want SteerChatPromptCommand", runtime.commands[0])
+	}
+	if cmd.Prompt != "steering message" {
+		t.Fatalf("prompt = %q, want 'steering message'", cmd.Prompt)
+	}
+}
+
+func TestPopQueueToInput(t *testing.T) {
+	runtime := &fakeRuntime{}
+	panel := newTestPanel(runtime)
+
+	// Queue some messages.
+	panel.status.Set(tauchat.ChatSessionStreaming)
+	panel.handleSubmit("first")
+	panel.lastSubmitTime = time.Time{}
+	panel.handleSubmit("second")
+	panel.lastSubmitTime = time.Time{}
+
+	if len(panel.outgoingQueue.Get()) != 2 {
+		t.Fatalf("queue length = %d, want 2", len(panel.outgoingQueue.Get()))
+	}
+
+	// Pop to input.
+	panel.popQueueToInput()
+
+	if got := panel.inputValue.Get(); got != "second" {
+		t.Fatalf("input = %q, want 'second'", got)
+	}
+	if len(panel.outgoingQueue.Get()) != 1 {
+		t.Fatalf("queue length = %d, want 1", len(panel.outgoingQueue.Get()))
+	}
+
+	// Clear input and pop again.
+	panel.inputValue.Set("")
+	panel.popQueueToInput()
+
+	if got := panel.inputValue.Get(); got != "first" {
+		t.Fatalf("input = %q, want 'first'", got)
+	}
+	if len(panel.outgoingQueue.Get()) != 0 {
+		t.Fatalf("queue length = %d, want 0", len(panel.outgoingQueue.Get()))
 	}
 }
 
@@ -195,6 +304,8 @@ func TestApplySelectedCompletionUpdatesTextArea(t *testing.T) {
 		panel.inputValue,
 		panel.completions,
 		panel.handleSubmit,
+		panel.handleSteerSubmit,
+		panel.popQueueToInput,
 		func() { panel.selectCompletion(-1) },
 		func() { panel.selectCompletion(1) },
 		120,
@@ -217,6 +328,8 @@ func TestCompletionTextAreaHeightAllowsMoreThanEightRows(t *testing.T) {
 	textarea := newCompletionTextArea(
 		input,
 		gt.NewState([]completionItem{}),
+		nil,
+		nil,
 		nil,
 		nil,
 		nil,
