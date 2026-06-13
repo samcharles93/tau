@@ -87,7 +87,7 @@ func (i *completionTextArea) KeyMap() gt.KeyMap {
 		v := i.value.Get()
 		i.value.Set(v + "\n")
 	})
-	steerSubmit := gt.OnFocused(gt.KeyEnter.Alt(), func(ke gt.KeyEvent) {
+	steerSubmit := gt.OnFocused(gt.KeyCtrlS, func(ke gt.KeyEvent) {
 		i.onSteerSubmit(i.value.Get())
 	})
 	popQueue := gt.OnFocused(gt.KeyUp.Alt(), func(ke gt.KeyEvent) {

@@ -219,7 +219,7 @@ func (c *ChatPanel) handleSteerSubmit(value string) {
 		return
 	}
 
-	// If idle, Alt+Enter is just a normal submit.
+	// If idle, Ctrl+S is just a normal submit.
 	if c.status.Get() == tauchat.ChatSessionIdle {
 		c.handleSubmit(value)
 		return
