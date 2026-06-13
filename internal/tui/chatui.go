@@ -474,7 +474,7 @@ func (c *ChatPanel) Render(app *gt.App) *gt.Element {
 		gt.WithDisplay(gt.DisplayFlex),
 		gt.WithDirection(gt.Column),
 		gt.WithWidthPercent(100),
-		gt.WithMarginTRBL(2, 0, 0, 0), // 2 lines of spacing above the input area
+		gt.WithMarginTRBL(3, 0, 0, 0), // 3 lines of spacing above the input area
 	)
 
 	if completions := c.renderCompletions(); completions != nil {
