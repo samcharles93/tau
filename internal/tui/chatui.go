@@ -436,7 +436,7 @@ func (c *ChatPanel) adjustInlineHeight() {
 	}
 	height := inlineMinHeight
 	if c.input != nil {
-		height = c.input.Height() + 3 // +1 for cursor, +2 for top margin
+		height = c.input.Height() + 5 // +1 for cursor, +2 for spacer, +2 for status bar & padding
 	} else if value := c.inputValue.Get(); value != "" {
 		height = strings.Count(value, "\n") + 4 // +2 for cursor, +2 for top margin
 	}
@@ -474,7 +474,6 @@ func (c *ChatPanel) Render(app *gt.App) *gt.Element {
 		gt.WithDisplay(gt.DisplayFlex),
 		gt.WithDirection(gt.Column),
 		gt.WithWidthPercent(100),
-		gt.WithMarginTRBL(3, 0, 0, 0), // 3 lines of spacing above the input area
 	)
 
 	if completions := c.renderCompletions(); completions != nil {
@@ -490,6 +489,8 @@ func (c *ChatPanel) Render(app *gt.App) *gt.Element {
 	if queue := c.renderQueue(); queue != nil {
 		root.AddChild(queue)
 	}
+	// Visual spacer between messages/completions and the input area.
+	root.AddChild(gt.New(gt.WithHeight(2)))
 	root.AddChild(c.renderInput(app))
 	root.AddChild(c.renderStatusBar())
 
