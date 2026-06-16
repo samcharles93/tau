@@ -181,24 +181,24 @@ templ (t *Tree) Render() {
 	<div class="flex-col grow" onFocus={func(*tui.Element) { t.Focus() }} onBlur={func(*tui.Element) { t.Blur() }} scrollable={tui.ScrollVertical} autoFocus={true}>
 		for i, item := range t.Items.Get() {
 			<div class="flex-row px-1">
-				<span>{strings.Repeat("  ", item.Depth)}</span>
+				<span textStyle={theme.BodyStyle()}>{strings.Repeat("  ", item.Depth)}</span>
 				if item.HasChildren {
 					if item.Expanded {
-						<span class="text-dim">{"▼ "}</span>
+						<span textStyle={theme.DimStyle()}>{"▼ "}</span>
 					} else {
-						<span class="text-dim">{"▶ "}</span>
+						<span textStyle={theme.DimStyle()}>{"▶ "}</span>
 					}
 				} else {
-					<span>{"  "}</span>
+					<span textStyle={theme.BodyStyle()}>{"  "}</span>
 				}
 
 				if i == t.Selected.Get() {
 					<span textStyle={theme.SelectedStyle()}>{item.Label}</span>
 				} else {
-					<span>{item.Label}</span>
+					<span textStyle={theme.BodyStyle()}>{item.Label}</span>
 				}
 				if item.Description != "" {
-					<span class="text-dim italic">{" — " + item.Description}</span>
+					<span textStyle={theme.DescriptionStyle()}>{" — " + item.Description}</span>
 				}
 			</div>
 		}

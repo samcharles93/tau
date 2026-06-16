@@ -153,19 +153,20 @@ func (l *List) Render(app *tui.App) *tui.Element {
 		} else if item.Disabled {
 			__tui_3 := tui.New(
 				tui.WithText(item.Label),
-				tui.WithTextStyle(tui.NewStyle().Dim().Italic()),
+				tui.WithTextStyle(theme.DisabledStyle()),
 			)
 			__tui_1.AddChild(__tui_3)
 		} else {
 			__tui_4 := tui.New(
 				tui.WithText(item.Label),
+				tui.WithTextStyle(theme.BodyStyle()),
 			)
 			__tui_1.AddChild(__tui_4)
 		}
 		if item.Description != "" {
 			__tui_5 := tui.New(
 				tui.WithText(" — "+item.Description),
-				tui.WithTextStyle(tui.NewStyle().Dim().Italic()),
+				tui.WithTextStyle(theme.DescriptionStyle()),
 			)
 			__tui_1.AddChild(__tui_5)
 		}

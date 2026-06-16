@@ -137,12 +137,12 @@ func init() {
 // Render builds the select element tree.
 templ (s *Select) Render() {
 	<div class="flex-row items-center gap-1 px-1 border-single" onFocus={func(*tui.Element) { s.Focus() }} onBlur={func(*tui.Element) { s.Blur() }} autoFocus={true}>
-		<span class="text-dim font-bold">{"‹"}</span>
+		<span textStyle={theme.DimStyle().Bold()}>{"‹"}</span>
 		if s.focused.Get() {
 			<span textStyle={theme.SelectedStyle()}>{s.currentLabel()}</span>
 		} else {
-			<span>{s.currentLabel()}</span>
+			<span textStyle={theme.BodyStyle()}>{s.currentLabel()}</span>
 		}
-		<span class="text-dim font-bold">{"›"}</span>
+		<span textStyle={theme.DimStyle().Bold()}>{"›"}</span>
 	</div>
 }

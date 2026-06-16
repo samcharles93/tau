@@ -98,3 +98,13 @@ func ReadyStyle() gotui.Style {
 func BorderStyle() gotui.Style {
 	return gotui.NewStyle().Foreground(ColorDimGray)
 }
+
+// DescriptionStyle is used for secondary descriptions and hints.
+func DescriptionStyle() gotui.Style {
+	return gotui.NewStyle().Foreground(ColorDimGray).Italic()
+}
+
+// DisabledStyle is used for unavailable or non-interactive items.
+func DisabledStyle() gotui.Style {
+	return gotui.NewStyle().Foreground(ColorDimGray).Italic()
+}

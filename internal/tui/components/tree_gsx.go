@@ -186,25 +186,27 @@ func (t *Tree) Render(app *tui.App) *tui.Element {
 		)
 		__tui_2 := tui.New(
 			tui.WithText(strings.Repeat("  ", item.Depth)),
+			tui.WithTextStyle(theme.BodyStyle()),
 		)
 		__tui_1.AddChild(__tui_2)
 		if item.HasChildren {
 			if item.Expanded {
 				__tui_3 := tui.New(
 					tui.WithText("▼ "),
-					tui.WithTextStyle(tui.NewStyle().Dim()),
+					tui.WithTextStyle(theme.DimStyle()),
 				)
 				__tui_1.AddChild(__tui_3)
 			} else {
 				__tui_4 := tui.New(
 					tui.WithText("▶ "),
-					tui.WithTextStyle(tui.NewStyle().Dim()),
+					tui.WithTextStyle(theme.DimStyle()),
 				)
 				__tui_1.AddChild(__tui_4)
 			}
 		} else {
 			__tui_5 := tui.New(
 				tui.WithText("  "),
+				tui.WithTextStyle(theme.BodyStyle()),
 			)
 			__tui_1.AddChild(__tui_5)
 		}
@@ -217,13 +219,14 @@ func (t *Tree) Render(app *tui.App) *tui.Element {
 		} else {
 			__tui_7 := tui.New(
 				tui.WithText(item.Label),
+				tui.WithTextStyle(theme.BodyStyle()),
 			)
 			__tui_1.AddChild(__tui_7)
 		}
 		if item.Description != "" {
 			__tui_8 := tui.New(
 				tui.WithText(" — "+item.Description),
-				tui.WithTextStyle(tui.NewStyle().Dim().Italic()),
+				tui.WithTextStyle(theme.DescriptionStyle()),
 			)
 			__tui_1.AddChild(__tui_8)
 		}

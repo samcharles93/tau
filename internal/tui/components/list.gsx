@@ -147,12 +147,12 @@ templ (l *List) Render() {
 				if i == l.Selected.Get() {
 					<span textStyle={theme.SelectedStyle()}>{item.Label}</span>
 				} else if item.Disabled {
-					<span class="text-dim italic">{item.Label}</span>
+					<span textStyle={theme.DisabledStyle()}>{item.Label}</span>
 				} else {
-					<span>{item.Label}</span>
+					<span textStyle={theme.BodyStyle()}>{item.Label}</span>
 				}
 				if item.Description != "" {
-					<span class="text-dim italic">{" — " + item.Description}</span>
+					<span textStyle={theme.DescriptionStyle()}>{" — " + item.Description}</span>
 				}
 			</div>
 		}

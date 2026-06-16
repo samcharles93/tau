@@ -135,7 +135,7 @@ func (s *Select) Render(app *tui.App) *tui.Element {
 	)
 	__tui_1 := tui.New(
 		tui.WithText("‹"),
-		tui.WithTextStyle(tui.NewStyle().Dim().Bold()),
+		tui.WithTextStyle(theme.DimStyle().Bold()),
 	)
 	__tui_0.AddChild(__tui_1)
 	if s.focused.Get() {
@@ -147,12 +147,13 @@ func (s *Select) Render(app *tui.App) *tui.Element {
 	} else {
 		__tui_3 := tui.New(
 			tui.WithText(s.currentLabel()),
+			tui.WithTextStyle(theme.BodyStyle()),
 		)
 		__tui_0.AddChild(__tui_3)
 	}
 	__tui_4 := tui.New(
 		tui.WithText("›"),
-		tui.WithTextStyle(tui.NewStyle().Dim().Bold()),
+		tui.WithTextStyle(theme.DimStyle().Bold()),
 	)
 	__tui_0.AddChild(__tui_4)
 

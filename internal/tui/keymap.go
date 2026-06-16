@@ -46,9 +46,13 @@ func (c *ChatPanel) KeyMap() gt.KeyMap {
 			c.applySelectedCompletion()
 		}),
 		gt.On(gt.KeyCtrlC, func(ke gt.KeyEvent) {
-			if c.showSettings.Get() || c.showSessionTree.Get() {
+			if c.showSettings.Get() || c.showSessionTree.Get() || c.showSessionList.Get() || c.showDebug.Get() || c.showDebugList.Get() || c.showHelp.Get() {
 				c.showSettings.Set(false)
 				c.showSessionTree.Set(false)
+				c.showSessionList.Set(false)
+				c.showDebug.Set(false)
+				c.showDebugList.Set(false)
+				c.showHelp.Set(false)
 				return
 			}
 			switch {
@@ -68,99 +72,6 @@ func (c *ChatPanel) KeyMap() gt.KeyMap {
 		}),
 		gt.On(gt.KeyCtrlR, func(ke gt.KeyEvent) {
 			c.showReasoning.Set(!c.showReasoning.Get())
-		}),
-		// Alternate-screen navigation. Preempt-stop so textarea cursor keys
-		// don't consume these when settings or tree is active.
-		gt.OnPreemptStop(gt.KeyUp, func(ke gt.KeyEvent) {
-			if c.showSettings.Get() && c.settingsView != nil && len(c.completions.Get()) == 0 {
-				for _, b := range c.settingsView.KeyMap() {
-					if b.Pattern.Key == gt.KeyUp {
-						b.Handler(ke)
-						return
-					}
-				}
-			}
-			if c.showSessionTree.Get() && c.sessionTreeView != nil {
-				// Delegate to tree view's KeyMap Up handler.
-				treeKM := c.sessionTreeView.KeyMap()
-				for _, b := range treeKM {
-					if b.Pattern.Key == gt.KeyUp {
-						b.Handler(ke)
-						return
-					}
-				}
-			}
-		}),
-		gt.OnPreemptStop(gt.KeyDown, func(ke gt.KeyEvent) {
-			if c.showSettings.Get() && c.settingsView != nil && len(c.completions.Get()) == 0 {
-				for _, b := range c.settingsView.KeyMap() {
-					if b.Pattern.Key == gt.KeyDown {
-						b.Handler(ke)
-						return
-					}
-				}
-			}
-			if c.showSessionTree.Get() && c.sessionTreeView != nil {
-				treeKM := c.sessionTreeView.KeyMap()
-				for _, b := range treeKM {
-					if b.Pattern.Key == gt.KeyDown {
-						b.Handler(ke)
-						return
-					}
-				}
-			}
-		}),
-		gt.OnPreemptStop(gt.KeyLeft, func(ke gt.KeyEvent) {
-			if c.showSessionTree.Get() && c.sessionTreeView != nil {
-				treeKM := c.sessionTreeView.KeyMap()
-				for _, b := range treeKM {
-					if b.Pattern.Key == gt.KeyLeft {
-						b.Handler(ke)
-						return
-					}
-				}
-			}
-		}),
-		gt.OnPreemptStop(gt.KeyRight, func(ke gt.KeyEvent) {
-			if c.showSessionTree.Get() && c.sessionTreeView != nil {
-				treeKM := c.sessionTreeView.KeyMap()
-				for _, b := range treeKM {
-					if b.Pattern.Key == gt.KeyRight {
-						b.Handler(ke)
-						return
-					}
-				}
-			}
-		}),
-		gt.OnPreemptStop(gt.Rune('f'), func(ke gt.KeyEvent) {
-			if c.showSessionTree.Get() && c.sessionTreeView != nil {
-				treeKM := c.sessionTreeView.KeyMap()
-				for _, b := range treeKM {
-					if b.Pattern.Rune == 'f' {
-						b.Handler(ke)
-						return
-					}
-				}
-			}
-		}),
-		gt.On(gt.KeyEnter, func(ke gt.KeyEvent) {
-			if c.showSettings.Get() && c.settingsView != nil {
-				for _, b := range c.settingsView.KeyMap() {
-					if b.Pattern.Key == gt.KeyEnter {
-						b.Handler(ke)
-						return
-					}
-				}
-			}
-			if c.showSessionTree.Get() && c.sessionTreeView != nil {
-				treeKM := c.sessionTreeView.KeyMap()
-				for _, b := range treeKM {
-					if b.Pattern.Key == gt.KeyEnter {
-						b.Handler(ke)
-						return
-					}
-				}
-			}
 		}),
 	}
 	if len(c.completions.Get()) > 0 {
