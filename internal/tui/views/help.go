@@ -5,142 +5,141 @@ import (
 	"github.com/samcharles93/tau/internal/theme"
 )
 
-// HelpView renders a scrollable help panel showing keybindings and slash
-// commands. It is opened with the /help (or /?) slash command.
+// HelpView renders a full-screen alternate-screen help reference. It is opened
+// with the /help (or /?) slash command, and closed with Esc or ?.
 type HelpView struct {
-	show  *gt.State[bool]
-	modal *gt.Modal
+	show *gt.State[bool]
 }
 
 // NewHelpView creates the help view.
 func NewHelpView(show *gt.State[bool]) *HelpView {
-	return &HelpView{
-		show: show,
-		modal: gt.NewModal(
-			gt.WithModalOpen(show),
-			gt.WithModalBackdrop("dim"),
-			gt.WithModalTrapFocus(false),
-		),
-	}
+	return &HelpView{show: show}
 }
 
 // BindApp wires reactive state.
-func (h *HelpView) BindApp(app *gt.App) {
-	h.show.BindApp(app)
-	h.modal.BindApp(app)
-}
+func (h *HelpView) BindApp(app *gt.App) { h.show.BindApp(app) }
 
 // KeyMap returns the help view key bindings.
 func (h *HelpView) KeyMap() gt.KeyMap {
 	return gt.KeyMap{
-		gt.On(gt.KeyEscape, func(ke gt.KeyEvent) {
-			h.show.Set(false)
-		}),
+		gt.On(gt.KeyEscape, func(ke gt.KeyEvent) { h.show.Set(false) }),
+		gt.On(gt.Rune('?'), func(ke gt.KeyEvent) { h.show.Set(false) }),
+		gt.On(gt.Rune('q'), func(ke gt.KeyEvent) { h.show.Set(false) }),
 	}
 }
 
-// Render builds the help modal.
+// Render builds the full-screen help view.
 func (h *HelpView) Render(app *gt.App) *gt.Element {
-	modalEl := app.MountPersistent(h, 1, func() gt.Component {
-		return h.modal
-	})
-
-	content := gt.New(
+	root := gt.New(
 		gt.WithDisplay(gt.DisplayFlex),
 		gt.WithDirection(gt.Column),
-		gt.WithWidth(56),
-		gt.WithHeight(22),
-		gt.WithBorder(gt.BorderRounded),
-		gt.WithBorderStyle(theme.BrandStyle()),
-		gt.WithPadding(1),
+		gt.WithWidthPercent(100),
+		gt.WithHeightPercent(100),
+		gt.WithPadding(2),
 		gt.WithGap(1),
-		gt.WithScrollable(gt.ScrollVertical),
 	)
 
-	content.AddChild(gt.New(
+	root.AddChild(gt.New(
 		gt.WithText("Tau Help"),
 		gt.WithTextStyle(theme.BrandStyle()),
 	))
 
-	for _, section := range helpSections() {
-		content.AddChild(gt.New(
-			gt.WithText(section.title),
-			gt.WithTextStyle(theme.BodyStyle().Bold()),
-		))
-		for _, line := range section.lines {
-			content.AddChild(gt.New(
-				gt.WithText(line),
-				gt.WithTextStyle(theme.DimStyle()),
-				gt.WithTruncate(true),
-			))
-		}
-	}
+	columns := gt.New(
+		gt.WithDisplay(gt.DisplayFlex),
+		gt.WithDirection(gt.Row),
+		gt.WithFlexGrow(1),
+		gt.WithGap(4),
+	)
 
-	content.AddChild(gt.New(gt.WithHeight(1)))
-	content.AddChild(gt.New(
-		gt.WithText("Esc: close"),
-		gt.WithTextStyle(theme.DimStyle().Italic()),
+	chat := helpColumn("Chat", chatHelpLines())
+	cmds := helpColumn("Commands", slashHelpLines())
+	nav := helpColumn("Navigation", navHelpLines())
+
+	columns.AddChild(chat)
+	columns.AddChild(cmds)
+	columns.AddChild(nav)
+	root.AddChild(columns)
+
+	root.AddChild(gt.New(
+		gt.WithText("? or Esc or q: close"),
+		gt.WithTextStyle(theme.DescriptionStyle()),
+		gt.WithFlexShrink(0),
 	))
 
-	modalEl.AddChild(content)
-
-	wrapper := gt.New(gt.WithOverlay(true))
-	wrapper.AddChild(modalEl)
-	return wrapper
+	return root
 }
 
-type helpSection struct {
-	title string
-	lines []string
+func helpColumn(title string, lines []helpLine) *gt.Element {
+	col := gt.New(
+		gt.WithDisplay(gt.DisplayFlex),
+		gt.WithDirection(gt.Column),
+		gt.WithFlexGrow(1),
+		gt.WithGap(0),
+	)
+	col.AddChild(gt.New(
+		gt.WithText(title),
+		gt.WithTextStyle(theme.BrandStyle()),
+	))
+	for _, line := range lines {
+		row := gt.New(
+			gt.WithDisplay(gt.DisplayFlex),
+			gt.WithDirection(gt.Row),
+			gt.WithGap(2),
+		)
+		row.AddChild(gt.New(
+			gt.WithText(line.key),
+			gt.WithTextStyle(theme.SelectedStyle()),
+			gt.WithWidth(18),
+		))
+		row.AddChild(gt.New(
+			gt.WithText(line.desc),
+			gt.WithTextStyle(theme.BodyStyle()),
+			gt.WithTruncate(true),
+		))
+		col.AddChild(row)
+	}
+	return col
 }
 
-func helpSections() []helpSection {
-	return []helpSection{
-		{
-			title: "Chat",
-			lines: []string{
-				"Enter         send message",
-				"Shift+Enter   insert a newline",
-				"Ctrl+S        steer / correct the model mid-stream",
-				"Alt+Up        recall the last queued message",
-				"Tab           accept the highlighted completion",
-				"↑/↓           navigate completions",
-			},
-		},
-		{
-			title: "Navigation",
-			lines: []string{
-				"Esc           close the current view or clear input",
-				"Ctrl+R        toggle reasoning visibility",
-				"Ctrl+C        cancel streaming (or quit when idle)",
-			},
-		},
-		{
-			title: "Slash commands",
-			lines: []string{
-				"/help, /?              toggle this help panel",
-				"/model <id>            switch model",
-				"/reasoning [on|off]    toggle reasoning",
-				"/system <prompt>       set the system prompt",
-				"/settings              open settings",
-				"/session list          list saved sessions",
-				"/session tree          open session tree dashboard",
-				"/session info <id>     show session details",
-				"/session export <id>   export session to JSONL",
-				"/session delete <id>   delete a session",
-				"/resume <id>           resume a saved session",
-				"/reload                reload extensions",
-				"/refresh, /models      refresh available models",
-				"/new, /clear, /reset   start a new conversation",
-				"/exit, /quit, /q       quit",
-			},
-		},
-		{
-			title: "Developer",
-			lines: []string{
-				"/debug components [name]  inspect TUI components",
-			},
-		},
+type helpLine struct {
+	key  string
+	desc string
+}
+
+func chatHelpLines() []helpLine {
+	return []helpLine{
+		{"Enter", "send message"},
+		{"Shift+Enter", "insert a newline"},
+		{"Ctrl+S", "steer / correct mid-stream"},
+		{"Alt+Up", "recall last queued message"},
+		{"Tab", "accept completion"},
+		{"↑/↓", "navigate completions"},
+	}
+}
+
+func navHelpLines() []helpLine {
+	return []helpLine{
+		{"Esc", "close view / clear input"},
+		{"Ctrl+R", "toggle reasoning"},
+		{"Ctrl+C", "cancel streaming / quit"},
+		{"?", "toggle this help"},
+	}
+}
+
+func slashHelpLines() []helpLine {
+	return []helpLine{
+		{"/help, /?", "toggle help"},
+		{"/model <id>", "switch model"},
+		{"/reasoning", "toggle reasoning"},
+		{"/system", "set system prompt"},
+		{"/settings", "open settings"},
+		{"/session list", "list sessions"},
+		{"/session tree", "session tree"},
+		{"/resume <id>", "resume session"},
+		{"/reload", "reload extensions"},
+		{"/refresh", "refresh models"},
+		{"/new, /clear", "new conversation"},
+		{"/exit, /q", "quit"},
 	}
 }
 

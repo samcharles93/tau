@@ -53,6 +53,14 @@ func (l *SessionListView) BindApp(app *gt.App) {
 	l.hasMore.BindApp(app)
 	l.items.BindApp(app)
 	l.list.BindApp(app)
+	// Force the list component to focus whenever this view is shown so arrow
+	// keys navigate the list immediately without requiring a Tab press.
+	l.show.Bind(func(open bool) {
+		if open {
+			app.Focused()
+			l.list.Focus()
+		}
+	})
 }
 
 // SetCursor updates pagination state.

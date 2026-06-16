@@ -59,6 +59,12 @@ func (v *SettingsView) BindApp(app *gt.App) {
 	v.showReasoning.BindApp(app)
 	v.items.BindApp(app)
 	v.list.BindApp(app)
+	// Focus the list when the view opens so arrow keys navigate models.
+	v.show.Bind(func(open bool) {
+		if open {
+			v.list.Focus()
+		}
+	})
 }
 
 // KeyMap processes alternate-screen key navigation for settings.

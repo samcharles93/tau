@@ -9,6 +9,7 @@ import (
 	"github.com/google/uuid"
 	gt "github.com/grindlemire/go-tui"
 	tauchat "github.com/samcharles93/tau/internal/chat"
+	"github.com/samcharles93/tau/internal/theme"
 	"github.com/samcharles93/tau/internal/tui/views"
 )
 
@@ -359,6 +360,12 @@ func (c *ChatPanel) handleSlashCommand(text string) {
 		c.showHelp.Set(!c.showHelp.Get())
 	case "new", "clear", "reset":
 		c.sendCommand(tauchat.ResetChatSessionCommand{SessionID: c.cfg.SessionID, RequestedAt: time.Now().UTC()})
+		c.messages.Set([]tauchat.ChatMessage{})
+		c.streamingContent.Set("")
+		c.streamingReasoning.Set("")
+		c.lastError.Set("")
+		c.notice.Set("conversation cleared")
+		c.printStyledAbovef("%s", ansify("\nconversation cleared", theme.ColorDimGray))
 	case "reload":
 		c.sendCommand(tauchat.ReloadExtensionsCommand{RequestedAt: time.Now().UTC()})
 	case "refresh", "models":
