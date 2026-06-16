@@ -41,8 +41,8 @@ func (c *ChatPanel) writeAssistantDelta(delta string) {
 	if !c.streamContentWritten && !c.reasoningWritten {
 		write("\n")
 	}
-	if c.reasoningWritten && c.streamContentWritten {
-		write("\n")
+	if c.reasoningWritten && !c.streamContentWritten {
+		write("\n\n")
 	}
 	write(delta)
 	c.streamContentWritten = true

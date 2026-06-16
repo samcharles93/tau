@@ -4,8 +4,9 @@ go 1.25.8
 
 require (
 	github.com/blevesearch/bleve/v2 v2.6.0
+	github.com/google/go-cmp v0.7.0
 	github.com/google/uuid v1.6.0
-	github.com/grindlemire/go-tui v0.16.0
+	github.com/grindlemire/go-tui v0.17.0
 	github.com/hashicorp/go-hclog v1.6.3
 	github.com/hashicorp/go-plugin v1.8.0
 	github.com/pkg/browser v0.0.0-20240102092130-5ac0b6a4141c
@@ -43,7 +44,6 @@ require (
 	github.com/fatih/color v1.19.0 // indirect
 	github.com/golang/protobuf v1.5.4 // indirect
 	github.com/golang/snappy v1.0.0 // indirect
-	github.com/google/go-cmp v0.7.0 // indirect
 	github.com/hashicorp/yamux v0.1.2 // indirect
 	github.com/json-iterator/go v0.0.0-20171115153421-f7279a603ede // indirect
 	github.com/mattn/go-colorable v0.1.15 // indirect

@@ -210,14 +210,18 @@ func (c *ChatPanel) handleRuntimeEvent(event tauchat.ChatEvent) {
 		}
 		message := fmt.Sprintf("\ntool started: %s %s", ev.ToolName, ev.ArgumentsSummary)
 		c.notice.Set(message)
-		c.printStyledAbovef("%s", ansify(message, theme.ColorDimGray))
+		c.printStyledAbovef("%s", ansify(message, theme.ColorPaleRed))
 	case tauchat.ChatToolExecutionCompletedEvent:
 		if !c.matchesRequest(ev.SessionID, ev.RequestID) {
 			return
 		}
+		statusColor := theme.ColorPaleGreen
+		if ev.IsError {
+			statusColor = theme.ColorYellow
+		}
 		message := fmt.Sprintf("tool completed: %s %s (%s)", ev.ToolName, ev.Status, ev.Duration)
 		c.notice.Set(message)
-		c.printStyledAbovef("%s", ansify(message, theme.ColorDimGray))
+		c.printStyledAbovef("%s", ansify(message, statusColor))
 	case tauchat.ChatResponseCompletedEvent:
 		if ev.State.SessionID != c.cfg.SessionID {
 			return
@@ -489,8 +493,12 @@ func (c *ChatPanel) Render(app *gt.App) *gt.Element {
 	if queue := c.renderQueue(); queue != nil {
 		root.AddChild(queue)
 	}
-	// Visual spacer between messages/completions and the input area.
-	root.AddChild(gt.New(gt.WithHeight(2)))
+	// Visual divider between messages and input area.
+	root.AddChild(gt.New(
+		gt.WithText("───"+strings.Repeat("─", 200)),
+		gt.WithTextStyle(theme.DimStyle()),
+		gt.WithHeight(1),
+	))
 	root.AddChild(c.renderInput(app))
 	root.AddChild(c.renderStatusBar())
 
@@ -628,6 +636,7 @@ func (c *ChatPanel) renderInput(app *gt.App) *gt.Element {
 			if w < 40 {
 				w = 120 // sensible fallback
 			}
+			w -= 2 // Account for prompt "› "
 			c.input = newCompletionTextArea(
 				c.inputValue,
 				c.completions,

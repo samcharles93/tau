@@ -19,6 +19,9 @@ const (
 	HexDimGray   = "#a5a5b1"
 	HexGray800   = "#1F2937"
 	HexGreen     = "#00A300"
+	HexYellow    = "#EAB308"
+	HexPaleRed   = "#FCA5A5"
+	HexPaleGreen = "#86EFAC"
 
 	// Splash palette — warm Coral (Tau brand) and Lilac (π family).
 	HexCoral     = "#f8d1cf"
@@ -40,6 +43,9 @@ var (
 	ColorDimGray   = mustColor(HexDimGray)
 	ColorGray800   = mustColor(HexGray800)
 	ColorGreen     = mustColor(HexGreen)
+	ColorYellow    = mustColor(HexYellow)
+	ColorPaleRed   = mustColor(HexPaleRed)
+	ColorPaleGreen = mustColor(HexPaleGreen)
 
 	ColorCoral     = mustColor(HexCoral)
 	ColorCoralDeep = mustColor(HexCoralDeep)

@@ -80,12 +80,13 @@ func (i *completionTextArea) Height() int { return i.textarea.Height() }
 func (i *completionTextArea) KeyMap() gt.KeyMap {
 	km := i.textarea.KeyMap()
 	insertNewline := gt.On(gt.KeyEnter.Shift(), func(ke gt.KeyEvent) {
-		// Append a newline at the end of the text.  Without
-		// access to the TextArea's internal cursor position we
-		// can't insert at the exact cursor, but the common case
-		// (typing then Shift+Enter) puts the cursor at the end.
-		v := i.value.Get()
-		i.value.Set(v + "\n")
+		// Use SetText so the textarea's internal cursor position
+		// stays in sync.  Without access to cursorPos we still
+		// append rather than inserting at the cursor, but the
+		// common case (typing then Shift+Enter) puts the cursor
+		// at the end.
+		v := i.textarea.Text()
+		i.textarea.SetText(v + "\n")
 	})
 	steerSubmit := gt.OnFocused(gt.KeyCtrlS, func(ke gt.KeyEvent) {
 		i.onSteerSubmit(i.value.Get())
