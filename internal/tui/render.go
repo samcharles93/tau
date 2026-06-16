@@ -11,14 +11,14 @@ import (
 )
 
 func (c *ChatPanel) printAbovef(format string, args ...any) {
-	if c.app == nil {
+	if c.app == nil || !c.cfg.InlineMode {
 		return
 	}
 	c.app.PrintAboveln(format, args...)
 }
 
 func (c *ChatPanel) ensureStreamWriter() *gt.StreamWriter {
-	if c.app == nil {
+	if c.app == nil || !c.cfg.InlineMode {
 		return nil
 	}
 	if c.streamWriter == nil {
@@ -31,6 +31,7 @@ func (c *ChatPanel) writeAssistantDelta(delta string) {
 	if delta == "" {
 		return
 	}
+	c.scrollToBottomFlag = true
 	w := c.ensureStreamWriter()
 	if w == nil {
 		return
@@ -52,6 +53,7 @@ func (c *ChatPanel) writeReasoningDelta(delta string) {
 	if delta == "" {
 		return
 	}
+	c.scrollToBottomFlag = true
 	w := c.ensureStreamWriter()
 	if w == nil {
 		return
@@ -95,6 +97,9 @@ func (c *ChatPanel) printSessionMessages(messages []tauchat.ChatMessage) {
 }
 
 func (c *ChatPanel) printMessage(msg tauchat.ChatMessage) {
+	if !c.cfg.InlineMode {
+		return
+	}
 	if c.showReasoning.Get() && strings.TrimSpace(msg.ReasoningContent) != "" {
 		c.printStyledAbovef("\n%s\n", ansify("reasoning:\n"+msg.ReasoningContent, theme.ColorDimGray))
 	}
@@ -112,7 +117,7 @@ func (c *ChatPanel) printMessage(msg tauchat.ChatMessage) {
 }
 
 func (c *ChatPanel) printStyledAbovef(format string, args ...any) {
-	if c.app == nil {
+	if c.app == nil || !c.cfg.InlineMode {
 		return
 	}
 	c.app.PrintAboveStyled(format, args...)

@@ -539,3 +539,32 @@ func findKeyBinding(km gt.KeyMap, key gt.Key) *gt.KeyBinding {
 	}
 	return nil
 }
+
+func TestRenderMessagesViewportIncludesMessages(t *testing.T) {
+	panel := newTestPanel(&fakeRuntime{})
+	panel.messages.Set([]tauchat.ChatMessage{
+		{Role: tauchat.ChatRoleUser, Content: "hello"},
+		{Role: tauchat.ChatRoleAssistant, Content: "world"},
+	})
+	panel.streamingContent.Set("streaming…")
+
+	viewport := panel.renderMessagesViewport(nil)
+	if viewport == nil {
+		t.Fatal("viewport is nil")
+	}
+	if len(viewport.Children()) != 3 {
+		t.Fatalf("viewport children = %d, want 3", len(viewport.Children()))
+	}
+}
+
+func TestPrintAboveIsNoOpInFullScreenMode(t *testing.T) {
+	panel := newTestPanel(&fakeRuntime{})
+	panel.printStyledAbovef("should not panic in full-screen mode")
+}
+
+func TestPrintAboveWorksInInlineMode(t *testing.T) {
+	panel := newTestPanel(&fakeRuntime{})
+	panel.cfg.InlineMode = true
+	panel.printMessage(tauchat.ChatMessage{Role: tauchat.ChatRoleUser, Content: "hi"})
+	// If we get here without panic, inline PrintAbove path is wired.
+}

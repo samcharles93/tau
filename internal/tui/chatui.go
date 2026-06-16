@@ -66,6 +66,8 @@ type ChatPanel struct {
 	sessionListCursor    string
 	dumpTreeOnNextRender bool
 	input                *completionTextArea
+	messageViewport      *gt.Element
+	scrollToBottomFlag   bool
 	streamWriter         *gt.StreamWriter
 	streamContentWritten bool
 	reasoningWritten     bool
@@ -203,12 +205,14 @@ func (c *ChatPanel) handleRuntimeEvent(event tauchat.ChatEvent) {
 			return
 		}
 		c.streamingContent.Set(ev.Snapshot)
+		c.scrollToBottomFlag = true
 		c.writeAssistantDelta(ev.Delta)
 	case tauchat.ChatReasoningDeltaEvent:
 		if !c.matchesRequest(ev.SessionID, ev.RequestID) {
 			return
 		}
 		c.streamingReasoning.Set(ev.Snapshot)
+		c.scrollToBottomFlag = true
 		if c.showReasoning.Get() {
 			c.writeReasoningDelta(ev.Delta)
 		}
@@ -234,6 +238,7 @@ func (c *ChatPanel) handleRuntimeEvent(event tauchat.ChatEvent) {
 		if ev.State.SessionID != c.cfg.SessionID {
 			return
 		}
+		c.scrollToBottomFlag = true
 		if !c.streamContentWritten {
 			c.printLatestAssistantMessage(ev.State)
 		}
@@ -428,6 +433,7 @@ func (c *ChatPanel) appendMessage(message tauchat.ChatMessage) {
 	messages := slices.Clone(c.messages.Get())
 	messages = append(messages, message)
 	c.messages.Set(messages)
+	c.scrollToBottomFlag = true
 	c.printMessage(message)
 }
 
@@ -507,6 +513,7 @@ func (c *ChatPanel) Render(app *gt.App) *gt.Element {
 		gt.WithDisplay(gt.DisplayFlex),
 		gt.WithDirection(gt.Column),
 		gt.WithWidthPercent(100),
+		gt.WithHeightPercent(100),
 	)
 
 	if completions := c.renderCompletions(); completions != nil {
@@ -522,14 +529,28 @@ func (c *ChatPanel) Render(app *gt.App) *gt.Element {
 	if queue := c.renderQueue(); queue != nil {
 		root.AddChild(queue)
 	}
-	// Visual divider between messages and input area.
-	dividerWidth := max(c.messageWidth()-3, 1)
-	root.AddChild(gt.New(
-		gt.WithText("───"+strings.Repeat("─", dividerWidth)),
-		gt.WithTextStyle(theme.DimStyle()),
-		gt.WithHeight(1),
-	))
-	root.AddChild(c.renderInput(app))
+
+	if c.cfg.InlineMode {
+		// Inline mode keeps the original input-at-bottom layout with
+		// streamed output above the inline frame.
+		root.AddChild(gt.New(
+			gt.WithText("───"+strings.Repeat("─", max(c.messageWidth()-3, 1))),
+			gt.WithTextStyle(theme.DimStyle()),
+			gt.WithHeight(1),
+		))
+		root.AddChild(c.renderInput(app))
+	} else {
+		// Full alternate-screen mode renders messages in a scrollable
+		// viewport that occupies the remaining screen space.
+		root.AddChild(c.renderMessagesViewport(app))
+		root.AddChild(gt.New(
+			gt.WithText("───"+strings.Repeat("─", max(c.messageWidth()-3, 1))),
+			gt.WithTextStyle(theme.DimStyle()),
+			gt.WithHeight(1),
+			gt.WithFlexShrink(0),
+		))
+		root.AddChild(c.renderInput(app))
+	}
 	root.AddChild(c.renderStatusBar())
 
 	if c.dumpTreeOnNextRender {
@@ -710,13 +731,13 @@ func (c *ChatPanel) renderInput(app *gt.App) *gt.Element {
 		gt.WithTextStyle(theme.BrandStyle()),
 		gt.WithFlexShrink(0),
 	))
+	w, _ := app.Size()
+	if w < 40 {
+		w = max(w, 40)
+	}
+	w -= 2 // Account for prompt "› "
 	input := app.MountPersistent(c, 0, func() gt.Component {
 		if c.input == nil {
-			w, _ := app.Size()
-			if w < 40 {
-				w = max(w, 40)
-			}
-			w -= 2 // Account for prompt "› "
 			c.input = newCompletionTextArea(
 				c.inputValue,
 				c.completions,
@@ -730,6 +751,11 @@ func (c *ChatPanel) renderInput(app *gt.App) *gt.Element {
 		}
 		return c.input
 	})
+	// Update width reactively on terminal resize. Recreating the textarea
+	// preserves the text but resets the cursor; resizing is infrequent.
+	if c.input != nil {
+		c.input.SetWidth(w)
+	}
 	inputContainer.AddChild(input)
 	return inputContainer
 }

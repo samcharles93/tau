@@ -20,8 +20,11 @@ type completionItem struct {
 
 type completionTextArea struct {
 	textarea      *gt.TextArea
+	app           *gt.App
+	width         int
 	value         *gt.State[string]
 	completions   *gt.State[[]completionItem]
+	onSubmit      func(string)
 	onUp          func()
 	onDown        func()
 	onSteerSubmit func(string)
@@ -39,6 +42,7 @@ func newCompletionTextArea(
 	width int,
 ) *completionTextArea {
 	return &completionTextArea{
+		width: width,
 		textarea: gt.NewTextArea(
 			gt.WithTextAreaValue(value),
 			gt.WithTextAreaWidth(width),
@@ -52,6 +56,7 @@ func newCompletionTextArea(
 		),
 		value:         value,
 		completions:   completions,
+		onSubmit:      onSubmit,
 		onUp:          onUp,
 		onDown:        onDown,
 		onSteerSubmit: onSteerSubmit,
@@ -59,7 +64,36 @@ func newCompletionTextArea(
 	}
 }
 
-func (i *completionTextArea) BindApp(app *gt.App) { i.textarea.BindApp(app) }
+func (i *completionTextArea) BindApp(app *gt.App) {
+	i.app = app
+	i.textarea.BindApp(app)
+}
+
+func (i *completionTextArea) SetWidth(width int) {
+	if i.textarea != nil && i.width == width {
+		return
+	}
+	text := ""
+	if i.textarea != nil {
+		text = i.textarea.Text()
+	}
+	i.width = width
+	i.textarea = gt.NewTextArea(
+		gt.WithTextAreaValue(i.value),
+		gt.WithTextAreaWidth(width),
+		gt.WithTextAreaMaxHeight(inlineTextAreaMaxRows),
+		gt.WithTextAreaPlaceholder("Send a message…"),
+		gt.WithTextAreaPlaceholderStyle(theme.DimStyle()),
+		gt.WithTextAreaTextStyle(theme.BodyStyle()),
+		gt.WithTextAreaFocusColor(theme.ColorPurple),
+		gt.WithTextAreaAutoFocus(true),
+		gt.WithTextAreaOnSubmit(i.onSubmit),
+	)
+	i.textarea.SetText(text)
+	if i.app != nil {
+		i.textarea.BindApp(i.app)
+	}
+}
 
 func (i *completionTextArea) Render(app *gt.App) *gt.Element { return i.textarea.Render(app) }
 
