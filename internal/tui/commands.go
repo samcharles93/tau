@@ -330,7 +330,6 @@ func (c *ChatPanel) setInputText(value string) {
 		c.inputValue.Set(value)
 	}
 	c.syncCompletions(value)
-	c.adjustInlineHeight()
 }
 
 func (c *ChatPanel) clearInput() {
@@ -340,7 +339,7 @@ func (c *ChatPanel) clearInput() {
 		c.inputValue.Set("")
 	}
 	c.closeCompletions()
-	c.adjustInlineHeight()
+	c.resetInlineHeight()
 }
 
 func (c *ChatPanel) handleSlashCommand(text string) {

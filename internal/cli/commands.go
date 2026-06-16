@@ -5,11 +5,11 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
-	"path/filepath"
 
 	"github.com/samcharles93/tau/internal/app"
 	tauchat "github.com/samcharles93/tau/internal/chat"
 	"github.com/samcharles93/tau/internal/config"
+	"github.com/samcharles93/tau/internal/sessions"
 	"github.com/samcharles93/tau/internal/store"
 	urfavecli "github.com/urfave/cli/v3"
 )
@@ -134,13 +134,7 @@ func listSessions(ctx context.Context) error {
 }
 
 func openSessionStore() (store.SessionStore, error) {
-	sessionsDir := filepath.Join(config.Dir(), "sessions")
-	storePath := filepath.Join(config.Dir(), "sessions.db")
-	s, err := store.NewSQLiteStore(storePath, sessionsDir)
-	if err != nil {
-		return nil, fmt.Errorf("opening session store: %w", err)
-	}
-	return s, nil
+	return sessions.OpenStore()
 }
 
 func formatTokensCLI(n int) string {

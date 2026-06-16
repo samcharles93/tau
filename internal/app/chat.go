@@ -18,8 +18,8 @@ import (
 	"github.com/samcharles93/tau/internal/plugin"
 	"github.com/samcharles93/tau/internal/provider"
 	commandreg "github.com/samcharles93/tau/internal/registry"
+	"github.com/samcharles93/tau/internal/sessions"
 	"github.com/samcharles93/tau/internal/skills"
-	"github.com/samcharles93/tau/internal/store"
 	"github.com/samcharles93/tau/internal/tui"
 	"github.com/samcharles93/tau/pkg/plugin/api"
 )
@@ -37,8 +37,8 @@ type ChatOptions struct {
 }
 
 // printExitSummary prints session metadata after the TUI exits.
-func printExitSummary(ctx context.Context, s store.SessionStore, sessionID, extra string) {
-	summaries, _, err := s.List(ctx, 1, "")
+func printExitSummary(ctx context.Context, m *sessions.Manager, sessionID, extra string) {
+	summaries, _, err := m.List(ctx, 1, "")
 	if err != nil || len(summaries) == 0 {
 		return
 	}
@@ -162,7 +162,7 @@ type newCoordinatorResult struct {
 
 // newCoordinator creates and returns an agent coordinator with the standard
 // tool registry, config, and session persistence.
-func newCoordinator(ctx context.Context, opts ChatOptions, bearerToken string, sessionStore store.SessionStore, startupEvents []tauchat.ChatEvent, bus *eventbus.Bus) (*newCoordinatorResult, error) {
+func newCoordinator(ctx context.Context, opts ChatOptions, bearerToken string, sessionManager *sessions.Manager, startupEvents []tauchat.ChatEvent, bus *eventbus.Bus) (*newCoordinatorResult, error) {
 	cwd, _ := os.Getwd()
 	cmdRegClient := bus.Client("command-registry")
 	cmdReg := commandreg.New(cwd, cmdRegClient)
@@ -171,7 +171,7 @@ func newCoordinator(ctx context.Context, opts ChatOptions, bearerToken string, s
 		Bus:             bus,
 		ChatOptions:     opts,
 		BearerToken:     bearerToken,
-		SessionStore:    sessionStore,
+		SessionManager:  sessionManager,
 		InteractiveUI:   true,
 		StartupEvents:   startupEvents,
 		CommandRegistry: cmdReg,
@@ -192,7 +192,7 @@ type coordinatorConfig struct {
 	Bus             *eventbus.Bus
 	ChatOptions     ChatOptions
 	BearerToken     string
-	SessionStore    store.SessionStore
+	SessionManager  *sessions.Manager
 	InteractiveUI   bool
 	StartupEvents   []tauchat.ChatEvent
 	CommandRegistry *commandreg.Registry
@@ -275,7 +275,7 @@ func buildCoordinator(ctx context.Context, cfg coordinatorConfig) (*agent.Coordi
 		Streamer:          provider.OpenAIStreamer{Insecure: cfg.ChatOptions.Insecure},
 		Registry:          registry,
 		InteractiveUI:     cfg.InteractiveUI,
-		SessionStore:      cfg.SessionStore,
+		SessionManager:    cfg.SessionManager,
 		AutoExportJSONL:   true,
 		StartupEvents:     cfg.StartupEvents,
 		ExtensionReloader: pluginMgr,

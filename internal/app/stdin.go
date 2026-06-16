@@ -8,10 +8,9 @@ import (
 	"time"
 
 	tauchat "github.com/samcharles93/tau/internal/chat"
-	tauconfig "github.com/samcharles93/tau/internal/config"
 	"github.com/samcharles93/tau/internal/eventbus"
 	"github.com/samcharles93/tau/internal/provider"
-	"github.com/samcharles93/tau/internal/store"
+	"github.com/samcharles93/tau/internal/sessions"
 )
 
 const stdInTimeout = 60 * time.Minute
@@ -37,34 +36,35 @@ func RunStdIn(ctx context.Context, opts ChatOptions, prompt string) error {
 	cwd, _ := os.Getwd()
 	systemPrompt := buildAgentSystemPrompt("", cwd)
 
-	sessionsDir := tauconfig.SessionsDir()
-	if err := os.MkdirAll(sessionsDir, 0o755); err != nil {
-		slog.Warn("session store: could not create sessions dir", "err", err)
-	}
-	storePath := tauconfig.SessionsDBPath()
-	sessionStore, storeErr := store.NewSQLiteStore(storePath, sessionsDir)
+	rawStore, storeErr := sessions.OpenStore()
+	var sessionManager *sessions.Manager
 	if storeErr != nil {
 		slog.Warn("session store unavailable", "err", storeErr)
-		sessionStore = nil
+	} else {
+		sessionManager = sessions.NewManager(rawStore)
 	}
 
 	coordinator, err := buildCoordinator(ctx, coordinatorConfig{
-		Bus:           eventbus.New(),
-		ChatOptions:   opts,
-		BearerToken:   bearerToken,
-		SessionStore:  sessionStore,
-		InteractiveUI: false,
+		Bus:            eventbus.New(),
+		ChatOptions:    opts,
+		BearerToken:    bearerToken,
+		SessionManager: sessionManager,
+		InteractiveUI:  false,
 	})
 	if err != nil {
-		if sessionStore != nil {
-			sessionStore.Close()
+		if sessionManager != nil {
+			if err := sessionManager.Close(); err != nil {
+				slog.Warn("closing session store", "err", err)
+			}
 		}
 		return err
 	}
 	defer func() {
 		coordinator.Close()
-		if sessionStore != nil {
-			sessionStore.Close()
+		if sessionManager != nil {
+			if err := sessionManager.Close(); err != nil {
+				slog.Warn("closing session store", "err", err)
+			}
 		}
 	}()
 

@@ -12,7 +12,7 @@ import (
 	"github.com/samcharles93/tau/internal/eventbus"
 	"github.com/samcharles93/tau/internal/provider"
 	commandreg "github.com/samcharles93/tau/internal/registry"
-	"github.com/samcharles93/tau/internal/store"
+	"github.com/samcharles93/tau/internal/sessions"
 	"github.com/samcharles93/tau/internal/tui"
 )
 
@@ -36,15 +36,12 @@ func RunChat(ctx context.Context, opts ChatOptions) error {
 
 	// Initialize session store at the RunChat level so it outlives the
 	// coordinator (needed for --resume and exit summary).
-	sessionsDir := tauconfig.SessionsDir()
-	if err := os.MkdirAll(sessionsDir, 0o755); err != nil {
-		slog.Warn("session store: could not create sessions dir", "err", err)
-	}
-	storePath := tauconfig.SessionsDBPath()
-	sessionStore, storeErr := store.NewSQLiteStore(storePath, sessionsDir)
+	rawStore, storeErr := sessions.OpenStore()
+	var sessionManager *sessions.Manager
 	if storeErr != nil {
 		slog.Warn("session store unavailable, sessions will not be persisted", "err", storeErr)
-		sessionStore = nil
+	} else {
+		sessionManager = sessions.NewManager(rawStore)
 	}
 
 	// Create the central event bus. All subsystems (coordinator, TUI, skills)
@@ -65,10 +62,12 @@ func RunChat(ctx context.Context, opts ChatOptions) error {
 		})
 	}
 
-	result, err := newCoordinator(ctx, opts, bearerToken, sessionStore, startupEvents, bus)
+	result, err := newCoordinator(ctx, opts, bearerToken, sessionManager, startupEvents, bus)
 	if err != nil {
-		if sessionStore != nil {
-			sessionStore.Close()
+		if sessionManager != nil {
+			if err := sessionManager.Close(); err != nil {
+				slog.Warn("closing session store", "err", err)
+			}
 		}
 		return err
 	}
@@ -83,16 +82,18 @@ func RunChat(ctx context.Context, opts ChatOptions) error {
 
 	// If --resume is set, load the session and use its ID/properties.
 	resumeSummary := "" // printed on exit
-	if opts.ResumeSessionID != "" && sessionStore != nil {
+	if opts.ResumeSessionID != "" && sessionManager != nil {
 		resumeID := opts.ResumeSessionID
 		if resumeID == "latest" {
-			summaries, _, lErr := sessionStore.List(ctx, 1, "")
+			summaries, _, lErr := sessionManager.List(ctx, 1, "")
 			if lErr != nil || len(summaries) == 0 {
 				return fmt.Errorf("no saved sessions to resume")
 			}
 			resumeID = summaries[0].ID
 		}
-		loaded, lErr := sessionStore.Load(ctx, resumeID)
+		// No RuntimeSessionConfig — there is no live template session
+		// to merge runtime config from before the coordinator starts.
+		loaded, lErr := sessionManager.Load(ctx, resumeID, nil)
 		if lErr != nil {
 			return fmt.Errorf("resume session %q: %w", resumeID, lErr)
 		}
@@ -155,9 +156,11 @@ func RunChat(ctx context.Context, opts ChatOptions) error {
 	coordinator.Close()
 
 	// Print session summary on exit.
-	if sessionStore != nil {
-		printExitSummary(ctx, sessionStore, sessionID, resumeSummary)
-		sessionStore.Close()
+	if sessionManager != nil {
+		printExitSummary(ctx, sessionManager, sessionID, resumeSummary)
+		if err := sessionManager.Close(); err != nil {
+			slog.Warn("closing session store", "err", err)
+		}
 	}
 
 	return tuiErr

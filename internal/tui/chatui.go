@@ -18,10 +18,9 @@ import (
 )
 
 const (
-	inlineMinHeight         = 5
 	inlineTextAreaMaxRows   = 24
 	inlineCompletionMaxRows = 4
-	inlineMaxHeight         = inlineTextAreaMaxRows + inlineCompletionMaxRows + 4
+	inlineHeight            = 6
 )
 
 // ChatPanel is the root go-tui component for the interactive chat UI.
@@ -70,6 +69,7 @@ type ChatPanel struct {
 	streamContentWritten bool
 	reasoningWritten     bool
 	startupDone          bool
+	peakInlineHeight     int
 	lastSubmitTime       time.Time
 	outgoingQueue        *gt.State[[]string]
 }
@@ -165,9 +165,12 @@ func (c *ChatPanel) BindApp(app *gt.App) {
 
 // Watchers bridges runtime event channels into the go-tui event loop.
 func (c *ChatPanel) Watchers() []gt.Watcher {
-	watchers := make([]gt.Watcher, 0, 4)
+	watchers := make([]gt.Watcher, 0, 6)
 	if c.chatSub != nil {
 		watchers = append(watchers, gt.Watch(c.chatSub.Events(), c.handleRuntimeEvent))
+	}
+	if c.input != nil {
+		watchers = append(watchers, c.input.Watchers()...)
 	}
 	watchers = append(watchers,
 		gt.OnChange(c.inputValue, c.handleInputValueChanged),
@@ -434,23 +437,40 @@ func (c *ChatPanel) handleInputValueChanged(value string) {
 	c.adjustInlineHeight()
 }
 
+// adjustInlineHeight grows the inline area to accommodate multi-line
+// textarea input.  The peak tracks the largest height so the area never
+// shrinks on backspace — terminal scrollback consumed during growth is
+// unrecoverable.  On submit the peak resets (see clearInput).
 func (c *ChatPanel) adjustInlineHeight() {
 	if c.app == nil || c.app.IsInAlternateScreen() {
 		return
 	}
-	height := inlineMinHeight
-	if c.input != nil {
-		height = c.input.Height() + 5 // +1 for cursor, +2 for spacer, +2 for status bar & padding
-	} else if value := c.inputValue.Get(); value != "" {
-		height = strings.Count(value, "\n") + 4 // +2 for cursor, +2 for top margin
+	if c.input == nil {
+		return
 	}
+	// textarea height + divider(1) + status bar(1) + buffer(1)
+	h := c.input.Height() + 3
 	if completions := len(c.completions.Get()); completions > 0 {
-		height += min(completions, inlineCompletionMaxRows)
+		h += min(completions, inlineCompletionMaxRows)
 	}
 	if strings.TrimSpace(c.lastError.Get()) != "" {
-		height++
+		h++
 	}
-	c.app.SetInlineHeight(clamp(height, inlineMinHeight, inlineMaxHeight))
+	if h < inlineHeight {
+		h = inlineHeight
+	}
+	if h > c.peakInlineHeight {
+		c.peakInlineHeight = h
+	}
+	c.app.SetInlineHeight(c.peakInlineHeight)
+}
+
+// resetInlineHeight clears the peak so the inline area can contract to
+// its current natural height.  Call after submit or when exiting an
+// alternate-screen overlay.
+func (c *ChatPanel) resetInlineHeight() {
+	c.peakInlineHeight = 0
+	c.adjustInlineHeight()
 }
 
 // Render builds the go-tui element tree. In inline mode the root is only the
@@ -541,7 +561,7 @@ func (c *ChatPanel) handleSettingsVisibilityChanged(open bool) {
 			c.lastError.Set(err.Error())
 		}
 	}
-	c.adjustInlineHeight()
+	c.resetInlineHeight()
 }
 
 // handleSessionTreeVisibilityChanged manages alternate-screen entry/exit
@@ -565,7 +585,8 @@ func (c *ChatPanel) handleSessionTreeVisibilityChanged(open bool) {
 			c.lastError.Set(err.Error())
 		}
 	}
-	c.adjustInlineHeight()
+	c.app.SetInlineHeight(inlineHeight)
+	c.resetInlineHeight()
 }
 
 func (c *ChatPanel) writeTreeDump(root *gt.Element) {

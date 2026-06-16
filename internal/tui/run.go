@@ -34,7 +34,8 @@ func Run(ctx context.Context, runtime tauchat.ChatRuntime, cfg TUIConfig) error 
 
 	app, err := gt.NewApp(
 		gt.WithRootComponent(root),
-		gt.WithInlineHeight(3),
+		gt.WithInlineHeight(inlineHeight),
+		gt.WithInlineStartupMode(gt.InlineStartupFreshViewport),
 	)
 	if err != nil {
 		return fmt.Errorf("creating go-tui app: %w", err)
