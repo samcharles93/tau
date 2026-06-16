@@ -52,6 +52,7 @@ type ChatPanel struct {
 	showSettings         *gt.State[bool]
 	selectedModelIndex   *gt.State[int]
 	settingsView         *views.SettingsView
+	helpView             *views.HelpView
 	showDebug            *gt.State[bool]
 	debugView            *views.DebugView
 	showDebugList        *gt.State[bool]
@@ -128,6 +129,7 @@ func NewChatPanel(
 			panel.handleModelCommand(modelID)
 		},
 	)
+	panel.helpView = views.NewHelpView(panel.showHelp)
 	return panel
 }
 
@@ -176,6 +178,10 @@ func (c *ChatPanel) Watchers() []gt.Watcher {
 		gt.OnChange(c.inputValue, c.handleInputValueChanged),
 		gt.OnChange(c.showSettings, c.handleSettingsVisibilityChanged),
 		gt.OnChange(c.showSessionTree, c.handleSessionTreeVisibilityChanged),
+		gt.OnChange(c.showSessionList, c.handleSessionListVisibilityChanged),
+		gt.OnChange(c.showDebug, c.handleDebugVisibilityChanged),
+		gt.OnChange(c.showDebugList, c.handleDebugListVisibilityChanged),
+		gt.OnChange(c.showHelp, c.handleHelpVisibilityChanged),
 		gt.OnTimer(time.Second, c.applyNotifyQueue),
 	)
 	return watchers
@@ -493,6 +499,18 @@ func (c *ChatPanel) Render(app *gt.App) *gt.Element {
 	if c.showSessionTree.Get() && app.IsInAlternateScreen() {
 		return c.renderFullscreenSessionTree(app)
 	}
+	if c.showSessionList.Get() && app.IsInAlternateScreen() && c.sessionListView != nil {
+		return c.sessionListView.Render(app)
+	}
+	if c.showDebugList.Get() && app.IsInAlternateScreen() && c.debugListView != nil {
+		return c.debugListView.Render(app)
+	}
+	if c.showDebug.Get() && app.IsInAlternateScreen() && c.debugView != nil {
+		return c.debugView.Render(app)
+	}
+	if c.showHelp.Get() && app.IsInAlternateScreen() && c.helpView != nil {
+		return c.helpView.Render(app)
+	}
 
 	root := gt.New(
 		gt.WithDisplay(gt.DisplayFlex),
@@ -514,8 +532,9 @@ func (c *ChatPanel) Render(app *gt.App) *gt.Element {
 		root.AddChild(queue)
 	}
 	// Visual divider between messages and input area.
+	dividerWidth := max(c.messageWidth()-3, 1)
 	root.AddChild(gt.New(
-		gt.WithText("───"+strings.Repeat("─", 200)),
+		gt.WithText("───"+strings.Repeat("─", dividerWidth)),
 		gt.WithTextStyle(theme.DimStyle()),
 		gt.WithHeight(1),
 	))
@@ -539,22 +558,48 @@ func (c *ChatPanel) renderFullscreenSessionTree(app *gt.App) *gt.Element {
 	return c.sessionTreeView.Render(app)
 }
 
-// handleSettingsVisibilityChanged manages alternate-screen entry/exit for the
-// settings view. Overlays are unsupported in inline mode per go-tui's design:
-// registerOverlay silently drops them unless the app is in alternate screen.
-func (c *ChatPanel) handleSettingsVisibilityChanged(open bool) {
+// alternateScreenStates returns every state that controls a full-screen
+// alternate-screen view. Mutual exclusion is enforced so only one view is
+// open at a time.
+func (c *ChatPanel) alternateScreenStates() []*gt.State[bool] {
+	return []*gt.State[bool]{
+		c.showSettings,
+		c.showSessionTree,
+		c.showSessionList,
+		c.showDebug,
+		c.showDebugList,
+		c.showHelp,
+	}
+}
+
+func (c *ChatPanel) closeAlternateScreenViews(except *gt.State[bool]) {
+	for _, s := range c.alternateScreenStates() {
+		if s != except && s.Get() {
+			s.Set(false)
+		}
+	}
+}
+
+func (c *ChatPanel) enterAlternateScreen(except *gt.State[bool]) {
 	if c.app == nil {
 		return
 	}
-	if open {
-		// Close tree view if open — only one alternate-screen view at a time.
-		c.showSessionTree.Set(false)
-		if !c.app.IsInAlternateScreen() {
-			if err := c.app.EnterAlternateScreen(); err != nil {
-				c.lastError.Set("enter settings screen: " + err.Error())
-			}
+	c.closeAlternateScreenViews(except)
+	if !c.app.IsInAlternateScreen() {
+		if err := c.app.EnterAlternateScreen(); err != nil {
+			c.lastError.Set("enter alternate screen: " + err.Error())
 		}
+	}
+}
+
+func (c *ChatPanel) exitAlternateScreenIfIdle() {
+	if c.app == nil {
 		return
+	}
+	for _, s := range c.alternateScreenStates() {
+		if s.Get() {
+			return
+		}
 	}
 	if c.app.IsInAlternateScreen() {
 		if err := c.app.ExitAlternateScreen(); err != nil {
@@ -564,29 +609,52 @@ func (c *ChatPanel) handleSettingsVisibilityChanged(open bool) {
 	c.resetInlineHeight()
 }
 
-// handleSessionTreeVisibilityChanged manages alternate-screen entry/exit
-// for the session tree dashboard.
-func (c *ChatPanel) handleSessionTreeVisibilityChanged(open bool) {
-	if c.app == nil {
-		return
-	}
+func (c *ChatPanel) handleSettingsVisibilityChanged(open bool) {
 	if open {
-		// Close settings if open — only one alternate-screen view at a time.
-		c.showSettings.Set(false)
-		if !c.app.IsInAlternateScreen() {
-			if err := c.app.EnterAlternateScreen(); err != nil {
-				c.lastError.Set("enter tree screen: " + err.Error())
-			}
-		}
+		c.enterAlternateScreen(c.showSettings)
 		return
 	}
-	if c.app.IsInAlternateScreen() {
-		if err := c.app.ExitAlternateScreen(); err != nil {
-			c.lastError.Set(err.Error())
-		}
+	c.exitAlternateScreenIfIdle()
+}
+
+func (c *ChatPanel) handleSessionTreeVisibilityChanged(open bool) {
+	if open {
+		c.enterAlternateScreen(c.showSessionTree)
+		return
 	}
-	c.app.SetInlineHeight(inlineHeight)
-	c.resetInlineHeight()
+	c.exitAlternateScreenIfIdle()
+}
+
+func (c *ChatPanel) handleSessionListVisibilityChanged(open bool) {
+	if open {
+		c.enterAlternateScreen(c.showSessionList)
+		return
+	}
+	c.exitAlternateScreenIfIdle()
+}
+
+func (c *ChatPanel) handleDebugVisibilityChanged(open bool) {
+	if open {
+		c.enterAlternateScreen(c.showDebug)
+		return
+	}
+	c.exitAlternateScreenIfIdle()
+}
+
+func (c *ChatPanel) handleDebugListVisibilityChanged(open bool) {
+	if open {
+		c.enterAlternateScreen(c.showDebugList)
+		return
+	}
+	c.exitAlternateScreenIfIdle()
+}
+
+func (c *ChatPanel) handleHelpVisibilityChanged(open bool) {
+	if open {
+		c.enterAlternateScreen(c.showHelp)
+		return
+	}
+	c.exitAlternateScreenIfIdle()
 }
 
 func (c *ChatPanel) writeTreeDump(root *gt.Element) {
@@ -655,7 +723,7 @@ func (c *ChatPanel) renderInput(app *gt.App) *gt.Element {
 		if c.input == nil {
 			w, _ := app.Size()
 			if w < 40 {
-				w = 120 // sensible fallback
+				w = max(w, 40)
 			}
 			w -= 2 // Account for prompt "› "
 			c.input = newCompletionTextArea(

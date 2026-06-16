@@ -11,6 +11,19 @@ import (
 func (c *ChatPanel) KeyMap() gt.KeyMap {
 	km := gt.KeyMap{
 		gt.On(gt.KeyEscape, func(ke gt.KeyEvent) {
+			if c.showDebug.Get() || c.showDebugList.Get() {
+				c.showDebug.Set(false)
+				c.showDebugList.Set(false)
+				return
+			}
+			if c.showSessionList.Get() {
+				c.showSessionList.Set(false)
+				return
+			}
+			if c.showHelp.Get() {
+				c.showHelp.Set(false)
+				return
+			}
 			if c.showSettings.Get() {
 				c.showSettings.Set(false)
 				return

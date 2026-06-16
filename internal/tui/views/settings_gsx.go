@@ -87,7 +87,6 @@ func (v *SettingsView) KeyMap() tui.KeyMap {
 					}
 				}
 			}
-			v.showReasoning.Set(!v.showReasoning.Get())
 		}),
 	}
 }
@@ -175,14 +174,14 @@ func (v *SettingsView) Render(app *tui.App) *tui.Element {
 	__tui_1.AddChild(__tui_5)
 	if v.showReasoning.Get() {
 		__tui_7 := tui.New(
-			tui.WithText("Reasoning: on  (↑↓ models  Enter switch/toggle  Ctrl+R)"),
+			tui.WithText("Reasoning: on  (↑↓ navigate  Enter switch model  Ctrl+R toggle)"),
 			tui.WithTextStyle(theme.BodyStyle()),
 			tui.WithTruncate(true),
 		)
 		__tui_1.AddChild(__tui_7)
 	} else {
 		__tui_8 := tui.New(
-			tui.WithText("Reasoning: off  (↑↓ models  Enter switch/toggle  Ctrl+R)"),
+			tui.WithText("Reasoning: off  (↑↓ navigate  Enter switch model  Ctrl+R toggle)"),
 			tui.WithTextStyle(theme.BodyStyle()),
 			tui.WithTruncate(true),
 		)
@@ -197,7 +196,7 @@ func (v *SettingsView) Render(app *tui.App) *tui.Element {
 		__tui_1.AddChild(__tui_9)
 	}
 	__tui_10 := tui.New(
-		tui.WithText("↑↓: navigate models  Enter: switch/toggle  Esc: close"),
+		tui.WithText("↑↓: navigate models  Enter: switch model  Esc: close  Ctrl+R: toggle reasoning"),
 		tui.WithTextStyle(theme.DimStyle().Italic()),
 	)
 	__tui_1.AddChild(__tui_10)

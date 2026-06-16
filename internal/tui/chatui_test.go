@@ -496,9 +496,9 @@ func TestKeyMap_SettingsEnterSwitchesModel(t *testing.T) {
 		t.Error("Enter should have switched to model-b")
 	}
 
-	// Should have toggled reasoning.
-	if !panel.showReasoning.Get() {
-		t.Error("Enter should toggle reasoning in settings")
+	// Enter now only switches the model; Ctrl+R toggles reasoning.
+	if panel.showReasoning.Get() {
+		t.Error("Enter should not toggle reasoning in settings")
 	}
 }
 

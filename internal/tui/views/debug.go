@@ -185,7 +185,11 @@ func (d *DebugView) Render(app *gt.App) *gt.Element {
 
 // KeyMap for the debug view.
 func (d *DebugView) KeyMap() gt.KeyMap {
-	return gt.KeyMap{}
+	return gt.KeyMap{
+		gt.On(gt.KeyEscape, func(ke gt.KeyEvent) {
+			d.show.Set(false)
+		}),
+	}
 }
 
 // DebugControlComp is a helper component that wraps a DebugControl to make it focusable and interactive.
@@ -394,6 +398,15 @@ func (l *DebugListView) BindApp(app *gt.App) {
 	l.modal.BindApp(app)
 	l.items.BindApp(app)
 	l.sel.BindApp(app)
+}
+
+// KeyMap for the debug list view.
+func (l *DebugListView) KeyMap() gt.KeyMap {
+	return gt.KeyMap{
+		gt.On(gt.KeyEscape, func(ke gt.KeyEvent) {
+			l.show.Set(false)
+		}),
+	}
 }
 
 // Render builds the debug list view.

@@ -88,8 +88,7 @@ func (v *SettingsView) KeyMap() tui.KeyMap {
 					}
 				}
 			}
-			v.showReasoning.Set(!v.showReasoning.Get())
-		}),
+			}),
 	}
 }
 
@@ -141,11 +140,11 @@ templ (v *SettingsView) Render() {
 
 			if v.showReasoning.Get() {
 				<span textStyle={theme.BodyStyle()} class="truncate">
-					{"Reasoning: on  (↑↓ models  Enter switch/toggle  Ctrl+R)"}
+					{"Reasoning: on  (↑↓ navigate  Enter switch model  Ctrl+R toggle)"}
 				</span>
 			} else {
 				<span textStyle={theme.BodyStyle()} class="truncate">
-					{"Reasoning: off  (↑↓ models  Enter switch/toggle  Ctrl+R)"}
+					{"Reasoning: off  (↑↓ navigate  Enter switch model  Ctrl+R toggle)"}
 				</span>
 			}
 
@@ -153,7 +152,7 @@ templ (v *SettingsView) Render() {
 				<span textStyle={theme.DimStyle()} class="truncate">{"Session: " + sid}</span>
 			}
 			<span textStyle={theme.DimStyle().Italic()}>
-				{"↑↓: navigate models  Enter: switch/toggle  Esc: close"}
+				{"↑↓: navigate models  Enter: switch model  Esc: close  Ctrl+R: toggle reasoning"}
 			</span>
 		</div>
 	</modal>
