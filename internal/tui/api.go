@@ -27,4 +27,7 @@ type TUIConfig struct {
 	RefreshModels   ModelRefresher
 	ShowReasoning   bool
 	Debug           bool
+	// InlineMode forces inline/scrollback mode instead of the full
+	// alternate-screen chat. Used for one-shot stdin pipelines.
+	InlineMode bool
 }

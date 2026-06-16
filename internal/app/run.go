@@ -148,6 +148,7 @@ func RunChat(ctx context.Context, opts ChatOptions) error {
 		RefreshModels:      refresher,
 		ShowReasoning:      opts.Config.UI.ShowReasoning,
 		Debug:              isDevel(opts.Version, opts.Config),
+		InlineMode:         false,
 	}
 
 	tuiErr := tui.Run(ctx, coordinator, tuiCfg)

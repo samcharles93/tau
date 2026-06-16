@@ -32,11 +32,20 @@ func Run(ctx context.Context, runtime tauchat.ChatRuntime, cfg TUIConfig) error 
 
 	root := NewChatPanel(ctx, runtime, chatSub, cfg)
 
-	app, err := gt.NewApp(
-		gt.WithRootComponent(root),
-		gt.WithInlineHeight(inlineHeight),
-		gt.WithInlineStartupMode(gt.InlineStartupFreshViewport),
-	)
+	var appOptions []gt.AppOption
+	if cfg.InlineMode {
+		appOptions = []gt.AppOption{
+			gt.WithRootComponent(root),
+			gt.WithInlineHeight(inlineHeight),
+			gt.WithInlineStartupMode(gt.InlineStartupFreshViewport),
+		}
+	} else {
+		appOptions = []gt.AppOption{
+			gt.WithRootComponent(root),
+		}
+	}
+
+	app, err := gt.NewApp(appOptions...)
 	if err != nil {
 		return fmt.Errorf("creating go-tui app: %w", err)
 	}

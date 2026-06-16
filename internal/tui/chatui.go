@@ -70,7 +70,6 @@ type ChatPanel struct {
 	streamContentWritten bool
 	reasoningWritten     bool
 	startupDone          bool
-	peakInlineHeight     int
 	lastSubmitTime       time.Time
 	outgoingQueue        *gt.State[[]string]
 }
@@ -440,18 +439,15 @@ func (c *ChatPanel) scrollToBottom() {
 
 func (c *ChatPanel) handleInputValueChanged(value string) {
 	c.syncCompletions(value)
-	c.adjustInlineHeight()
+	if c.cfg.InlineMode {
+		c.adjustInlineHeight()
+	}
 }
 
 // adjustInlineHeight grows the inline area to accommodate multi-line
-// textarea input.  The peak tracks the largest height so the area never
-// shrinks on backspace — terminal scrollback consumed during growth is
-// unrecoverable.  On submit the peak resets (see clearInput).
+// textarea input. Only used in inline mode.
 func (c *ChatPanel) adjustInlineHeight() {
-	if c.app == nil || c.app.IsInAlternateScreen() {
-		return
-	}
-	if c.input == nil {
+	if c.app == nil || c.app.IsInAlternateScreen() || c.input == nil {
 		return
 	}
 	// textarea height + divider(1) + status bar(1) + buffer(1)
@@ -462,53 +458,48 @@ func (c *ChatPanel) adjustInlineHeight() {
 	if strings.TrimSpace(c.lastError.Get()) != "" {
 		h++
 	}
-	if h < inlineHeight {
-		h = inlineHeight
-	}
-	if h > c.peakInlineHeight {
-		c.peakInlineHeight = h
-	}
-	c.app.SetInlineHeight(c.peakInlineHeight)
+	c.app.SetInlineHeight(max(h, inlineHeight))
 }
 
-// resetInlineHeight clears the peak so the inline area can contract to
-// its current natural height.  Call after submit or when exiting an
-// alternate-screen overlay.
+// resetInlineHeight resets the inline area to its minimum height.
+// Only meaningful in inline mode.
 func (c *ChatPanel) resetInlineHeight() {
-	c.peakInlineHeight = 0
-	c.adjustInlineHeight()
+	if c.app == nil {
+		return
+	}
+	c.app.SetInlineHeight(inlineHeight)
 }
 
 // Render builds the go-tui element tree. In inline mode the root is only the
 // input widget; conversation output is printed/streamed above it into terminal
-// scrollback. Settings temporarily switch to the alternate screen and render as
-// a conventional full-screen modal.
+// scrollback. In full alternate-screen mode the whole screen is a chat viewport.
 func (c *ChatPanel) Render(app *gt.App) *gt.Element {
 	if !c.startupDone {
 		c.startupDone = true
-		// Schedule a blank line after the first render to mitigate the
-		// visual screen-clearing effect of go-tui's initial inline frame.
-		app.QueuePrintAboveln(" ")
-		// Startup hint — styled as muted/secondary text
-		app.QueuePrintAboveStyled("%s", ansify("Tau can explain its own features and look up its docs. Ask it about usage or configuration.", theme.ColorDimGray))
+		// Startup hint shown only in inline mode; in full alternate screen
+		// the chat viewport replaces the terminal scrollback.
+		if c.cfg.InlineMode {
+			app.QueuePrintAboveln(" ")
+			app.QueuePrintAboveStyled("%s", ansify("Tau can explain its own features and look up its docs. Ask it about usage or configuration.", theme.ColorDimGray))
+		}
 	}
 
-	if c.showSettings.Get() && app.IsInAlternateScreen() {
+	if c.showSettings.Get() {
 		return c.settingsView.Render(app)
 	}
-	if c.showSessionTree.Get() && app.IsInAlternateScreen() {
+	if c.showSessionTree.Get() {
 		return c.renderFullscreenSessionTree(app)
 	}
-	if c.showSessionList.Get() && app.IsInAlternateScreen() && c.sessionListView != nil {
+	if c.showSessionList.Get() && c.sessionListView != nil {
 		return c.sessionListView.Render(app)
 	}
-	if c.showDebugList.Get() && app.IsInAlternateScreen() && c.debugListView != nil {
+	if c.showDebugList.Get() && c.debugListView != nil {
 		return c.debugListView.Render(app)
 	}
-	if c.showDebug.Get() && app.IsInAlternateScreen() && c.debugView != nil {
+	if c.showDebug.Get() && c.debugView != nil {
 		return c.debugView.Render(app)
 	}
-	if c.showHelp.Get() && app.IsInAlternateScreen() && c.helpView != nil {
+	if c.showHelp.Get() && c.helpView != nil {
 		return c.helpView.Render(app)
 	}
 
