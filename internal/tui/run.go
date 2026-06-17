@@ -42,6 +42,7 @@ func Run(ctx context.Context, runtime tauchat.ChatRuntime, cfg TUIConfig) error 
 	} else {
 		appOptions = []gt.AppOption{
 			gt.WithRootComponent(root),
+			gt.WithMouse(),
 		}
 	}
 
