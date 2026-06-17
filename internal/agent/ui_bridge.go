@@ -110,6 +110,16 @@ func (b *coordinatorUIBridge) Notify(title, level string) {
 	})
 }
 
+func (b *coordinatorUIBridge) Log(chunk string) {
+	if b == nil || b.coordinator == nil {
+		return
+	}
+	b.coordinator.emit(chat.ChatToolOutputEvent{
+		Chunk:      chunk,
+		ReceivedAt: time.Now().UTC(),
+	})
+}
+
 func (c *Coordinator) nextPromptID() string {
 	seq := atomic.AddUint64(&c.promptSeq, 1)
 	return fmt.Sprintf("prompt_%d", seq)

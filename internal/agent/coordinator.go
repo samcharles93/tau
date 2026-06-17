@@ -927,6 +927,14 @@ func (c *Coordinator) executeToolsParallel(ctx context.Context, sessionID, reque
 		var result tools.Result
 		var toolErr error
 
+		bridge := &loggingUIBridge{
+			UIBridge:  c.uiBridge,
+			sessionID: sessionID,
+			requestID: requestID,
+			callID:    tc.ID,
+			c:         c,
+		}
+
 		switch {
 		case beforeResp != nil && beforeResp.BlockToolExecution:
 			reason := beforeResp.BlockReason
@@ -950,7 +958,7 @@ func (c *Coordinator) executeToolsParallel(ctx context.Context, sessionID, reque
 						IsError: true,
 					}
 				} else {
-					result, toolErr = tool.Execute(ctx, json.RawMessage(effectiveArgs), c.uiBridge)
+					result, toolErr = tool.Execute(ctx, json.RawMessage(effectiveArgs), bridge)
 					if toolErr != nil {
 						result = tools.Result{
 							Content: fmt.Sprintf("tool execution error: %v", toolErr),
@@ -968,7 +976,7 @@ func (c *Coordinator) executeToolsParallel(ctx context.Context, sessionID, reque
 					IsError: true,
 				}
 			} else {
-				result, toolErr = tool.Execute(ctx, json.RawMessage(effectiveArgs), c.uiBridge)
+				result, toolErr = tool.Execute(ctx, json.RawMessage(effectiveArgs), bridge)
 				if toolErr != nil {
 					result = tools.Result{
 						Content: fmt.Sprintf("tool execution error: %v", toolErr),
@@ -1594,4 +1602,22 @@ func (c *Coordinator) persistSession(state chat.ChatSessionState, duration time.
 			)
 		}
 	}()
+}
+
+type loggingUIBridge struct {
+	tools.UIBridge
+	sessionID string
+	requestID string
+	callID    string
+	c         *Coordinator
+}
+
+func (b *loggingUIBridge) Log(chunk string) {
+	b.c.emit(chat.ChatToolOutputEvent{
+		SessionID:  b.sessionID,
+		RequestID:  b.requestID,
+		CallID:     b.callID,
+		Chunk:      chunk,
+		ReceivedAt: time.Now().UTC(),
+	})
 }
