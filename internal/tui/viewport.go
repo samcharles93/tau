@@ -44,6 +44,12 @@ func (c *ChatPanel) renderMessagesViewport(app *gt.App) *gt.Element {
 		viewport.AddChild(c.renderViewportAssistantMessage(streaming, width, true))
 	}
 
+	for callID, log := range c.toolLogs.Get() {
+		if strings.TrimSpace(log) != "" {
+			viewport.AddChild(c.renderViewportToolLog(callID, log, width))
+		}
+	}
+
 	if c.showReasoning.Get() {
 		reasoning := c.streamingReasoning.Get()
 		if strings.TrimSpace(reasoning) != "" {
@@ -118,10 +124,31 @@ func (c *ChatPanel) renderViewportAssistantMessage(text string, width int, strea
 		prefix = "▌ "
 	}
 	return gt.New(
-		gt.WithText(prefix+text),
-		gt.WithTextStyle(theme.BodyStyle()),
-		gt.WithWrap(true),
 		gt.WithWidth(width),
+		gt.WithComponent(gt.NewMarkdown(
+			gt.WithMarkdownSource(prefix+text),
+			gt.WithMarkdownWidth(width),
+		)),
+	)
+}
+
+func (c *ChatPanel) renderViewportToolLog(callID, log string, width int) *gt.Element {
+	return gt.New(
+		gt.WithDisplay(gt.DisplayFlex),
+		gt.WithDirection(gt.Column),
+		gt.WithWidth(width),
+		gt.WithBorder(gt.BorderRounded),
+		gt.WithBorderStyle(theme.DimStyle()),
+		gt.WithPadding(1),
+		gt.WithChild(gt.New(
+			gt.WithText("Tool Output ("+callID+"):"),
+			gt.WithTextStyle(theme.DimStyle()),
+		)),
+		gt.WithChild(gt.New(
+			gt.WithText(log),
+			gt.WithTextStyle(theme.BodyStyle()),
+			gt.WithWrap(true),
+		)),
 	)
 }
 

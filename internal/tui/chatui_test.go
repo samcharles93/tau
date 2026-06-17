@@ -269,6 +269,32 @@ func TestCompletedEventSyncsMessages(t *testing.T) {
 	}
 }
 
+func TestToolOutputUpdatesState(t *testing.T) {
+	panel := newTestPanel(&fakeRuntime{})
+
+	// Simulate tool output chunks
+	panel.handleRuntimeEvent(tauchat.ChatToolOutputEvent{
+		CallID: "call_1",
+		Chunk:  "hello ",
+	})
+	panel.handleRuntimeEvent(tauchat.ChatToolOutputEvent{
+		CallID: "call_1",
+		Chunk:  "world",
+	})
+	panel.handleRuntimeEvent(tauchat.ChatToolOutputEvent{
+		CallID: "call_2",
+		Chunk:  "another",
+	})
+
+	logs := panel.toolLogs.Get()
+	if logs["call_1"] != "hello world" {
+		t.Fatalf("call_1 log = %q, want 'hello world'", logs["call_1"])
+	}
+	if logs["call_2"] != "another" {
+		t.Fatalf("call_2 log = %q, want 'another'", logs["call_2"])
+	}
+}
+
 func TestSlashCommandCompletionsApplyBeforeSubmit(t *testing.T) {
 	runtime := &fakeRuntime{}
 	panel := newTestPanel(runtime)

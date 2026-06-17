@@ -73,12 +73,36 @@ func (c *ChatPanel) KeyMap() gt.KeyMap {
 		gt.On(gt.KeyCtrlR, func(ke gt.KeyEvent) {
 			c.showReasoning.Set(!c.showReasoning.Get())
 		}),
-	}
-	if len(c.completions.Get()) > 0 {
-		km = append(km,
-			gt.OnPreemptStop(gt.KeyUp, func(gt.KeyEvent) { c.selectCompletion(-1) }),
-			gt.OnPreemptStop(gt.KeyDown, func(gt.KeyEvent) { c.selectCompletion(1) }),
-		)
+		gt.On(gt.KeyPageUp, func(ke gt.KeyEvent) {
+			if c.messageViewport != nil {
+				_, h := c.messageViewport.ViewportSize()
+				c.messageViewport.ScrollBy(0, -h)
+			}
+		}),
+		gt.On(gt.KeyPageDown, func(ke gt.KeyEvent) {
+			if c.messageViewport != nil {
+				_, h := c.messageViewport.ViewportSize()
+				c.messageViewport.ScrollBy(0, h)
+			}
+		}),
+		gt.On(gt.KeyUp, func(ke gt.KeyEvent) {
+			if len(c.completions.Get()) > 0 {
+				c.selectCompletion(-1)
+				return
+			}
+			if c.messageViewport != nil {
+				c.messageViewport.ScrollBy(0, -1)
+			}
+		}),
+		gt.On(gt.KeyDown, func(ke gt.KeyEvent) {
+			if len(c.completions.Get()) > 0 {
+				c.selectCompletion(1)
+				return
+			}
+			if c.messageViewport != nil {
+				c.messageViewport.ScrollBy(0, 1)
+			}
+		}),
 	}
 	return km
 }

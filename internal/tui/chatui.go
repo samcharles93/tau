@@ -74,6 +74,7 @@ type ChatPanel struct {
 	startupDone          bool
 	lastSubmitTime       time.Time
 	outgoingQueue        *gt.State[[]string]
+	toolLogs             *gt.State[map[string]string]
 }
 
 // NewChatPanel creates a new go-tui chat panel with reactive state initialized.
@@ -117,6 +118,7 @@ func NewChatPanel(
 		sessionSummaries:   gt.NewState([]tauchat.SessionSummary{}),
 		outgoingQueue:      gt.NewState([]string{}),
 		selectedModelIndex: gt.NewState(0),
+		toolLogs:           gt.NewState(make(map[string]string)),
 	}
 	panel.settingsView = views.NewSettingsView(
 		panel.showSettings,
@@ -164,6 +166,7 @@ func (c *ChatPanel) BindApp(app *gt.App) {
 	c.showSessionInfo.BindApp(app)
 	c.showSessionTree.BindApp(app)
 	c.sessionSummaries.BindApp(app)
+	c.toolLogs.BindApp(app)
 }
 
 // Watchers bridges runtime event channels into the go-tui event loop.
@@ -220,9 +223,9 @@ func (c *ChatPanel) handleRuntimeEvent(event tauchat.ChatEvent) {
 		if !c.matchesRequest(ev.SessionID, ev.RequestID) {
 			return
 		}
-		message := fmt.Sprintf("\ntool started: %s %s", ev.ToolName, ev.ArgumentsSummary)
+		message := fmt.Sprintf("tool started: %s %s", ev.ToolName, ev.ArgumentsSummary)
 		c.notice.Set(message)
-		c.printStyledAbovef("%s", ansify(message, theme.ColorPaleRed))
+		c.appendMessage(tauchat.ChatMessage{Role: tauchat.ChatRoleSystem, Content: message})
 	case tauchat.ChatToolExecutionCompletedEvent:
 		if !c.matchesRequest(ev.SessionID, ev.RequestID) {
 			return
@@ -233,7 +236,14 @@ func (c *ChatPanel) handleRuntimeEvent(event tauchat.ChatEvent) {
 		}
 		message := fmt.Sprintf("tool completed: %s %s (%s)", ev.ToolName, ev.Status, ev.Duration)
 		c.notice.Set(message)
+		c.appendMessage(tauchat.ChatMessage{Role: tauchat.ChatRoleSystem, Content: message})
 		c.printStyledAbovef("%s", ansify(message, statusColor))
+	case tauchat.ChatToolOutputEvent:
+		c.toolLogs.Update(func(m map[string]string) map[string]string {
+			m[ev.CallID] += ev.Chunk
+			return m
+		})
+		c.scrollToBottomFlag = true
 	case tauchat.ChatResponseCompletedEvent:
 		if ev.State.SessionID != c.cfg.SessionID {
 			return
