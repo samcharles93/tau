@@ -23,7 +23,7 @@ func (c *ChatPanel) renderMessagesViewport(app *gt.App) *gt.Element {
 		gt.WithFlexGrow(1),
 		gt.WithWidthPercent(100),
 		gt.WithPadding(1),
-		gt.WithGap(0),
+		gt.WithGap(1),
 		gt.WithScrollable(gt.ScrollVertical),
 		gt.WithScrollbarHidden(true),
 	)
@@ -85,10 +85,18 @@ func (c *ChatPanel) renderViewportMessage(msg tauchat.ChatMessage, width int) *g
 }
 
 func (c *ChatPanel) renderViewportUserMessage(text string, width int) *gt.Element {
+	contentWidth := min(width, max(20, c.messageWidth()-8))
+	row := gt.New(
+		gt.WithDisplay(gt.DisplayFlex),
+		gt.WithDirection(gt.Row),
+		gt.WithWidthPercent(100),
+	)
+	row.AddChild(gt.New(gt.WithFlexGrow(1))) // left spacer
+
 	bubble := gt.New(
 		gt.WithDisplay(gt.DisplayFlex),
 		gt.WithDirection(gt.Column),
-		gt.WithWidth(min(width+2, c.messageWidth()-2)),
+		gt.WithWidth(contentWidth),
 		gt.WithBorder(gt.BorderRounded),
 		gt.WithBorderStyle(theme.BorderStyle()),
 		gt.WithBackground(theme.BodyStyle().Background(theme.ColorGray800)),
@@ -100,7 +108,8 @@ func (c *ChatPanel) renderViewportUserMessage(text string, width int) *gt.Elemen
 		gt.WithTextStyle(theme.BodyStyle()),
 		gt.WithWrap(true),
 	))
-	return bubble
+	row.AddChild(bubble)
+	return row
 }
 
 func (c *ChatPanel) renderViewportAssistantMessage(text string, width int, streaming bool) *gt.Element {
