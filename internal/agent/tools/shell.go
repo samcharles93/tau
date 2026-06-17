@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"runtime"
@@ -51,8 +52,17 @@ func NewShellTool(cwd string) Tool {
 	}
 }
 
+type bridgeWriter struct {
+	bridge UIBridge
+}
+
+func (w *bridgeWriter) Write(p []byte) (n int, err error) {
+	w.bridge.Log(string(p))
+	return len(p), nil
+}
+
 func makeShellExecutor(cwd string) Executor {
-	return func(ctx context.Context, params json.RawMessage, _ UIBridge) (Result, error) {
+	return func(ctx context.Context, params json.RawMessage, bridge UIBridge) (Result, error) {
 		var p ShellParams
 		if err := json.Unmarshal(params, &p); err != nil {
 			return Result{Content: fmt.Sprintf("invalid parameters: %v", err), IsError: true}, nil
@@ -88,8 +98,9 @@ func makeShellExecutor(cwd string) Executor {
 		}
 
 		var stdout, stderr bytes.Buffer
-		cmd.Stdout = &stdout
-		cmd.Stderr = &stderr
+		bw := &bridgeWriter{bridge: bridge}
+		cmd.Stdout = io.MultiWriter(&stdout, bw)
+		cmd.Stderr = io.MultiWriter(&stderr, bw)
 
 		err := cmd.Run()
 
