@@ -42,7 +42,6 @@ func NewRootCommand(version string) *urfavecli.Command {
 		Flags: []urfavecli.Flag{
 			&urfavecli.StringFlag{
 				Name:    "provider",
-				Aliases: []string{"p"},
 				Usage:   "Configured provider name",
 				Sources: urfavecli.EnvVars("TAU_PROVIDER"),
 			},
@@ -76,8 +75,9 @@ func NewRootCommand(version string) *urfavecli.Command {
 				Usage:   "Resume a saved session (pass ID or 'latest' for most recent)",
 			},
 			&urfavecli.StringFlag{
-				Name:  "prompt",
-				Usage: "Single-shot mode: process prompt and exit",
+				Name:    "prompt",
+				Aliases: []string{"p"},
+				Usage:   "Single-shot mode: process prompt and exit",
 			},
 		},
 		Action: func(ctx context.Context, cmd *urfavecli.Command) error {
@@ -101,6 +101,9 @@ func NewRootCommand(version string) *urfavecli.Command {
 			opts := chatOptionsFromCmd(cmd, cfg, selectedProvider, version)
 			prompt := cmd.String("prompt")
 			if prompt != "" {
+				if args := cmd.Args(); args.Len() > 0 {
+					prompt = strings.TrimSpace(prompt + " " + strings.Join(args.Slice(), " "))
+				}
 				return app.RunStdIn(ctx, opts, prompt)
 			}
 			return app.RunChat(ctx, opts)
