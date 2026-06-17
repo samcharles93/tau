@@ -45,11 +45,12 @@ func RunStdIn(ctx context.Context, opts ChatOptions, prompt string) error {
 	}
 
 	coordinator, err := buildCoordinator(ctx, coordinatorConfig{
-		Bus:            eventbus.New(),
-		ChatOptions:    opts,
-		BearerToken:    bearerToken,
-		SessionManager: sessionManager,
-		InteractiveUI:  false,
+		Bus:             eventbus.New(),
+		ChatOptions:     opts,
+		BearerToken:     bearerToken,
+		SessionManager:  sessionManager,
+		InteractiveUI:   false,
+		AutoExportJSONL: false,
 	})
 	if err != nil {
 		if sessionManager != nil {
@@ -123,6 +124,9 @@ func RunStdIn(ctx context.Context, opts ChatOptions, prompt string) error {
 					fmt.Println()
 					if e.State.LastError != "" {
 						fmt.Fprintf(os.Stderr, "\nerror: %s\n", e.State.LastError)
+					}
+					if e.FinishReason == "length" {
+						fmt.Fprintln(os.Stderr, "\nwarning: response was truncated by max_tokens; rerun with --max-tokens N for a longer answer")
 					}
 					return nil
 				}

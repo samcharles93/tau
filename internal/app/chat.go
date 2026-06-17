@@ -83,12 +83,16 @@ func buildModelRefresher(selectedProvider tauconfig.ProviderConfig, bearerToken 
 }
 
 func buildSessionConfig(opts ChatOptions, model tauchat.ChatModelRef, systemPrompt string) tauchat.ChatSessionConfig {
+	maxTokens := opts.MaxTokens
+	if maxTokens == 0 && model.Config.DefaultMaxTokens > 0 {
+		maxTokens = model.Config.DefaultMaxTokens
+	}
 	return tauchat.ChatSessionConfig{
 		Provider:     opts.Provider,
 		Model:        model,
 		SystemPrompt: systemPrompt,
 		Parameters: tauchat.ChatParameters{
-			MaxTokens:   opts.MaxTokens,
+			MaxTokens:   maxTokens,
 			Temperature: opts.Temperature,
 		},
 	}
@@ -175,6 +179,7 @@ func newCoordinator(ctx context.Context, opts ChatOptions, bearerToken string, s
 		InteractiveUI:   true,
 		StartupEvents:   startupEvents,
 		CommandRegistry: cmdReg,
+		AutoExportJSONL: true,
 	})
 	if err != nil {
 		cmdReg.Close()
@@ -196,6 +201,7 @@ type coordinatorConfig struct {
 	InteractiveUI   bool
 	StartupEvents   []tauchat.ChatEvent
 	CommandRegistry *commandreg.Registry
+	AutoExportJSONL bool
 }
 
 // buildCoordinator creates a coordinator with the full plugin/tool setup.
@@ -276,7 +282,7 @@ func buildCoordinator(ctx context.Context, cfg coordinatorConfig) (*agent.Coordi
 		Registry:          registry,
 		InteractiveUI:     cfg.InteractiveUI,
 		SessionManager:    cfg.SessionManager,
-		AutoExportJSONL:   true,
+		AutoExportJSONL:   cfg.AutoExportJSONL,
 		StartupEvents:     cfg.StartupEvents,
 		ExtensionReloader: pluginMgr,
 		OnPluginEvent: func(event string, sessionID string, payload *api.EventPayload) *api.EventResponse {

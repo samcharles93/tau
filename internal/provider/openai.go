@@ -80,17 +80,21 @@ func buildOpenAIRequestBody(session chat.ChatSessionState) ([]byte, error) {
 	body := map[string]any{
 		"model":       request.Model,
 		"messages":    encodeMessages(request.Messages, compat),
-		"max_tokens":  request.MaxTokens,
 		"temperature": request.Temperature,
 		"stream":      request.Stream,
+	}
+	if request.MaxTokens > 0 {
+		body["max_tokens"] = request.MaxTokens
 	}
 	if len(request.Tools) > 0 {
 		body["tools"] = request.Tools
 	}
 	maps.Copy(body, compat.ExtraBody)
 	if field := strings.TrimSpace(compat.MaxTokensField); field != "" && field != "max_tokens" {
-		body[field] = body["max_tokens"]
-		delete(body, "max_tokens")
+		if _, ok := body["max_tokens"]; ok {
+			body[field] = body["max_tokens"]
+			delete(body, "max_tokens")
+		}
 	}
 	return json.Marshal(body)
 }

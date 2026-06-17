@@ -13,7 +13,7 @@ import (
 
 const (
 	defaultChatSystemPrompt = "You are a helpful assistant."
-	defaultChatMaxTokens    = 1024
+	defaultChatMaxTokens    = 0
 	defaultChatTemperature  = 0.7
 )
 
@@ -139,9 +139,6 @@ func defaultChatParameters() ChatParameters {
 
 func (p ChatParameters) withDefaults() ChatParameters {
 	defaults := defaultChatParameters()
-	if p.MaxTokens == 0 {
-		p.MaxTokens = defaults.MaxTokens
-	}
 	if p.Temperature == 0 {
 		p.Temperature = defaults.Temperature
 	}
@@ -149,8 +146,8 @@ func (p ChatParameters) withDefaults() ChatParameters {
 }
 
 func (p ChatParameters) Validate() error {
-	if p.MaxTokens <= 0 {
-		return errors.New("max_tokens must be greater than 0")
+	if p.MaxTokens < 0 {
+		return errors.New("max_tokens must be greater than or equal to 0")
 	}
 	if p.Temperature < 0 || p.Temperature > 2 {
 		return errors.New("temperature must be between 0 and 2")
@@ -210,8 +207,8 @@ func (p ChatSessionPatch) Validate() error {
 			return err
 		}
 	}
-	if p.MaxTokens != nil && *p.MaxTokens <= 0 {
-		return errors.New("max_tokens must be greater than 0")
+	if p.MaxTokens != nil && *p.MaxTokens < 0 {
+		return errors.New("max_tokens must be greater than or equal to 0")
 	}
 	if p.Temperature != nil && (*p.Temperature < 0 || *p.Temperature > 2) {
 		return errors.New("temperature must be between 0 and 2")
@@ -626,7 +623,7 @@ type PluginLifecycleEvent struct {
 type ChatCompletionRequest struct {
 	Model       string        `json:"model"`
 	Messages    []ChatMessage `json:"messages"`
-	MaxTokens   int           `json:"max_tokens"`
+	MaxTokens   int           `json:"max_tokens,omitempty"`
 	Temperature float64       `json:"temperature"`
 	Stream      bool          `json:"stream"`
 	Tools       []ChatToolDef `json:"tools,omitempty"`

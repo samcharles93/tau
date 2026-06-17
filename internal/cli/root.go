@@ -61,7 +61,7 @@ func NewRootCommand(version string) *urfavecli.Command {
 			},
 			&urfavecli.IntFlag{
 				Name:  "max-tokens",
-				Usage: "Maximum completion tokens per response",
+				Usage: "Maximum completion tokens per response (0 = provider/model default)",
 				Value: defaultChatParameters.MaxTokens,
 			},
 			&urfavecli.FloatFlag{
