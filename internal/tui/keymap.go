@@ -106,3 +106,39 @@ func (c *ChatPanel) KeyMap() gt.KeyMap {
 	}
 	return km
 }
+
+// wheelScrollLines is how many lines one mouse-wheel notch scrolls the message
+// viewport.
+const wheelScrollLines = 3
+
+// HandleMouse implements gt.MouseListener. The go-tui app dispatches mouse
+// events to MouseListener components before element hit-testing, which is what
+// makes this work: hit-testing resolves the wheel to the deepest element under
+// the cursor (usually a non-scrollable text leaf) and does not bubble to the
+// scrollable viewport ancestor, so wheel-over-content would otherwise do
+// nothing. Handling it here scrolls regardless of what sits under the cursor.
+//
+// Only wheel events are consumed. Clicks and drags are left unhandled so
+// terminal-level selection (Shift+drag in most terminals) keeps working.
+func (c *ChatPanel) HandleMouse(me gt.MouseEvent) bool {
+	if c.messageViewport == nil {
+		return false // inline mode, or before the first full-screen render
+	}
+	// While a full-screen overlay (settings, help, session views) owns the
+	// screen, leave the wheel for it rather than scrolling the hidden chat.
+	for _, s := range c.alternateScreenStates() {
+		if s.Get() {
+			return false
+		}
+	}
+	switch me.Button {
+	case gt.MouseWheelUp:
+		c.messageViewport.ScrollBy(0, -wheelScrollLines)
+		return true
+	case gt.MouseWheelDown:
+		c.messageViewport.ScrollBy(0, wheelScrollLines)
+		return true
+	default:
+		return false
+	}
+}
