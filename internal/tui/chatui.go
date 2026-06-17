@@ -516,23 +516,22 @@ func (c *ChatPanel) Render(app *gt.App) *gt.Element {
 		gt.WithHeightPercent(100),
 	)
 
-	if completions := c.renderCompletions(); completions != nil {
-		root.AddChild(completions)
-	}
-	if errMsg := strings.TrimSpace(c.lastError.Get()); errMsg != "" {
-		root.AddChild(gt.New(
-			gt.WithText("error: "+errMsg),
-			gt.WithTextStyle(theme.ErrorStyle()),
-			gt.WithTruncate(true),
-		))
-	}
-	if queue := c.renderQueue(); queue != nil {
-		root.AddChild(queue)
-	}
-
 	if c.cfg.InlineMode {
 		// Inline mode keeps the original input-at-bottom layout with
 		// streamed output above the inline frame.
+		if completions := c.renderCompletions(); completions != nil {
+			root.AddChild(completions)
+		}
+		if errMsg := strings.TrimSpace(c.lastError.Get()); errMsg != "" {
+			root.AddChild(gt.New(
+				gt.WithText("error: "+errMsg),
+				gt.WithTextStyle(theme.ErrorStyle()),
+				gt.WithTruncate(true),
+			))
+		}
+		if queue := c.renderQueue(); queue != nil {
+			root.AddChild(queue)
+		}
 		root.AddChild(gt.New(
 			gt.WithText("───"+strings.Repeat("─", max(c.messageWidth()-3, 1))),
 			gt.WithTextStyle(theme.DimStyle()),
@@ -540,9 +539,23 @@ func (c *ChatPanel) Render(app *gt.App) *gt.Element {
 		))
 		root.AddChild(c.renderInput(app))
 	} else {
-		// Full alternate-screen mode renders messages in a scrollable
-		// viewport that occupies the remaining screen space.
+		// Full alternate-screen mode: messages fill the available space,
+		// input/status sit at the bottom, and completions render just
+		// above the input.
 		root.AddChild(c.renderMessagesViewport(app))
+		if completions := c.renderCompletions(); completions != nil {
+			root.AddChild(completions)
+		}
+		if errMsg := strings.TrimSpace(c.lastError.Get()); errMsg != "" {
+			root.AddChild(gt.New(
+				gt.WithText("error: "+errMsg),
+				gt.WithTextStyle(theme.ErrorStyle()),
+				gt.WithTruncate(true),
+			))
+		}
+		if queue := c.renderQueue(); queue != nil {
+			root.AddChild(queue)
+		}
 		root.AddChild(gt.New(
 			gt.WithText("───"+strings.Repeat("─", max(c.messageWidth()-3, 1))),
 			gt.WithTextStyle(theme.DimStyle()),
