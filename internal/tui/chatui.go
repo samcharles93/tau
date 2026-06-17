@@ -67,7 +67,6 @@ type ChatPanel struct {
 	dumpTreeOnNextRender bool
 	input                *completionTextArea
 	messageViewport      *gt.Element
-	scrollToBottomFlag   bool
 	streamWriter         *gt.StreamWriter
 	streamContentWritten bool
 	reasoningWritten     bool
@@ -208,14 +207,12 @@ func (c *ChatPanel) handleRuntimeEvent(event tauchat.ChatEvent) {
 			return
 		}
 		c.streamingContent.Set(ev.Snapshot)
-		c.scrollToBottomFlag = true
 		c.writeAssistantDelta(ev.Delta)
 	case tauchat.ChatReasoningDeltaEvent:
 		if !c.matchesRequest(ev.SessionID, ev.RequestID) {
 			return
 		}
 		c.streamingReasoning.Set(ev.Snapshot)
-		c.scrollToBottomFlag = true
 		if c.showReasoning.Get() {
 			c.writeReasoningDelta(ev.Delta)
 		}
@@ -243,12 +240,10 @@ func (c *ChatPanel) handleRuntimeEvent(event tauchat.ChatEvent) {
 			m[ev.CallID] += ev.Chunk
 			return m
 		})
-		c.scrollToBottomFlag = true
 	case tauchat.ChatResponseCompletedEvent:
 		if ev.State.SessionID != c.cfg.SessionID {
 			return
 		}
-		c.scrollToBottomFlag = true
 		if !c.streamContentWritten {
 			c.printLatestAssistantMessage(ev.State)
 		}
@@ -443,7 +438,6 @@ func (c *ChatPanel) appendMessage(message tauchat.ChatMessage) {
 	messages := slices.Clone(c.messages.Get())
 	messages = append(messages, message)
 	c.messages.Set(messages)
-	c.scrollToBottomFlag = true
 	c.printMessage(message)
 }
 

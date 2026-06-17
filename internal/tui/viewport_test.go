@@ -26,19 +26,28 @@ func TestRenderMessagesViewportIncludesToolLogs(t *testing.T) {
 
 	viewport := panel.renderMessagesViewport(nil)
 
-	found := false
-	// We expect tool logs to be rendered in the viewport.
-	// Current implementation doesn't do this.
-	for _, child := range viewport.Children() {
-		if strings.Contains(child.Text(), "executing ls...") {
-			found = true
-			break
-		}
-	}
-
-	if !found {
+	// Tool-log text lives in nested elements (a bordered container with a label
+	// and a wrapped body), so search the whole subtree, not just direct children.
+	if !elementContainsText(viewport, "executing ls...") {
 		t.Error("tool logs not found in viewport")
 	}
+}
+
+// elementContainsText reports whether el or any descendant has text containing
+// substr.
+func elementContainsText(el *gt.Element, substr string) bool {
+	if el == nil {
+		return false
+	}
+	if strings.Contains(el.Text(), substr) {
+		return true
+	}
+	for _, child := range el.Children() {
+		if elementContainsText(child, substr) {
+			return true
+		}
+	}
+	return false
 }
 
 func TestChatPanel_OnKey_Scrolling(t *testing.T) {

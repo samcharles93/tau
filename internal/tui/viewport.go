@@ -9,31 +9,45 @@ import (
 )
 
 // renderMessagesViewport builds the scrollable alternate-screen chat history.
-// It renders persisted messages plus any active streaming content. Scroll
-// position is preserved across re-renders and snaps to the bottom when new
-// content arrives.
+// It renders persisted messages plus any active streaming content.
+//
+// The viewport element is created once and reused across renders. go-tui
+// rebuilds the entire element tree on every dirty frame, and the scroll offset
+// (scrollX/scrollY) lives on the element — so creating a fresh element each
+// render would reset the offset to the top on every frame (including the
+// once-per-second notify timer tick). Reusing the same element preserves the
+// offset; only its children are swapped.
+//
+// Scroll follows new content only when the user is already pinned at the bottom
+// (sticky scroll). If they have scrolled up to read history, their position is
+// left untouched.
 func (c *ChatPanel) renderMessagesViewport(app *gt.App) *gt.Element {
 	width := max(
 		// leave padding for readability
 		c.messageWidth()-4, 1)
 
-	viewport := gt.New(
-		gt.WithDisplay(gt.DisplayFlex),
-		gt.WithDirection(gt.Column),
-		gt.WithFlexGrow(1),
-		gt.WithWidthPercent(100),
-		gt.WithPadding(1),
-		gt.WithGap(1),
-		gt.WithScrollable(gt.ScrollVertical),
-		gt.WithScrollbarHidden(true),
-	)
-
-	// Preserve scroll position across re-renders.
-	if c.messageViewport != nil {
-		x, y := c.messageViewport.ScrollOffset()
-		viewport.ScrollTo(x, y)
+	viewport := c.messageViewport
+	firstRender := viewport == nil
+	if firstRender {
+		viewport = gt.New(
+			gt.WithDisplay(gt.DisplayFlex),
+			gt.WithDirection(gt.Column),
+			gt.WithFlexGrow(1),
+			gt.WithWidthPercent(100),
+			gt.WithPadding(1),
+			gt.WithGap(1),
+			gt.WithScrollable(gt.ScrollVertical),
+			gt.WithScrollbarHidden(true),
+		)
+		c.messageViewport = viewport
 	}
-	c.messageViewport = viewport
+
+	// Decide whether to follow the bottom before mutating children, while the
+	// previous frame's layout (and thus IsAtBottom) is still valid. A freshly
+	// created viewport counts as "at the bottom" so the first frame starts there.
+	stickToBottom := firstRender || viewport.IsAtBottom()
+
+	viewport.RemoveAllChildren()
 
 	for _, msg := range c.messages.Get() {
 		viewport.AddChild(c.renderViewportMessage(app, msg, width))
@@ -57,8 +71,7 @@ func (c *ChatPanel) renderMessagesViewport(app *gt.App) *gt.Element {
 		}
 	}
 
-	if c.scrollToBottomFlag {
-		c.scrollToBottomFlag = false
+	if stickToBottom {
 		viewport.ScrollToBottom()
 	}
 

@@ -31,7 +31,6 @@ func (c *ChatPanel) writeAssistantDelta(delta string) {
 	if delta == "" {
 		return
 	}
-	c.scrollToBottomFlag = true
 	w := c.ensureStreamWriter()
 	if w == nil {
 		return
@@ -53,7 +52,6 @@ func (c *ChatPanel) writeReasoningDelta(delta string) {
 	if delta == "" {
 		return
 	}
-	c.scrollToBottomFlag = true
 	w := c.ensureStreamWriter()
 	if w == nil {
 		return
