@@ -36,12 +36,12 @@ func (c *ChatPanel) renderMessagesViewport(app *gt.App) *gt.Element {
 	c.messageViewport = viewport
 
 	for _, msg := range c.messages.Get() {
-		viewport.AddChild(c.renderViewportMessage(msg, width))
+		viewport.AddChild(c.renderViewportMessage(app, msg, width))
 	}
 
 	streaming := c.streamingContent.Get()
 	if strings.TrimSpace(streaming) != "" {
-		viewport.AddChild(c.renderViewportAssistantMessage(streaming, width, true))
+		viewport.AddChild(c.renderViewportAssistantMessage(app, streaming, width, true))
 	}
 
 	for callID, log := range c.toolLogs.Get() {
@@ -65,7 +65,7 @@ func (c *ChatPanel) renderMessagesViewport(app *gt.App) *gt.Element {
 	return viewport
 }
 
-func (c *ChatPanel) renderViewportMessage(msg tauchat.ChatMessage, width int) *gt.Element {
+func (c *ChatPanel) renderViewportMessage(app *gt.App, msg tauchat.ChatMessage, width int) *gt.Element {
 	switch msg.Role {
 	case tauchat.ChatRoleUser:
 		return c.renderViewportUserMessage(msg.Content, width)
@@ -79,7 +79,7 @@ func (c *ChatPanel) renderViewportMessage(msg tauchat.ChatMessage, width int) *g
 			container.AddChild(c.renderViewportReasoning(msg.ReasoningContent, width, false))
 		}
 		if strings.TrimSpace(msg.Content) != "" {
-			container.AddChild(c.renderViewportAssistantMessage(msg.Content, width, false))
+			container.AddChild(c.renderViewportAssistantMessage(app, msg.Content, width, false))
 		}
 		if len(container.Children()) == 0 {
 			return gt.New()
@@ -118,39 +118,37 @@ func (c *ChatPanel) renderViewportUserMessage(text string, width int) *gt.Elemen
 	return row
 }
 
-func (c *ChatPanel) renderViewportAssistantMessage(text string, width int, streaming bool) *gt.Element {
+func (c *ChatPanel) renderViewportAssistantMessage(app *gt.App, text string, width int, streaming bool) *gt.Element {
 	prefix := ""
 	if streaming {
 		prefix = "▌ "
 	}
-	return gt.New(
-		gt.WithWidth(width),
-		gt.WithComponent(gt.NewMarkdown(
-			gt.WithMarkdownSource(prefix+text),
-			gt.WithMarkdownWidth(width),
-			gt.WithMarkdownTheme(theme.MarkdownTheme()),
-		)),
-	)
+	return gt.NewMarkdown(
+		gt.WithMarkdownSource(prefix+text),
+		gt.WithMarkdownWidth(width),
+		gt.WithMarkdownTheme(theme.MarkdownTheme()),
+	).Render(app)
 }
 
 func (c *ChatPanel) renderViewportToolLog(callID, log string, width int) *gt.Element {
-	return gt.New(
+	container := gt.New(
 		gt.WithDisplay(gt.DisplayFlex),
 		gt.WithDirection(gt.Column),
 		gt.WithWidth(width),
 		gt.WithBorder(gt.BorderRounded),
 		gt.WithBorderStyle(theme.DimStyle()),
 		gt.WithPadding(1),
-		gt.WithChild(gt.New(
-			gt.WithText("Tool Output ("+callID+"):"),
-			gt.WithTextStyle(theme.DimStyle()),
-		)),
-		gt.WithChild(gt.New(
-			gt.WithText(log),
-			gt.WithTextStyle(theme.BodyStyle()),
-			gt.WithWrap(true),
-		)),
 	)
+	container.AddChild(gt.New(
+		gt.WithText("Tool Output ("+callID+"):"),
+		gt.WithTextStyle(theme.DimStyle()),
+	))
+	container.AddChild(gt.New(
+		gt.WithText(log),
+		gt.WithTextStyle(theme.BodyStyle()),
+		gt.WithWrap(true),
+	))
+	return container
 }
 
 func (c *ChatPanel) renderViewportReasoning(text string, width int, streaming bool) *gt.Element {

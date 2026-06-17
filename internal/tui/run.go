@@ -52,6 +52,12 @@ func Run(ctx context.Context, runtime tauchat.ChatRuntime, cfg TUIConfig) error 
 	}
 	defer app.Close()
 
+	if !cfg.InlineMode {
+		if err := app.EnterAlternateScreen(); err != nil {
+			return fmt.Errorf("entering alternate screen: %w", err)
+		}
+	}
+
 	if err := app.Run(); err != nil {
 		return fmt.Errorf("running go-tui app: %w", err)
 	}

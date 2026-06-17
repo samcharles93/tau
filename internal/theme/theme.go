@@ -112,12 +112,27 @@ func DisabledStyle() gotui.Style {
 // MarkdownTheme returns the brand-aligned theme for the Markdown component.
 func MarkdownTheme() gotui.MarkdownTheme {
 	t := gotui.DefaultMarkdownTheme()
-	t.H1 = BrandStyle()
-	t.H2 = BrandStyle()
-	t.H3 = BrandStyle()
-	t.Code = gotui.NewStyle().Foreground(ColorPaleGreen).Background(ColorGray800)
-	t.CodeBlock = gotui.NewStyle().Foreground(ColorPaleGreen).Background(ColorGray800)
+	t.Heading = [6]gotui.Style{
+		BrandStyle().Underline().Italic(),
+		BrandStyle().Italic(),
+		BrandStyle().Italic(),
+		BrandStyle(),
+		BrandStyle(),
+		BrandStyle(),
+	}
+	t.Paragraph = BodyStyle()
+	t.Bold = BodyStyle().Bold()
+	t.Italic = BodyStyle().Italic()
+	t.CodeSpan = gotui.NewStyle().Foreground(ColorPaleGreen)
 	t.Link = gotui.NewStyle().Foreground(ColorPurple).Underline()
-	t.ListBullet = gotui.NewStyle().Foreground(ColorPurple)
+	t.CodeBlockText = gotui.NewStyle().Foreground(ColorPaleGreen)
+	t.CodeBlockBg = gotui.DefaultColor()
+	t.CodeBlockBorder = gotui.BorderRounded
+	t.TableHeader = BrandStyle()
+	t.TableBorder = gotui.BorderRounded
+	t.BlockquoteBar = '│'
+	t.BlockquoteBarStyle = DimStyle()
+	t.BlockquoteText = DescriptionStyle()
+	t.BulletMarker = "• "
 	return t
 }
