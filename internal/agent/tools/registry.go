@@ -25,15 +25,6 @@ type Result struct {
 	IsError bool   `json:"is_error,omitempty"`
 }
 
-// UIBridge allows tools to interact with the user through the TUI.
-// This interface is satisfied by the extension/ui bridge implementation.
-type UIBridge interface {
-	Confirm(ctx context.Context, title, description string) (bool, error)
-	Select(ctx context.Context, title string, options []string) (string, error)
-	Input(ctx context.Context, title, placeholder string) (string, error)
-	Notify(title, level string)
-}
-
 // Executor is a function that executes a tool with the given parameters.
 type Executor func(ctx context.Context, params json.RawMessage, ui UIBridge) (Result, error)
 

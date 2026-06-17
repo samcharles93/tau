@@ -437,6 +437,16 @@ type ChatToolExecutionCompletedEvent struct {
 
 func (ChatToolExecutionCompletedEvent) IsChatEvent() {}
 
+type ChatToolOutputEvent struct {
+	SessionID  string    `json:"session_id"`
+	RequestID  string    `json:"request_id"`
+	CallID     string    `json:"call_id"`
+	Chunk      string    `json:"chunk"`
+	ReceivedAt time.Time `json:"received_at"`
+}
+
+func (ChatToolOutputEvent) IsChatEvent() {}
+
 type ChatResponseCompletedEvent struct {
 	State        ChatSessionState `json:"state"`
 	RequestID    string           `json:"request_id"`

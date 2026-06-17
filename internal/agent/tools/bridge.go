@@ -10,6 +10,16 @@ var (
 	ErrInteractiveCanceled    = errors.New("interactive prompt was canceled")
 )
 
+// UIBridge allows tools to interact with the user through the TUI.
+// This interface is satisfied by the extension/ui bridge implementation.
+type UIBridge interface {
+	Confirm(ctx context.Context, title, description string) (bool, error)
+	Select(ctx context.Context, title string, options []string) (string, error)
+	Input(ctx context.Context, title, placeholder string) (string, error)
+	Notify(title, level string)
+	Log(chunk string)
+}
+
 type NonInteractiveBridge struct{}
 
 func (NonInteractiveBridge) Confirm(context.Context, string, string) (bool, error) {
@@ -25,3 +35,5 @@ func (NonInteractiveBridge) Input(context.Context, string, string) (string, erro
 }
 
 func (NonInteractiveBridge) Notify(string, string) {}
+
+func (NonInteractiveBridge) Log(string) {}
