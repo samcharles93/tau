@@ -128,6 +128,7 @@ func (c *ChatPanel) renderViewportAssistantMessage(text string, width int, strea
 		gt.WithComponent(gt.NewMarkdown(
 			gt.WithMarkdownSource(prefix+text),
 			gt.WithMarkdownWidth(width),
+			gt.WithMarkdownTheme(theme.MarkdownTheme()),
 		)),
 	)
 }
