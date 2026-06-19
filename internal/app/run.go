@@ -14,6 +14,7 @@ import (
 	commandreg "github.com/samcharles93/tau/internal/registry"
 	"github.com/samcharles93/tau/internal/sessions"
 	"github.com/samcharles93/tau/internal/tui"
+	"github.com/samcharles93/tau/pkg/ai"
 )
 
 // RunChat orchestrates an interactive chat session: resolves tokens and model,
@@ -28,6 +29,20 @@ func RunChat(ctx context.Context, opts ChatOptions) error {
 	model, err := pickModel(allModels, opts.Model, opts.Config.DefaultModel, opts.Provider.BaseURL)
 	if err != nil {
 		return err
+	}
+
+	catalog := ai.NewCatalog(ai.DefaultCatalogOptions(opts.Insecure))
+	if catalogErr := catalog.Load(ctx); catalogErr != nil {
+		if discoverErr == nil {
+			discoverErr = catalogErr
+		}
+		slog.Warn("model catalog load failed", "err", catalogErr)
+	}
+
+	streamer, err := buildStreamer(opts.Provider, model, bearerToken, catalog, opts.Insecure)
+	if err != nil {
+		slog.Warn("ai-sdk streamer unavailable; falling back to OpenAI-compatible streamer", "err", err)
+		streamer = provider.OpenAIStreamer{Insecure: opts.Insecure}
 	}
 
 	// Build the full system prompt — project context (AGENTS.md) + user override.
@@ -62,7 +77,7 @@ func RunChat(ctx context.Context, opts ChatOptions) error {
 		})
 	}
 
-	result, err := newCoordinator(ctx, opts, bearerToken, sessionManager, startupEvents, bus)
+	result, err := newCoordinator(ctx, opts, bearerToken, sessionManager, startupEvents, bus, streamer)
 	if err != nil {
 		if sessionManager != nil {
 			if err := sessionManager.Close(); err != nil {
@@ -131,7 +146,7 @@ func RunChat(ctx context.Context, opts ChatOptions) error {
 
 	// Build a refresher closure that captures the provider and token so the
 	// TUI can re-discover models without importing infrastructure packages.
-	refresher := buildModelRefresher(opts.Provider, bearerToken, opts.Insecure)
+	refresher := buildModelRefresher(opts.Provider, opts.Insecure)
 
 	// Command registry owns command state; TUI initialises from snapshot
 	// and receives deltas via CommandsChangedEvent on the bus.

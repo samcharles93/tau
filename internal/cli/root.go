@@ -37,6 +37,7 @@ func NewRootCommand(version string) *urfavecli.Command {
 		Commands: []*urfavecli.Command{
 			tokenCmd(),
 			modelsCmd(),
+			refreshCmd(),
 			sessionsCmd(),
 		},
 		Flags: []urfavecli.Flag{

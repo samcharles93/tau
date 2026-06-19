@@ -21,6 +21,7 @@ import (
 	"github.com/samcharles93/tau/internal/sessions"
 	"github.com/samcharles93/tau/internal/skills"
 	"github.com/samcharles93/tau/internal/tui"
+	"github.com/samcharles93/tau/pkg/ai"
 	"github.com/samcharles93/tau/pkg/plugin/api"
 )
 
@@ -70,11 +71,11 @@ func formatTokensHuman(n int) string {
 }
 
 // buildModelRefresher returns a ModelRefresher closure that re-discovers
-// models from the configured provider. The closure captures the provider and token so the TUI
-// does not need to import infrastructure packages.
-func buildModelRefresher(selectedProvider tauconfig.ProviderConfig, bearerToken string, insecure bool) tui.ModelRefresher {
+// models from the configured provider. The closure captures the provider and
+// insecure flag so the TUI does not need to import infrastructure packages.
+func buildModelRefresher(selectedProvider tauconfig.ProviderConfig, insecure bool) tui.ModelRefresher {
 	return func(ctx context.Context) ([]tauchat.ChatModelRef, error) {
-		models, err := provider.DiscoverModels(ctx, selectedProvider, bearerToken, insecure)
+		models, err := provider.RefreshModels(ctx, selectedProvider, insecure)
 		if err != nil {
 			return nil, err
 		}
@@ -156,6 +157,48 @@ func buildModelRefs(models []provider.Model) []tauchat.ChatModelRef {
 	return refs
 }
 
+// buildStreamer attempts to construct an ai-sdk-backed streamer for the
+// selected provider/model. If the provider has no ai-sdk npm mapping, or the
+// API key cannot be resolved, it returns an error and the caller falls back
+// to tau's legacy OpenAI-compatible streamer.
+func buildStreamer(
+	providerCfg tauconfig.ProviderConfig,
+	model tauchat.ChatModelRef,
+	bearerToken string,
+	catalog *ai.Catalog,
+	insecure bool,
+) (agent.Streamer, error) {
+	npm, ok := catalog.NPM(providerCfg.Name)
+	if !ok {
+		return nil, fmt.Errorf("no ai-sdk npm mapping for provider %q", providerCfg.Name)
+	}
+	apiKey := bearerToken
+	if apiKey == "" {
+		var err error
+		apiKey, err = ai.ResolveAPIKey(providerCfg.Name, providerCfg.Auth.APIKeyEnv, catalog)
+		if err != nil {
+			return nil, err
+		}
+	}
+	baseURL := strings.TrimRight(providerCfg.BaseURL, "/")
+	if catalogAPI, ok := catalog.API(providerCfg.Name); ok && baseURL == "" {
+		baseURL = catalogAPI
+	}
+
+	aiProvider, err := ai.ResolveChatProvider(ai.ChatProviderConfig{
+		ProviderID: providerCfg.Name,
+		ModelID:    model.ID,
+		NPM:        npm,
+		APIKey:     apiKey,
+		BaseURL:    baseURL,
+		Insecure:   insecure,
+	})
+	if err != nil {
+		return nil, err
+	}
+	return ai.NewStreamer(aiProvider, model.ID), nil
+}
+
 // newCoordinatorResult bundles a coordinator with its command registry so
 // the caller can seed the TUI with the initial command snapshot before the
 // bus delivers the first CommandsChangedEvent.
@@ -166,7 +209,7 @@ type newCoordinatorResult struct {
 
 // newCoordinator creates and returns an agent coordinator with the standard
 // tool registry, config, and session persistence.
-func newCoordinator(ctx context.Context, opts ChatOptions, bearerToken string, sessionManager *sessions.Manager, startupEvents []tauchat.ChatEvent, bus *eventbus.Bus) (*newCoordinatorResult, error) {
+func newCoordinator(ctx context.Context, opts ChatOptions, bearerToken string, sessionManager *sessions.Manager, startupEvents []tauchat.ChatEvent, bus *eventbus.Bus, streamer agent.Streamer) (*newCoordinatorResult, error) {
 	cwd, _ := os.Getwd()
 	cmdRegClient := bus.Client("command-registry")
 	cmdReg := commandreg.New(cwd, cmdRegClient)
@@ -180,6 +223,7 @@ func newCoordinator(ctx context.Context, opts ChatOptions, bearerToken string, s
 		StartupEvents:   startupEvents,
 		CommandRegistry: cmdReg,
 		AutoExportJSONL: true,
+		Streamer:        streamer,
 	})
 	if err != nil {
 		cmdReg.Close()
@@ -202,6 +246,7 @@ type coordinatorConfig struct {
 	StartupEvents   []tauchat.ChatEvent
 	CommandRegistry *commandreg.Registry
 	AutoExportJSONL bool
+	Streamer        agent.Streamer
 }
 
 // buildCoordinator creates a coordinator with the full plugin/tool setup.
@@ -278,7 +323,7 @@ func buildCoordinator(ctx context.Context, cfg coordinatorConfig) (*agent.Coordi
 	coordinator, err := agent.NewCoordinator(ctx, agent.CoordinatorConfig{
 		Bus:               cfg.Bus,
 		TokenSource:       staticTokenSource(cfg.BearerToken),
-		Streamer:          provider.OpenAIStreamer{Insecure: cfg.ChatOptions.Insecure},
+		Streamer:          cfg.Streamer,
 		Registry:          registry,
 		InteractiveUI:     cfg.InteractiveUI,
 		SessionManager:    cfg.SessionManager,

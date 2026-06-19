@@ -11,6 +11,7 @@ import (
 	"github.com/samcharles93/tau/internal/eventbus"
 	"github.com/samcharles93/tau/internal/provider"
 	"github.com/samcharles93/tau/internal/sessions"
+	"github.com/samcharles93/tau/pkg/ai"
 )
 
 const stdInTimeout = 60 * time.Minute
@@ -31,7 +32,20 @@ func RunStdIn(ctx context.Context, opts ChatOptions, prompt string) error {
 	if err != nil {
 		return err
 	}
-	// END TODO
+
+	catalog := ai.NewCatalog(ai.DefaultCatalogOptions(opts.Insecure))
+	if catalogErr := catalog.Load(ctx); catalogErr != nil {
+		if discoverErr == nil {
+			discoverErr = catalogErr
+		}
+		slog.Warn("model catalog load failed", "err", catalogErr)
+	}
+
+	streamer, err := buildStreamer(opts.Provider, model, bearerToken, catalog, opts.Insecure)
+	if err != nil {
+		slog.Warn("ai-sdk streamer unavailable; falling back to OpenAI-compatible streamer", "err", err)
+		streamer = provider.OpenAIStreamer{Insecure: opts.Insecure}
+	}
 
 	cwd, _ := os.Getwd()
 	systemPrompt := buildAgentSystemPrompt("", cwd)
@@ -51,6 +65,7 @@ func RunStdIn(ctx context.Context, opts ChatOptions, prompt string) error {
 		SessionManager:  sessionManager,
 		InteractiveUI:   false,
 		AutoExportJSONL: false,
+		Streamer:        streamer,
 	})
 	if err != nil {
 		if sessionManager != nil {

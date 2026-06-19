@@ -32,3 +32,9 @@ func DiscoverModels(ctx context.Context, opts ModelsOptions) ([]provider.Model, 
 	}
 	return provider.DiscoverModels(ctx, opts.Provider, bearerToken, opts.Insecure)
 }
+
+// RefreshModels forces a refresh of the models.dev catalog and returns the
+// refreshed list of models for the configured provider.
+func RefreshModels(ctx context.Context, opts ModelsOptions) ([]provider.Model, error) {
+	return provider.RefreshModels(ctx, opts.Provider, opts.Insecure)
+}

@@ -2,17 +2,15 @@ package provider
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
-	"io"
-	"net/http"
-	"os"
 	"strings"
 
 	"github.com/samcharles93/tau/internal/config"
+	"github.com/samcharles93/tau/pkg/ai"
 )
 
-// Model represents a model returned by an OpenAI-compatible models endpoint.
+// Model represents a model returned by the models.dev catalog, optionally
+// merged with a provider's manually-configured models.
 type Model struct {
 	ID     string             `json:"id"`
 	Name   string             `json:"name,omitempty"`
@@ -21,84 +19,33 @@ type Model struct {
 	Config config.ModelConfig `json:"-"`
 }
 
-type modelsResponse struct {
-	Data []modelData `json:"data"`
-}
-
-type modelData struct {
-	ID string `json:"id"`
-}
-
-// DiscoverModels fetches available models from GET {base_url}/v1/models.
+// DiscoverModels returns available models for a provider from the
+// models.dev catalog, merged with any models declared directly in the tau
+// configuration. It no longer calls the provider's /v1/models endpoint.
 func DiscoverModels(ctx context.Context, provider config.ProviderConfig, bearerToken string, insecure bool) ([]Model, error) {
-	if catalogEnabled() {
-		catalogModels, err := discoverModelsFromCatalog(ctx, provider, insecure)
-		if err == nil {
-			return mergeModels(ConfiguredModels(provider), catalogModels), nil
-		}
+	_ = bearerToken // Legacy parameter; kept for API compatibility.
+
+	catalog := ai.NewCatalog(ai.DefaultCatalogOptions(insecure))
+	if err := catalog.Load(ctx); err != nil {
+		// If the catalog is unavailable, fall back to configured models only.
+		return ConfiguredModels(provider), nil
 	}
 
-	return discoverModelsLegacy(ctx, provider, bearerToken, insecure)
+	return mergeCatalogWithConfigured(catalog, provider), nil
 }
 
-func discoverModelsLegacy(ctx context.Context, provider config.ProviderConfig, bearerToken string, insecure bool) ([]Model, error) {
-	baseURL := strings.TrimRight(provider.BaseURL, "/")
-	configured := ConfiguredModels(provider)
-	url := baseURL + "/v1/models"
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
-	if err != nil {
-		return nil, err
+// RefreshModels forces a network refresh of the catalog before resolving
+// models for the provider.
+func RefreshModels(ctx context.Context, provider config.ProviderConfig, insecure bool) ([]Model, error) {
+	catalog := ai.NewCatalog(ai.DefaultCatalogOptions(insecure))
+	if err := catalog.Fetch(ctx); err != nil {
+		return nil, fmt.Errorf("refreshing model catalog: %w", err)
 	}
-	req.Header.Set("Authorization", "Bearer "+bearerToken)
-
-	client := NewHTTPClient(insecure)
-	resp, err := client.Do(req)
-	if err != nil {
-		if len(configured) > 0 {
-			return configured, nil
-		}
-		return nil, fmt.Errorf("model discovery: %w", err)
-	}
-	defer resp.Body.Close()
-
-	body, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return nil, fmt.Errorf("reading model discovery response: %w", err)
-	}
-
-	if resp.StatusCode == http.StatusUnauthorized {
-		if len(configured) > 0 {
-			return configured, nil
-		}
-		return nil, fmt.Errorf("provider %q bearer token was rejected (401)", provider.Name)
-	}
-	if resp.StatusCode != http.StatusOK {
-		if len(configured) > 0 {
-			return configured, nil
-		}
-		return nil, fmt.Errorf("model discovery returned %d: %s", resp.StatusCode, body)
-	}
-
-	var response modelsResponse
-	if err := json.Unmarshal(body, &response); err != nil {
-		return nil, fmt.Errorf("invalid JSON from models endpoint: %w", err)
-	}
-	models := make([]Model, 0, len(response.Data))
-	seen := make(map[string]struct{}, len(response.Data))
-	for _, item := range response.Data {
-		if strings.TrimSpace(item.ID) == "" {
-			continue
-		}
-		if _, exists := seen[item.ID]; exists {
-			continue
-		}
-		models = append(models, Model{ID: item.ID, URL: baseURL, Ready: true})
-		seen[item.ID] = struct{}{}
-	}
-	return mergeModels(configured, models), nil
+	return mergeCatalogWithConfigured(catalog, provider), nil
 }
 
-// ConfiguredModels returns ready model refs declared directly in provider config.
+// ConfiguredModels returns ready model refs declared directly in provider
+// config.
 func ConfiguredModels(provider config.ProviderConfig) []Model {
 	baseURL := strings.TrimRight(provider.BaseURL, "/")
 	models := make([]Model, 0, len(provider.Models))
@@ -122,27 +69,51 @@ func ConfiguredModels(provider config.ProviderConfig) []Model {
 	return models
 }
 
-func mergeModels(configured, discovered []Model) []Model {
-	models := make([]Model, 0, len(configured)+len(discovered))
-	seen := make(map[string]struct{}, len(configured)+len(discovered))
-	for _, model := range configured {
-		models = append(models, model)
-		seen[model.ID] = struct{}{}
-	}
-	for _, model := range discovered {
-		if strings.TrimSpace(model.ID) == "" {
-			continue
-		}
-		if _, exists := seen[model.ID]; exists {
-			continue
-		}
-		models = append(models, model)
-		seen[model.ID] = struct{}{}
-	}
-	return models
-}
+func mergeCatalogWithConfigured(catalog *ai.Catalog, provider config.ProviderConfig) []Model {
+	configured := ConfiguredModels(provider)
+	models := make([]Model, 0, len(configured))
+	seen := make(map[string]struct{}, len(configured))
 
-func catalogEnabled() bool {
-	value := strings.ToLower(strings.TrimSpace(os.Getenv("TAU_MODELS_CATALOG_ENABLED")))
-	return value == "1" || value == "true" || value == "yes" || value == "on"
+	for _, m := range configured {
+		models = append(models, m)
+		seen[m.ID] = struct{}{}
+	}
+
+	catalogModels, err := catalog.Models(provider.Name)
+	if err != nil {
+		return models
+	}
+
+	baseURL := strings.TrimRight(provider.BaseURL, "/")
+	if apiURL, ok := catalog.API(provider.Name); ok && baseURL == "" {
+		baseURL = apiURL
+	}
+
+	for _, cm := range catalogModels {
+		if _, exists := seen[cm.ID]; exists {
+			continue
+		}
+		models = append(models, Model{
+			ID:    cm.ID,
+			Name:  cm.Name,
+			URL:   baseURL,
+			Ready: true,
+			Config: config.ModelConfig{
+				ID:               cm.ID,
+				Name:             cm.Name,
+				ContextWindow:    cm.Context,
+				DefaultMaxTokens: cm.Output,
+				Reasoning:        cm.Reasoning,
+				Cost: config.CostConfig{
+					Input:      cm.Cost.Input,
+					Output:     cm.Cost.Output,
+					CacheRead:  cm.Cost.CacheRead,
+					CacheWrite: cm.Cost.CacheWrite,
+				},
+			},
+		})
+		seen[cm.ID] = struct{}{}
+	}
+
+	return models
 }

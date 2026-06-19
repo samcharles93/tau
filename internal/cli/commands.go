@@ -90,6 +90,44 @@ func modelsCmd() *urfavecli.Command {
 	}
 }
 
+func refreshCmd() *urfavecli.Command {
+	return &urfavecli.Command{
+		Name:  "refresh",
+		Usage: "Refresh the models.dev catalog and list available models",
+		Action: func(ctx context.Context, cmd *urfavecli.Command) error {
+			_, selectedProvider, err := loadProvider(cmd)
+			if err != nil {
+				return err
+			}
+
+			models, err := app.RefreshModels(ctx, app.ModelsOptions{
+				Provider: selectedProvider,
+				Insecure: cmd.Root().Bool("insecure"),
+			})
+			if err != nil {
+				return err
+			}
+
+			nameW := len("MODEL")
+			for _, model := range models {
+				if len(model.ID) > nameW {
+					nameW = len(model.ID)
+				}
+			}
+
+			fmt.Printf("%-*s  %-5s  %s\n", nameW, "MODEL", "READY", "URL")
+			for _, model := range models {
+				ready := "yes"
+				if !model.Ready {
+					ready = "no"
+				}
+				fmt.Printf("%-*s  %-5s  %s\n", nameW, model.ID, ready, model.URL)
+			}
+			return nil
+		},
+	}
+}
+
 func sessionsCmd() *urfavecli.Command {
 	return &urfavecli.Command{
 		Name:  "sessions",
