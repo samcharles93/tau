@@ -20,6 +20,9 @@ func Run(ctx context.Context, runtime tauchat.ChatRuntime, cfg TUIConfig) error 
 		return err
 	}
 
+	if os.Getenv("TAU_TUI") == "taui" {
+		return RunInline(ctx, runtime, cfg)
+	}
 	if cfg.Bus == nil {
 		return fmt.Errorf("event bus is required for TUI")
 	}

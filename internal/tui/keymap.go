@@ -70,6 +70,9 @@ func (c *ChatPanel) KeyMap() gt.KeyMap {
 				ke.App().Stop()
 			}
 		}),
+		gt.On(gt.KeyCtrlE, func(ke gt.KeyEvent) {
+			c.cycleReasoningEffort()
+		}),
 		gt.On(gt.KeyCtrlR, func(ke gt.KeyEvent) {
 			c.showReasoning.Set(!c.showReasoning.Get())
 		}),

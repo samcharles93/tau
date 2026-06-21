@@ -12,9 +12,9 @@ func TestSettingsView_SelectsModel(t *testing.T) {
 	show := gt.NewState(true)
 	modelName := gt.NewState("model-a")
 	availableModels := gt.NewState([]tauchat.ChatModelRef{
-		{ID: "model-a", Ready: true},
-		{ID: "model-b", Ready: true},
-		{ID: "model-c", Ready: false},
+		{ID: "model-a"},
+		{ID: "model-b"},
+		{ID: "model-c"},
 	})
 	selectedIndex := gt.NewState(0)
 	showReasoning := gt.NewState(false)
@@ -39,13 +39,13 @@ func TestSettingsView_SelectsModel(t *testing.T) {
 	}
 }
 
-func TestSettingsView_SkipsDisabledModel(t *testing.T) {
+func TestSettingsView_AllModelsSelectable(t *testing.T) {
 	var selectedID string
 	show := gt.NewState(true)
 	modelName := gt.NewState("model-a")
 	availableModels := gt.NewState([]tauchat.ChatModelRef{
-		{ID: "model-a", Ready: true},
-		{ID: "model-c", Ready: false},
+		{ID: "model-a"},
+		{ID: "model-c"},
 	})
 	selectedIndex := gt.NewState(0)
 	showReasoning := gt.NewState(false)
@@ -62,13 +62,12 @@ func TestSettingsView_SkipsDisabledModel(t *testing.T) {
 	)
 
 	items := v.buildItems()
-	if !items[1].Disabled {
-		t.Fatal("not-ready model should be disabled")
+	for _, item := range items {
+		if item.Disabled {
+			t.Fatalf("model %q should not be disabled", item.ID)
+		}
 	}
 
-	// Selecting the disabled item still calls onSelectModel because
-	// the List skips disabled items during navigation; the callback
-	// receives whatever the list decided to activate.
 	v.handleListSelect(items[1])
 	if selectedID != "model-c" {
 		t.Fatalf("callback id = %q, want model-c", selectedID)

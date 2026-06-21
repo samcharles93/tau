@@ -6,6 +6,7 @@ import (
 	"os"
 	"slices"
 	"strings"
+	"sync"
 	"time"
 
 	gt "github.com/grindlemire/go-tui"
@@ -15,6 +16,7 @@ import (
 	"github.com/samcharles93/tau/internal/theme"
 	"github.com/samcharles93/tau/internal/tui/notify"
 	"github.com/samcharles93/tau/internal/tui/views"
+	"github.com/samcharles93/tau/pkg/taui/termkit"
 )
 
 const (
@@ -42,6 +44,7 @@ type ChatPanel struct {
 	notice               *gt.State[string]
 	showHelp             *gt.State[bool]
 	showReasoning        *gt.State[bool]
+	reasoningEffort      *gt.State[string]
 	modelName            *gt.State[string]
 	availableModels      *gt.State[[]tauchat.ChatModelRef]
 	extensionCommands    *gt.State[map[string]tauchat.ExtensionCommand]
@@ -74,6 +77,11 @@ type ChatPanel struct {
 	lastSubmitTime       time.Time
 	outgoingQueue        *gt.State[[]string]
 	toolLogs             *gt.State[map[string]string]
+
+	// ToolLifecycle rendering — animated three-state (RUNNING→SUCCESS/FAILURE)
+	// inline tool-call status lines.
+	toolLifecycles   map[string]*termkit.ToolLifecycle
+	toolLifecyclesMu sync.Mutex
 }
 
 // NewChatPanel creates a new go-tui chat panel with reactive state initialized.
@@ -101,6 +109,7 @@ func NewChatPanel(
 		notice:             gt.NewState(""),
 		showHelp:           gt.NewState(false),
 		showReasoning:      gt.NewState(cfg.ShowReasoning),
+		reasoningEffort:    gt.NewState(cfg.ReasoningEffort),
 		modelName:          gt.NewState(cfg.ModelName),
 		availableModels:    gt.NewState(models),
 		extensionCommands:  gt.NewState(commands),
@@ -118,6 +127,7 @@ func NewChatPanel(
 		outgoingQueue:      gt.NewState([]string{}),
 		selectedModelIndex: gt.NewState(0),
 		toolLogs:           gt.NewState(make(map[string]string)),
+		toolLifecycles:     make(map[string]*termkit.ToolLifecycle),
 	}
 	panel.settingsView = views.NewSettingsView(
 		panel.showSettings,
@@ -148,6 +158,7 @@ func (c *ChatPanel) BindApp(app *gt.App) {
 	c.notice.BindApp(app)
 	c.showHelp.BindApp(app)
 	c.showReasoning.BindApp(app)
+	c.reasoningEffort.BindApp(app)
 	c.modelName.BindApp(app)
 	c.availableModels.BindApp(app)
 	c.extensionCommands.BindApp(app)
@@ -186,6 +197,7 @@ func (c *ChatPanel) Watchers() []gt.Watcher {
 		gt.OnChange(c.showDebugList, c.handleDebugListVisibilityChanged),
 		gt.OnChange(c.showHelp, c.handleHelpVisibilityChanged),
 		gt.OnTimer(time.Second, c.applyNotifyQueue),
+		gt.OnTimer(40*time.Millisecond, c.tickToolLifecycles),
 	)
 	return watchers
 }
@@ -222,19 +234,33 @@ func (c *ChatPanel) handleRuntimeEvent(event tauchat.ChatEvent) {
 		}
 		message := fmt.Sprintf("tool started: %s %s", ev.ToolName, ev.ArgumentsSummary)
 		c.notice.Set(message)
-		c.appendMessage(tauchat.ChatMessage{Role: tauchat.ChatRoleSystem, Content: message})
+
+		// Start the animated three-state inline lifecycle.
+		w := c.ensureStreamWriter()
+		if w != nil {
+			tl := termkit.NewToolLifecycle(ev.ToolName, ev.ArgumentsSummary, w)
+			tl.Start()
+			c.toolLifecyclesMu.Lock()
+			c.toolLifecycles[ev.CallID] = tl
+			c.toolLifecyclesMu.Unlock()
+		}
 	case tauchat.ChatToolExecutionCompletedEvent:
 		if !c.matchesRequest(ev.SessionID, ev.RequestID) {
 			return
 		}
-		statusColor := theme.ColorPaleGreen
-		if ev.IsError {
-			statusColor = theme.ColorYellow
+		// Resolve the animated lifecycle if one was started.
+		c.toolLifecyclesMu.Lock()
+		tl, ok := c.toolLifecycles[ev.CallID]
+		if ok {
+			delete(c.toolLifecycles, ev.CallID)
+		}
+		c.toolLifecyclesMu.Unlock()
+		if tl != nil {
+			tl.Resolve(!ev.IsError, fmt.Sprintf("%s (%s)", ev.Status, ev.Duration))
 		}
 		message := fmt.Sprintf("tool completed: %s %s (%s)", ev.ToolName, ev.Status, ev.Duration)
 		c.notice.Set(message)
 		c.appendMessage(tauchat.ChatMessage{Role: tauchat.ChatRoleSystem, Content: message})
-		c.printStyledAbovef("%s", ansify(message, statusColor))
 	case tauchat.ChatToolOutputEvent:
 		c.toolLogs.Update(func(m map[string]string) map[string]string {
 			m[ev.CallID] += ev.Chunk
@@ -327,6 +353,16 @@ func (c *ChatPanel) handleRuntimeEvent(event tauchat.ChatEvent) {
 			c.notice.Set("Session exported to stdout")
 		}
 		c.printAbovef("%s", c.notice.Get())
+	}
+}
+
+// tickToolLifecycles advances every active ToolLifecycle by one frame.
+// Called by a 40 ms timer watcher; no-ops when no tools are running.
+func (c *ChatPanel) tickToolLifecycles() {
+	c.toolLifecyclesMu.Lock()
+	defer c.toolLifecyclesMu.Unlock()
+	for _, tl := range c.toolLifecycles {
+		tl.Tick()
 	}
 }
 
@@ -809,4 +845,40 @@ func (c *ChatPanel) renderStatusBar() *gt.Element {
 		))
 	}
 	return statusBar
+}
+
+// reasoning effort levels cycle in order.
+var reasoningEffortLevels = []string{"off", "low", "medium", "high", "max"}
+
+// effortDisplay maps effort levels to their display labels.
+var effortDisplay = map[string]string{
+	"off":    "effort: off",
+	"low":    "effort: low (~512 tok)",
+	"medium": "effort: medium (~2k tok)",
+	"high":   "effort: high (~8k tok)",
+	"max":    "effort: max (unlimited)",
+}
+
+// cycleReasoningEffort advances the reasoning effort level.
+func (c *ChatPanel) cycleReasoningEffort() {
+	current := c.reasoningEffort.Get()
+	var next string
+	for i, level := range reasoningEffortLevels {
+		if level == current {
+			next = reasoningEffortLevels[(i+1)%len(reasoningEffortLevels)]
+			break
+		}
+	}
+	if next == "" {
+		next = reasoningEffortLevels[1] // default to low if unrecognized
+	}
+	c.reasoningEffort.Set(next)
+	if label, ok := effortDisplay[next]; ok {
+		c.notice.Set(label)
+	}
+	// Propagate to the session so the streamer picks it up.
+	c.sendCommand(tauchat.UpdateChatSessionCommand{
+		SessionID: c.cfg.SessionID,
+		Patch:     tauchat.ChatSessionPatch{ReasoningEffort: &next},
+	})
 }

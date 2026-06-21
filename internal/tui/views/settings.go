@@ -165,14 +165,10 @@ func (v *SettingsView) buildItems() []components.ListItem {
 			label = "✓ " + model.ID
 		}
 		description := model.URL
-		if !model.Ready {
-			description = "not ready"
-		}
 		items = append(items, components.ListItem{
 			ID:          model.ID,
 			Label:       label,
 			Description: description,
-			Disabled:    !model.Ready,
 		})
 	}
 	return items
