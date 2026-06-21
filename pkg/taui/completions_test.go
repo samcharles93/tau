@@ -1,0 +1,149 @@
+package taui
+
+import (
+	"testing"
+)
+
+func TestCompletionsHiddenByDefault(t *testing.T) {
+	input := NewLineInput("")
+	c := NewCompletions(input, func(ctx CompletionContext) *CompletionSet {
+		return nil
+	})
+	if c.Visible() {
+		t.Fatal("completions should be hidden when provider returns nil")
+	}
+}
+
+func TestCompletionsShowsWhenProviderReturns(t *testing.T) {
+	input := NewLineInput("")
+	for _, r := range "fx" {
+		input.HandleInput(string(r))
+	}
+	c := NewCompletions(input, func(ctx CompletionContext) *CompletionSet {
+		if ctx.Text == "" {
+			return nil
+		}
+		return &CompletionSet{
+			ReplaceStart: 0,
+			ReplaceEnd:   len([]rune(ctx.Text)),
+			Groups: []MatchGroup{{
+				Title: "Actions",
+				Matches: []Match{
+					{Word: "fix", Description: "— fix the build"},
+					{Word: "build"},
+				},
+			}},
+		}
+	})
+	c.Render(60)
+	if !c.Visible() {
+		t.Fatal("completions should be visible when provider returns items")
+	}
+	lines := c.Render(60)
+	if len(lines) == 0 {
+		t.Fatal("rendered nothing for visible completions")
+	}
+}
+
+func TestCompletionsFuzzyFilters(t *testing.T) {
+	input := NewLineInput("")
+	for _, r := range "fx" {
+		input.HandleInput(string(r))
+	}
+	c := NewCompletions(input, func(ctx CompletionContext) *CompletionSet {
+		return &CompletionSet{
+			ReplaceStart: 0,
+			ReplaceEnd:   len([]rune(ctx.Text)),
+			Groups: []MatchGroup{{
+				Matches: []Match{
+					{Word: "fix", Description: "— fix the build"},
+					{Word: "fox"},
+					{Word: "build"},
+				},
+			}},
+		}
+	})
+	// "fx" fuzzy-matches "fix" and "fox" but NOT "build" (no 'f').
+	c.Render(60) // triggers refresh + filter
+	// Verify filtered state: should only contain fix + fox.
+	c.mu.Lock()
+	vis := c.visible
+	count := len(c.filtered)
+	c.mu.Unlock()
+	if !vis {
+		t.Fatal("should be visible with matching items")
+	}
+	if count != 2 {
+		t.Fatalf("filtered count = %d, want 2 (only fix + fox match 'fx')", count)
+	}
+}
+
+func TestCompletionsNavigateAndSelect(t *testing.T) {
+	input := NewLineInput("")
+	// "a" matches "alpha" and "gamma" but NOT "beta" — fuzzy filter drops beta.
+	for _, r := range "a" {
+		input.HandleInput(string(r))
+	}
+	var got string
+	c := NewCompletions(input, func(ctx CompletionContext) *CompletionSet {
+		return &CompletionSet{
+			ReplaceStart: 0, ReplaceEnd: 1,
+			Groups: []MatchGroup{{
+				Matches: []Match{
+					{Word: "alpha"},
+					{Word: "beta"},
+					{Word: "gamma"},
+				},
+			}},
+		}
+	})
+	c.SetOnSelect(func(s string) { got = s })
+	c.Render(20)
+
+	// Filtered: ["alpha", "gamma"]. Down → gamma.
+	c.HandleInput("\x1b[B")
+	if got != "" {
+		t.Fatalf("selected before Enter: %q", got)
+	}
+	c.HandleInput("\r")
+	if got != "gamma " {
+		t.Errorf("selected %q, want %q (gamma, filtered from 3 items)", got, "gamma ")
+	}
+}
+
+func TestCompletionsEscDismiss(t *testing.T) {
+	input := NewLineInput("")
+	c := NewCompletions(input, func(ctx CompletionContext) *CompletionSet {
+		return &CompletionSet{
+			ReplaceStart: 0, ReplaceEnd: 0,
+			Groups: []MatchGroup{{Matches: []Match{{Word: "x"}}}},
+		}
+	})
+	c.Render(20)
+	if !c.Visible() {
+		t.Fatal("expected visible")
+	}
+	c.HandleInput("\x1b")
+	if c.Visible() {
+		t.Fatal("expected hidden after Esc")
+	}
+}
+
+func TestCompletionsClampsToMaxItems(t *testing.T) {
+	var items []Match
+	for range 20 {
+		items = append(items, Match{Word: "item"})
+	}
+	input := NewLineInput("")
+	c := NewCompletions(input, func(ctx CompletionContext) *CompletionSet {
+		return &CompletionSet{
+			ReplaceStart: 0, ReplaceEnd: 0,
+			Groups: []MatchGroup{{Matches: items}},
+		}
+	})
+	lines := c.Render(80)
+	// Render shows up to 10 items.
+	if len(lines) > 10 {
+		t.Errorf("rendered %d lines, should be <= 10", len(lines))
+	}
+}
