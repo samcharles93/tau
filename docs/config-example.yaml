@@ -1,6 +1,10 @@
 # Example Tau configuration.
 # Copy to ~/.config/tau/config.yaml for global use or .tau.yaml in a project.
 # Keep secrets out of config files; reference API keys with environment variables.
+#
+# Since Tau 0.x, provider and model metadata are loaded from the models.dev
+# catalog. Most model fields below are only needed when overriding catalog data.
+# See docs/ai-sdk.md for the recommended minimal configuration.
 
 default_provider: hosted-example
 default_model: example-chat-model

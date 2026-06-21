@@ -214,6 +214,8 @@ func (c *ChatPanel) completionItems(value string) []completionItem {
 		return c.modelCompletions(strings.TrimSpace(argPrefix))
 	case "reasoning":
 		return c.reasoningCompletions(strings.TrimSpace(argPrefix))
+	case "effort":
+		return c.effortCompletions(strings.TrimSpace(argPrefix))
 	case "session":
 		return c.sessionCompletions(strings.TrimSpace(argPrefix))
 	case "debug":
@@ -226,6 +228,8 @@ func (c *ChatPanel) completionItems(value string) []completionItem {
 func (c *ChatPanel) commandCompletions(prefix string) []completionItem {
 	// Start with registry-published commands.
 	commands := registryCompletions(c.cfg.Debug, c.registryCommands.Get())
+	// Add built-in commands not in the registry.
+	commands = append(commands, staticCompletions...)
 	// Merge extension commands from plugins.
 	for _, ext := range c.sortedExtensionCommands() {
 		commands = append(commands, completionItem{
@@ -253,9 +257,6 @@ func (c *ChatPanel) modelCompletions(prefix string) []completionItem {
 	})
 	items := make([]completionItem, 0, len(models))
 	for _, model := range models {
-		if !model.Ready {
-			continue
-		}
 		if prefix != "" && !strings.Contains(strings.ToLower(model.ID), prefix) {
 			continue
 		}
@@ -273,6 +274,24 @@ func (c *ChatPanel) reasoningCompletions(prefix string) []completionItem {
 		{Value: "/reasoning on", Label: "on", Description: "show reasoning before Tau responses"},
 		{Value: "/reasoning off", Label: "off", Description: "hide reasoning"},
 		{Value: "/reasoning toggle", Label: "toggle", Description: "toggle reasoning visibility"},
+	}
+	prefix = strings.ToLower(prefix)
+	matches := make([]completionItem, 0, len(options))
+	for _, item := range options {
+		if prefix == "" || strings.HasPrefix(item.Label, prefix) {
+			matches = append(matches, item)
+		}
+	}
+	return matches
+}
+
+func (c *ChatPanel) effortCompletions(prefix string) []completionItem {
+	options := []completionItem{
+		{Value: "/effort off", Label: "off", Description: "no reasoning effort"},
+		{Value: "/effort low", Label: "low", Description: "low effort (~512 tokens)"},
+		{Value: "/effort medium", Label: "medium", Description: "medium effort (~2048 tokens)"},
+		{Value: "/effort high", Label: "high", Description: "high effort (~8192 tokens)"},
+		{Value: "/effort max", Label: "max", Description: "maximum effort (unlimited)"},
 	}
 	prefix = strings.ToLower(prefix)
 	matches := make([]completionItem, 0, len(options))
@@ -402,7 +421,13 @@ func (c *ChatPanel) closeCompletions() {
 	c.completionIndex.Set(0)
 }
 
-// registryCompletions converts [tauchat.CommandRef] values from the registry
+// staticCompletions are built-in slash commands not published via the
+// command registry.
+var staticCompletions = []completionItem{
+	{Value: "/effort ", Label: "/effort", Description: "set reasoning effort (off/low/medium/high/max)", AcceptsArgs: true},
+	{Value: "/reasoning ", Label: "/reasoning", Description: "toggle reasoning display", AcceptsArgs: true},
+}
+
 // into completionItem values for the TUI. The debug command is only included
 // when debug mode is active.
 func registryCompletions(debug bool, refs []tauchat.CommandRef) []completionItem {

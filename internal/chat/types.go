@@ -110,7 +110,6 @@ type ChatToolDefFunction struct {
 type ChatModelRef struct {
 	ID     string             `json:"id"`
 	URL    string             `json:"url"`
-	Ready  bool               `json:"ready,omitempty"`
 	Config config.ModelConfig `json:"-"`
 }
 
@@ -126,8 +125,9 @@ func (m ChatModelRef) Validate() error {
 
 // ChatParameters are the tunable per-request controls for a session.
 type ChatParameters struct {
-	MaxTokens   int     `json:"max_tokens"`
-	Temperature float64 `json:"temperature"`
+	MaxTokens       int     `json:"max_tokens"`
+	Temperature     float64 `json:"temperature"`
+	ReasoningEffort string  `json:"reasoning_effort,omitempty"`
 }
 
 func defaultChatParameters() ChatParameters {
@@ -195,10 +195,11 @@ func (c ChatSessionConfig) Validate() error {
 
 // ChatSessionPatch holds optional config changes for an existing session.
 type ChatSessionPatch struct {
-	Model        *ChatModelRef `json:"model,omitempty"`
-	SystemPrompt *string       `json:"system_prompt,omitempty"`
-	MaxTokens    *int          `json:"max_tokens,omitempty"`
-	Temperature  *float64      `json:"temperature,omitempty"`
+	Model           *ChatModelRef `json:"model,omitempty"`
+	SystemPrompt    *string       `json:"system_prompt,omitempty"`
+	MaxTokens       *int          `json:"max_tokens,omitempty"`
+	Temperature     *float64      `json:"temperature,omitempty"`
+	ReasoningEffort *string       `json:"reasoning_effort,omitempty"`
 }
 
 func (p ChatSessionPatch) Validate() error {
@@ -739,6 +740,9 @@ func (s *ChatSessionState) ApplyPatch(patch ChatSessionPatch, at time.Time) erro
 	}
 	if patch.Temperature != nil {
 		s.Parameters.Temperature = *patch.Temperature
+	}
+	if patch.ReasoningEffort != nil {
+		s.Parameters.ReasoningEffort = *patch.ReasoningEffort
 	}
 	s.UpdatedAt = normalizeChatTime(at)
 	return nil

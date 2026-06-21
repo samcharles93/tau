@@ -178,6 +178,7 @@ type ModelConfig struct {
 	MaxTokens        int            `yaml:"max_tokens,omitempty" json:"max_tokens,omitempty"`
 	Input            []string       `yaml:"input,omitempty" json:"input,omitempty"`
 	Reasoning        bool           `yaml:"reasoning,omitempty" json:"reasoning,omitempty"`
+	ReasoningEffort  string         `yaml:"reasoning_effort,omitempty" json:"reasoning_effort,omitempty"`
 	Thinking         ThinkingConfig `yaml:"thinking,omitempty" json:"thinking"`
 	Cost             CostConfig     `yaml:"cost,omitempty" json:"cost"`
 	Compat           CompatConfig   `yaml:"compat,omitempty" json:"compat"`
@@ -199,6 +200,8 @@ func (m *ModelConfig) UnmarshalYAML(value *yaml.Node) error {
 		CanReason                                        bool              `yaml:"can_reason"`
 		CanReasonCamel                                   bool              `yaml:"canReason"`
 		Thinking                                         ThinkingConfig    `yaml:"thinking"`
+		ReasoningEffort                                  string            `yaml:"reasoning_effort"`
+		ReasoningEffortCamel                             string            `yaml:"reasoningEffort"`
 		Cost                                             CostConfig        `yaml:"cost"`
 		Compat                                           CompatConfig      `yaml:"compat"`
 		MaxTokensField                                   string            `yaml:"max_tokens_field"`
@@ -231,6 +234,7 @@ func (m *ModelConfig) UnmarshalYAML(value *yaml.Node) error {
 	m.Input = append([]string(nil), raw.Input...)
 	m.Reasoning = raw.Reasoning || raw.CanReason || raw.CanReasonCamel
 	m.Thinking = raw.Thinking
+	m.ReasoningEffort = firstNonEmpty(raw.ReasoningEffort, raw.ReasoningEffortCamel)
 	m.Cost = raw.Cost
 	m.Compat = raw.Compat
 	if field := firstNonEmpty(raw.MaxTokensField, raw.MaxTokensFieldCamel); field != "" {

@@ -18,8 +18,8 @@ import (
 
 	"github.com/samcharles93/tau/internal/agent/tools"
 	"github.com/samcharles93/tau/internal/chat"
+	tauconfig "github.com/samcharles93/tau/internal/config"
 	"github.com/samcharles93/tau/internal/eventbus"
-	"github.com/samcharles93/tau/internal/provider"
 	"github.com/samcharles93/tau/internal/sessions"
 	"github.com/samcharles93/tau/pkg/plugin/api"
 )
@@ -31,7 +31,7 @@ const (
 )
 
 // TokenSource resolves a bearer token for the configured provider.
-type TokenSource = provider.TokenSource
+type TokenSource func(ctx context.Context, provider tauconfig.ProviderConfig) (string, error)
 
 // Streamer is the interface for making streaming LLM calls.
 // The coordinator calls StreamChatCompletionFull once per turn-loop iteration.

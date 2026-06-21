@@ -77,13 +77,9 @@ func modelsCmd() *urfavecli.Command {
 				}
 			}
 
-			fmt.Printf("%-*s  %-5s  %s\n", nameW, "MODEL", "READY", "URL")
+			fmt.Printf("%-*s  %s\n", nameW, "MODEL", "URL")
 			for _, model := range models {
-				ready := "yes"
-				if !model.Ready {
-					ready = "no"
-				}
-				fmt.Printf("%-*s  %-5s  %s\n", nameW, model.ID, ready, model.URL)
+				fmt.Printf("%-*s  %s\n", nameW, model.ID, model.URL)
 			}
 			return nil
 		},
@@ -115,13 +111,9 @@ func refreshCmd() *urfavecli.Command {
 				}
 			}
 
-			fmt.Printf("%-*s  %-5s  %s\n", nameW, "MODEL", "READY", "URL")
+			fmt.Printf("%-*s  %s\n", nameW, "MODEL", "URL")
 			for _, model := range models {
-				ready := "yes"
-				if !model.Ready {
-					ready = "no"
-				}
-				fmt.Printf("%-*s  %-5s  %s\n", nameW, model.ID, ready, model.URL)
+				fmt.Printf("%-*s  %s\n", nameW, model.ID, model.URL)
 			}
 			return nil
 		},

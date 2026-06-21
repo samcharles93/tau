@@ -10,18 +10,18 @@ import (
 	"strings"
 	"time"
 
+	"github.com/samcharles93/ai-sdk/pkg/runtime"
+
 	"github.com/samcharles93/tau/internal/agent"
 	"github.com/samcharles93/tau/internal/agent/tools"
 	tauchat "github.com/samcharles93/tau/internal/chat"
 	tauconfig "github.com/samcharles93/tau/internal/config"
 	"github.com/samcharles93/tau/internal/eventbus"
 	"github.com/samcharles93/tau/internal/plugin"
-	"github.com/samcharles93/tau/internal/provider"
 	commandreg "github.com/samcharles93/tau/internal/registry"
 	"github.com/samcharles93/tau/internal/sessions"
 	"github.com/samcharles93/tau/internal/skills"
 	"github.com/samcharles93/tau/internal/tui"
-	"github.com/samcharles93/tau/pkg/ai"
 	"github.com/samcharles93/tau/pkg/plugin/api"
 )
 
@@ -33,6 +33,7 @@ type ChatOptions struct {
 	Model           string
 	MaxTokens       int
 	Temperature     float64
+	ReasoningEffort string
 	Version         string
 	ResumeSessionID string
 }
@@ -73,13 +74,16 @@ func formatTokensHuman(n int) string {
 // buildModelRefresher returns a ModelRefresher closure that re-discovers
 // models from the configured provider. The closure captures the provider and
 // insecure flag so the TUI does not need to import infrastructure packages.
-func buildModelRefresher(selectedProvider tauconfig.ProviderConfig, insecure bool) tui.ModelRefresher {
+func buildModelRefresher(rt *runtime.Runtime, providerID string) tui.ModelRefresher {
 	return func(ctx context.Context) ([]tauchat.ChatModelRef, error) {
-		models, err := provider.RefreshModels(ctx, selectedProvider, insecure)
+		if err := rt.Catalog().Fetch(ctx); err != nil {
+			return nil, err
+		}
+		models, err := rt.Models(providerID)
 		if err != nil {
 			return nil, err
 		}
-		return buildModelRefs(models), nil
+		return modelInfoRefs(models), nil
 	}
 }
 
@@ -88,13 +92,18 @@ func buildSessionConfig(opts ChatOptions, model tauchat.ChatModelRef, systemProm
 	if maxTokens == 0 && model.Config.DefaultMaxTokens > 0 {
 		maxTokens = model.Config.DefaultMaxTokens
 	}
+	reasoningEffort := opts.ReasoningEffort
+	if reasoningEffort == "" && model.Config.ReasoningEffort != "" {
+		reasoningEffort = model.Config.ReasoningEffort
+	}
 	return tauchat.ChatSessionConfig{
 		Provider:     opts.Provider,
 		Model:        model,
 		SystemPrompt: systemPrompt,
 		Parameters: tauchat.ChatParameters{
-			MaxTokens:   maxTokens,
-			Temperature: opts.Temperature,
+			MaxTokens:       maxTokens,
+			Temperature:     opts.Temperature,
+			ReasoningEffort: reasoningEffort,
 		},
 	}
 }
@@ -117,7 +126,7 @@ func buildAgentSystemPrompt(userPrompt, cwd string) string {
 	})
 }
 
-func pickModel(models []provider.Model, requestedModel, defaultModel, baseURL string) (tauchat.ChatModelRef, error) {
+func pickModel(models []runtime.ModelInfo, requestedModel, defaultModel, baseURL string) (tauchat.ChatModelRef, error) {
 	selectedModel := strings.TrimSpace(requestedModel)
 	if selectedModel == "" {
 		selectedModel = strings.TrimSpace(defaultModel)
@@ -130,73 +139,129 @@ func pickModel(models []provider.Model, requestedModel, defaultModel, baseURL st
 		if m.ID != selectedModel {
 			continue
 		}
-		if !m.Ready {
-			return tauchat.ChatModelRef{}, fmt.Errorf("model %q is not ready", selectedModel)
-		}
-		return tauchat.ChatModelRef{
-			ID:     m.ID,
-			URL:    m.URL,
-			Ready:  m.Ready,
-			Config: m.Config,
-		}, nil
+		return modelInfoToRef(m), nil
 	}
 
-	return tauchat.ChatModelRef{ID: selectedModel, URL: strings.TrimRight(baseURL, "/"), Ready: true}, nil
+	return tauchat.ChatModelRef{ID: selectedModel, URL: strings.TrimRight(baseURL, "/")}, nil
 }
 
-func buildModelRefs(models []provider.Model) []tauchat.ChatModelRef {
+func modelInfoRefs(models []runtime.ModelInfo) []tauchat.ChatModelRef {
 	refs := make([]tauchat.ChatModelRef, 0, len(models))
 	for _, m := range models {
-		refs = append(refs, tauchat.ChatModelRef{
-			ID:     m.ID,
-			URL:    m.URL,
-			Ready:  m.Ready,
-			Config: m.Config,
-		})
+		refs = append(refs, modelInfoToRef(m))
 	}
 	return refs
 }
 
-// buildStreamer attempts to construct an ai-sdk-backed streamer for the
-// selected provider/model. If the provider has no ai-sdk npm mapping, or the
-// API key cannot be resolved, it returns an error and the caller falls back
-// to tau's legacy OpenAI-compatible streamer.
-func buildStreamer(
-	providerCfg tauconfig.ProviderConfig,
-	model tauchat.ChatModelRef,
-	bearerToken string,
-	catalog *ai.Catalog,
-	insecure bool,
-) (agent.Streamer, error) {
-	npm, ok := catalog.NPM(providerCfg.Name)
-	if !ok {
-		return nil, fmt.Errorf("no ai-sdk npm mapping for provider %q", providerCfg.Name)
+func modelInfoToRef(m runtime.ModelInfo) tauchat.ChatModelRef {
+	return tauchat.ChatModelRef{
+		ID:     m.ID,
+		URL:    m.URL,
+		Config: modelInfoToModelConfig(m),
 	}
-	apiKey := bearerToken
-	if apiKey == "" {
-		var err error
-		apiKey, err = ai.ResolveAPIKey(providerCfg.Name, providerCfg.Auth.APIKeyEnv, catalog)
-		if err != nil {
-			return nil, err
+}
+
+func modelInfoToModelConfig(m runtime.ModelInfo) tauconfig.ModelConfig {
+	cfg := tauconfig.ModelConfig{
+		ID:               m.ID,
+		Name:             m.Name,
+		ContextWindow:    m.ContextWindow,
+		DefaultMaxTokens: m.MaxOutputTokens,
+		MaxTokens:        m.MaxOutputTokens,
+		Reasoning:        m.Reasoning,
+		Cost: tauconfig.CostConfig{
+			Input:      m.Cost.Input,
+			Output:     m.Cost.Output,
+			CacheRead:  m.Cost.CacheRead,
+			CacheWrite: m.Cost.CacheWrite,
+		},
+	}
+	// Restore compat config if it was stored during runtime construction.
+	if raw, ok := m.Extra["tau_compat"]; ok {
+		if compat, ok := raw.(tauconfig.CompatConfig); ok {
+			cfg.Compat = compat
 		}
 	}
-	baseURL := strings.TrimRight(providerCfg.BaseURL, "/")
-	if catalogAPI, ok := catalog.API(providerCfg.Name); ok && baseURL == "" {
-		baseURL = catalogAPI
+	// Restore reasoning effort from Extra.
+	if eff, ok := m.Extra["reasoning_effort"].(string); ok {
+		cfg.ReasoningEffort = eff
+	}
+	return cfg
+}
+
+// buildStreamer constructs an ai-sdk-backed streamer for the selected
+// provider/model. The runtime must be configured with the provider before
+// calling.
+func buildStreamer(
+	ctx context.Context,
+	rt *runtime.Runtime,
+	providerName string,
+	model tauchat.ChatModelRef,
+) (agent.Streamer, error) {
+	ref := providerName + "/" + model.ID
+	provider, modelID, err := rt.ChatProvider(ctx, ref)
+	if err != nil {
+		return nil, fmt.Errorf("resolving provider for %q: %w", ref, err)
+	}
+	return NewStreamer(provider, modelID), nil
+}
+
+// newRuntimeForProvider creates a runtime configured for a tau provider.
+// It maps tau's provider configuration to the ai-sdk runtime config and
+// registers the built-in provider classes. The provider class is resolved
+// from the tau config's Type field, the models.dev catalog npm mapping,
+// or falls back to openai-compatible.
+func newRuntimeForProvider(provider tauconfig.ProviderConfig, insecure bool) *runtime.Runtime {
+	runtime.RegisterBuiltinClasses()
+
+	authType := runtime.AuthTypeAPIKey
+	switch provider.Auth.Type {
+	case tauconfig.AuthTypeNone:
+		authType = runtime.AuthTypeNone
+	case tauconfig.AuthTypeOAuthPKCE:
+		authType = runtime.AuthTypeOAuthPKCE
 	}
 
-	aiProvider, err := ai.ResolveChatProvider(ai.ChatProviderConfig{
-		ProviderID: providerCfg.Name,
-		ModelID:    model.ID,
-		NPM:        npm,
-		APIKey:     apiKey,
-		BaseURL:    baseURL,
-		Insecure:   insecure,
-	})
-	if err != nil {
-		return nil, err
+	models := make([]runtime.ModelConfig, 0, len(provider.Models))
+	for _, m := range provider.Models {
+		extra := make(map[string]any)
+		// Store compat config that runtime.ModelInfo doesn't natively carry.
+		extra["tau_compat"] = m.Compat
+		if m.ReasoningEffort != "" {
+			extra["reasoning_effort"] = m.ReasoningEffort
+		}
+		models = append(models, runtime.ModelConfig{
+			ID:              m.ID,
+			Name:            m.Name,
+			URL:             m.URL,
+			ContextWindow:   m.ContextWindow,
+			MaxOutputTokens: m.DefaultMaxTokens,
+			Reasoning:       m.Reasoning,
+			Extra:           extra,
+		})
 	}
-	return ai.NewStreamer(aiProvider, model.ID), nil
+
+	return runtime.NewRuntime(runtime.Config{
+		Providers: map[string]runtime.ProviderConfig{
+			provider.Name: {
+				ID:       provider.Name,
+				Class:    strings.TrimSpace(provider.Type),
+				BaseURL:  strings.TrimRight(provider.BaseURL, "/"),
+				Insecure: insecure,
+				Auth: runtime.AuthConfig{
+					Type:            authType,
+					APIKeyEnv:       provider.Auth.APIKeyEnv,
+					APIKey:          provider.Auth.APIKey,
+					AuthorizeURL:    provider.Auth.AuthorizeURL,
+					TokenURL:        provider.Auth.TokenURL,
+					ClientID:        provider.Auth.ClientID,
+					IDP:             provider.Auth.IDP,
+					TokenAuthMethod: provider.Auth.TokenAuthMethod,
+				},
+				Models: models,
+			},
+		},
+	})
 }
 
 // newCoordinatorResult bundles a coordinator with its command registry so
@@ -343,7 +408,7 @@ func buildCoordinator(ctx context.Context, cfg coordinatorConfig) (*agent.Coordi
 	return coordinator, nil
 }
 
-func staticTokenSource(token string) provider.TokenSource {
+func staticTokenSource(token string) agent.TokenSource {
 	trimmed := strings.TrimSpace(token)
 	return func(ctx context.Context, _ tauconfig.ProviderConfig) (string, error) {
 		select {

@@ -48,6 +48,18 @@ tau models [flags]
 * **`--json`**  
     Output the list of models as JSON instead of a formatted table.
 
+### `refresh`
+
+Force a refresh of the models.dev catalog cache and list available models.
+
+```bash
+tau refresh
+```
+
+This downloads the latest `api.json` to `~/.config/tau/models.json`, merges
+any `~/.config/tau/api.overrides.json`, and prints the models for the
+configured provider.
+
 ### `sessions`
 
 Manage and list saved chat sessions.

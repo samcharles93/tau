@@ -20,6 +20,11 @@ tasks:
     generates:
       - "{{.BINARY}}{{exeExt}}"
 
+  deadcode:
+    desc: Detect dead code in production packages (exclude *_test.go)
+    cmds:
+      - golangci-lint run --tests=false --enable-only=unused,staticcheck ./...
+
   check:
     desc: Run all quality checks (format, lint, vet, fix, test)
     cmds:
@@ -39,11 +44,6 @@ tasks:
     desc: Run tests with race detector
     cmds:
       - go test -race ./...
-
-  deadcode:
-    desc: Detect dead code in production packages (exclude *_test.go)
-    cmds:
-      - golangci-lint run --tests=false --enable-only=unused,staticcheck ./...
 
   build:all:
     desc: Cross-compile for all release targets

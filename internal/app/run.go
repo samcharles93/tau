@@ -10,39 +10,35 @@ import (
 	tauchat "github.com/samcharles93/tau/internal/chat"
 	tauconfig "github.com/samcharles93/tau/internal/config"
 	"github.com/samcharles93/tau/internal/eventbus"
-	"github.com/samcharles93/tau/internal/provider"
 	commandreg "github.com/samcharles93/tau/internal/registry"
 	"github.com/samcharles93/tau/internal/sessions"
 	"github.com/samcharles93/tau/internal/tui"
-	"github.com/samcharles93/tau/pkg/ai"
 )
 
 // RunChat orchestrates an interactive chat session: resolves tokens and model,
 // creates the coordinator, then launches the TUI.
 func RunChat(ctx context.Context, opts ChatOptions) error {
-	bearerToken, err := provider.ResolveBearerToken(ctx, opts.Provider, opts.Insecure)
-	if err != nil {
-		return err
+	rt := newRuntimeForProvider(opts.Provider, opts.Insecure)
+
+	var discoverErr error
+	if err := rt.LoadCatalog(ctx); err != nil {
+		discoverErr = err
+		slog.Warn("model catalog load failed", "err", err)
 	}
 
-	allModels, discoverErr := provider.DiscoverModels(ctx, opts.Provider, bearerToken, opts.Insecure)
+	allModels, modelsErr := rt.Models(opts.Provider.Name)
+	if modelsErr != nil && discoverErr == nil {
+		discoverErr = modelsErr
+	}
+
 	model, err := pickModel(allModels, opts.Model, opts.Config.DefaultModel, opts.Provider.BaseURL)
 	if err != nil {
 		return err
 	}
 
-	catalog := ai.NewCatalog(ai.DefaultCatalogOptions(opts.Insecure))
-	if catalogErr := catalog.Load(ctx); catalogErr != nil {
-		if discoverErr == nil {
-			discoverErr = catalogErr
-		}
-		slog.Warn("model catalog load failed", "err", catalogErr)
-	}
-
-	streamer, err := buildStreamer(opts.Provider, model, bearerToken, catalog, opts.Insecure)
+	streamer, err := buildStreamer(ctx, rt, opts.Provider.Name, model)
 	if err != nil {
-		slog.Warn("ai-sdk streamer unavailable; falling back to OpenAI-compatible streamer", "err", err)
-		streamer = provider.OpenAIStreamer{Insecure: opts.Insecure}
+		return fmt.Errorf("building streamer: %w", err)
 	}
 
 	// Build the full system prompt — project context (AGENTS.md) + user override.
@@ -77,7 +73,10 @@ func RunChat(ctx context.Context, opts ChatOptions) error {
 		})
 	}
 
-	result, err := newCoordinator(ctx, opts, bearerToken, sessionManager, startupEvents, bus, streamer)
+	// Auth is resolved by the runtime when the provider is created.
+	// The coordinator only needs a token source for legacy compatibility;
+	// pass an empty token.
+	result, err := newCoordinator(ctx, opts, "", sessionManager, startupEvents, bus, streamer)
 	if err != nil {
 		if sessionManager != nil {
 			if err := sessionManager.Close(); err != nil {
@@ -142,11 +141,10 @@ func RunChat(ctx context.Context, opts ChatOptions) error {
 		}
 	}
 
-	available := buildModelRefs(allModels)
+	available := modelInfoRefs(allModels)
 
-	// Build a refresher closure that captures the provider and token so the
-	// TUI can re-discover models without importing infrastructure packages.
-	refresher := buildModelRefresher(opts.Provider, opts.Insecure)
+	// Build a refresher closure that the TUI can use to re-discover models.
+	refresher := buildModelRefresher(rt, opts.Provider.Name)
 
 	// Command registry owns command state; TUI initialises from snapshot
 	// and receives deltas via CommandsChangedEvent on the bus.
@@ -162,6 +160,7 @@ func RunChat(ctx context.Context, opts ChatOptions) error {
 		Bus:                bus,
 		RefreshModels:      refresher,
 		ShowReasoning:      opts.Config.UI.ShowReasoning,
+		ReasoningEffort:    opts.ReasoningEffort,
 		Debug:              isDevel(opts.Version, opts.Config),
 		InlineMode:         false,
 	}

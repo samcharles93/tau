@@ -31,9 +31,9 @@ func newTestPanel(runtime *fakeRuntime) *ChatPanel {
 		SessionID: "session_1",
 		ModelName: "model-a",
 		AvailableModels: []tauchat.ChatModelRef{
-			{ID: "model-a", URL: "https://example.invalid/a", Ready: true},
-			{ID: "model-b", URL: "https://example.invalid/b", Ready: true},
-			{ID: "model-c", URL: "https://example.invalid/c", Ready: false},
+			{ID: "model-a", URL: "https://example.invalid/a"},
+			{ID: "model-b", URL: "https://example.invalid/b"},
+			{ID: "model-c", URL: "https://example.invalid/c"},
 		},
 	})
 	// Seed the registry commands state — in production this arrives via
@@ -211,20 +211,6 @@ func TestSlashModelSendsUpdate(t *testing.T) {
 	}
 	if cmd.Patch.Model == nil || cmd.Patch.Model.ID != "model-b" {
 		t.Fatalf("model patch = %#v, want model-b", cmd.Patch.Model)
-	}
-}
-
-func TestSlashModelRejectsNotReady(t *testing.T) {
-	runtime := &fakeRuntime{}
-	panel := newTestPanel(runtime)
-
-	panel.handleSlashCommand("/model model-c")
-
-	if len(runtime.commands) != 0 {
-		t.Fatalf("commands = %d, want 0", len(runtime.commands))
-	}
-	if panel.lastError.Get() == "" {
-		t.Fatal("lastError is empty, want not-ready error")
 	}
 }
 

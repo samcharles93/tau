@@ -26,6 +26,7 @@ type TUIConfig struct {
 	Bus             *eventbus.Bus
 	RefreshModels   ModelRefresher
 	ShowReasoning   bool
+	ReasoningEffort string
 	Debug           bool
 	// InlineMode forces inline/scrollback mode instead of the full
 	// alternate-screen chat. Used for one-shot stdin pipelines.

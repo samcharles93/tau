@@ -8,6 +8,7 @@ import (
 	gt "github.com/grindlemire/go-tui"
 	tauchat "github.com/samcharles93/tau/internal/chat"
 	"github.com/samcharles93/tau/internal/theme"
+	"github.com/samcharles93/tau/pkg/taui/termkit"
 )
 
 func (c *ChatPanel) printAbovef(format string, args ...any) {
@@ -64,6 +65,14 @@ func (c *ChatPanel) writeReasoningDelta(delta string) {
 }
 
 func (c *ChatPanel) closeStream() {
+	// Resolve any dangling tool lifecycles (e.g. on cancellation).
+	c.toolLifecyclesMu.Lock()
+	for id, tl := range c.toolLifecycles {
+		tl.Resolve(false, "cancelled")
+		delete(c.toolLifecycles, id)
+	}
+	c.toolLifecyclesMu.Unlock()
+
 	if c.streamWriter != nil {
 		if c.streamContentWritten || c.reasoningWritten {
 			_, _ = c.streamWriter.Write([]byte("\n\n"))
@@ -108,7 +117,8 @@ func (c *ChatPanel) printMessage(msg tauchat.ChatMessage) {
 	case tauchat.ChatRoleUser:
 		c.printStyledAbovef("%s", c.userMessageBlock(msg.Content))
 	case tauchat.ChatRoleAssistant:
-		c.printStyledAbovef("\n%s\n\n", msg.Content)
+		wrapped := wrapPlainText(msg.Content, max(1, c.messageWidth()))
+		c.printStyledAbovef("\n%s\n\n", wrapped)
 	default:
 		c.printStyledAbovef("\n%s\n\n", ansify(fmt.Sprintf("%s: %s", messageRoleLabel(msg.Role), msg.Content), theme.ColorDimGray))
 	}
@@ -121,11 +131,11 @@ func (c *ChatPanel) printStyledAbovef(format string, args ...any) {
 	c.app.PrintAboveStyled(format, args...)
 }
 
-// ansify wraps text in ANSI SGR sequences matching the given go-tui Style.
+// ansify wraps text in ANSI SGR sequences matching the given go-tui Color.
 // The result can be passed to PrintAboveStyled which preserves ANSI escapes.
 func ansify(text string, c gt.Color) string {
 	r, g, b := c.RGB()
-	return fmt.Sprintf("\033[38;2;%d;%d;%dm%s\033[0m", r, g, b, text)
+	return termkit.FgColor(text, termkit.FromRGB(r, g, b))
 }
 
 func (c *ChatPanel) userMessageBlock(text string) string {
@@ -153,6 +163,38 @@ func (c *ChatPanel) messageWidth() int {
 	// Last resort: a conservative default that prevents
 	// messages from being narrower than a typical terminal.
 	return 120
+}
+
+// wrapPlainText wraps text to the given width, preserving newlines.
+// Unlike wrapUserMessageLines, it returns the joined string directly
+// without ANSI background styling.
+func wrapPlainText(text string, width int) string {
+	if width < 1 {
+		width = 1
+	}
+	var out []string
+	for line := range strings.SplitSeq(text, "\n") {
+		runes := []rune(line)
+		for len(runes) > width {
+			// Prefer breaking at a word boundary.
+			breakAt := width
+			for i := width - 1; i >= width/2; i-- {
+				if runes[i] == ' ' {
+					breakAt = i + 1
+					break
+				}
+			}
+			out = append(out, strings.TrimRight(string(runes[:breakAt]), " "))
+			runes = runes[breakAt:]
+			for len(runes) > 0 && runes[0] == ' ' {
+				runes = runes[1:]
+			}
+		}
+		if len(runes) > 0 {
+			out = append(out, string(runes))
+		}
+	}
+	return strings.Join(out, "\n")
 }
 
 func wrapUserMessageLines(text string, width int) []string {
@@ -189,7 +231,7 @@ func wrapUserMessageLines(text string, width int) []string {
 func ansiBackgroundLine(text string, fg gt.Color, bg gt.Color) string {
 	fr, fgG, fb := fg.RGB()
 	br, bgG, bb := bg.RGB()
-	return fmt.Sprintf("\033[38;2;%d;%d;%dm\033[48;2;%d;%d;%dm%s\033[K\033[0m", fr, fgG, fb, br, bgG, bb, text)
+	return termkit.FgBgColor(text+termkit.ClearToEnd, termkit.FromRGB(fr, fgG, fb), termkit.FromRGB(br, bgG, bb))
 }
 
 func (c *ChatPanel) printSessionSummaries(summaries []tauchat.SessionSummary, nextCursor string) {

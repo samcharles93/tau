@@ -372,6 +372,8 @@ func (c *ChatPanel) handleSlashCommand(text string) {
 		c.refreshModels()
 	case "reasoning":
 		c.handleReasoningCommand(parts)
+	case "effort":
+		c.handleEffortCommand(parts)
 	case "model":
 		c.handleModelCommand(rest)
 	case "system":
@@ -416,11 +418,45 @@ func (c *ChatPanel) handleReasoningCommand(parts []string) {
 	switch strings.ToLower(parts[1]) {
 	case "on", "true", "yes":
 		c.showReasoning.Set(true)
-	case "off", "false", "no":
+	case "off", "false", "no", "auto":
 		c.showReasoning.Set(false)
 	default:
 		c.showReasoning.Set(!c.showReasoning.Get())
 	}
+}
+
+func (c *ChatPanel) handleEffortCommand(parts []string) {
+	effort := c.reasoningEffort.Get()
+	switch {
+	case len(parts) >= 2:
+		switch strings.ToLower(parts[1]) {
+		case "off", "none":
+			effort = "off"
+		case "low":
+			effort = "low"
+		case "med", "medium":
+			effort = "medium"
+		case "high":
+			effort = "high"
+		case "max":
+			effort = "max"
+		default:
+			c.cycleReasoningEffort()
+			return
+		}
+	default:
+		c.cycleReasoningEffort()
+		return
+	}
+	c.reasoningEffort.Set(effort)
+	if label, ok := effortDisplay[effort]; ok {
+		c.notice.Set(label)
+	}
+	// Propagate to the session.
+	c.sendCommand(tauchat.UpdateChatSessionCommand{
+		SessionID: c.cfg.SessionID,
+		Patch:     tauchat.ChatSessionPatch{ReasoningEffort: &effort},
+	})
 }
 
 func (c *ChatPanel) handleModelCommand(modelID string) {
@@ -432,10 +468,6 @@ func (c *ChatPanel) handleModelCommand(modelID string) {
 	for _, model := range c.availableModels.Get() {
 		if model.ID != modelID {
 			continue
-		}
-		if !model.Ready {
-			c.lastError.Set(fmt.Sprintf("model %q is not ready", modelID))
-			return
 		}
 		c.sendCommand(tauchat.UpdateChatSessionCommand{
 			SessionID: c.cfg.SessionID,
@@ -454,16 +486,13 @@ func (c *ChatPanel) modelHelp() string {
 	}
 	ids := make([]string, 0, min(len(models), 5))
 	for _, model := range models {
-		if !model.Ready {
-			continue
-		}
 		ids = append(ids, model.ID)
 		if len(ids) >= 5 {
 			break
 		}
 	}
 	if len(ids) == 0 {
-		return "no ready models available"
+		return "no models available"
 	}
 	return "available models: " + strings.Join(ids, ", ")
 }

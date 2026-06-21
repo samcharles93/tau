@@ -9,9 +9,7 @@ import (
 
 	tauchat "github.com/samcharles93/tau/internal/chat"
 	"github.com/samcharles93/tau/internal/eventbus"
-	"github.com/samcharles93/tau/internal/provider"
 	"github.com/samcharles93/tau/internal/sessions"
-	"github.com/samcharles93/tau/pkg/ai"
 )
 
 const stdInTimeout = 60 * time.Minute
@@ -21,30 +19,27 @@ func RunStdIn(ctx context.Context, opts ChatOptions, prompt string) error {
 	ctx, cancel := context.WithTimeout(ctx, stdInTimeout)
 	defer cancel()
 
-	// TODO: This makes no sense
-	bearerToken, err := provider.ResolveBearerToken(ctx, opts.Provider, opts.Insecure)
-	if err != nil {
-		return err
+	rt := newRuntimeForProvider(opts.Provider, opts.Insecure)
+
+	var discoverErr error
+	if err := rt.LoadCatalog(ctx); err != nil {
+		discoverErr = err
+		slog.Warn("model catalog load failed", "err", err)
 	}
 
-	allModels, discoverErr := provider.DiscoverModels(ctx, opts.Provider, bearerToken, opts.Insecure)
+	allModels, modelsErr := rt.Models(opts.Provider.Name)
+	if modelsErr != nil && discoverErr == nil {
+		discoverErr = modelsErr
+	}
+
 	model, err := pickModel(allModels, opts.Model, opts.Config.DefaultModel, opts.Provider.BaseURL)
 	if err != nil {
 		return err
 	}
 
-	catalog := ai.NewCatalog(ai.DefaultCatalogOptions(opts.Insecure))
-	if catalogErr := catalog.Load(ctx); catalogErr != nil {
-		if discoverErr == nil {
-			discoverErr = catalogErr
-		}
-		slog.Warn("model catalog load failed", "err", catalogErr)
-	}
-
-	streamer, err := buildStreamer(opts.Provider, model, bearerToken, catalog, opts.Insecure)
+	streamer, err := buildStreamer(ctx, rt, opts.Provider.Name, model)
 	if err != nil {
-		slog.Warn("ai-sdk streamer unavailable; falling back to OpenAI-compatible streamer", "err", err)
-		streamer = provider.OpenAIStreamer{Insecure: opts.Insecure}
+		return fmt.Errorf("building streamer: %w", err)
 	}
 
 	cwd, _ := os.Getwd()
@@ -61,7 +56,7 @@ func RunStdIn(ctx context.Context, opts ChatOptions, prompt string) error {
 	coordinator, err := buildCoordinator(ctx, coordinatorConfig{
 		Bus:             eventbus.New(),
 		ChatOptions:     opts,
-		BearerToken:     bearerToken,
+		BearerToken:     "",
 		SessionManager:  sessionManager,
 		InteractiveUI:   false,
 		AutoExportJSONL: false,

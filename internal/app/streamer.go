@@ -1,4 +1,4 @@
-package ai
+package app
 
 import (
 	"context"
@@ -37,7 +37,7 @@ func (s *Streamer) StreamChatCompletionFull(
 	}
 
 	req := s.buildRequest(session)
-	streamCtx := WithExtraHeaders(ctx, extraHeaders)
+	streamCtx := aisdkchat.WithContextHeaders(ctx, extraHeaders)
 	stream, err := s.provider.ChatStream(streamCtx, req)
 	if err != nil {
 		return tauchat.CompletionResult{}, err
@@ -97,6 +97,13 @@ func (s *Streamer) buildRequest(session tauchat.ChatSessionState) aisdkchat.Requ
 		MaxTokens:   session.Parameters.MaxTokens,
 		Temperature: float32(session.Parameters.Temperature),
 		Stream:      true,
+	}
+	if session.Parameters.ReasoningEffort != "" && session.Parameters.ReasoningEffort != "off" {
+		req.ProviderOptions = map[string]any{
+			"openai": map[string]any{
+				"reasoning_effort": effortToOpenAI(session.Parameters.ReasoningEffort),
+			},
+		}
 	}
 	if req.Model == "" {
 		req.Model = s.modelID
@@ -209,4 +216,22 @@ func buildToolCalls(calls map[int]*assembledToolCall) []tauchat.ChatToolCall {
 		})
 	}
 	return out
+}
+
+// effortToOpenAI maps tau's reasoning effort levels to OpenAI API values.
+func effortToOpenAI(tauLevel string) string {
+	switch tauLevel {
+	case "off", "none":
+		return "none"
+	case "low":
+		return "low"
+	case "medium":
+		return "medium"
+	case "high":
+		return "high"
+	case "max":
+		return "xhigh"
+	default:
+		return "medium"
+	}
 }
