@@ -6,6 +6,7 @@ import (
 	"time"
 
 	tauchat "github.com/samcharles93/tau/internal/chat"
+	"github.com/samcharles93/tau/internal/theme"
 	"github.com/samcharles93/tau/internal/tui/notify"
 	"github.com/samcharles93/tau/pkg/taui"
 )
@@ -72,7 +73,7 @@ func (c *inlineChat) handleEvent(ev tauchat.ChatEvent) {
 	case tauchat.ChatToolExecutionStartedEvent:
 		c.engine.Update(func() {
 			tr := taui.NewToolRow(e.ToolName, e.ArgumentsSummary)
-			tbox := taui.NewBox().Padding(2, 1).Bg(toolBoxBg(running)).ExpandW().Build()
+			tbox := taui.NewBox().Padding(2, 1).Bg(toolBoxBg(theme.ToolRunning)).ExpandW().Build()
 			tbox.AddChild(tr)
 			if c.activeTools == nil {
 				c.activeTools = make(map[string]*activeToolBox)
@@ -91,10 +92,10 @@ func (c *inlineChat) handleEvent(ev tauchat.ChatEvent) {
 			if e.IsError {
 				detail = "failed"
 				tb.row.Fail(detail)
-				tb.box.SetBgFn(toolBoxBg(failed))
+				tb.box.SetBgFn(toolBoxBg(theme.ToolFailed))
 			} else {
 				tb.row.Succeed(detail)
-				tb.box.SetBgFn(toolBoxBg(success))
+				tb.box.SetBgFn(toolBoxBg(theme.ToolSuccess))
 			}
 		})
 		c.engine.RequestRender()

@@ -12,6 +12,7 @@ import (
 	"github.com/google/uuid"
 	tauchat "github.com/samcharles93/tau/internal/chat"
 	"github.com/samcharles93/tau/internal/eventbus"
+	"github.com/samcharles93/tau/internal/theme"
 	"github.com/samcharles93/tau/internal/tui/notify"
 	"github.com/samcharles93/tau/pkg/taui"
 	"github.com/samcharles93/tau/pkg/taui/termkit"
@@ -351,16 +352,8 @@ func (c *inlineChat) width() int {
 
 // ── Tool box colours ─────────────────────────────────────────────────────────
 
-type pair struct{ bg, fg termkit.Color }
-
-var (
-	running = pair{termkit.Color{252, 214, 187}, termkit.Color{124, 11, 11}}
-	success = pair{termkit.Color{192, 234, 172}, termkit.Color{76, 91, 23}}
-	failed  = pair{termkit.Color{120, 30, 30}, termkit.Color{248, 209, 207}}
-)
-
-func toolBoxBg(p pair) taui.BgFn {
-	return func(s string) string { return termkit.FgBgOnly(s, p.fg, p.bg) }
+func toolBoxBg(p theme.ToolStatus) taui.BgFn {
+	return func(s string) string { return termkit.FgBgOnly(s, p.FG, p.BG) }
 }
 
 // ── Controller ──────────────────────────────────────────────────────────────
