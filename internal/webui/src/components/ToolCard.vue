@@ -19,6 +19,13 @@
           <div class="mb-0.5 text-[10px] uppercase tracking-wide text-muted-foreground">Arguments</div>
           <pre class="overflow-x-auto rounded bg-background/60 p-2 font-mono text-[11px] text-foreground">{{ tool.argumentsSummary || '(none)' }}</pre>
         </div>
+        <div v-if="tool.output">
+          <div class="mb-0.5 flex items-center gap-1.5 text-[10px] uppercase tracking-wide text-muted-foreground">
+            Output
+            <span v-if="tool.status === 'running'" class="inline-block size-1 rounded-full bg-status-running animate-status-pulse" />
+          </div>
+          <pre class="max-h-64 overflow-auto whitespace-pre-wrap rounded bg-background/60 p-2 font-mono text-[11px] text-foreground">{{ tool.output }}</pre>
+        </div>
         <div v-if="tool.resultSummary !== undefined">
           <div class="mb-0.5 text-[10px] uppercase tracking-wide text-muted-foreground">Result</div>
           <pre

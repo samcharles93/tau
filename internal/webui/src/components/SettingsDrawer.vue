@@ -18,7 +18,17 @@
       <div class="flex flex-col gap-4 py-2">
         <div class="flex flex-col gap-1.5">
           <Label for="set-model">Model</Label>
+          <!-- Dropdown when the backend advertises models; free-text otherwise. -->
+          <Select v-if="session.availableModels.length" v-model="form.model" @update:model-value="applyModelValue">
+            <SelectTrigger id="set-model">
+              <SelectValue placeholder="Select model" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem v-for="m in session.availableModels" :key="m" :value="m">{{ m }}</SelectItem>
+            </SelectContent>
+          </Select>
           <Input
+            v-else
             id="set-model"
             v-model="form.model"
             placeholder="model id"
@@ -133,6 +143,11 @@ function apply(patch: ChatSessionPatch) {
 
 function applyModel() {
   const id = form.model.trim()
+  if (id && id !== session.model) apply({ model: { id } })
+}
+
+function applyModelValue(value: unknown) {
+  const id = typeof value === 'string' ? value.trim() : ''
   if (id && id !== session.model) apply({ model: { id } })
 }
 

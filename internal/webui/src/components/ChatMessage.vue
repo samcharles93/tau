@@ -1,5 +1,10 @@
 <template>
   <div class="flex flex-col gap-1.5" :class="message.role === 'user' ? 'items-end' : 'items-start'">
+    <!-- Streamed reasoning for this assistant turn, collapsed by default. -->
+    <div v-if="message.role === 'assistant' && message.reasoning" class="w-full max-w-[85%]">
+      <ReasoningPanel :reasoning="message.reasoning" :streaming="message.streaming" />
+    </div>
+
     <div
       class="max-w-[85%] rounded-lg px-3.5 py-2.5 text-sm"
       :class="
@@ -26,6 +31,7 @@
 import { computed } from 'vue'
 import { renderMarkdown } from '@/lib/markdown'
 import ToolGroup from '@/components/ToolGroup.vue'
+import ReasoningPanel from '@/components/ReasoningPanel.vue'
 import type { DisplayMessage } from '@/stores/session'
 
 const props = defineProps<{ message: DisplayMessage }>()
