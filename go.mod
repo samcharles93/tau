@@ -5,8 +5,10 @@ go 1.26.4
 require (
 	github.com/blevesearch/bleve/v2 v2.6.0
 	github.com/google/uuid v1.6.0
+	github.com/gorilla/websocket v1.5.3
 	github.com/hashicorp/go-hclog v1.6.3
 	github.com/hashicorp/go-plugin v1.8.0
+	github.com/pkg/browser v0.0.0-20240102092130-5ac0b6a4141c
 	github.com/rivo/uniseg v0.4.7
 	github.com/samcharles93/ai-sdk v0.1.3
 	github.com/stretchr/testify v1.11.1
@@ -50,7 +52,6 @@ require (
 	github.com/mschoch/smat v0.2.0 // indirect
 	github.com/ncruces/go-strftime v1.0.0 // indirect
 	github.com/oklog/run v1.2.0 // indirect
-	github.com/pkg/browser v0.0.0-20240102092130-5ac0b6a4141c // indirect
 	github.com/pmezard/go-difflib v1.0.0 // indirect
 	github.com/remyoudompheng/bigfft v0.0.0-20230129092748-24d4a6f8daec // indirect
 	go.etcd.io/bbolt v1.4.0 // indirect

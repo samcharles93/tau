@@ -1,0 +1,96 @@
+package bridge
+
+import (
+	"net/http"
+	"net/http/httptest"
+	"testing"
+	"time"
+
+	"github.com/gorilla/websocket"
+	tauchat "github.com/samcharles93/tau/internal/chat"
+	"github.com/samcharles93/tau/internal/eventbus"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+)
+
+type fakeRuntime struct {
+	sent []tauchat.ChatCommand
+}
+
+func (r *fakeRuntime) Send(cmd tauchat.ChatCommand) error {
+	r.sent = append(r.sent, cmd)
+	return nil
+}
+
+func (r *fakeRuntime) Close() {}
+
+func TestBridgeForwardsCommandFromClient(t *testing.T) {
+	bus := eventbus.New()
+	defer bus.Close()
+
+	rt := &fakeRuntime{}
+	b, err := NewBridge(rt, bus, InitInfo{}, nil)
+	require.NoError(t, err)
+	defer b.Close()
+
+	// Serve the bridge's WebSocket handler on a test HTTP server.
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_ = b.UpgradeHTTP(w, r)
+	}))
+	defer srv.Close()
+
+	clientConn, resp, err := websocket.DefaultDialer.Dial("ws"+srv.URL[4:]+"/ws", nil)
+	require.NoError(t, err)
+	if resp != nil {
+		_ = resp.Body.Close()
+	}
+	defer clientConn.Close()
+
+	payload := []byte(`{"type":"SubmitChatPromptCommand","payload":{"session_id":"s1","request_id":"r1","prompt":"hello","submitted_at":"2026-06-27T00:00:00Z"}}`)
+	err = clientConn.WriteMessage(websocket.TextMessage, payload)
+	require.NoError(t, err)
+
+	require.Eventually(t, func() bool { return len(rt.sent) > 0 }, time.Second, 10*time.Millisecond)
+	assert.IsType(t, tauchat.SubmitChatPromptCommand{}, rt.sent[0])
+}
+
+func TestBridgeBroadcastsEventToClient(t *testing.T) {
+	bus := eventbus.New()
+	defer bus.Close()
+
+	rt := &fakeRuntime{}
+	b, err := NewBridge(rt, bus, InitInfo{}, nil)
+	require.NoError(t, err)
+	defer b.Close()
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_ = b.UpgradeHTTP(w, r)
+	}))
+	defer srv.Close()
+
+	clientConn, resp, err := websocket.DefaultDialer.Dial("ws"+srv.URL[4:]+"/ws", nil)
+	require.NoError(t, err)
+	if resp != nil {
+		_ = resp.Body.Close()
+	}
+	defer clientConn.Close()
+
+	// Publish a notification on the bus from a separate client.
+	pub := eventbus.Publish[tauchat.ChatEvent](bus.Client("test"))
+	pub.Publish(tauchat.ChatNotificationEvent{Message: "hi", Level: tauchat.ChatNotificationInfo, OccurredAt: time.Now().UTC()})
+	pub.Close()
+
+	clientConn.SetReadDeadline(time.Now().Add(2 * time.Second))
+
+	// First message is the init envelope.
+	mt, _, err := clientConn.ReadMessage()
+	require.NoError(t, err)
+	assert.Equal(t, websocket.TextMessage, mt)
+
+	// Next message should be the broadcast event.
+	mt, data, err := clientConn.ReadMessage()
+	require.NoError(t, err)
+	assert.Equal(t, websocket.TextMessage, mt)
+	assert.Contains(t, string(data), `"type":"ChatNotificationEvent"`)
+	assert.Contains(t, string(data), `"message":"hi"`)
+}

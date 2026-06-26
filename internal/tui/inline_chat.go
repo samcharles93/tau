@@ -51,6 +51,7 @@ type inlineChat struct {
 	notifyQueue       *notify.Queue
 	sessionID         string
 	modelName         string
+	webURL            string
 	showReasoning     bool
 	reasoningEffort   string
 	availableModels   []tauchat.ChatModelRef
@@ -89,6 +90,7 @@ func newInlineChat(
 		notifyQueue:       notify.NewQueue(),
 		sessionID:         cfg.SessionID,
 		modelName:         cfg.ModelName,
+		webURL:            cfg.WebURL,
 		showReasoning:     cfg.ShowReasoning,
 		reasoningEffort:   cfg.ReasoningEffort,
 		availableModels:   slices.Clone(cfg.AvailableModels),
@@ -216,6 +218,9 @@ func (c *inlineChat) computeStatus() string {
 	}
 	if prov != "" {
 		parts = append(parts, prov)
+	}
+	if c.webURL != "" {
+		parts = append(parts, "web: "+c.webURL)
 	}
 	s := strings.Join(parts, " · ")
 	if note != "" {

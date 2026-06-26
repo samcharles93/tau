@@ -7,11 +7,14 @@ import (
 	"os"
 	"time"
 
+	webbridge "github.com/samcharles93/tau/internal/bridge"
 	tauchat "github.com/samcharles93/tau/internal/chat"
 	tauconfig "github.com/samcharles93/tau/internal/config"
 	"github.com/samcharles93/tau/internal/eventbus"
 	commandreg "github.com/samcharles93/tau/internal/registry"
+	webserver "github.com/samcharles93/tau/internal/server"
 	"github.com/samcharles93/tau/internal/sessions"
+	"github.com/samcharles93/tau/internal/spa"
 	"github.com/samcharles93/tau/internal/tui"
 )
 
@@ -150,6 +153,44 @@ func RunChat(ctx context.Context, opts ChatOptions) error {
 	// and receives deltas via CommandsChangedEvent on the bus.
 	initialCommands := commandRefsFromRegistry(result.CommandRegistry.All())
 
+	// Optionally start the Web UI bridge and server.
+	var webURL string
+	var webShutdown func()
+	var webWait func()
+	if !opts.NoWeb {
+		bridge, err := webbridge.NewBridge(coordinator, bus, webbridge.InitInfo{
+			SessionID: sessionID,
+			Model:     model.ID,
+			Provider:  opts.Provider.Name,
+			Commands:  initialCommands,
+		}, slog.Default())
+		if err != nil {
+			slog.Warn("web bridge failed", "err", err)
+		} else {
+			addr := fmt.Sprintf("127.0.0.1:%d", opts.WebPort)
+			if opts.WebPort == 0 {
+				addr = "127.0.0.1:0"
+			}
+			webSrv := webserver.New(addr, bridge, spa.Handler(), slog.Default())
+			webCtx, webCancel := context.WithCancel(ctx)
+			webShutdown = webCancel
+			webWait = webSrv.Wait
+			bound, err := webSrv.Start(webCtx)
+			if err != nil {
+				slog.Warn("web server failed", "err", err)
+				webShutdown = nil
+				webWait = nil
+			} else {
+				webURL = "http://" + bound
+				if opts.Web {
+					if err := openBrowser(ctx, webURL); err != nil {
+						slog.Warn("open browser failed", "err", err)
+					}
+				}
+			}
+		}
+	}
+
 	tuiCfg := tui.TUIConfig{
 		SessionID:          sessionID,
 		ModelName:          model.ID,
@@ -162,9 +203,18 @@ func RunChat(ctx context.Context, opts ChatOptions) error {
 		ShowReasoning:      opts.Config.UI.ShowReasoning,
 		ReasoningEffort:    opts.ReasoningEffort,
 		Debug:              isDevel(opts.Version, opts.Config),
+		WebURL:             webURL,
 	}
 
 	tuiErr := tui.Run(ctx, coordinator, tuiCfg)
+
+	// Shut down the web UI before closing the coordinator.
+	if webShutdown != nil {
+		webShutdown()
+		if webWait != nil {
+			webWait()
+		}
+	}
 
 	// Close coordinator first so it can persist sessions while the store is still open.
 	coordinator.Close()

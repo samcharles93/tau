@@ -1,0 +1,23 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Tau Web UI</title>
+</head>
+<body>
+  <div id="app">
+    <h1>Tau Web UI</h1>
+    <p>Web UI placeholder. Build the Vue app into <code>internal/spa/dist</code>.</p>
+    <p id="status">Connecting…</p>
+  </div>
+  <script>
+    const ws = new WebSocket('ws://' + location.host + '/ws');
+    ws.onopen = () => { document.getElementById('status').textContent = 'Connected'; };
+    ws.onclose = () => { document.getElementById('status').textContent = 'Disconnected'; };
+    ws.onmessage = (ev) => {
+      console.log('tau event:', JSON.parse(ev.data));
+    };
+  </script>
+</body>
+</html>

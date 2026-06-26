@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/pkg/browser"
 	"github.com/samcharles93/ai-sdk/pkg/runtime"
 
 	"github.com/samcharles93/tau/internal/agent"
@@ -36,6 +37,9 @@ type ChatOptions struct {
 	ReasoningEffort string
 	Version         string
 	ResumeSessionID string
+	Web             bool // --web: auto-open browser
+	WebPort         int  // --port: 0 = ephemeral
+	NoWeb           bool // --no-web: do not start web UI
 }
 
 // printExitSummary prints session metadata after the TUI exits.
@@ -449,4 +453,17 @@ func isDevel(version string, cfg tauconfig.Config) bool {
 	}
 	v := strings.ToLower(version)
 	return strings.Contains(v, "dev") || strings.Contains(v, "none")
+}
+
+// openBrowser opens url in the user's default browser.
+func openBrowser(ctx context.Context, url string) error {
+	return browserOpenURL(ctx, url)
+}
+
+// browserOpenURL is a test seam.
+var browserOpenURL = defaultBrowserOpenURL
+
+func defaultBrowserOpenURL(ctx context.Context, url string) error {
+	_ = ctx
+	return browser.OpenURL(url)
 }

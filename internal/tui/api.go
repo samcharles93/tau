@@ -28,4 +28,6 @@ type TUIConfig struct {
 	ShowReasoning   bool
 	ReasoningEffort string
 	Debug           bool
+	// WebURL is the local address of the optional web UI. Empty means no web UI.
+	WebURL string
 }

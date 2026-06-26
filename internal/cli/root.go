@@ -80,6 +80,19 @@ func NewRootCommand(version string) *urfavecli.Command {
 				Aliases: []string{"p"},
 				Usage:   "Single-shot mode: process prompt and exit",
 			},
+			&urfavecli.BoolFlag{
+				Name:  "web",
+				Usage: "Start the web UI and open the browser",
+			},
+			&urfavecli.IntFlag{
+				Name:  "port",
+				Usage: "HTTP port for the web UI (0 = auto-assign)",
+				Value: 0,
+			},
+			&urfavecli.BoolFlag{
+				Name:  "no-web",
+				Usage: "Do not start the web UI",
+			},
 		},
 		Action: func(ctx context.Context, cmd *urfavecli.Command) error {
 			// Support explicit provider:model syntax (preferred), e.g.
@@ -105,6 +118,9 @@ func NewRootCommand(version string) *urfavecli.Command {
 				if args := cmd.Args(); args.Len() > 0 {
 					prompt = strings.TrimSpace(prompt + " " + strings.Join(args.Slice(), " "))
 				}
+				// One-shot mode never starts the web server.
+				opts.Web = false
+				opts.NoWeb = true
 				return app.RunStdIn(ctx, opts, prompt)
 			}
 			return app.RunChat(ctx, opts)
@@ -147,5 +163,8 @@ func chatOptionsFromCmd(cmd *urfavecli.Command, cfg tauconfig.Config, provider t
 		Temperature:     cmd.Float("temperature"),
 		Version:         version,
 		ResumeSessionID: cmd.String("resume"),
+		Web:             cmd.Bool("web"),
+		WebPort:         cmd.Int("port"),
+		NoWeb:           cmd.Bool("no-web"),
 	}
 }

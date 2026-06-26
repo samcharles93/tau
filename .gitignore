@@ -6,6 +6,7 @@ reference/
 
 # Build output
 dist/
+!internal/spa/dist/
 /tau
 /tau.exe
 .task/
