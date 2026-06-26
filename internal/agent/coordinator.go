@@ -25,9 +25,8 @@ import (
 )
 
 const (
-	commandBufferSize            = 16
-	defaultMaxToolLoopIterations = 50
-	toolSummaryMaxBytes          = 600
+	commandBufferSize   = 16
+	toolSummaryMaxBytes = 600
 )
 
 // TokenSource resolves a bearer token for the configured provider.
@@ -58,7 +57,6 @@ type Coordinator struct {
 	tokenSource       TokenSource
 	streamer          Streamer
 	registry          *tools.Registry
-	maxToolIterations int
 	parallelToolCalls bool
 	interactiveUI     bool
 	uiBridge          tools.UIBridge
@@ -67,9 +65,8 @@ type Coordinator struct {
 	autoExportJSONL   bool
 	onClose           func()
 	onPluginEvent     func(event string, sessionID string, payload *api.EventPayload) *api.EventResponse
-	// NOTE: startup events are no longer managed by the coordinator.
-	// The app layer publishes them directly on the bus after the
-	// subscriber is created.
+	startupEvents     []chat.ChatEvent
+	startupEventsOnce sync.Once
 	commands          chan chat.ChatCommand
 
 	mu       sync.Mutex
@@ -94,17 +91,19 @@ type coordinatorSession struct {
 
 // CoordinatorConfig holds the dependencies for creating a Coordinator.
 type CoordinatorConfig struct {
-	Bus               *eventbus.Bus
-	TokenSource       TokenSource
-	Streamer          Streamer
-	Registry          *tools.Registry
-	MaxToolIterations int   // 0 → default (50)
+	Bus         *eventbus.Bus
+	TokenSource TokenSource
+	Streamer    Streamer
+	Registry    *tools.Registry
+
 	ParallelToolCalls *bool // nil → default (true)
 	InteractiveUI     bool
 	ExtensionReloader chat.ExtensionReloader
 	SessionManager    *sessions.Manager
 	AutoExportJSONL   bool
 	OnClose           func()
+	StartupEvents     []chat.ChatEvent
+
 	// OnPluginEvent dispatches lifecycle events to the plugin manager.
 	// The coordinator fires this at turn boundaries, tool execution boundaries,
 	// and LLM request boundaries. sessionID is the explicit session identity.
@@ -128,10 +127,6 @@ func NewCoordinator(ctx context.Context, cfg CoordinatorConfig) (*Coordinator, e
 	}
 
 	ctx, cancel := context.WithCancel(ctx)
-	maxIter := cfg.MaxToolIterations
-	if maxIter <= 0 {
-		maxIter = defaultMaxToolLoopIterations
-	}
 	parallel := true
 	if cfg.ParallelToolCalls != nil {
 		parallel = *cfg.ParallelToolCalls
@@ -151,7 +146,6 @@ func NewCoordinator(ctx context.Context, cfg CoordinatorConfig) (*Coordinator, e
 		tokenSource:       cfg.TokenSource,
 		streamer:          cfg.Streamer,
 		registry:          cfg.Registry,
-		maxToolIterations: maxIter,
 		parallelToolCalls: parallel,
 		interactiveUI:     cfg.InteractiveUI,
 		extensionReloader: cfg.ExtensionReloader,
@@ -159,6 +153,7 @@ func NewCoordinator(ctx context.Context, cfg CoordinatorConfig) (*Coordinator, e
 		autoExportJSONL:   cfg.AutoExportJSONL,
 		onClose:           cfg.OnClose,
 		onPluginEvent:     cfg.OnPluginEvent,
+		startupEvents:     append([]chat.ChatEvent(nil), cfg.StartupEvents...),
 		commands:          make(chan chat.ChatCommand, commandBufferSize),
 		sessions:          make(map[string]*coordinatorSession),
 		shutdown:          make(map[string]struct{}),
@@ -178,6 +173,21 @@ func NewCoordinator(ctx context.Context, cfg CoordinatorConfig) (*Coordinator, e
 	}()
 
 	return c, nil
+}
+
+// SubscribeEvents returns a typed subscriber for coordinator events.
+// The subscriber's Events channel carries [chat.ChatEvent] values in
+// publication order. Startup events (configured via
+// CoordinatorConfig.StartupEvents) are delivered when the first
+// subscriber connects.
+func (c *Coordinator) SubscribeEvents() (*eventbus.Subscriber[chat.ChatEvent], error) {
+	sub := eventbus.Subscribe[chat.ChatEvent](c.client)
+	c.startupEventsOnce.Do(func() {
+		for _, event := range c.startupEvents {
+			c.chatPub.Publish(event)
+		}
+	})
+	return sub, nil
 }
 
 // Send submits a command to the coordinator.
@@ -719,7 +729,7 @@ func (c *Coordinator) runTurn(ctx context.Context, state chat.ChatSessionState) 
 	toolDefs := c.buildToolDefs()
 
 	// The turn loop: call LLM, if tool_calls → execute → append → repeat.
-	for iteration := 0; iteration < c.maxToolIterations; iteration++ {
+	for iteration := 0; ; iteration++ {
 		if err := ctx.Err(); err != nil {
 			c.cancelTurn(sessionID, requestID, time.Now().UTC())
 			return
@@ -867,11 +877,6 @@ func (c *Coordinator) runTurn(ctx context.Context, state chat.ChatSessionState) 
 		// Clear pending assistant for the next LLM call.
 		c.clearPending(sessionID)
 	}
-
-	// Safety: hit max iterations.
-	c.failTurn(sessionID, requestID,
-		fmt.Errorf("agent exceeded maximum tool loop iterations (%d)", c.maxToolIterations),
-		time.Now().UTC())
 }
 
 // executeToolsParallel runs tool calls and returns results in input order.
