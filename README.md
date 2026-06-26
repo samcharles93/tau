@@ -52,6 +52,7 @@ events and can send the same commands. Everything uses the existing
 ## Documentation
 
 * [CLI reference](docs/README.md)
+* [Plugin SDK](docs/plugins.md)
 * [AI SDK integration and model catalog](docs/ai-sdk.md)
 * [Event bus design](docs/eventbus.md)
 * [Web UI protocol](docs/asyncapi/tau.yaml)

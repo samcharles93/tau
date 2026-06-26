@@ -10,6 +10,7 @@ import (
 func TestEmbeddedFS(t *testing.T) {
 	var foundConfigExample bool
 	var foundReadme bool
+	var foundPlugins bool
 
 	err := fs.WalkDir(FS, ".", func(path string, d fs.DirEntry, err error) error {
 		if err != nil {
@@ -36,6 +37,9 @@ func TestEmbeddedFS(t *testing.T) {
 		if path == "README.md" {
 			foundReadme = true
 		}
+		if path == "plugins.md" {
+			foundPlugins = true
+		}
 
 		return nil
 	})
@@ -49,6 +53,9 @@ func TestEmbeddedFS(t *testing.T) {
 	}
 	if !foundReadme {
 		t.Error("expected README.md to be embedded in FS, but it was not")
+	}
+	if !foundPlugins {
+		t.Error("expected plugins.md to be embedded in FS, but it was not")
 	}
 }
 

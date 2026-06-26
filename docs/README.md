@@ -116,3 +116,7 @@ Tau loads its configuration from `~/.config/tau/config.yaml` and an optional
 project-local `.tau.yaml`. Example configurations can be found in
 [`config-example.yaml`](config-example.yaml) and
 [`config-deepseek-example.yaml`](config-deepseek-example.yaml).
+
+## See also
+
+* [Plugin SDK](plugins.md) — build custom tools and slash commands for Tau.
