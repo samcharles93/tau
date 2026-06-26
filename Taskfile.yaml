@@ -8,7 +8,9 @@ vars:
 
 tasks:
   default:
-    desc: Build the binary
+    desc: Build the web UI and the binary
+    deps:
+      - webui
     cmds:
       - go build -ldflags "-s -w -X main.version={{.VERSION}}" -o {{.BINARY}}{{exeExt}} {{.CMD}}
     sources:
@@ -17,6 +19,23 @@ tasks:
       - go.sum
     generates:
       - "{{.BINARY}}{{exeExt}}"
+
+  webui:
+    desc: Build the Tau Web UI SPA into internal/spa/dist
+    dir: internal/webui
+    cmds:
+      - pnpm install --prefer-offline
+      - pnpm build
+    sources:
+      - "src/**/*.vue"
+      - "src/**/*.ts"
+      - "src/**/*.css"
+      - index.html
+      - vite.config.ts
+      - tsconfig.json
+      - package.json
+    generates:
+      - ../spa/dist/index.html
 
   deadcode:
     desc: Detect dead code in production packages (exclude *_test.go)

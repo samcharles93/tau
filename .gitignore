@@ -1,15 +1,19 @@
-# Project-local Tau config may contain provider secrets
-.tau.yaml
-
-# Reference artifacts (kept for analysis only)
-reference/
-
 # Build output
 dist/
 !internal/spa/dist/
 /tau
 /tau.exe
 .task/
+
+# JavaScript tooling
+node_modules/
+*.tsbuildinfo
+
+# Project-local Tau config may contain provider secrets
+.tau.yaml
+
+# Reference artifacts (kept for analysis only)
+reference/
 
 /plugins/
 

@@ -7,14 +7,11 @@ import (
 	"os"
 	"time"
 
-	webbridge "github.com/samcharles93/tau/internal/bridge"
 	tauchat "github.com/samcharles93/tau/internal/chat"
 	tauconfig "github.com/samcharles93/tau/internal/config"
 	"github.com/samcharles93/tau/internal/eventbus"
 	commandreg "github.com/samcharles93/tau/internal/registry"
-	webserver "github.com/samcharles93/tau/internal/server"
 	"github.com/samcharles93/tau/internal/sessions"
-	"github.com/samcharles93/tau/internal/spa"
 	"github.com/samcharles93/tau/internal/tui"
 )
 
@@ -158,34 +155,16 @@ func RunChat(ctx context.Context, opts ChatOptions) error {
 	var webShutdown func()
 	var webWait func()
 	if !opts.NoWeb {
-		bridge, err := webbridge.NewBridge(coordinator, bus, webbridge.InitInfo{
-			SessionID: sessionID,
-			Model:     model.ID,
-			Provider:  opts.Provider.Name,
-			Commands:  initialCommands,
-		}, slog.Default())
+		webRes, err := startWebUI(coordinator, bus, opts, sessionID, model.ID, initialCommands, slog.Default())
 		if err != nil {
-			slog.Warn("web bridge failed", "err", err)
-		} else {
-			addr := fmt.Sprintf("127.0.0.1:%d", opts.WebPort)
-			if opts.WebPort == 0 {
-				addr = "127.0.0.1:0"
-			}
-			webSrv := webserver.New(addr, bridge, spa.Handler(), slog.Default())
-			webCtx, webCancel := context.WithCancel(ctx)
-			webShutdown = webCancel
-			webWait = webSrv.Wait
-			bound, err := webSrv.Start(webCtx)
-			if err != nil {
-				slog.Warn("web server failed", "err", err)
-				webShutdown = nil
-				webWait = nil
-			} else {
-				webURL = "http://" + bound
-				if opts.Web {
-					if err := openBrowser(ctx, webURL); err != nil {
-						slog.Warn("open browser failed", "err", err)
-					}
+			slog.Warn("web ui failed", "err", err)
+		} else if webRes != nil {
+			webURL = webRes.URL
+			webShutdown = webRes.Shutdown
+			webWait = webRes.Wait
+			if opts.Web {
+				if err := openBrowser(ctx, webURL); err != nil {
+					slog.Warn("open browser failed", "err", err)
 				}
 			}
 		}

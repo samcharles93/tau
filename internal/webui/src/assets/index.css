@@ -1,0 +1,179 @@
+/*
+ * Tau Web UI
+ *
+ * A calm, terminal-adjacent surface for the Tau chat runtime. The web UI is a
+ * first-class peer to the TUI: same events, same commands. Dark canvas, steel
+ * structure, restrained accents. No cards by default; use sections and dividers.
+ */
+
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap');
+
+@import "tailwindcss";
+
+@import "tw-animate-css";
+
+@import "shadcn-vue/tailwind.css";
+
+@custom-variant dark (&:is(.dark *));
+
+@theme inline {
+    --font-sans: 'Inter', sans-serif;
+    --font-mono: 'JetBrains Mono', monospace;
+    --color-sidebar-ring: var(--sidebar-ring);
+    --color-sidebar-border: var(--sidebar-border);
+    --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
+    --color-sidebar-accent: var(--sidebar-accent);
+    --color-sidebar-primary-foreground: var(--sidebar-primary-foreground);
+    --color-sidebar-primary: var(--sidebar-primary);
+    --color-sidebar-foreground: var(--sidebar-foreground);
+    --color-sidebar: var(--sidebar);
+    --color-chart-5: var(--chart-5);
+    --color-chart-4: var(--chart-4);
+    --color-chart-3: var(--chart-3);
+    --color-chart-2: var(--chart-2);
+    --color-chart-1: var(--chart-1);
+    --color-ring: var(--ring);
+    --color-input: var(--input);
+    --color-border: var(--border);
+    --color-destructive: var(--destructive);
+    --color-accent-foreground: var(--accent-foreground);
+    --color-accent: var(--accent);
+    --color-muted-foreground: var(--muted-foreground);
+    --color-muted: var(--muted);
+    --color-secondary-foreground: var(--secondary-foreground);
+    --color-secondary: var(--secondary);
+    --color-primary-foreground: var(--primary-foreground);
+    --color-primary: var(--primary);
+    --color-popover-foreground: var(--popover-foreground);
+    --color-popover: var(--popover);
+    --color-card-foreground: var(--card-foreground);
+    --color-card: var(--card);
+    --color-foreground: var(--foreground);
+    --color-background: var(--background);
+    --radius-sm: calc(var(--radius) - 4px);
+    --radius-md: calc(var(--radius) - 2px);
+    --radius-lg: var(--radius);
+    --radius-xl: calc(var(--radius) + 4px);
+}
+
+:root {
+    --background: #0a0c10;
+    --foreground: #e8ecf2;
+    --card: #0f1218;
+    --card-foreground: #e8ecf2;
+    --popover: #11151c;
+    --popover-foreground: #e8ecf2;
+    --primary: #5b8def;
+    --primary-foreground: #0a0c10;
+    --secondary: #1b2430;
+    --secondary-foreground: #e8ecf2;
+    --muted: #11151c;
+    --muted-foreground: #8595ab;
+    --accent: #3ddc97;
+    --accent-foreground: #0a0c10;
+    --destructive: #e5484d;
+    --border: #1c2430;
+    --input: #1c2430;
+    --ring: #5b8def;
+    --chart-1: #5b8def;
+    --chart-2: #3ddc97;
+    --chart-3: #f5a623;
+    --chart-4: #a855f7;
+    --chart-5: #e8ecf2;
+    --radius: 0.5rem;
+    --sidebar: #0c0f14;
+    --sidebar-foreground: #e8ecf2;
+    --sidebar-primary: #5b8def;
+    --sidebar-primary-foreground: #0a0c10;
+    --sidebar-accent: #11151c;
+    --sidebar-accent-foreground: #e8ecf2;
+    --sidebar-border: #1c2430;
+    --sidebar-ring: #5b8def;
+}
+
+.dark {
+    --background: #0a0c10;
+    --foreground: #e8ecf2;
+    --card: #0f1218;
+    --card-foreground: #e8ecf2;
+    --popover: #11151c;
+    --popover-foreground: #e8ecf2;
+    --primary: #5b8def;
+    --primary-foreground: #0a0c10;
+    --secondary: #1b2430;
+    --secondary-foreground: #e8ecf2;
+    --muted: #11151c;
+    --muted-foreground: #8595ab;
+    --accent: #3ddc97;
+    --accent-foreground: #0a0c10;
+    --destructive: #e5484d;
+    --border: #1c2430;
+    --input: #1c2430;
+    --ring: #5b8def;
+    --chart-1: #5b8def;
+    --chart-2: #3ddc97;
+    --chart-3: #f5a623;
+    --chart-4: #a855f7;
+    --chart-5: #e8ecf2;
+    --sidebar: #0c0f14;
+    --sidebar-foreground: #e8ecf2;
+    --sidebar-primary: #5b8def;
+    --sidebar-primary-foreground: #0a0c10;
+    --sidebar-accent: #11151c;
+    --sidebar-accent-foreground: #e8ecf2;
+    --sidebar-border: #1c2430;
+    --sidebar-ring: #5b8def;
+}
+
+/* ── Tool status accents (mirrors internal/theme semantic colors) ── */
+@utility text-status-ok      { color: #3ddc97; }
+@utility text-status-running { color: #5b8def; }
+@utility text-status-error   { color: #e5484d; }
+@utility bg-status-ok        { background-color: #3ddc97; }
+@utility bg-status-running   { background-color: #5b8def; }
+@utility bg-status-error     { background-color: #e5484d; }
+
+@layer base {
+    * {
+        @apply border-border outline-ring/50;
+    }
+
+    body {
+        @apply bg-background text-foreground font-sans;
+        -webkit-font-smoothing: antialiased;
+        -moz-osx-font-smoothing: grayscale;
+    }
+
+    button:not(:disabled), [role="button"]:not(:disabled) {
+        cursor: pointer;
+    }
+}
+
+/* ── Status pulse for the live connection dot ── */
+@keyframes status-pulse {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.4; }
+}
+
+@utility animate-status-pulse {
+    animation: status-pulse 2s ease-in-out infinite;
+}
+
+/* ── Markdown prose for rendered assistant messages ── */
+.prose-chat {
+    @apply text-sm leading-relaxed;
+}
+.prose-chat p { @apply my-2; }
+.prose-chat ul { @apply my-2 list-disc pl-5; }
+.prose-chat ol { @apply my-2 list-decimal pl-5; }
+.prose-chat pre {
+    @apply my-2 overflow-x-auto rounded-md bg-muted p-3 font-mono text-xs;
+}
+.prose-chat code {
+    @apply rounded bg-muted px-1 py-0.5 font-mono text-xs;
+}
+.prose-chat pre code {
+    @apply bg-transparent p-0;
+}
+.prose-chat a { @apply text-primary underline; }
+.prose-chat h1, .prose-chat h2, .prose-chat h3 { @apply mt-3 mb-1 font-semibold; }
