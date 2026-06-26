@@ -86,7 +86,6 @@ func (r *Registry) Lookup(name string) (Command, bool) {
 func (r *Registry) Discover() {
 	r.mu.Lock()
 	r.commands = make(map[string]Command)
-	r.mergeBuiltins()
 	r.mergeCustomCommands()
 	r.mu.Unlock()
 
@@ -120,12 +119,6 @@ func (r *Registry) MergeSkills(all []*skills.Skill) {
 	r.publishLocked()
 }
 
-// mergeBuiltins adds the hard-coded TUI slash commands.
-func (r *Registry) mergeBuiltins() {
-	for _, c := range builtinCommands() {
-		r.commands[c.Name] = c
-	}
-}
 
 // publish publishes the current command set on the bus. Does not hold
 // the lock — callers should release r.mu before calling.

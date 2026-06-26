@@ -17,18 +17,11 @@ func TestDiscover(t *testing.T) {
 	reg := New("/nonexistent", client)
 	reg.Discover()
 
-	// Should have built-in commands (at minimum).
+	// No custom commands exist under /nonexistent, but Discover should
+	// succeed without panicking and return an empty set.
 	cmds := reg.All()
-	if len(cmds) == 0 {
-		t.Fatal("expected built-in commands after Discover")
-	}
-
-	// Verify key commands exist.
-	want := []string{"exit", "model", "new", "settings", "session", "reasoning"}
-	for _, name := range want {
-		if _, ok := reg.Lookup(name); !ok {
-			t.Errorf("missing built-in command %q", name)
-		}
+	if len(cmds) != 0 {
+		t.Fatalf("expected 0 commands after Discover (no custom commands), got %d", len(cmds))
 	}
 }
 
@@ -42,24 +35,21 @@ func TestLookup(t *testing.T) {
 	reg := New("/nonexistent", client)
 	reg.Discover()
 
-	// Known command.
-	cmd, ok := reg.Lookup("model")
-	if !ok {
-		t.Fatal("expected model command")
-	}
-	if cmd.Name != "model" {
-		t.Errorf("Name = %q, want model", cmd.Name)
-	}
-	if cmd.Label != "/model" {
-		t.Errorf("Label = %q, want /model", cmd.Label)
-	}
-	if !cmd.AcceptsArgs {
-		t.Error("model should accept args")
+	// No builtins; lookup of a non-existent command returns false.
+	if _, ok := reg.Lookup("model"); ok {
+		t.Error("expected false for command not added via skills or custom dirs")
 	}
 
-	// Unknown command.
-	if _, ok := reg.Lookup("nonexistent"); ok {
-		t.Error("expected false for unknown command")
+	// Merge a skill and verify it is found.
+	reg.MergeSkills([]*skills.Skill{
+		{Name: "pdf", Description: "PDF processing", UserInvocable: true, Scope: skills.ScopeUser},
+	})
+	cmd, ok := reg.Lookup("user:pdf")
+	if !ok {
+		t.Fatal("expected user:pdf after MergeSkills")
+	}
+	if cmd.Label != "/skill:pdf" {
+		t.Errorf("Label = %q, want /skill:pdf", cmd.Label)
 	}
 }
 
@@ -113,7 +103,7 @@ func TestMergeSkills(t *testing.T) {
 	}
 }
 
-func TestBuiltinsTakePrecedence(t *testing.T) {
+func TestSkillPrecedence(t *testing.T) {
 	bus := eventbus.New()
 	defer bus.Close()
 
@@ -123,18 +113,26 @@ func TestBuiltinsTakePrecedence(t *testing.T) {
 	reg := New("/nonexistent", client)
 	reg.Discover()
 
-	// A skill named "model" should not override the built-in.
+	// Merge a skill.
 	reg.MergeSkills([]*skills.Skill{
 		{Name: "model", Description: "custom model thing", UserInvocable: true, Scope: skills.ScopeUser},
 	})
 
-	cmd, ok := reg.Lookup("model")
+	cmd, ok := reg.Lookup("user:model")
 	if !ok {
-		t.Fatal("model command should still exist")
+		t.Fatal("user:model command should exist after MergeSkills")
 	}
-	// Built-in description should win.
-	if cmd.Description != "switch model" {
-		t.Errorf("Description = %q, want 'switch model' (built-in wins)", cmd.Description)
+	if cmd.Description != "custom model thing" {
+		t.Errorf("Description = %q, want 'custom model thing'", cmd.Description)
+	}
+
+	// Merging again should keep the original (first registration wins).
+	reg.MergeSkills([]*skills.Skill{
+		{Name: "model", Description: "newer model thing", UserInvocable: true, Scope: skills.ScopeUser},
+	})
+	cmd, _ = reg.Lookup("user:model")
+	if cmd.Description != "custom model thing" {
+		t.Errorf("Description = %q, want 'custom model thing' (first wins)", cmd.Description)
 	}
 }
 
@@ -147,11 +145,8 @@ func TestPublishDoesNotPanic(t *testing.T) {
 
 	reg := New("/nonexistent", pubClient)
 
-	// Discover publishes via the bus — should not panic.
+	// Discover publishes via the bus — should not panic even with no commands.
 	reg.Discover()
-	if len(reg.All()) == 0 {
-		t.Error("expected non-empty command list after Discover")
-	}
 
 	// MergeSkills publishes via the bus — should not panic.
 	reg.MergeSkills([]*skills.Skill{
