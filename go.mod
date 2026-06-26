@@ -1,6 +1,6 @@
 module github.com/samcharles93/tau
 
-go 1.26.2
+go 1.26.4
 
 require (
 	github.com/blevesearch/bleve/v2 v2.6.0
