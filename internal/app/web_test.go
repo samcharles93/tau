@@ -73,7 +73,7 @@ func TestStartWebUIServesAndAcceptsCommands(t *testing.T) {
 	require.NoError(t, err)
 	defer resp2.Body.Close()
 	body, _ := io.ReadAll(resp2.Body)
-	assert.Contains(t, string(body), "Tau Web UI")
+	assert.Contains(t, string(body), "<title>Tau</title>")
 
 	// WebSocket init + command round-trip.
 	wsURL := "ws" + res.URL[4:] + "/ws"
