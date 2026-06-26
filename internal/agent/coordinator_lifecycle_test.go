@@ -269,28 +269,15 @@ func TestCoordinatorPublishesToolAndReasoningObservabilityEvents(t *testing.T) {
 	parallel := false
 
 	bus := newTestBus(t)
-	coordinator, err := NewCoordinator(context.Background(), CoordinatorConfig{
-		Bus: bus,
-		TokenSource: func(context.Context, config.ProviderConfig) (string, error) {
-			return "", nil
-		},
-		Streamer:          streamer,
-		Registry:          registry,
-		ParallelToolCalls: &parallel,
-	})
-	require.NoError(t, err)
-
-	bus := newTestBus(t)
 	sub := eventbus.Subscribe[chat.ChatEvent](bus.Client("test"))
 	defer sub.Close()
 
 	coordinator, err := NewCoordinator(context.Background(), CoordinatorConfig{
-		Bus: bus,
-		TokenSource: func(context.Context, config.ProviderConfig) (string, error) {
-			return "", nil
-		},
-		Streamer: &reasoningOnlyStreamer{},
-		Registry: tools.NewRegistry(),
+		Bus:               bus,
+		TokenSource:       func(context.Context, config.ProviderConfig) (string, error) { return "", nil },
+		Streamer:          streamer,
+		Registry:          registry,
+		ParallelToolCalls: &parallel,
 	})
 	require.NoError(t, err)
 	defer coordinator.Close()
@@ -394,8 +381,9 @@ func TestCoordinatorEmitsReasoningDeltaEvent(t *testing.T) {
 }
 
 func TestCoordinatorUnknownToolPublishesCompletedError(t *testing.T) {
+	bus := newTestBus(t)
 	coordinator, err := NewCoordinator(context.Background(), CoordinatorConfig{
-		Bus: newTestBus(t),
+		Bus: bus,
 		TokenSource: func(context.Context, config.ProviderConfig) (string, error) {
 			return "", nil
 		},
