@@ -24,13 +24,11 @@
 
 <script setup lang="ts">
 import { computed } from 'vue'
-import { marked } from 'marked'
+import { renderMarkdown } from '@/lib/markdown'
 import ToolGroup from '@/components/ToolGroup.vue'
 import type { DisplayMessage } from '@/stores/session'
 
 const props = defineProps<{ message: DisplayMessage }>()
 
-const rendered = computed(() =>
-  marked.parse(props.message.content ?? '', { async: false, breaks: true }) as string,
-)
+const rendered = computed(() => renderMarkdown(props.message.content ?? ''))
 </script>

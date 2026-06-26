@@ -42,7 +42,7 @@
 
     <template #footer>
       <div class="mx-auto max-w-3xl">
-        <ChatInput @submit="onSubmit" />
+        <ChatInput :streaming="session.streaming" @submit="onSubmit" @stop="session.cancel()" />
       </div>
     </template>
   </ChatLayout>

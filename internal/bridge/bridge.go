@@ -41,6 +41,10 @@ type Bridge struct {
 	mu       sync.RWMutex
 	clients  map[*client]struct{}
 	initData []byte
+	// lastSnapshot is the most recent ChatSessionSnapshotEvent seen on the bus,
+	// already marshalled. It is replayed to each newly connected client so a
+	// browser joining mid-session sees the existing conversation and settings.
+	lastSnapshot []byte
 
 	upgrader websocket.Upgrader
 	logger   *slog.Logger
@@ -107,9 +111,15 @@ func (b *Bridge) UpgradeHTTP(w http.ResponseWriter, r *http.Request) error {
 
 	b.mu.RLock()
 	init := b.initData
+	snapshot := b.lastSnapshot
 	b.mu.RUnlock()
 	if len(init) > 0 {
 		_ = c.write(websocket.TextMessage, init)
+	}
+	// Replay the latest session snapshot so this client renders existing history
+	// and current settings without waiting for the next turn.
+	if len(snapshot) > 0 {
+		_ = c.write(websocket.TextMessage, snapshot)
 	}
 
 	return c.readLoop()
@@ -188,6 +198,13 @@ func (b *Bridge) broadcastEvent(ev tauchat.ChatEvent) {
 	if err != nil {
 		b.logger.Warn("marshal chat event", "err", err)
 		return
+	}
+
+	// Cache session snapshots for replay to clients that connect later.
+	if _, ok := ev.(tauchat.ChatSessionSnapshotEvent); ok {
+		b.mu.Lock()
+		b.lastSnapshot = data
+		b.mu.Unlock()
 	}
 
 	b.mu.RLock()

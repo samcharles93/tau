@@ -10,6 +10,15 @@
       @keydown="onKeydown"
     />
     <button
+      v-if="streaming"
+      type="button"
+      class="h-10 rounded-md bg-destructive/15 px-4 text-sm font-medium text-destructive hover:bg-destructive/25"
+      @click="emit('stop')"
+    >
+      Stop
+    </button>
+    <button
+      v-else
       type="submit"
       :disabled="!draft.trim()"
       class="h-10 rounded-md bg-primary px-4 text-sm font-medium text-primary-foreground disabled:opacity-40"
@@ -22,12 +31,12 @@
 <script setup lang="ts">
 import { nextTick, ref } from 'vue'
 
-const props = withDefaults(defineProps<{ placeholder?: string }>(), {
+withDefaults(defineProps<{ placeholder?: string; streaming?: boolean }>(), {
   placeholder: 'Message tau…  (Enter to send, Shift+Enter for newline)',
+  streaming: false,
 })
-void props
 
-const emit = defineEmits<{ submit: [text: string] }>()
+const emit = defineEmits<{ submit: [text: string]; stop: [] }>()
 
 const draft = ref('')
 const textarea = ref<HTMLTextAreaElement | null>(null)

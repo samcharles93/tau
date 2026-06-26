@@ -160,6 +160,29 @@ export const useSessionStore = defineStore('session', () => {
     if (state.model?.id) model.value = state.model.id
     if (state.status) status.value = state.status
     if (state.parameters) parameters.value = { ...state.parameters }
+
+    // On a fresh connection the local stream is empty; hydrate it from the
+    // replayed snapshot so a browser joining mid-session sees the history.
+    if (messages.value.length === 0 && state.messages?.length) {
+      hydrateFromHistory(state.messages)
+    }
+  }
+
+  /** Rebuild display messages from persisted conversation history. */
+  function hydrateFromHistory(history: ChatSessionState['messages']) {
+    const hydrated: DisplayMessage[] = []
+    for (const m of history) {
+      if (m.role !== 'user' && m.role !== 'assistant') continue
+      if (!m.content) continue
+      hydrated.push({
+        id: nextId(),
+        role: m.role,
+        content: m.content,
+        tools: [],
+        streaming: false,
+      })
+    }
+    messages.value = hydrated
   }
 
   function pushNotice(level: Notice['level'], message: string) {

@@ -478,3 +478,61 @@ The AsyncAPI document will be expanded with concrete message schemas once the co
 - [ ] Settings changes in the browser emit the same `UpdateChatSessionCommand` as the TUI.
 - [ ] WebSocket protocol is documented in `docs/asyncapi/tau.yaml`.
 - [ ] All new Go code passes `golangci-lint run` and `go fix ./...`.
+
+---
+
+## 14. Post-MVP Enhancements
+
+Phases 1-4 deliver a working, terminal-paired web UI. The following enhancements
+were identified after the first live end-to-end test (browser round-trip against
+a real provider). They are grouped by priority. Most are frontend-only because
+their events/commands already exist on the wire; the two backend items are
+called out explicitly.
+
+### Tier 1 — Foundational gaps
+
+1. **Session history on connect.** A browser that connects mid-session starts
+   with an empty stream because the bridge subscribes to the bus *after* the
+   coordinator emits its session-start snapshot. *Backend:* the bridge caches the
+   most recent `ChatSessionSnapshotEvent` (and last completed state) and replays
+   it to each new client immediately after the `init` message; alternatively the
+   full `ChatSessionState` is folded into `init`. This also populates the settings
+   drawer parameters on first open. *Frontend:* reconcile replayed snapshot
+   messages into the store and dedupe against any optimistic local echo.
+2. **Sanitise markdown.** `ChatMessage` injects `marked` output via `v-html`;
+   model or tool output containing HTML is an XSS vector. Sanitise with DOMPurify
+   before rendering. Pair with code-block syntax highlighting.
+3. **Stop control.** The store already exposes `cancel()` →
+   `CancelChatRequestCommand`; surface a Stop button while `streaming`.
+
+### Tier 2 — TUI feature parity
+
+4. **Reasoning panel.** `ChatReasoningDeltaEvent` is on the wire but unrendered.
+   Add a collapsible `ReasoningPanel` that streams reasoning tokens per turn.
+5. **Live tool output.** `ChatToolCallDeltaEvent` (streaming arguments) and
+   `ChatToolOutputEvent` (live stdout chunks) are currently ignored. Stream them
+   into `ToolCard` so output appears as it is produced, not only on completion.
+6. **Interactive prompts.** `InteractivePromptRequestedEvent` /
+   `RespondInteractivePromptCommand` drive tool confirmations and questions. The
+   web UI must render these as a dialog, otherwise an approval-gated tool hangs
+   for web users.
+7. **Slash commands.** `init` already carries the `commands` (`CommandRef`) list;
+   surface a `/`-triggered autocomplete menu in `ChatInput`.
+
+### Tier 3 — Richer UX
+
+8. **Real model selector.** Model is currently a free-text field. *Backend:*
+   include the available-models list in `init` (the coordinator already builds
+   model refs). *Frontend:* replace the text field with a `ModelSelect` dropdown.
+9. **Toast notices.** Notices currently accumulate inline in the stream. Move
+   transient info/warn/error to a Sonner-style toast container.
+10. **Session switcher.** `ListSessions` / `LoadSession` / `DeleteSession` /
+    `ExportSession` commands and their events are already defined; add a sidebar
+    to browse, resume, export, and delete sessions.
+
+### Tier 4 — Hardening and reach (future)
+
+- E2E coverage in CI against a stubbed runtime (no provider key required).
+- `tau serve` multi-session daemon with token auth — the prerequisite for genuine
+  mobile/remote access beyond localhost (see Non-Goals §3.1).
+- Mobile polish: safe-area insets, virtual-keyboard handling, responsive header.
