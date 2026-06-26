@@ -153,12 +153,11 @@ func (c *Completions) fullReplace(row filteredRow) string {
 		return row.match.Word
 	}
 	text := c.input.Value()
-	end := c.rawSet.ReplaceEnd
-	if end < 0 || end > runeLen(text) {
-		end = runeLen(text)
-	}
+	// Keep everything before the replacement span. Guard only on ReplaceStart
+	// being positive — an empty token slot (ReplaceStart == ReplaceEnd, e.g.
+	// just after "/model ") must still preserve the text up to the cursor.
 	prefix := ""
-	if c.rawSet.ReplaceStart >= 0 && c.rawSet.ReplaceStart < end {
+	if c.rawSet.ReplaceStart > 0 {
 		prefix = runePrefix(text, c.rawSet.ReplaceStart)
 	}
 	result := prefix + row.match.Word
@@ -225,9 +224,20 @@ func (c *Completions) Render(width int) []string {
 
 	var out []string
 	colour := termkit.ColorEnabled()
-	maxItems := min(len(c.filtered), 10)
 
-	for i := range maxItems {
+	// Scroll a fixed-size window over the matches so the selected row stays
+	// visible — without this, selections past the 10th item are invisible and
+	// unreachable. Centre the window on the selection, clamped to the ends.
+	const window = 10
+	n := len(c.filtered)
+	size := min(n, window)
+	start := max(c.selected-size/2, 0)
+	if start+size > n {
+		start = n - size
+	}
+	end := start + size
+
+	for i := start; i < end; i++ {
 		row := c.filtered[i]
 		if g := c.groupOf(i); g != nil && g.start == i && g.title != "" {
 			out = append(out, dim(g.title, colour))

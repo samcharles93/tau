@@ -74,7 +74,7 @@ func formatTokensHuman(n int) string {
 // buildModelRefresher returns a ModelRefresher closure that re-discovers
 // models from the configured provider. The closure captures the provider and
 // insecure flag so the TUI does not need to import infrastructure packages.
-func buildModelRefresher(rt *runtime.Runtime, providerID string) tui.ModelRefresher {
+func buildModelRefresher(rt *runtime.Runtime, providerID, baseURL string) tui.ModelRefresher {
 	return func(ctx context.Context) ([]tauchat.ChatModelRef, error) {
 		if err := rt.Catalog().Fetch(ctx); err != nil {
 			return nil, err
@@ -83,7 +83,7 @@ func buildModelRefresher(rt *runtime.Runtime, providerID string) tui.ModelRefres
 		if err != nil {
 			return nil, err
 		}
-		return modelInfoRefs(models), nil
+		return modelInfoRefs(models, baseURL), nil
 	}
 }
 
@@ -139,24 +139,30 @@ func pickModel(models []runtime.ModelInfo, requestedModel, defaultModel, baseURL
 		if m.ID != selectedModel {
 			continue
 		}
-		return modelInfoToRef(m), nil
+		return modelInfoToRef(m, baseURL), nil
 	}
 
 	return tauchat.ChatModelRef{ID: selectedModel, URL: strings.TrimRight(baseURL, "/")}, nil
 }
 
-func modelInfoRefs(models []runtime.ModelInfo) []tauchat.ChatModelRef {
+func modelInfoRefs(models []runtime.ModelInfo, baseURL string) []tauchat.ChatModelRef {
 	refs := make([]tauchat.ChatModelRef, 0, len(models))
 	for _, m := range models {
-		refs = append(refs, modelInfoToRef(m))
+		refs = append(refs, modelInfoToRef(m, baseURL))
 	}
 	return refs
 }
 
-func modelInfoToRef(m runtime.ModelInfo) tauchat.ChatModelRef {
+func modelInfoToRef(m runtime.ModelInfo, baseURL string) tauchat.ChatModelRef {
+	// Catalogue models often carry no per-model URL; fall back to the provider
+	// base URL so the model reference passes validation when switching models.
+	url := strings.TrimRight(m.URL, "/")
+	if url == "" {
+		url = strings.TrimRight(baseURL, "/")
+	}
 	return tauchat.ChatModelRef{
 		ID:     m.ID,
-		URL:    m.URL,
+		URL:    url,
 		Config: modelInfoToModelConfig(m),
 	}
 }
@@ -206,11 +212,25 @@ func buildStreamer(
 	return NewStreamer(provider, modelID), nil
 }
 
+// resolveProviderClass maps a tau provider config to an ai-sdk runtime class.
+// The config's `type` is honoured only when it names a registered class (e.g.
+// `type: deepseek`). tau's deployment kinds — `hosted`, `local` — are not
+// runtime classes, so any provider speaking the OpenAI chat-completions dialect
+// (the `api: openai-completions` default) resolves to the generic
+// openai-compatible class.
+func resolveProviderClass(provider tauconfig.ProviderConfig) string {
+	if t := strings.TrimSpace(provider.Type); t != "" {
+		if _, ok := runtime.GetClass(t); ok {
+			return t
+		}
+	}
+	return "openai-compatible"
+}
+
 // newRuntimeForProvider creates a runtime configured for a tau provider.
 // It maps tau's provider configuration to the ai-sdk runtime config and
 // registers the built-in provider classes. The provider class is resolved
-// from the tau config's Type field, the models.dev catalog npm mapping,
-// or falls back to openai-compatible.
+// by [resolveProviderClass].
 func newRuntimeForProvider(provider tauconfig.ProviderConfig, insecure bool) *runtime.Runtime {
 	runtime.RegisterBuiltinClasses()
 
@@ -245,7 +265,7 @@ func newRuntimeForProvider(provider tauconfig.ProviderConfig, insecure bool) *ru
 		Providers: map[string]runtime.ProviderConfig{
 			provider.Name: {
 				ID:       provider.Name,
-				Class:    strings.TrimSpace(provider.Type),
+				Class:    resolveProviderClass(provider),
 				BaseURL:  strings.TrimRight(provider.BaseURL, "/"),
 				Insecure: insecure,
 				Auth: runtime.AuthConfig{

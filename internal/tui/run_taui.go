@@ -25,7 +25,7 @@ func RunInline(ctx context.Context, runtime tauchat.ChatRuntime, cfg TUIConfig) 
 	term := taui.NewProcessTerminal()
 	engine := taui.NewTUI(term)
 
-	chat := newInlineChat(engine, runtime, chatSub, cfg)
+	chat := newInlineChat(ctx, engine, runtime, chatSub, cfg)
 
 	go func() {
 		<-ctx.Done()

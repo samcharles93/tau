@@ -27,7 +27,6 @@ func builtinCommands() []Command {
 		{Name: "?", Label: "/?", Description: "toggle help"},
 		{Name: "clear", Label: "/clear", Description: "start a new conversation"},
 		{Name: "reset", Label: "/reset", Description: "start a new conversation"},
-		{Name: "models", Label: "/models", Description: "refresh models"},
 	}
 	return cmds
 }

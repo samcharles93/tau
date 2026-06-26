@@ -111,6 +111,31 @@ func TestCompletionsNavigateAndSelect(t *testing.T) {
 	}
 }
 
+// TestCompletionsEmptySlotPreservesPrefix guards a regression where selecting a
+// completion in an empty token slot (ReplaceStart == ReplaceEnd, e.g. just after
+// "/model ") dropped the text before the cursor, turning "/model " + "gpt" into
+// "gpt " instead of "/model gpt ".
+func TestCompletionsEmptySlotPreservesPrefix(t *testing.T) {
+	input := NewLineInput("")
+	for _, r := range "/model " {
+		input.HandleInput(string(r))
+	}
+	cur := input.Cursor() // 7, after the trailing space
+	var got string
+	c := NewCompletions(input, func(ctx CompletionContext) *CompletionSet {
+		return &CompletionSet{
+			ReplaceStart: cur, ReplaceEnd: cur,
+			Groups: []MatchGroup{{Matches: []Match{{Word: "gpt"}}}},
+		}
+	})
+	c.SetOnSelect(func(s string) { got = s })
+	c.Render(40)
+	c.HandleInput("\r")
+	if got != "/model gpt " {
+		t.Errorf("selected %q, want %q", got, "/model gpt ")
+	}
+}
+
 func TestCompletionsEscDismiss(t *testing.T) {
 	input := NewLineInput("")
 	c := NewCompletions(input, func(ctx CompletionContext) *CompletionSet {

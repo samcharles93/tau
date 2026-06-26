@@ -9,8 +9,6 @@ vars:
 tasks:
   default:
     desc: Build the binary
-    deps:
-      - gsx:generate
     cmds:
       - go build -ldflags "-s -w -X main.version={{.VERSION}}" -o {{.BINARY}}{{exeExt}} {{.CMD}}
     sources:
@@ -29,16 +27,10 @@ tasks:
     desc: Run all quality checks (format, lint, vet, fix, test)
     cmds:
       - golangci-lint fmt ./...
-      - tui fmt ./...
       - go vet ./...
       - go fix ./...
       - golangci-lint run ./...
       - go test ./...
-
-  gsx:generate:
-    desc: Compile .gsx files to Go code
-    cmds:
-      - tui generate ./...
 
   test:race:
     desc: Run tests with race detector

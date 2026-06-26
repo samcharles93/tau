@@ -85,10 +85,23 @@ func (s *scriptedStreamer) StreamChatCompletionFull(
 }
 
 type testSteerStreamer struct {
+	mu            sync.Mutex
 	calls         int
-	onCall        func(chat.ChatSessionState)
+	lastMessages  []chat.ChatMessage
 	firstCallDone chan struct{}
 	steerSent     chan struct{}
+}
+
+func (s *testSteerStreamer) recordMessages(messages []chat.ChatMessage) {
+	s.mu.Lock()
+	s.lastMessages = messages
+	s.mu.Unlock()
+}
+
+func (s *testSteerStreamer) getLastMessages() []chat.ChatMessage {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.lastMessages
 }
 
 func (s *testSteerStreamer) StreamChatCompletionFull(
@@ -99,7 +112,7 @@ func (s *testSteerStreamer) StreamChatCompletionFull(
 	cb chat.StreamCallbacks,
 ) (chat.CompletionResult, error) {
 	s.calls++
-	s.onCall(session)
+	s.recordMessages(session.Messages)
 	if s.calls == 1 {
 		close(s.firstCallDone)
 		return chat.CompletionResult{
@@ -130,11 +143,7 @@ func TestCoordinatorSteeringInjection(t *testing.T) {
 	firstCallDone := make(chan struct{})
 	steerSent := make(chan struct{})
 
-	var lastMessages []chat.ChatMessage
 	streamer := &testSteerStreamer{
-		onCall: func(session chat.ChatSessionState) {
-			lastMessages = session.Messages
-		},
 		firstCallDone: firstCallDone,
 		steerSent:     steerSent,
 	}
@@ -191,7 +200,7 @@ func TestCoordinatorSteeringInjection(t *testing.T) {
 
 	// The last messages should contain the steering message.
 	found := false
-	for _, msg := range lastMessages {
+	for _, msg := range streamer.getLastMessages() {
 		if msg.Role == chat.ChatRoleUser && msg.Content == "steering message" {
 			found = true
 			break
@@ -248,35 +257,6 @@ func TestCoordinatorDispatchesSessionLifecycleHooks(t *testing.T) {
 	require.Equal(t, "session_shutdown", receiveLifecycle(t, shutdown)["event"])
 }
 
-func TestCoordinatorPublishesStartupEventsOnSubscribe(t *testing.T) {
-	coordinator, err := NewCoordinator(context.Background(), CoordinatorConfig{
-		Bus: newTestBus(t),
-		TokenSource: func(context.Context, config.ProviderConfig) (string, error) {
-			return "", nil
-		},
-		Streamer: noopStreamer{},
-		Registry: tools.NewRegistry(),
-		StartupEvents: []chat.ChatEvent{
-			chat.ChatRuntimeErrorEvent{Message: "extension failed", Fatal: false},
-		},
-	})
-	require.NoError(t, err)
-	defer coordinator.Close()
-
-	sub, err := coordinator.SubscribeEvents()
-	require.NoError(t, err)
-	defer sub.Close()
-
-	select {
-	case event := <-sub.Events():
-		runtimeErr, ok := event.(chat.ChatRuntimeErrorEvent)
-		require.True(t, ok)
-		require.Equal(t, "extension failed", runtimeErr.Message)
-	case <-time.After(time.Second):
-		t.Fatal("timed out waiting for startup event")
-	}
-}
-
 func TestCoordinatorPublishesToolAndReasoningObservabilityEvents(t *testing.T) {
 	registry := tools.NewRegistry()
 	require.NoError(t, registry.Register(tools.Tool{
@@ -300,9 +280,19 @@ func TestCoordinatorPublishesToolAndReasoningObservabilityEvents(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	sub, err := coordinator.SubscribeEvents()
-	require.NoError(t, err)
+	bus := newTestBus(t)
+	sub := eventbus.Subscribe[chat.ChatEvent](bus.Client("test"))
 	defer sub.Close()
+
+	coordinator, err := NewCoordinator(context.Background(), CoordinatorConfig{
+		Bus: bus,
+		TokenSource: func(context.Context, config.ProviderConfig) (string, error) {
+			return "", nil
+		},
+		Streamer: &reasoningOnlyStreamer{},
+		Registry: tools.NewRegistry(),
+	})
+	require.NoError(t, err)
 	defer coordinator.Close()
 
 	startTestSession(t, coordinator)
@@ -415,8 +405,7 @@ func TestCoordinatorUnknownToolPublishesCompletedError(t *testing.T) {
 	require.NoError(t, err)
 	defer coordinator.Close()
 
-	sub, err := coordinator.SubscribeEvents()
-	require.NoError(t, err)
+	sub := eventbus.Subscribe[chat.ChatEvent](bus.Client("test"))
 	defer sub.Close()
 
 	startTestSession(t, coordinator)

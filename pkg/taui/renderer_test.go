@@ -4,6 +4,7 @@ import (
 	"regexp"
 	"strings"
 	"testing"
+	"time"
 )
 
 // doRender acquires the render lock and draws one frame. Used by tests to
@@ -158,6 +159,41 @@ func TestPrintAboveStreamsAndRedraws(t *testing.T) {
 	// And the engine still tracks the frame for the next diff.
 	if len(engine.prevLines) != 2 {
 		t.Errorf("after PrintAbove prevLines = %d, want 2 (frame retracked)", len(engine.prevLines))
+	}
+}
+
+func TestUpdateThenPrintMutatesThenCommits(t *testing.T) {
+	term := newFakeTerm(40, 12)
+	engine := NewTUI(term)
+	stage := &Container{}
+	stage.AddChild(NewText("in-frame"))
+	engine.AddChild(stage)
+	engine.doRender()
+	term.reset()
+
+	// The closure mutates the tree (clears the stage) and returns a line to
+	// commit. Crucially, calling this must not deadlock — it would if the
+	// renderer let us PrintAbove while holding the lock.
+	done := make(chan struct{})
+	go func() {
+		engine.UpdateThenPrint(func() []string {
+			stage.Clear()
+			return []string{"committed line"}
+		})
+		close(done)
+	}()
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("UpdateThenPrint deadlocked")
+	}
+
+	out := term.out()
+	if !strings.Contains(out, "committed line") {
+		t.Errorf("returned line was not printed to scrollback: %q", out)
+	}
+	if strings.Contains(out, "in-frame") {
+		t.Errorf("stage was not cleared before repaint: %q", out)
 	}
 }
 

@@ -214,6 +214,16 @@ func (t *TUI) renderLocked() {
 		}
 	}
 
+	// Prevent the live frame from exceeding terminal height. During streaming
+	// the frame can grow very tall (hundreds of response lines), which would
+	// push the input and status past the viewport and into the scrollback
+	// buffer during fullRewrite. Truncating from the top keeps the visible
+	// portion anchored to the bottom (input + status) while the oldest
+	// response lines scroll off.
+	if len(newLines) > height {
+		newLines = newLines[len(newLines)-height:]
+	}
+
 	// Truncate every line to width so one logical line = one physical row (the
 	// renderer's core invariant), then append line-end resets.
 	for i, line := range newLines {
@@ -438,4 +448,29 @@ func (t *TUI) Update(fn func()) {
 	}
 	fn()
 	t.renderLocked()
+}
+
+// UpdateThenPrint runs fn under the render lock to mutate the component tree and
+// collect scrollback output, repaints the frame, then prints the lines fn
+// returns ABOVE the frame after the lock is released.
+//
+// It exists to make a deadlock unrepresentable: calling PrintAbove (or any
+// lock-taking method) inside an Update closure deadlocks because both take the
+// render lock. Returning the lines instead lets the renderer own the ordering —
+// mutate + repaint under the lock, then commit to scrollback once it's free.
+// Each returned line is printed verbatim, so callers bake in their own styling
+// and trailing newlines.
+func (t *TUI) UpdateThenPrint(fn func() []string) {
+	t.mu.Lock()
+	if t.stopped {
+		t.mu.Unlock()
+		return
+	}
+	above := fn()
+	t.renderLocked()
+	t.mu.Unlock()
+
+	for _, line := range above {
+		t.PrintAbovef("%s", line)
+	}
 }

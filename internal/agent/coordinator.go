@@ -67,8 +67,9 @@ type Coordinator struct {
 	autoExportJSONL   bool
 	onClose           func()
 	onPluginEvent     func(event string, sessionID string, payload *api.EventPayload) *api.EventResponse
-	startupEvents     []chat.ChatEvent
-	startupEventsOnce sync.Once
+	// NOTE: startup events are no longer managed by the coordinator.
+	// The app layer publishes them directly on the bus after the
+	// subscriber is created.
 	commands          chan chat.ChatCommand
 
 	mu       sync.Mutex
@@ -104,8 +105,6 @@ type CoordinatorConfig struct {
 	SessionManager    *sessions.Manager
 	AutoExportJSONL   bool
 	OnClose           func()
-	StartupEvents     []chat.ChatEvent
-
 	// OnPluginEvent dispatches lifecycle events to the plugin manager.
 	// The coordinator fires this at turn boundaries, tool execution boundaries,
 	// and LLM request boundaries. sessionID is the explicit session identity.
@@ -160,7 +159,6 @@ func NewCoordinator(ctx context.Context, cfg CoordinatorConfig) (*Coordinator, e
 		autoExportJSONL:   cfg.AutoExportJSONL,
 		onClose:           cfg.OnClose,
 		onPluginEvent:     cfg.OnPluginEvent,
-		startupEvents:     append([]chat.ChatEvent(nil), cfg.StartupEvents...),
 		commands:          make(chan chat.ChatCommand, commandBufferSize),
 		sessions:          make(map[string]*coordinatorSession),
 		shutdown:          make(map[string]struct{}),
@@ -180,21 +178,6 @@ func NewCoordinator(ctx context.Context, cfg CoordinatorConfig) (*Coordinator, e
 	}()
 
 	return c, nil
-}
-
-// SubscribeEvents returns a typed subscriber for coordinator events.
-// The subscriber's Events channel carries [chat.ChatEvent] values in
-// publication order. Startup events (configured via
-// CoordinatorConfig.StartupEvents) are delivered when the first
-// subscriber connects.
-func (c *Coordinator) SubscribeEvents() (*eventbus.Subscriber[chat.ChatEvent], error) {
-	sub := eventbus.Subscribe[chat.ChatEvent](c.client)
-	c.startupEventsOnce.Do(func() {
-		for _, event := range c.startupEvents {
-			c.chatPub.Publish(event)
-		}
-	})
-	return sub, nil
 }
 
 // Send submits a command to the coordinator.
@@ -1229,7 +1212,7 @@ func (c *Coordinator) completeTurn(sessionID, requestID string, result chat.Comp
 	snapshot := chat.CloneChatSessionState(session.state)
 	c.mu.Unlock()
 
-	c.emitMustDeliver(chat.ChatResponseCompletedEvent{
+	c.emit(chat.ChatResponseCompletedEvent{
 		State:        snapshot,
 		RequestID:    requestID,
 		FinishReason: result.FinishReason,
@@ -1254,7 +1237,7 @@ func (c *Coordinator) cancelTurn(sessionID, requestID string, at time.Time) {
 	snapshot := chat.CloneChatSessionState(session.state)
 	c.mu.Unlock()
 
-	c.emitMustDeliver(chat.ChatResponseCancelledEvent{
+	c.emit(chat.ChatResponseCancelledEvent{
 		State:       snapshot,
 		RequestID:   requestID,
 		CancelledAt: at,
@@ -1273,8 +1256,8 @@ func (c *Coordinator) failTurn(sessionID, requestID string, err error, at time.T
 	snapshot := chat.CloneChatSessionState(session.state)
 	c.mu.Unlock()
 
-	c.emitMustDeliver(chat.ChatSessionSnapshotEvent{State: snapshot})
-	c.emitMustDeliver(chat.ChatRuntimeErrorEvent{
+	c.emit(chat.ChatSessionSnapshotEvent{State: snapshot})
+	c.emit(chat.ChatRuntimeErrorEvent{
 		SessionID:  sessionID,
 		RequestID:  requestID,
 		Message:    err.Error(),
@@ -1383,10 +1366,6 @@ func (c *Coordinator) publishPluginLifecycleEvent(event, sessionID string, paylo
 }
 
 func (c *Coordinator) emit(event chat.ChatEvent) {
-	c.chatPub.Publish(event)
-}
-
-func (c *Coordinator) emitMustDeliver(event chat.ChatEvent) {
 	c.chatPub.Publish(event)
 }
 

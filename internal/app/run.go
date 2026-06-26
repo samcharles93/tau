@@ -141,10 +141,10 @@ func RunChat(ctx context.Context, opts ChatOptions) error {
 		}
 	}
 
-	available := modelInfoRefs(allModels)
+	available := modelInfoRefs(allModels, opts.Provider.BaseURL)
 
 	// Build a refresher closure that the TUI can use to re-discover models.
-	refresher := buildModelRefresher(rt, opts.Provider.Name)
+	refresher := buildModelRefresher(rt, opts.Provider.Name, opts.Provider.BaseURL)
 
 	// Command registry owns command state; TUI initialises from snapshot
 	// and receives deltas via CommandsChangedEvent on the bus.
@@ -162,7 +162,6 @@ func RunChat(ctx context.Context, opts ChatOptions) error {
 		ShowReasoning:      opts.Config.UI.ShowReasoning,
 		ReasoningEffort:    opts.ReasoningEffort,
 		Debug:              isDevel(opts.Version, opts.Config),
-		InlineMode:         false,
 	}
 
 	tuiErr := tui.Run(ctx, coordinator, tuiCfg)

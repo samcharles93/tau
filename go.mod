@@ -4,9 +4,7 @@ go 1.26.2
 
 require (
 	github.com/blevesearch/bleve/v2 v2.6.0
-	github.com/google/go-cmp v0.7.0
 	github.com/google/uuid v1.6.0
-	github.com/grindlemire/go-tui v0.17.0
 	github.com/hashicorp/go-hclog v1.6.3
 	github.com/hashicorp/go-plugin v1.8.0
 	github.com/rivo/uniseg v0.4.7
