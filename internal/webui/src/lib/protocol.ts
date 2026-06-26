@@ -21,6 +21,8 @@ export interface InitMessage {
   model: string
   provider: string
   commands?: CommandRef[]
+  /** Available model ids, if the backend advertises them. */
+  models?: string[]
 }
 
 export interface CommandRef {
@@ -126,6 +128,56 @@ export interface ChatNotificationEvent {
   occurred_at: string
 }
 
+export interface ChatToolCallDeltaEvent {
+  session_id: string
+  request_id: string
+  call_id: string
+  index: number
+  tool_name: string
+  arguments_summary: string
+  truncated: boolean
+  received_at: string
+}
+
+export interface ChatToolOutputEvent {
+  session_id: string
+  request_id: string
+  call_id: string
+  chunk: string
+  received_at: string
+}
+
+export type InteractivePromptKind = 'confirm' | 'question'
+
+export interface InteractivePromptRequestedEvent {
+  request_id: string
+  kind: InteractivePromptKind
+  title: string
+  message: string
+  requested_at: string
+}
+
+export interface SessionSummary {
+  id: string
+  model_id: string
+  provider: string
+  created_at: string
+  updated_at: string
+  status: string
+  message_count: number
+  total_tokens: number
+  cost: number
+}
+
+export interface SessionsListedEvent {
+  sessions: SessionSummary[]
+  next_cursor?: string
+}
+
+export interface SessionLoadedEvent {
+  state: ChatSessionState
+}
+
 // ── Commands (client -> server) ─────────────────────────────────────────────
 
 export interface SubmitChatPromptCommand {
@@ -152,6 +204,32 @@ export interface ChatSessionPatch {
 export interface UpdateChatSessionCommand {
   session_id: string
   patch: ChatSessionPatch
+}
+
+export interface RespondInteractivePromptCommand {
+  request_id: string
+  response?: string
+  confirmed: boolean
+  canceled: boolean
+  responded_at: string
+}
+
+export interface ListSessionsCommand {
+  limit: number
+  cursor?: string
+}
+
+export interface LoadSessionCommand {
+  session_id: string
+}
+
+export interface DeleteSessionCommand {
+  session_id: string
+}
+
+export interface ExportSessionCommand {
+  session_id: string
+  format: string
 }
 
 /** Build a command envelope for the wire. */

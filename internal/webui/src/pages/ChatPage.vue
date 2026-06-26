@@ -1,7 +1,8 @@
 <template>
   <ChatLayout>
     <template #header>
-      <div class="flex items-center gap-3">
+      <div class="flex items-center gap-2">
+        <SessionSwitcher />
         <StatusBar />
         <SettingsDrawer />
       </div>
@@ -25,20 +26,11 @@
           :key="message.id"
           :message="message"
         />
-
-        <div v-for="notice in session.notices" :key="notice.id" class="text-center">
-          <span
-            class="text-xs"
-            :class="{
-              'text-status-error': notice.level === 'error',
-              'text-muted-foreground': notice.level !== 'error',
-            }"
-          >
-            {{ notice.message }}
-          </span>
-        </div>
       </div>
     </div>
+
+    <ToastContainer />
+    <InteractivePromptDialog />
 
     <template #footer>
       <div class="mx-auto max-w-3xl">
@@ -55,6 +47,9 @@ import ChatMessage from '@/components/ChatMessage.vue'
 import ChatInput from '@/components/ChatInput.vue'
 import StatusBar from '@/components/StatusBar.vue'
 import SettingsDrawer from '@/components/SettingsDrawer.vue'
+import SessionSwitcher from '@/components/SessionSwitcher.vue'
+import ToastContainer from '@/components/ToastContainer.vue'
+import InteractivePromptDialog from '@/components/InteractivePromptDialog.vue'
 import { useAutoScroll } from '@/composables/useAutoScroll'
 import { useSessionStore } from '@/stores/session'
 
