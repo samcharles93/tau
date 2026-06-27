@@ -98,6 +98,7 @@ func (m *Manager) Load(ctx context.Context, id string, runtimeCfg *RuntimeSessio
 
 	if runtimeCfg != nil {
 		loaded.Provider = runtimeCfg.Provider
+		loaded.ProviderName = runtimeCfg.Provider.Name
 		loaded.Parameters = runtimeCfg.Parameters
 		// Only replace Model.URL/Config when the stored model ID matches
 		// the runtime model, or when the stored URL is empty (migration

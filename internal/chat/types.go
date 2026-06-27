@@ -701,21 +701,26 @@ type ChatFunctionCallDelta struct {
 
 // ChatSessionState is the runtime-owned mutable state for one conversation.
 type ChatSessionState struct {
-	SessionID        string                `json:"session_id"`
-	Provider         config.ProviderConfig `json:"-"`
-	Model            ChatModelRef          `json:"model"`
-	SystemPrompt     string                `json:"system_prompt"`
-	Parameters       ChatParameters        `json:"parameters"`
-	Status           ChatSessionStatus     `json:"status"`
-	Messages         []ChatMessage         `json:"messages"`
-	Tools            []ChatToolDef         `json:"tools,omitempty"`
-	PendingAssistant string                `json:"pending_assistant,omitempty"`
-	ActiveRequestID  string                `json:"active_request_id,omitempty"`
-	LastFinishReason string                `json:"last_finish_reason,omitempty"`
-	LastError        string                `json:"last_error,omitempty"`
-	LastUsage        ChatUsage             `json:"last_usage"`
-	CreatedAt        time.Time             `json:"created_at"`
-	UpdatedAt        time.Time             `json:"updated_at"`
+	SessionID string `json:"session_id"`
+	// Provider holds the full provider configuration (including auth). It is
+	// never written to the wire to avoid leaking credentials.
+	Provider config.ProviderConfig `json:"-"`
+	// ProviderName mirrors Provider.Name and is the field consumed by wire
+	// consumers (web UI, bridge) to know which provider is active.
+	ProviderName     string            `json:"provider,omitempty"`
+	Model            ChatModelRef      `json:"model"`
+	SystemPrompt     string            `json:"system_prompt"`
+	Parameters       ChatParameters    `json:"parameters"`
+	Status           ChatSessionStatus `json:"status"`
+	Messages         []ChatMessage     `json:"messages"`
+	Tools            []ChatToolDef     `json:"tools,omitempty"`
+	PendingAssistant string            `json:"pending_assistant,omitempty"`
+	ActiveRequestID  string            `json:"active_request_id,omitempty"`
+	LastFinishReason string            `json:"last_finish_reason,omitempty"`
+	LastError        string            `json:"last_error,omitempty"`
+	LastUsage        ChatUsage         `json:"last_usage"`
+	CreatedAt        time.Time         `json:"created_at"`
+	UpdatedAt        time.Time         `json:"updated_at"`
 	// ParentSessionID links this session to its parent for conversation
 	// branching / traceability. Empty means root session. Immutable after creation.
 	ParentSessionID string `json:"parent_session_id,omitempty"`
@@ -734,6 +739,7 @@ func NewChatSessionState(sessionID string, cfg ChatSessionConfig, now time.Time)
 	return &ChatSessionState{
 		SessionID:       sessionID,
 		Provider:        cfg.Provider,
+		ProviderName:    cfg.Provider.Name,
 		Model:           cfg.Model,
 		SystemPrompt:    cfg.SystemPrompt,
 		Parameters:      cfg.Parameters,
@@ -759,6 +765,7 @@ func (s *ChatSessionState) ApplyPatch(patch ChatSessionPatch, at time.Time) erro
 	}
 	if patch.Provider != nil {
 		s.Provider.Name = *patch.Provider
+		s.ProviderName = *patch.Provider
 	}
 	if patch.SystemPrompt != nil {
 		s.SystemPrompt = *patch.SystemPrompt

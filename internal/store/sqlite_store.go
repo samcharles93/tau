@@ -209,6 +209,7 @@ func (s *SQLiteStore) Load(ctx context.Context, id string) (chat.ChatSessionStat
 		SessionID:       id,
 		Model:           chat.ChatModelRef{ID: row.modelID},
 		Provider:        config.ProviderConfig{Name: row.provider},
+		ProviderName:    row.provider,
 		SystemPrompt:    row.systemPrompt,
 		ParentSessionID: row.parentID.String,
 		Status:          chat.ChatSessionStatus(row.status),

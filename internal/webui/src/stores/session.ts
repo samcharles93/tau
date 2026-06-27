@@ -326,6 +326,7 @@ export const useSessionStore = defineStore('session', () => {
   function absorbState(state: ChatSessionState) {
     if (!state) return
     sessionId.value = state.session_id || sessionId.value
+    if (state.provider) provider.value = state.provider
     if (state.model?.id) {
       model.value = state.model.id
       // The snapshot carries context_window/cost when the model ref has a

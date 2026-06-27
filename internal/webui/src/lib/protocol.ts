@@ -70,6 +70,7 @@ export interface ChatParameters {
 
 export interface ChatSessionState {
   session_id: string
+  provider?: string
   model: ChatModelRef
   parameters: ChatParameters
   status: string
