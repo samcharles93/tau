@@ -298,7 +298,7 @@ type newCoordinatorResult struct {
 
 // newCoordinator creates and returns an agent coordinator with the standard
 // tool registry, config, and session persistence.
-func newCoordinator(ctx context.Context, opts ChatOptions, bearerToken string, sessionManager *sessions.Manager, startupEvents []tauchat.ChatEvent, bus *eventbus.Bus, streamer agent.Streamer) (*newCoordinatorResult, error) {
+func newCoordinator(ctx context.Context, opts ChatOptions, bearerToken string, sessionManager *sessions.Manager, startupEvents []tauchat.ChatEvent, bus *eventbus.Bus, streamer agent.Streamer, modelRefs []tauchat.ChatModelRef) (*newCoordinatorResult, error) {
 	cwd, _ := os.Getwd()
 	cmdRegClient := bus.Client("command-registry")
 	cmdReg := commandreg.New(cwd, cmdRegClient)
@@ -313,6 +313,7 @@ func newCoordinator(ctx context.Context, opts ChatOptions, bearerToken string, s
 		CommandRegistry: cmdReg,
 		AutoExportJSONL: true,
 		Streamer:        streamer,
+		ModelRefs:       modelRefs,
 	})
 	if err != nil {
 		cmdReg.Close()
@@ -336,6 +337,7 @@ type coordinatorConfig struct {
 	CommandRegistry *commandreg.Registry
 	AutoExportJSONL bool
 	Streamer        agent.Streamer
+	ModelRefs       []tauchat.ChatModelRef
 }
 
 // buildCoordinator creates a coordinator with the full plugin/tool setup.
@@ -444,6 +446,14 @@ func buildCoordinator(ctx context.Context, cfg coordinatorConfig) (*agent.Coordi
 		},
 		OnClose: func() {
 			pluginMgr.Unload()
+		},
+		ModelLookup: func(modelID string) *tauchat.ChatModelRef {
+			for i, ref := range cfg.ModelRefs {
+				if ref.ID == modelID {
+					return &cfg.ModelRefs[i]
+				}
+			}
+			return nil
 		},
 	})
 	if err != nil {

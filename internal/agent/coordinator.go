@@ -68,6 +68,7 @@ type Coordinator struct {
 	startupEvents     []chat.ChatEvent
 	startupEventsOnce sync.Once
 	commands          chan chat.ChatCommand
+	modelLookup       ModelLookup
 
 	mu       sync.Mutex
 	sessions map[string]*coordinatorSession
@@ -90,6 +91,10 @@ type coordinatorSession struct {
 }
 
 // CoordinatorConfig holds the dependencies for creating a Coordinator.
+// ModelLookup resolves a model ID to its full ChatModelRef (with Config,
+// context window, and pricing). Returns nil if the model is unknown.
+type ModelLookup func(modelID string) *chat.ChatModelRef
+
 type CoordinatorConfig struct {
 	Bus         *eventbus.Bus
 	TokenSource TokenSource
@@ -109,6 +114,12 @@ type CoordinatorConfig struct {
 	// and LLM request boundaries. sessionID is the explicit session identity.
 	// Returns merged EventResponse, or nil if no plugins.
 	OnPluginEvent func(event string, sessionID string, payload *api.EventPayload) *api.EventResponse
+
+	// ModelLookup resolves a model ID to its full ChatModelRef (with Config,
+	// context window, pricing). If set, the coordinator calls this whenever
+	// a model patch arrives to enrich the bare {id: "..."} with the full
+	// metadata so snapshots carry correct context_window and cost.
+	ModelLookup ModelLookup
 }
 
 // NewCoordinator creates and starts the agent coordinator.
@@ -155,12 +166,14 @@ func NewCoordinator(ctx context.Context, cfg CoordinatorConfig) (*Coordinator, e
 		onPluginEvent:     cfg.OnPluginEvent,
 		startupEvents:     append([]chat.ChatEvent(nil), cfg.StartupEvents...),
 		commands:          make(chan chat.ChatCommand, commandBufferSize),
+		modelLookup:       cfg.ModelLookup,
 		sessions:          make(map[string]*coordinatorSession),
 		shutdown:          make(map[string]struct{}),
 		prompts:           make(map[string]chan interactivePromptResponse),
 		done:              make(chan struct{}),
 		loopDone:          make(chan struct{}),
 	}
+
 	if cfg.InteractiveUI {
 		c.uiBridge = &coordinatorUIBridge{coordinator: c}
 	} else {
@@ -374,6 +387,17 @@ func (c *Coordinator) handleUpdate(cmd chat.UpdateChatSessionCommand) {
 		})
 		return
 	}
+
+	// If the patch changes the model ID, try to enrich the bare {id: "..."}
+	// with the full Config (context window, pricing) so snapshots carry
+	// correct metadata to wire consumers.
+	if cmd.Patch.Model != nil && c.modelLookup != nil {
+		if full := c.modelLookup(cmd.Patch.Model.ID); full != nil {
+			cmd.Patch.Model.Config = full.Config
+			cmd.Patch.Model.URL = full.URL
+		}
+	}
+
 	if err := session.state.ApplyPatch(cmd.Patch, now); err != nil {
 		c.mu.Unlock()
 		c.emit(chat.ChatRuntimeErrorEvent{

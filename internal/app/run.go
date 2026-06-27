@@ -73,10 +73,14 @@ func RunChat(ctx context.Context, opts ChatOptions) error {
 		})
 	}
 
+	// Build the available model refs early so the coordinator can use them
+	// for model metadata lookups (context window, pricing).
+	available := modelInfoRefs(allModels, opts.Provider.BaseURL)
+
 	// Auth is resolved by the runtime when the provider is created.
 	// The coordinator only needs a token source for legacy compatibility;
 	// pass an empty token.
-	result, err := newCoordinator(ctx, opts, "", sessionManager, startupEvents, bus, streamer)
+	result, err := newCoordinator(ctx, opts, "", sessionManager, startupEvents, bus, streamer, available)
 	if err != nil {
 		if sessionManager != nil {
 			if err := sessionManager.Close(); err != nil {
@@ -140,8 +144,6 @@ func RunChat(ctx context.Context, opts ChatOptions) error {
 			return err
 		}
 	}
-
-	available := modelInfoRefs(allModels, opts.Provider.BaseURL)
 
 	// Build a refresher closure that the TUI can use to re-discover models.
 	refresher := buildModelRefresher(rt, opts.Provider.Name, opts.Provider.BaseURL)

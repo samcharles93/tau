@@ -328,8 +328,19 @@ export const useSessionStore = defineStore('session', () => {
     sessionId.value = state.session_id || sessionId.value
     if (state.model?.id) {
       model.value = state.model.id
-      if (state.model.context_window) contextWindow.value = state.model.context_window
-      if (state.model.cost) cost.value = state.model.cost
+      // The snapshot carries context_window/cost when the model ref has a
+      // populated Config. After a model patch the Config is lost, so fall
+      // back to the model list that was seeded at init time.
+      if (state.model.context_window) {
+        contextWindow.value = state.model.context_window
+      }
+      if (state.model.cost?.input != null || state.model.cost?.output != null) {
+        cost.value = state.model.cost
+      }
+      // If the snapshot lacked metadata, pull it from the init model list.
+      if ((!state.model.context_window || !state.model.cost?.input) && state.model.id) {
+        applyModelMetadata(state.model.id)
+      }
     }
     if (state.status) status.value = state.status
     if (state.parameters) parameters.value = { ...state.parameters }
