@@ -25,11 +25,13 @@ type EventEnvelope struct {
 
 // InitMessage is sent once on connection so the SPA can render initial state.
 type InitMessage struct {
-	Type      string               `json:"type"`
-	SessionID string               `json:"session_id"`
-	Model     string               `json:"model"`
-	Provider  string               `json:"provider"`
-	Commands  []tauchat.CommandRef `json:"commands,omitempty"`
+	Type      string                 `json:"type"`
+	SessionID string                 `json:"session_id"`
+	Model     string                 `json:"model"`
+	Provider  string                 `json:"provider"`
+	Models    []tauchat.ChatModelRef `json:"models,omitempty"`
+	Providers []string               `json:"providers,omitempty"`
+	Commands  []tauchat.CommandRef   `json:"commands,omitempty"`
 }
 
 // MarshalEvent serializes a ChatEvent into an envelope with a type discriminator.
@@ -54,12 +56,14 @@ func UnmarshalCommand(data []byte) (tauchat.ChatCommand, error) {
 }
 
 // MarshalInit builds the one-time init message.
-func MarshalInit(sessionID, model, provider string, commands []tauchat.CommandRef) ([]byte, error) {
+func MarshalInit(sessionID, model, provider string, models []tauchat.ChatModelRef, providers []string, commands []tauchat.CommandRef) ([]byte, error) {
 	return json.Marshal(InitMessage{
 		Type:      "init",
 		SessionID: sessionID,
 		Model:     model,
 		Provider:  provider,
+		Models:    models,
+		Providers: providers,
 		Commands:  commands,
 	})
 }

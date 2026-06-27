@@ -66,7 +66,7 @@ We enforce strict formatting, linting, and language modernization standards for 
 
 ## Project Overview
 
-Tau is a provider-agnostic, OpenAI-compatible chat client with an interactive terminal UI. It features an agentic tool-calling loop, plugin/extension system, skill discovery, session persistence, and a taui-based reactive UI.
+Tau is a provider-agnostic, coding agent with an interactive terminal UI. It features an agentic tool-calling loop, plugin/extension system, skill discovery, session persistence, and a taui-based reactive UI.
 
 ## Architecture
 

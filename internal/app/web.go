@@ -29,6 +29,8 @@ func startWebUI(
 	opts ChatOptions,
 	sessionID string,
 	modelID string,
+	availableModels []tauchat.ChatModelRef,
+	availableProviders []string,
 	commands []tauchat.CommandRef,
 	logger *slog.Logger,
 ) (*webServerResult, error) {
@@ -40,6 +42,8 @@ func startWebUI(
 		SessionID: sessionID,
 		Model:     modelID,
 		Provider:  opts.Provider.Name,
+		Models:    availableModels,
+		Providers: availableProviders,
 		Commands:  commands,
 	}, logger)
 	if err != nil {

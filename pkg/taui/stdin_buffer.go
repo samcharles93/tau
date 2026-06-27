@@ -1,6 +1,7 @@
 package taui
 
 import (
+	"fmt"
 	"regexp"
 	"strconv"
 	"strings"
@@ -13,52 +14,92 @@ const (
 	bracketPasteOff = "\x1b[201~"
 )
 
-// canonicalKey maps the unmodified keys that the Kitty keyboard protocol's
-// "disambiguate escape codes" mode reports as CSI-u back to their legacy bytes,
-// so the rest of the codebase can match a single canonical form regardless of
-// whether the protocol is active. Modified keys (e.g. Shift+Enter "\x1b[13;2u")
-// are left untouched — components match those CSI-u forms directly.
+// Kitty keyboard-protocol modifier bits (the wire value is 1 + this bitmask).
+const (
+	kittyModShift = 1
+	kittyModAlt   = 2
+	kittyModCtrl  = 4
+	// Lock modifiers must be ignored: a terminal with NumLock/CapsLock active
+	// (e.g. ghostty) folds them into the modifier field, so Ctrl arrives as
+	// "1+4+128"=133 rather than "1+4"=5. Masking them out keeps key matching
+	// independent of lock state.
+	kittyLockMods = 64 | 128 // CapsLock | NumLock
+)
+
+// canonicalKey normalizes Kitty keyboard-protocol CSI-u key events back to the
+// legacy bytes the rest of the codebase matches on, regardless of whether the
+// protocol is active or which lock keys happen to be on:
+//   - unmodified disambiguated keys (Esc/Enter/Tab/Backspace) -> their byte;
+//   - Ctrl+<letter> -> the control byte (so Ctrl+C quit, Ctrl+J newline, etc.);
+//   - other modifier combos -> the same CSI-u form with lock bits stripped, so
+//     exact-match handlers like Shift+Enter ("\x1b[13;2u") still fire.
 func canonicalKey(seq string) string {
-	switch seq {
-	case "\x1b[27u": // Esc
-		return "\x1b"
-	case "\x1b[13u": // Enter
-		return "\r"
-	case "\x1b[9u": // Tab
-		return "\t"
-	case "\x1b[127u": // Backspace
-		return "\x7f"
+	cp, mod, ok := parseCSIu(seq)
+	if !ok {
+		return seq
 	}
-	// Kitty CSI-u for Ctrl+<key> ("\x1b[<cp>;5u", modifier 5 = Ctrl only): map
-	// back to the legacy control byte so every Ctrl binding (Ctrl+C quit, Ctrl+J
-	// newline, Ctrl+A/E/U/K/W/S editing) works whether or not the protocol is
-	// active. Modifier combos other than plain Ctrl are left for direct matching.
-	if b, ok := ctrlByteFromKittyCSIu(seq); ok {
-		return string(b)
+
+	// No modifier (or only lock modifiers) -> treat as the bare key.
+	bits := 0
+	if mod > 0 {
+		bits = (mod - 1) &^ kittyLockMods
 	}
-	return seq
+	if bits == 0 {
+		switch cp {
+		case 27:
+			return "\x1b"
+		case 13:
+			return "\r"
+		case 9:
+			return "\t"
+		case 127:
+			return "\x7f"
+		}
+		if mod > 0 {
+			return fmt.Sprintf("\x1b[%du", cp) // e.g. unmodified letter under locks
+		}
+		return seq
+	}
+
+	// Ctrl alone + a letter -> the corresponding control byte.
+	if bits == kittyModCtrl {
+		switch {
+		case cp >= 'a' && cp <= 'z':
+			return string(byte(cp-'a') + 1)
+		case cp >= 1 && cp <= 26:
+			return string(byte(cp))
+		}
+	}
+
+	// Any other combo: re-emit with lock bits removed so the canonical CSI-u
+	// form (e.g. Shift+Enter "\x1b[13;2u") matches downstream.
+	return fmt.Sprintf("\x1b[%d;%du", cp, bits+1)
 }
 
-// ctrlByteFromKittyCSIu decodes a Kitty "\x1b[<cp>;5u" sequence (Ctrl + a
-// letter) into its control byte. It accepts both the codepoint form (cp is the
-// ASCII letter, e.g. 99 for 'c') and the control-char form (cp is 1–26).
-func ctrlByteFromKittyCSIu(seq string) (byte, bool) {
-	const prefix, suffix = "\x1b[", ";5u"
-	if !strings.HasPrefix(seq, prefix) || !strings.HasSuffix(seq, suffix) {
-		return 0, false
+// parseCSIu decodes a Kitty "\x1b[<codepoint>[:alt];<modifier>[:event]u" key
+// event into its codepoint and raw modifier value (0 when no modifier field is
+// present). It returns ok=false for anything that is not a CSI-u key event.
+func parseCSIu(seq string) (codepoint, modifier int, ok bool) {
+	if !strings.HasPrefix(seq, "\x1b[") || !strings.HasSuffix(seq, "u") {
+		return 0, 0, false
 	}
-	digits := seq[len(prefix) : len(seq)-len(suffix)]
-	cp, err := strconv.Atoi(digits)
+	body := seq[2 : len(seq)-1]
+
+	cpField, modField, hasMod := strings.Cut(body, ";")
+	cpField, _, _ = strings.Cut(cpField, ":") // drop shifted-key/base-layout codepoints
+	cp, err := strconv.Atoi(cpField)
 	if err != nil {
-		return 0, false
+		return 0, 0, false
 	}
-	switch {
-	case cp >= 'a' && cp <= 'z': // codepoint form: Ctrl+A == 'a' -> 0x01
-		return byte(cp-'a') + 1, true
-	case cp >= 1 && cp <= 26: // control-char form: already the control byte
-		return byte(cp), true
+	if !hasMod || modField == "" {
+		return cp, 0, true
 	}
-	return 0, false
+	modField, _, _ = strings.Cut(modField, ":") // drop event-type sub-parameter
+	mod, err := strconv.Atoi(modField)
+	if err != nil {
+		return 0, 0, false
+	}
+	return cp, mod, true
 }
 
 // stdinBuffer splits raw terminal input into discrete key sequences and

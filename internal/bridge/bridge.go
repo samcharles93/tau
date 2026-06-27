@@ -24,6 +24,8 @@ type InitInfo struct {
 	SessionID string
 	Model     string
 	Provider  string
+	Models    []tauchat.ChatModelRef
+	Providers []string
 	Commands  []tauchat.CommandRef
 }
 
@@ -62,7 +64,7 @@ func NewBridge(runtime Runtime, bus *eventbus.Bus, init InitInfo, logger *slog.L
 		return nil, errors.New("event bus is required")
 	}
 
-	initData, err := MarshalInit(init.SessionID, init.Model, init.Provider, init.Commands)
+	initData, err := MarshalInit(init.SessionID, init.Model, init.Provider, init.Models, init.Providers, init.Commands)
 	if err != nil {
 		return nil, fmt.Errorf("marshal init message: %w", err)
 	}

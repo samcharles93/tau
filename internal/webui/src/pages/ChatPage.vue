@@ -18,7 +18,7 @@
           v-if="!session.messages.length"
           class="mt-24 text-center text-sm text-muted-foreground"
         >
-          Start the conversation. Messages sync with the terminal session.
+          No messages yet.
         </div>
 
         <ChatMessage

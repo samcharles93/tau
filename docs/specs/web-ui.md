@@ -162,8 +162,8 @@ All messages are JSON objects with a `type` field.
 {
   "type": "init",
   "session_id": "...",
-  "model": "gpt-4o",
-  "provider": "openai",
+  "model": "deepseek-v4-flash",
+  "provider": "deepseek",
   "commands": [ { "name": "/model", "description": "..." } ]
 }
 ```

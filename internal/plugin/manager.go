@@ -10,6 +10,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"sync"
 	"time"
 
@@ -109,12 +110,7 @@ func (m *Manager) hasCapability(name, capability string) bool {
 	if !ok || len(caps) == 0 {
 		return true
 	}
-	for _, c := range caps {
-		if c == capability {
-			return true
-		}
-	}
-	return false
+	return slices.Contains(caps, capability)
 }
 
 // Load discovers and starts all plugin binaries in the plugins directory.

@@ -1,7 +1,7 @@
 # Tau CLI Reference
 
-Tau is a provider-agnostic, OpenAI-compatible interactive chat client. It
-provides a highly extensible and playful environment for working with LLMs,
+Tau is a provider-agnostic, coding agent with an interactive terminal UI.
+`tau` provides a highly extensible and personalised environment for working with AI,
 featuring an interactive TUI, an optional Web UI, session history, token
 tracking, and plugin integration.
 
@@ -19,9 +19,9 @@ provider and model, and also starts a local Web UI on `127.0.0.1`.
 The following flags can be passed to the root `tau` command:
 
 * **`--provider` `<name>`**  
-    Specify the configured provider name to use (e.g., `openai`, `openrouter`). Can also be set via the `TAU_PROVIDER` environment variable.
+    Specify the configured provider name to use (e.g., `openai`, `deepseek`, `openrouter`). Can also be set via the `TAU_PROVIDER` environment variable.
 * **`--model` `<model-id>`**  
-    Specify the model ID to use for the chat session (e.g., `gpt-4o`, `claude-3-5-sonnet`). You can also specify the provider and model together in the format `--model provider:model-id` (e.g. `--model openrouter:nvidia/nemotron-3-ultra`) or the legacy `provider/model-id` form.
+    Specify the model ID to use for the chat session (e.g., `gpt-5.5`, `claude-4-6-sonnet`). You can also specify the provider and model together in the format `--model provider:model-id` (e.g. `--model openrouter:nvidia/nemotron-3-ultra`) or the legacy `provider/model-id` form.
 * **`--max-tokens` `<number>`**  
     Set the maximum completion tokens per response.
 * **`--temperature` `<float>`**  
@@ -43,12 +43,9 @@ The following flags can be passed to the root `tau` command:
 
 ## Web UI
 
-When Tau starts interactively, it also binds a local HTTP/WebSocket server on
-`127.0.0.1`. The URL is printed at startup and shown in the TUI status bar. The
-browser connects to `/ws` and receives the same `ChatEvent` stream that the TUI
-receives; messages sent from the browser are forwarded as `ChatCommand` values
-to the coordinator. The protocol is documented in
-[`docs/asyncapi/tau.yaml`](asyncapi/tau.yaml).
+When Tau starts interactively, it also binds a local HTTP/WebSocket server on localhost.
+
+The URL is printed in the TUI status bar, launching the Web UI in the browser connects to `/ws` and receives the same `ChatEvent` stream that the TUI receives; messages sent from the browser are forwarded as `ChatCommand` values to the coordinator. The protocol is documented in [`docs/asyncapi/tau.yaml`](asyncapi/tau.yaml).
 
 ```bash
 # Start TUI + Web UI, print URL in the terminal

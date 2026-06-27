@@ -11,20 +11,39 @@
       <SheetHeader>
         <SheetTitle>Session settings</SheetTitle>
         <SheetDescription>
-          Changes apply to the shared session, so the terminal sees them too.
+          Changes affect the current session only.
         </SheetDescription>
       </SheetHeader>
 
       <div class="flex flex-col gap-4 py-2">
+        <!-- Provider -->
+        <div v-if="hasMultipleProviders" class="flex flex-col gap-1.5">
+          <Label for="set-provider">Provider</Label>
+          <Select v-model="form.provider" @update:model-value="applyProvider">
+            <SelectTrigger id="set-provider">
+              <SelectValue placeholder="Select provider" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem v-for="p in session.providers" :key="p" :value="p">{{ p }}</SelectItem>
+            </SelectContent>
+          </Select>
+        </div>
+        <div v-else-if="session.provider" class="flex flex-col gap-1.5">
+          <Label>Provider</Label>
+          <div class="rounded-md border border-border bg-muted/50 px-3 py-2 text-sm text-muted-foreground">
+            {{ session.provider }}
+          </div>
+        </div>
+
+        <!-- Model: dropdown from available refs, or free-text fallback -->
         <div class="flex flex-col gap-1.5">
           <Label for="set-model">Model</Label>
-          <!-- Dropdown when the backend advertises models; free-text otherwise. -->
           <Select v-if="session.availableModels.length" v-model="form.model" @update:model-value="applyModelValue">
             <SelectTrigger id="set-model">
               <SelectValue placeholder="Select model" />
             </SelectTrigger>
             <SelectContent>
-              <SelectItem v-for="m in session.availableModels" :key="m" :value="m">{{ m }}</SelectItem>
+              <SelectItem v-for="m in session.availableModels" :key="m.id" :value="m.id">{{ m.id }}</SelectItem>
             </SelectContent>
           </Select>
           <Input
@@ -37,6 +56,7 @@
           />
         </div>
 
+        <!-- Temperature -->
         <div class="flex flex-col gap-1.5">
           <Label for="set-temp">Temperature</Label>
           <Input
@@ -50,6 +70,7 @@
           />
         </div>
 
+        <!-- Max tokens -->
         <div class="flex flex-col gap-1.5">
           <Label for="set-maxtokens">Max tokens</Label>
           <Input
@@ -62,6 +83,7 @@
           />
         </div>
 
+        <!-- Reasoning effort -->
         <div class="flex flex-col gap-1.5">
           <Label>Reasoning effort</Label>
           <Select v-model="form.reasoning" @update:model-value="applyReasoning">
@@ -81,7 +103,7 @@
 </template>
 
 <script setup lang="ts">
-import { reactive, ref, watch } from 'vue'
+import { computed, reactive, ref, watch } from 'vue'
 import { Settings2Icon } from '@lucide/vue'
 import {
   Sheet,
@@ -115,8 +137,10 @@ const reasoningOptions = [
 
 const session = useSessionStore()
 const open = ref(false)
+const hasMultipleProviders = computed(() => (session.providers?.length ?? 0) > 1)
 
 const form = reactive({
+  provider: '',
   model: '',
   temperature: 0,
   maxTokens: 0,
@@ -126,6 +150,7 @@ const form = reactive({
 // Refresh the form from authoritative session state each time the drawer opens.
 watch(open, (isOpen) => {
   if (!isOpen) return
+  form.provider = session.provider
   form.model = session.model
   form.temperature = session.parameters.temperature
   form.maxTokens = session.parameters.max_tokens
@@ -139,6 +164,14 @@ function clampNumber(n: number, lo: number, hi: number): number {
 
 function apply(patch: ChatSessionPatch) {
   session.updateSettings(patch)
+}
+
+function applyProvider(value: unknown) {
+  const provider = typeof value === 'string' ? value.trim() : ''
+  if (provider && provider !== session.provider) {
+    // When switching provider, send the provider name along with current model.
+    apply({ provider, model: { id: form.model || session.model } })
+  }
 }
 
 function applyModel() {

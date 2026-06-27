@@ -38,7 +38,7 @@ func TestStartWebUIServesAndAcceptsCommands(t *testing.T) {
 		NoWeb:    false,
 	}
 
-	res, err := startWebUI(rt, bus, opts, "sess-1", "gpt-test", []tauchat.CommandRef{
+	res, err := startWebUI(rt, bus, opts, "sess-1", "gpt-test", nil, nil, []tauchat.CommandRef{
 		{Name: "/model", Description: "Pick a model"},
 	}, nil)
 	require.NoError(t, err)
@@ -103,7 +103,7 @@ func TestStartWebUIDisabled(t *testing.T) {
 	bus := eventbus.New()
 	defer bus.Close()
 	rt := &stubRuntime{}
-	res, err := startWebUI(rt, bus, ChatOptions{NoWeb: true}, "s1", "m1", nil, nil)
+	res, err := startWebUI(rt, bus, ChatOptions{NoWeb: true}, "s1", "m1", nil, nil, nil, nil)
 	assert.NoError(t, err)
 	assert.Nil(t, res)
 }

@@ -6,7 +6,7 @@
 # is installed, it also verifies the WebSocket init handshake.
 #
 # Usage:
-#   TAU_PROVIDER=openai TAU_MODEL=gpt-4o ./scripts/e2e-webui.sh
+#   TAU_PROVIDER=openai TAU_MODEL=gpt-5.4 ./scripts/e2e-webui.sh
 #
 # The provider/model env vars are optional if you already have a config file.
 

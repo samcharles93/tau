@@ -20,9 +20,11 @@ export interface InitMessage {
   session_id: string
   model: string
   provider: string
+  /** Available model refs (id + config), if the backend advertises them. */
+  models?: ChatModelRef[]
+  /** Available provider names, if the backend advertises them. */
+  providers?: string[]
   commands?: CommandRef[]
-  /** Available model ids, if the backend advertises them. */
-  models?: string[]
 }
 
 export interface CommandRef {
@@ -35,7 +37,7 @@ export interface CommandRef {
 // ── Events (server -> client) ───────────────────────────────────────────────
 
 export interface ChatModelRef {
-  id?: string
+  id: string
   url?: string
 }
 
@@ -178,6 +180,10 @@ export interface SessionLoadedEvent {
   state: ChatSessionState
 }
 
+export interface SessionDeletedEvent {
+  session_id: string
+}
+
 // ── Commands (client -> server) ─────────────────────────────────────────────
 
 export interface SubmitChatPromptCommand {
@@ -194,7 +200,11 @@ export interface CancelChatRequestCommand {
 
 /** Partial update to session settings; only set fields are applied. */
 export interface ChatSessionPatch {
+  /** Model reference. When switching, set model.id to the desired model ID. */
   model?: ChatModelRef
+  /** Provider name to switch to. When set alongside model, the backend treats
+   * this as a full provider/model change. */
+  provider?: string
   system_prompt?: string
   max_tokens?: number
   temperature?: number

@@ -2,6 +2,7 @@ import { defineStore } from 'pinia'
 import { ref } from 'vue'
 import {
   command,
+  type ChatModelRef,
   type ChatParameters,
   type ChatReasoningDeltaEvent,
   type ChatSessionPatch,
@@ -21,6 +22,7 @@ import {
   type InteractivePromptKind,
   type InteractivePromptRequestedEvent,
   type SessionsListedEvent,
+  type SessionDeletedEvent,
   type SessionSummary,
   type SubmitChatPromptCommand,
   type UpdateChatSessionCommand,
@@ -69,8 +71,9 @@ export const useSessionStore = defineStore('session', () => {
   const sessionId = ref('')
   const model = ref('')
   const provider = ref('')
+  const providers = ref<string[]>([])
   const commands = ref<CommandRef[]>([])
-  const availableModels = ref<string[]>([])
+  const availableModels = ref<ChatModelRef[]>([])
   const messages = ref<DisplayMessage[]>([])
   const notices = ref<Notice[]>([])
   const streaming = ref(false)
@@ -118,8 +121,11 @@ export const useSessionStore = defineStore('session', () => {
         sessionId.value = init.session_id
         model.value = init.model
         provider.value = init.provider
+        providers.value = init.providers ?? []
         commands.value = init.commands ?? []
-        availableModels.value = init.models ?? []
+        // availableModels is ChatModelRef[] but the wire delivers it as a plain
+        // object array; cast through unknown to satisfy the type checker.
+        availableModels.value = (init.models ?? []) as ChatModelRef[]
         break
       }
       case 'ChatSessionSnapshotEvent': {
@@ -239,6 +245,12 @@ export const useSessionStore = defineStore('session', () => {
         sessions.value = (msg.payload as SessionsListedEvent).sessions ?? []
         break
       }
+      case 'SessionDeletedEvent': {
+        const ev = msg.payload as SessionDeletedEvent
+        // Remove the session from the list if it exists.
+        sessions.value = sessions.value.filter((s) => s.id !== ev.session_id)
+        break
+      }
     }
   }
 
@@ -329,6 +341,7 @@ export const useSessionStore = defineStore('session', () => {
       reasoning_effort: patch.reasoning_effort ?? parameters.value.reasoning_effort,
     }
     if (patch.model?.id) model.value = patch.model.id
+    if (patch.provider) provider.value = patch.provider
 
     const payload: UpdateChatSessionCommand = { session_id: sessionId.value, patch }
     return sendEnvelope(command('UpdateChatSessionCommand', payload))
@@ -363,6 +376,8 @@ export const useSessionStore = defineStore('session', () => {
 
   function deleteSession(id: string): boolean {
     if (!sendEnvelope) return false
+    // Optimistically remove from the list for a responsive UI.
+    sessions.value = sessions.value.filter((s) => s.id !== id)
     return sendEnvelope(command('DeleteSessionCommand', { session_id: id }))
   }
 
@@ -375,6 +390,7 @@ export const useSessionStore = defineStore('session', () => {
     sessionId,
     model,
     provider,
+    providers,
     commands,
     availableModels,
     messages,

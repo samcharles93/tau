@@ -55,7 +55,7 @@ import { useSessionStore } from '@/stores/session'
 import type { CommandRef } from '@/lib/protocol'
 
 withDefaults(defineProps<{ placeholder?: string; streaming?: boolean }>(), {
-  placeholder: 'Message tau…  (Enter to send, Shift+Enter for newline)',
+  placeholder: 'How can I assist you today?',
   streaming: false,
 })
 

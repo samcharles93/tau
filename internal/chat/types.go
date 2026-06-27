@@ -117,9 +117,6 @@ func (m ChatModelRef) Validate() error {
 	if strings.TrimSpace(m.ID) == "" {
 		return errors.New("chat model id is required")
 	}
-	if strings.TrimSpace(m.URL) == "" {
-		return errors.New("chat model url is required")
-	}
 	return nil
 }
 
@@ -196,6 +193,7 @@ func (c ChatSessionConfig) Validate() error {
 // ChatSessionPatch holds optional config changes for an existing session.
 type ChatSessionPatch struct {
 	Model           *ChatModelRef `json:"model,omitempty"`
+	Provider        *string       `json:"provider,omitempty"`
 	SystemPrompt    *string       `json:"system_prompt,omitempty"`
 	MaxTokens       *int          `json:"max_tokens,omitempty"`
 	Temperature     *float64      `json:"temperature,omitempty"`
@@ -731,6 +729,9 @@ func (s *ChatSessionState) ApplyPatch(patch ChatSessionPatch, at time.Time) erro
 	}
 	if patch.Model != nil {
 		s.Model = *patch.Model
+	}
+	if patch.Provider != nil {
+		s.Provider.Name = *patch.Provider
 	}
 	if patch.SystemPrompt != nil {
 		s.SystemPrompt = *patch.SystemPrompt

@@ -17,13 +17,13 @@ describe('session store', () => {
     s.apply({
       type: 'init',
       session_id: 'sess-1',
-      model: 'gpt-4o',
-      provider: 'openai',
+      model: 'deepseek-v4-flash',
+      provider: 'deepseek',
       commands: [{ name: '/model', label: 'model' }],
     })
     expect(s.sessionId).toBe('sess-1')
-    expect(s.model).toBe('gpt-4o')
-    expect(s.provider).toBe('openai')
+    expect(s.model).toBe('deepseek-v4-flash')
+    expect(s.provider).toBe('deepseek')
     expect(s.commands).toHaveLength(1)
   })
 
@@ -184,5 +184,70 @@ describe('session store', () => {
     expect(s.cancel()).toBe(false)
     expect(s.updateSettings({ temperature: 1 })).toBe(false)
     void vi
+  })
+})
+
+describe('session store — enhancements', () => {
+  beforeEach(() => setActivePinia(createPinia()))
+
+  it('streams reasoning into the active assistant turn', () => {
+    const s = useSessionStore()
+    s.apply(event('ChatReasoningDeltaEvent', { delta: 'think', snapshot: 'think' }))
+    s.apply(event('ChatReasoningDeltaEvent', { delta: 'ing', snapshot: 'thinking' }))
+    expect(s.messages).toHaveLength(1)
+    expect(s.messages[0].reasoning).toBe('thinking')
+  })
+
+  it('streams live tool output by call id', () => {
+    const s = useSessionStore()
+    s.apply(event('ChatToolExecutionStartedEvent', { call_id: 'c1', tool_name: 'bash', arguments_summary: 'ls' }))
+    s.apply(event('ChatToolOutputEvent', { call_id: 'c1', chunk: 'line1\n' }))
+    s.apply(event('ChatToolOutputEvent', { call_id: 'c1', chunk: 'line2\n' }))
+    expect(s.messages[0].tools[0].output).toBe('line1\nline2\n')
+  })
+
+  it('upserts a tool from a tool-call delta before execution starts', () => {
+    const s = useSessionStore()
+    s.apply(event('ChatResponseDeltaEvent', { delta: 'x', snapshot: 'x' }))
+    s.apply(event('ChatToolCallDeltaEvent', { call_id: 'c1', index: 0, tool_name: 'read', arguments_summary: 'pa' }))
+    s.apply(event('ChatToolCallDeltaEvent', { call_id: 'c1', index: 0, tool_name: 'read', arguments_summary: 'path=x' }))
+    expect(s.messages[0].tools).toHaveLength(1)
+    expect(s.messages[0].tools[0].argumentsSummary).toBe('path=x')
+  })
+
+  it('captures an interactive prompt and responds, clearing it', () => {
+    const s = useSessionStore()
+    const sent: Envelope[] = []
+    s.bindSender((e) => {
+      sent.push(e)
+      return true
+    })
+
+    s.apply(
+      event('InteractivePromptRequestedEvent', {
+        request_id: 'p1',
+        kind: 'confirm',
+        title: 'Run?',
+        message: 'allow tool',
+      }),
+    )
+    expect(s.activePrompt?.requestId).toBe('p1')
+
+    s.respondPrompt({ confirmed: true })
+    expect(s.activePrompt).toBeNull()
+    expect(sent[0].type).toBe('RespondInteractivePromptCommand')
+    const payload = sent[0].payload as { request_id: string; confirmed: boolean }
+    expect(payload.request_id).toBe('p1')
+    expect(payload.confirmed).toBe(true)
+  })
+
+  it('stores listed sessions and handles session deletion', () => {
+    const s = useSessionStore()
+    s.apply(event('SessionsListedEvent', { sessions: [{ id: 'a', message_count: 2 }, { id: 'b', message_count: 0 }] }))
+    expect(s.sessions).toHaveLength(2)
+
+    s.apply(event('SessionDeletedEvent', { session_id: 'a' }))
+    expect(s.sessions).toHaveLength(1)
+    expect(s.sessions[0].id).toBe('b')
   })
 })
