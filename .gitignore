@@ -20,3 +20,4 @@ plugins/*/tau-plugin-*
 examples/plugins/*/tau-plugin-*
 
 /.claude/
+.playwright-mcp/

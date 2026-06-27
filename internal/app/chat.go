@@ -468,6 +468,17 @@ func buildCoordinator(ctx context.Context, cfg coordinatorConfig) (*agent.Coordi
 		return nil, nil, fmt.Errorf("registering built-in tools: %w", err)
 	}
 
+	// Create a skill Tracker and register the Skill tool. The allowed-tools
+	// callback is wired after coordinator creation since it needs the
+	// Coordinator's SetAllowedTools method.
+	skillTracker := skills.NewTracker()
+	var setAllowedToolsFn func([]string)
+	tools.RegisterSkillTool(registry, cfg.SkillsManager, skillTracker, func(toolNames []string) {
+		if setAllowedToolsFn != nil {
+			setAllowedToolsFn(toolNames)
+		}
+	})
+
 	// Notifications pushed by plugins via HostService.Notify surface as chat
 	// notifications in every connected client (TUI + web).
 	notifyPub := eventbus.Publish[tauchat.ChatEvent](cfg.Bus.Client("plugin-host"))
@@ -589,6 +600,8 @@ func buildCoordinator(ctx context.Context, cfg coordinatorConfig) (*agent.Coordi
 		SessionManager:    cfg.SessionManager,
 		AutoExportJSONL:   cfg.AutoExportJSONL,
 		StartupEvents:     cfg.StartupEvents,
+		ProjectDir:        cwd,
+		SkillTracker:      skillTracker,
 		ExtensionReloader: pluginMgr,
 		OnPluginEvent: func(event string, sessionID string, payload *api.EventPayload) *api.EventResponse {
 			return pluginMgr.DispatchEvent(ctx, event, sessionID, payload)
@@ -608,6 +621,10 @@ func buildCoordinator(ctx context.Context, cfg coordinatorConfig) (*agent.Coordi
 	if err != nil {
 		return nil, nil, err
 	}
+
+	// Wire up the allowed-tools callback now that the coordinator exists.
+	setAllowedToolsFn = coordinator.SetAllowedTools
+
 	return coordinator, pluginMgr.ExtensionCommands(), nil
 }
 

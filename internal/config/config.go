@@ -790,6 +790,40 @@ func ResolveProvider(cfg Config, providerName string) (ProviderConfig, error) {
 	return ProviderConfig{}, fmt.Errorf("unknown provider %q (available: %s)", name, strings.Join(ProviderNames(cfg), ", "))
 }
 
+// SaveDefaultProviderAndModel writes default_provider and/or default_model
+// to the global Tau config file (~/.config/tau/config.yaml) so the selection
+// persists across restarts. Other fields are preserved. The file is created
+// if it doesn't already exist. An empty provider or model string is silently
+// skipped.
+func SaveDefaultProviderAndModel(cwd, provider, model string) error {
+	path := GlobalPath()
+	_ = cwd // kept for API compatibility
+
+	data := make(map[string]any)
+
+	if b, err := os.ReadFile(path); err == nil {
+		_ = yaml.Unmarshal(b, &data)
+	} else if !errors.Is(err, os.ErrNotExist) {
+		return fmt.Errorf("read local config: %w", err)
+	}
+
+	if strings.TrimSpace(provider) != "" {
+		data["default_provider"] = provider
+	}
+	if strings.TrimSpace(model) != "" {
+		data["default_model"] = model
+	}
+
+	out, err := yaml.Marshal(data)
+	if err != nil {
+		return fmt.Errorf("marshal local config: %w", err)
+	}
+	if err := os.WriteFile(path, out, 0644); err != nil {
+		return fmt.Errorf("write local config: %w", err)
+	}
+	return nil
+}
+
 // ProviderNames returns configured provider names in resolution order.
 func ProviderNames(cfg Config) []string {
 	names := make([]string, 0, len(cfg.Providers))

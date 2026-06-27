@@ -70,6 +70,7 @@ type Coordinator struct {
 	startupEventsOnce sync.Once
 	commands          chan chat.ChatCommand
 	modelLookup       ModelLookup
+	projectDir        string
 	skillTracker      *skills.Tracker
 	allowedTools      map[string]bool
 
@@ -111,6 +112,11 @@ type CoordinatorConfig struct {
 	AutoExportJSONL   bool
 	OnClose           func()
 	StartupEvents     []chat.ChatEvent
+
+	// ProjectDir is the project root directory containing .tau.yaml.
+	// When set, provider/model changes from the UI are persisted to the local
+	// config file so they survive restarts. Empty means no config file writes.
+	ProjectDir string
 
 	// SkillTracker records skills activated in the current session.
 	SkillTracker *skills.Tracker
@@ -173,6 +179,7 @@ func NewCoordinator(ctx context.Context, cfg CoordinatorConfig) (*Coordinator, e
 		startupEvents:     append([]chat.ChatEvent(nil), cfg.StartupEvents...),
 		commands:          make(chan chat.ChatCommand, commandBufferSize),
 		modelLookup:       cfg.ModelLookup,
+		projectDir:        cfg.ProjectDir,
 		skillTracker:      cfg.SkillTracker,
 		allowedTools:      nil,
 		sessions:          make(map[string]*coordinatorSession),
@@ -422,6 +429,34 @@ func (c *Coordinator) handleUpdate(cmd chat.UpdateChatSessionCommand) {
 	// handleUpdate is a config change, not a session lifecycle transition.
 	// Session shutdown is dispatched by handleClose and cancelAllSessions.
 	c.emit(chat.ChatSessionSnapshotEvent{State: snapshot})
+
+	// Persist provider/model changes to the local config file so they survive
+	// restarts. This runs outside the mutex (file I/O is blocking).
+	c.persistDefaultsOnUpdate(cmd.Patch, snapshot)
+}
+
+// persistDefaultsOnUpdate writes default_provider and/or default_model to the
+// local .tau.yaml when the user changed provider or model through the UI.
+func (c *Coordinator) persistDefaultsOnUpdate(patch chat.ChatSessionPatch, snapshot chat.ChatSessionState) {
+	if c.projectDir == "" {
+		return
+	}
+	provider := ""
+	model := ""
+	if patch.Provider != nil {
+		provider = snapshot.ProviderName
+	}
+	if patch.Model != nil {
+		model = snapshot.Model.ID
+	}
+	if provider == "" && model == "" {
+		return
+	}
+	if err := tauconfig.SaveDefaultProviderAndModel(c.projectDir, provider, model); err != nil {
+		slog.Error("coordinator: saving default provider/model to local config",
+			"err", err,
+		)
+	}
 }
 
 func (c *Coordinator) handleCancel(cmd chat.CancelChatRequestCommand) {
@@ -757,9 +792,6 @@ func (c *Coordinator) runTurn(ctx context.Context, state chat.ChatSessionState) 
 		return
 	}
 
-	// Build tool definitions from registry.
-	toolDefs := c.buildToolDefs()
-
 	// The turn loop: call LLM, if tool_calls → execute → append → repeat.
 	for iteration := 0; ; iteration++ {
 		if err := ctx.Err(); err != nil {
@@ -772,8 +804,9 @@ func (c *Coordinator) runTurn(ctx context.Context, state chat.ChatSessionState) 
 		c.injectSteering(sessionID)
 		state = c.getSessionState(sessionID)
 
-		// Inject tools into the session state for this call.
-		state.Tools = toolDefs
+		// Build tool definitions from registry each iteration so the
+		// AllowedTools filter (set by the Skill tool) takes effect.
+		state.Tools = c.buildToolDefs()
 		reasoningSnapshot := ""
 		toolCallSnapshots := make([]chat.ChatToolCall, 0)
 
@@ -1068,10 +1101,47 @@ func (c *Coordinator) executeToolsParallel(ctx context.Context, sessionID, reque
 	return results
 }
 
+// SetAllowedTools sets the allowed tool filter for the next LLM call.
+// When non-empty, only tools whose names are in the set are included in
+// the tool schemas sent to the LLM. The "Skill" tool is always allowed so
+// that the model can switch skills mid-conversation.
+func (c *Coordinator) SetAllowedTools(toolNames []string) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	if len(toolNames) == 0 {
+		c.allowedTools = nil
+		return
+	}
+	m := make(map[string]bool, len(toolNames)+1)
+	for _, name := range toolNames {
+		m[name] = true
+	}
+	// Always allow switching skills.
+	m["Skill"] = true
+	c.allowedTools = m
+}
+
 func (c *Coordinator) buildToolDefs() []chat.ChatToolDef {
 	schemas := c.registry.Schemas()
-	defs := make([]chat.ChatToolDef, len(schemas))
-	for i, s := range schemas {
+
+	c.mu.Lock()
+	allowed := c.allowedTools
+	c.mu.Unlock()
+
+	var filtered []tools.Schema
+	if allowed == nil || len(allowed) == 0 {
+		filtered = schemas
+	} else {
+		for _, s := range schemas {
+			if allowed[s.Name] {
+				filtered = append(filtered, s)
+			}
+		}
+	}
+
+	defs := make([]chat.ChatToolDef, len(filtered))
+	for i, s := range filtered {
 		defs[i] = chat.ChatToolDef{
 			Type: "function",
 			Function: chat.ChatToolDefFunction{

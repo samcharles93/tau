@@ -15,7 +15,7 @@
         </SheetDescription>
       </SheetHeader>
 
-      <div class="flex flex-col gap-4 py-2">
+      <div class="flex flex-col gap-4 py-2 overflow-y-auto flex-1 min-h-0">
         <!-- Provider -->
         <div v-if="hasMultipleProviders" class="flex flex-col gap-1.5">
           <Label for="set-provider">Provider</Label>
