@@ -2,6 +2,7 @@ package taui
 
 import (
 	"regexp"
+	"strconv"
 	"strings"
 	"unicode/utf8"
 )
@@ -27,15 +28,37 @@ func canonicalKey(seq string) string {
 		return "\t"
 	case "\x1b[127u": // Backspace
 		return "\x7f"
-	// Kitty CSI-u encodings for common control characters.
-	case "\x1b[99;5u", "\x1b[3;5u": // Ctrl+C
-		return "\x03"
-	case "\x1b[100;5u", "\x1b[4;5u": // Ctrl+D
-		return "\x04"
-	case "\x1b[122;5u", "\x1b[26;5u": // Ctrl+Z
-		return "\x1a"
+	}
+	// Kitty CSI-u for Ctrl+<key> ("\x1b[<cp>;5u", modifier 5 = Ctrl only): map
+	// back to the legacy control byte so every Ctrl binding (Ctrl+C quit, Ctrl+J
+	// newline, Ctrl+A/E/U/K/W/S editing) works whether or not the protocol is
+	// active. Modifier combos other than plain Ctrl are left for direct matching.
+	if b, ok := ctrlByteFromKittyCSIu(seq); ok {
+		return string(b)
 	}
 	return seq
+}
+
+// ctrlByteFromKittyCSIu decodes a Kitty "\x1b[<cp>;5u" sequence (Ctrl + a
+// letter) into its control byte. It accepts both the codepoint form (cp is the
+// ASCII letter, e.g. 99 for 'c') and the control-char form (cp is 1–26).
+func ctrlByteFromKittyCSIu(seq string) (byte, bool) {
+	const prefix, suffix = "\x1b[", ";5u"
+	if !strings.HasPrefix(seq, prefix) || !strings.HasSuffix(seq, suffix) {
+		return 0, false
+	}
+	digits := seq[len(prefix) : len(seq)-len(suffix)]
+	cp, err := strconv.Atoi(digits)
+	if err != nil {
+		return 0, false
+	}
+	switch {
+	case cp >= 'a' && cp <= 'z': // codepoint form: Ctrl+A == 'a' -> 0x01
+		return byte(cp-'a') + 1, true
+	case cp >= 1 && cp <= 26: // control-char form: already the control byte
+		return byte(cp), true
+	}
+	return 0, false
 }
 
 // stdinBuffer splits raw terminal input into discrete key sequences and
