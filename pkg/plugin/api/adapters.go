@@ -3,13 +3,41 @@ package api
 import (
 	"context"
 
+	"github.com/hashicorp/go-plugin"
 	"github.com/samcharles93/tau/internal/chat"
 )
 
 // GRPCServer adapts an Extension implementation to the gRPC service.
 type GRPCServer struct {
 	UnimplementedExtensionServiceServer
-	Impl Extension
+	Impl   Extension
+	broker *plugin.GRPCBroker
+}
+
+// Init receives the host's HostService broker id, dials it, and hands the
+// resulting Host to the Extension if it is HostAware.
+func (s *GRPCServer) Init(ctx context.Context, req *InitRequest) (*InitResponse, error) {
+	if s.broker == nil || req.HostBrokerId == 0 {
+		return &InitResponse{}, nil
+	}
+	conn, err := s.broker.Dial(req.HostBrokerId)
+	if err != nil {
+		return nil, err
+	}
+	host := &hostClient{client: NewHostServiceClient(conn), pluginName: req.PluginName}
+	if aware, ok := s.Impl.(HostAware); ok {
+		aware.SetHost(host)
+	}
+	return &InitResponse{}, nil
+}
+
+// GetCapabilities reports the plugin's advertised capabilities, defaulting to
+// the full legacy surface when the Extension does not implement Capable.
+func (s *GRPCServer) GetCapabilities(ctx context.Context, req *GetCapabilitiesRequest) (*GetCapabilitiesResponse, error) {
+	if c, ok := s.Impl.(Capable); ok {
+		return &GetCapabilitiesResponse{Capabilities: c.Capabilities()}, nil
+	}
+	return &GetCapabilitiesResponse{Capabilities: []string{CapabilityCommands, CapabilityTools, CapabilityEvents}}, nil
 }
 
 func (s *GRPCServer) GetMetadata(ctx context.Context, req *GetMetadataRequest) (*GetMetadataResponse, error) {
@@ -56,11 +84,31 @@ func (s *GRPCServer) ExecuteTool(ctx context.Context, req *ExecuteToolRequest) (
 
 // GRPCClient adapts the gRPC client to the chat.ExtensionReloader interface.
 type GRPCClient struct {
-	Client ExtensionServiceClient
-	cmds   []chat.ExtensionCommand
+	Client       ExtensionServiceClient
+	cmds         []chat.ExtensionCommand
+	hostBrokerID uint32
 }
 
 var _ chat.ExtensionReloader = &GRPCClient{}
+
+// Capabilities returns the plugin's advertised capability set.
+func (c *GRPCClient) Capabilities(ctx context.Context) ([]string, error) {
+	resp, err := c.Client.GetCapabilities(ctx, &GetCapabilitiesRequest{})
+	if err != nil {
+		return nil, err
+	}
+	return resp.Capabilities, nil
+}
+
+// Init tells the plugin which broker id to dial for the host's HostService.
+// It is a no-op when no HostService is being served.
+func (c *GRPCClient) Init(ctx context.Context, pluginName string) error {
+	if c.hostBrokerID == 0 {
+		return nil
+	}
+	_, err := c.Client.Init(ctx, &InitRequest{HostBrokerId: c.hostBrokerID, PluginName: pluginName})
+	return err
+}
 
 func (c *GRPCClient) ReloadExtensions(ctx context.Context, idle bool) (chat.ExtensionReloadResult, error) {
 	resp, err := c.Client.Reload(ctx, &ReloadRequest{})

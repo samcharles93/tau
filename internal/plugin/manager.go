@@ -28,6 +28,16 @@ type Config struct {
 	Logger               *slog.Logger
 	EventDispatchTimeout time.Duration // per-plugin event dispatch timeout (0 = default)
 	ToolExecutionTimeout time.Duration // per-plugin tool execution timeout (0 = default)
+
+	// Plugins holds the `plugins.<name>` config blocks from config.yaml, served
+	// to plugins via HostService.GetConfig.
+	Plugins map[string]map[string]any
+	// StateDir is where plugin SetConfig values persist (default: PluginsDir/..).
+	StateDir string
+	// Optional host capabilities exposed to plugins via HostService.
+	Notify       Notifier
+	Models       func() []string
+	SessionState func(sessionID string) (stateJSON string, found bool)
 }
 
 const (
@@ -44,11 +54,13 @@ const (
 // Manager discovers, launches, and manages go-plugin extension binaries.
 // It implements chat.ExtensionReloader so it can be passed directly to the coordinator.
 type Manager struct {
-	cfg         Config
-	clients     map[string]*goplugin.Client // plugin name → client
-	grpcClients map[string]*api.GRPCClient  // plugin name → gRPC client
-	pluginOrder []string                    // load order, deterministic iteration
-	mu          sync.RWMutex
+	cfg          Config
+	host         *hostService                // shared HostService served to plugins
+	clients      map[string]*goplugin.Client // plugin name → client
+	grpcClients  map[string]*api.GRPCClient  // plugin name → gRPC client
+	capabilities map[string][]string         // plugin name → advertised capabilities
+	pluginOrder  []string                    // load order, deterministic iteration
+	mu           sync.RWMutex
 }
 
 var _ chat.ExtensionReloader = &Manager{}
@@ -69,11 +81,40 @@ func NewManager(cfg Config) (*Manager, error) {
 	if cfg.ToolExecutionTimeout <= 0 {
 		cfg.ToolExecutionTimeout = DefaultToolExecutionTimeout
 	}
+	if cfg.StateDir == "" {
+		cfg.StateDir = filepath.Dir(cfg.PluginsDir)
+	}
+	host := &hostService{
+		logger:       cfg.Logger,
+		config:       cfg.Plugins,
+		kv:           newKVStore(filepath.Join(cfg.StateDir, "plugin-state.json")),
+		notify:       cfg.Notify,
+		models:       cfg.Models,
+		sessionState: cfg.SessionState,
+	}
 	return &Manager{
-		cfg:         cfg,
-		clients:     make(map[string]*goplugin.Client),
-		grpcClients: make(map[string]*api.GRPCClient),
+		cfg:          cfg,
+		host:         host,
+		clients:      make(map[string]*goplugin.Client),
+		grpcClients:  make(map[string]*api.GRPCClient),
+		capabilities: make(map[string][]string),
 	}, nil
+}
+
+// hasCapability reports whether the named plugin advertises a capability.
+// Plugins that advertise nothing (e.g. a legacy binary without the RPC) are
+// treated as fully capable for backward compatibility.
+func (m *Manager) hasCapability(name, capability string) bool {
+	caps, ok := m.capabilities[name]
+	if !ok || len(caps) == 0 {
+		return true
+	}
+	for _, c := range caps {
+		if c == capability {
+			return true
+		}
+	}
+	return false
 }
 
 // Load discovers and starts all plugin binaries in the plugins directory.
@@ -115,8 +156,16 @@ func (m *Manager) Load(ctx context.Context) error {
 		m.grpcClients[name] = grpcClient
 		m.pluginOrder = append(m.pluginOrder, name)
 
-		// Discover and register tools.
-		toolCount := m.registerPluginTools(ctx, name, grpcClient)
+		// Discover advertised capabilities so we skip unsupported calls.
+		if caps, err := grpcClient.Capabilities(ctx); err == nil {
+			m.capabilities[name] = caps
+		}
+
+		// Discover and register tools only if the plugin provides them.
+		toolCount := 0
+		if m.hasCapability(name, api.CapabilityTools) {
+			toolCount = m.registerPluginTools(ctx, name, grpcClient)
+		}
 		m.cfg.Logger.Info("plugin manager: loaded plugin",
 			"name", name,
 			"commands", len(grpcClient.ExtensionCommands()),
@@ -222,6 +271,10 @@ func (m *Manager) DispatchEvent(ctx context.Context, event string, sessionID str
 	for _, name := range m.pluginOrder {
 		c, ok := m.grpcClients[name]
 		if !ok {
+			continue
+		}
+		// Skip plugins that do not handle lifecycle events.
+		if !m.hasCapability(name, api.CapabilityEvents) {
 			continue
 		}
 
@@ -355,7 +408,7 @@ func (m *Manager) startPlugin(ctx context.Context, pluginPath string) (*goplugin
 			MagicCookieValue: "tau",
 		},
 		Plugins: map[string]goplugin.Plugin{
-			"extension": &api.ExtensionPlugin{Impl: nil},
+			"extension": &api.ExtensionPlugin{Impl: nil, HostImpl: m.host},
 		},
 		Cmd:              exec.CommandContext(ctx, pluginPath),
 		AllowedProtocols: []goplugin.Protocol{goplugin.ProtocolGRPC},
@@ -379,6 +432,16 @@ func (m *Manager) startPlugin(ctx context.Context, pluginPath string) (*goplugin
 	if !ok {
 		client.Kill()
 		return nil, nil, fmt.Errorf("plugin manager: unexpected type %T from dispense", raw)
+	}
+
+	// Hand the plugin its HostService broker id, scoped by its reported name so
+	// HostService.GetConfig resolves the right `plugins.<name>` block.
+	pluginName := filepath.Base(pluginPath)
+	if meta, err := grpcClient.Client.GetMetadata(ctx, &api.GetMetadataRequest{}); err == nil && meta.Name != "" {
+		pluginName = meta.Name
+	}
+	if err := grpcClient.Init(ctx, pluginName); err != nil {
+		m.cfg.Logger.Warn("plugin host init failed", "plugin", pluginName, "err", err)
 	}
 
 	return client, grpcClient, nil

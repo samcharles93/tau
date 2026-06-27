@@ -346,10 +346,30 @@ func buildCoordinator(ctx context.Context, cfg coordinatorConfig) (*agent.Coordi
 		return nil, fmt.Errorf("registering built-in tools: %w", err)
 	}
 
+	// Notifications pushed by plugins via HostService.Notify surface as chat
+	// notifications in every connected client (TUI + web).
+	notifyPub := eventbus.Publish[tauchat.ChatEvent](cfg.Bus.Client("plugin-host"))
+	pluginNotify := func(level, message string) {
+		lvl := tauchat.ChatNotificationInfo
+		switch level {
+		case "warn":
+			lvl = tauchat.ChatNotificationWarn
+		case "error":
+			lvl = tauchat.ChatNotificationError
+		}
+		notifyPub.Publish(tauchat.ChatNotificationEvent{
+			Message:    message,
+			Level:      lvl,
+			OccurredAt: time.Now().UTC(),
+		})
+	}
+
 	// Plugin manager — discovers and manages extension binaries.
 	pluginMgr, err := plugin.NewManager(plugin.Config{
 		ToolRegistry: registry,
 		Logger:       slog.Default(),
+		Plugins:      cfg.ChatOptions.Config.Plugins,
+		Notify:       pluginNotify,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("plugin manager: %w", err)

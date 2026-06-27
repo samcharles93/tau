@@ -20,15 +20,19 @@ type Config struct {
 	Providers       []ProviderConfig `yaml:"providers"`
 	UI              UIConfig         `yaml:"ui"`
 	Debug           bool             `yaml:"debug"`
+	// Plugins holds per-plugin config blocks (`plugins.<name>:`), passed through
+	// to plugins via the HostService.GetConfig reverse RPC.
+	Plugins map[string]map[string]any `yaml:"plugins"`
 }
 
 func (c *Config) UnmarshalYAML(value *yaml.Node) error {
 	type rawConfig struct {
-		DefaultProvider string    `yaml:"default_provider"`
-		DefaultModel    string    `yaml:"default_model"`
-		Providers       yaml.Node `yaml:"providers"`
-		UI              UIConfig  `yaml:"ui"`
-		Debug           bool      `yaml:"debug"`
+		DefaultProvider string                    `yaml:"default_provider"`
+		DefaultModel    string                    `yaml:"default_model"`
+		Providers       yaml.Node                 `yaml:"providers"`
+		UI              UIConfig                  `yaml:"ui"`
+		Debug           bool                      `yaml:"debug"`
+		Plugins         map[string]map[string]any `yaml:"plugins"`
 	}
 	var raw rawConfig
 	if err := value.Decode(&raw); err != nil {
@@ -38,6 +42,7 @@ func (c *Config) UnmarshalYAML(value *yaml.Node) error {
 	c.DefaultModel = raw.DefaultModel
 	c.UI = raw.UI
 	c.Debug = raw.Debug
+	c.Plugins = raw.Plugins
 	if raw.Providers.Kind != 0 {
 		providers, err := decodeProviders(raw.Providers)
 		if err != nil {

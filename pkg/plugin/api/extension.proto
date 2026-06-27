@@ -203,4 +203,73 @@ service ExtensionService {
   rpc GetTools(GetToolsRequest) returns (GetToolsResponse);
   rpc ExecuteTool(ExecuteToolRequest) returns (ExecuteToolResponse);
   rpc Log(LogRequest) returns (LogResponse);
+
+  // Init hands the plugin the broker id of the host's HostService so the
+  // plugin can dial back. Called once by the host right after handshake.
+  rpc Init(InitRequest) returns (InitResponse);
+
+  // GetCapabilities reports which capability types the plugin provides so the
+  // host can skip unsupported calls and evolve the protocol additively.
+  rpc GetCapabilities(GetCapabilitiesRequest) returns (GetCapabilitiesResponse);
+}
+
+message GetCapabilitiesRequest {}
+message GetCapabilitiesResponse {
+  // e.g. "commands", "tools", "events". Unknown values are ignored by the host.
+  repeated string capabilities = 1;
+}
+
+// --- Host services (plugin -> host reverse RPCs) ---
+
+message InitRequest {
+  uint32 host_broker_id = 1;  // go-plugin broker id for the host HostService
+  string plugin_name = 2;     // the plugin's registered name
+}
+message InitResponse {}
+
+message GetConfigRequest {
+  string plugin_name = 1;  // which plugin's config block to read
+  string key = 2;          // optional dotted key; empty returns the whole block
+}
+message GetConfigResponse {
+  string value = 1;  // JSON-encoded value (object or scalar)
+  bool found = 2;
+}
+
+message SetConfigRequest {
+  string plugin_name = 1;
+  string key = 2;
+  string value = 3;  // JSON-encoded value
+}
+message SetConfigResponse {}
+
+message GetSessionStateRequest {
+  string session_id = 1;  // empty = active session
+}
+message GetSessionStateResponse {
+  string state_json = 1;  // JSON-encoded chat.ChatSessionState
+  bool found = 2;
+}
+
+message GetAvailableModelsRequest {}
+message GetAvailableModelsResponse {
+  repeated string models = 1;
+}
+
+message NotifyRequest {
+  string level = 1;    // "info", "warn", "error"
+  string message = 2;
+}
+message NotifyResponse {}
+
+// HostService is served by the tau host and called by plugins via the
+// go-plugin broker. It gives plugins read access to host config/state and
+// the ability to push notifications and structured logs back to tau.
+service HostService {
+  rpc GetConfig(GetConfigRequest) returns (GetConfigResponse);
+  rpc SetConfig(SetConfigRequest) returns (SetConfigResponse);
+  rpc GetSessionState(GetSessionStateRequest) returns (GetSessionStateResponse);
+  rpc GetAvailableModels(GetAvailableModelsRequest) returns (GetAvailableModelsResponse);
+  rpc Notify(NotifyRequest) returns (NotifyResponse);
+  rpc Log(LogRequest) returns (LogResponse);
 }

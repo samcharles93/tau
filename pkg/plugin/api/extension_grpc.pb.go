@@ -2,7 +2,7 @@
 // versions:
 // - protoc-gen-go-grpc v1.6.2
 // - protoc             v7.34.0
-// source: pkg/plugin/api/extension.proto
+// source: extension.proto
 
 package api
 
@@ -19,13 +19,15 @@ import (
 const _ = grpc.SupportPackageIsVersion9
 
 const (
-	ExtensionService_GetMetadata_FullMethodName   = "/proto.ExtensionService/GetMetadata"
-	ExtensionService_RunCommand_FullMethodName    = "/proto.ExtensionService/RunCommand"
-	ExtensionService_Reload_FullMethodName        = "/proto.ExtensionService/Reload"
-	ExtensionService_DispatchEvent_FullMethodName = "/proto.ExtensionService/DispatchEvent"
-	ExtensionService_GetTools_FullMethodName      = "/proto.ExtensionService/GetTools"
-	ExtensionService_ExecuteTool_FullMethodName   = "/proto.ExtensionService/ExecuteTool"
-	ExtensionService_Log_FullMethodName           = "/proto.ExtensionService/Log"
+	ExtensionService_GetMetadata_FullMethodName     = "/proto.ExtensionService/GetMetadata"
+	ExtensionService_RunCommand_FullMethodName      = "/proto.ExtensionService/RunCommand"
+	ExtensionService_Reload_FullMethodName          = "/proto.ExtensionService/Reload"
+	ExtensionService_DispatchEvent_FullMethodName   = "/proto.ExtensionService/DispatchEvent"
+	ExtensionService_GetTools_FullMethodName        = "/proto.ExtensionService/GetTools"
+	ExtensionService_ExecuteTool_FullMethodName     = "/proto.ExtensionService/ExecuteTool"
+	ExtensionService_Log_FullMethodName             = "/proto.ExtensionService/Log"
+	ExtensionService_Init_FullMethodName            = "/proto.ExtensionService/Init"
+	ExtensionService_GetCapabilities_FullMethodName = "/proto.ExtensionService/GetCapabilities"
 )
 
 // ExtensionServiceClient is the client API for ExtensionService service.
@@ -39,6 +41,12 @@ type ExtensionServiceClient interface {
 	GetTools(ctx context.Context, in *GetToolsRequest, opts ...grpc.CallOption) (*GetToolsResponse, error)
 	ExecuteTool(ctx context.Context, in *ExecuteToolRequest, opts ...grpc.CallOption) (*ExecuteToolResponse, error)
 	Log(ctx context.Context, in *LogRequest, opts ...grpc.CallOption) (*LogResponse, error)
+	// Init hands the plugin the broker id of the host's HostService so the
+	// plugin can dial back. Called once by the host right after handshake.
+	Init(ctx context.Context, in *InitRequest, opts ...grpc.CallOption) (*InitResponse, error)
+	// GetCapabilities reports which capability types the plugin provides so the
+	// host can skip unsupported calls and evolve the protocol additively.
+	GetCapabilities(ctx context.Context, in *GetCapabilitiesRequest, opts ...grpc.CallOption) (*GetCapabilitiesResponse, error)
 }
 
 type extensionServiceClient struct {
@@ -119,6 +127,26 @@ func (c *extensionServiceClient) Log(ctx context.Context, in *LogRequest, opts .
 	return out, nil
 }
 
+func (c *extensionServiceClient) Init(ctx context.Context, in *InitRequest, opts ...grpc.CallOption) (*InitResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(InitResponse)
+	err := c.cc.Invoke(ctx, ExtensionService_Init_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *extensionServiceClient) GetCapabilities(ctx context.Context, in *GetCapabilitiesRequest, opts ...grpc.CallOption) (*GetCapabilitiesResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(GetCapabilitiesResponse)
+	err := c.cc.Invoke(ctx, ExtensionService_GetCapabilities_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // ExtensionServiceServer is the server API for ExtensionService service.
 // All implementations must embed UnimplementedExtensionServiceServer
 // for forward compatibility.
@@ -130,6 +158,12 @@ type ExtensionServiceServer interface {
 	GetTools(context.Context, *GetToolsRequest) (*GetToolsResponse, error)
 	ExecuteTool(context.Context, *ExecuteToolRequest) (*ExecuteToolResponse, error)
 	Log(context.Context, *LogRequest) (*LogResponse, error)
+	// Init hands the plugin the broker id of the host's HostService so the
+	// plugin can dial back. Called once by the host right after handshake.
+	Init(context.Context, *InitRequest) (*InitResponse, error)
+	// GetCapabilities reports which capability types the plugin provides so the
+	// host can skip unsupported calls and evolve the protocol additively.
+	GetCapabilities(context.Context, *GetCapabilitiesRequest) (*GetCapabilitiesResponse, error)
 	mustEmbedUnimplementedExtensionServiceServer()
 }
 
@@ -160,6 +194,12 @@ func (UnimplementedExtensionServiceServer) ExecuteTool(context.Context, *Execute
 }
 func (UnimplementedExtensionServiceServer) Log(context.Context, *LogRequest) (*LogResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method Log not implemented")
+}
+func (UnimplementedExtensionServiceServer) Init(context.Context, *InitRequest) (*InitResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method Init not implemented")
+}
+func (UnimplementedExtensionServiceServer) GetCapabilities(context.Context, *GetCapabilitiesRequest) (*GetCapabilitiesResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method GetCapabilities not implemented")
 }
 func (UnimplementedExtensionServiceServer) mustEmbedUnimplementedExtensionServiceServer() {}
 func (UnimplementedExtensionServiceServer) testEmbeddedByValue()                          {}
@@ -308,6 +348,42 @@ func _ExtensionService_Log_Handler(srv interface{}, ctx context.Context, dec fun
 	return interceptor(ctx, in, info, handler)
 }
 
+func _ExtensionService_Init_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(InitRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(ExtensionServiceServer).Init(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: ExtensionService_Init_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(ExtensionServiceServer).Init(ctx, req.(*InitRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _ExtensionService_GetCapabilities_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(GetCapabilitiesRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(ExtensionServiceServer).GetCapabilities(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: ExtensionService_GetCapabilities_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(ExtensionServiceServer).GetCapabilities(ctx, req.(*GetCapabilitiesRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 // ExtensionService_ServiceDesc is the grpc.ServiceDesc for ExtensionService service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -343,7 +419,315 @@ var ExtensionService_ServiceDesc = grpc.ServiceDesc{
 			MethodName: "Log",
 			Handler:    _ExtensionService_Log_Handler,
 		},
+		{
+			MethodName: "Init",
+			Handler:    _ExtensionService_Init_Handler,
+		},
+		{
+			MethodName: "GetCapabilities",
+			Handler:    _ExtensionService_GetCapabilities_Handler,
+		},
 	},
 	Streams:  []grpc.StreamDesc{},
-	Metadata: "pkg/plugin/api/extension.proto",
+	Metadata: "extension.proto",
+}
+
+const (
+	HostService_GetConfig_FullMethodName          = "/proto.HostService/GetConfig"
+	HostService_SetConfig_FullMethodName          = "/proto.HostService/SetConfig"
+	HostService_GetSessionState_FullMethodName    = "/proto.HostService/GetSessionState"
+	HostService_GetAvailableModels_FullMethodName = "/proto.HostService/GetAvailableModels"
+	HostService_Notify_FullMethodName             = "/proto.HostService/Notify"
+	HostService_Log_FullMethodName                = "/proto.HostService/Log"
+)
+
+// HostServiceClient is the client API for HostService service.
+//
+// For semantics around ctx use and closing/ending streaming RPCs, please refer to https://pkg.go.dev/google.golang.org/grpc/?tab=doc#ClientConn.NewStream.
+//
+// HostService is served by the tau host and called by plugins via the
+// go-plugin broker. It gives plugins read access to host config/state and
+// the ability to push notifications and structured logs back to tau.
+type HostServiceClient interface {
+	GetConfig(ctx context.Context, in *GetConfigRequest, opts ...grpc.CallOption) (*GetConfigResponse, error)
+	SetConfig(ctx context.Context, in *SetConfigRequest, opts ...grpc.CallOption) (*SetConfigResponse, error)
+	GetSessionState(ctx context.Context, in *GetSessionStateRequest, opts ...grpc.CallOption) (*GetSessionStateResponse, error)
+	GetAvailableModels(ctx context.Context, in *GetAvailableModelsRequest, opts ...grpc.CallOption) (*GetAvailableModelsResponse, error)
+	Notify(ctx context.Context, in *NotifyRequest, opts ...grpc.CallOption) (*NotifyResponse, error)
+	Log(ctx context.Context, in *LogRequest, opts ...grpc.CallOption) (*LogResponse, error)
+}
+
+type hostServiceClient struct {
+	cc grpc.ClientConnInterface
+}
+
+func NewHostServiceClient(cc grpc.ClientConnInterface) HostServiceClient {
+	return &hostServiceClient{cc}
+}
+
+func (c *hostServiceClient) GetConfig(ctx context.Context, in *GetConfigRequest, opts ...grpc.CallOption) (*GetConfigResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(GetConfigResponse)
+	err := c.cc.Invoke(ctx, HostService_GetConfig_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *hostServiceClient) SetConfig(ctx context.Context, in *SetConfigRequest, opts ...grpc.CallOption) (*SetConfigResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(SetConfigResponse)
+	err := c.cc.Invoke(ctx, HostService_SetConfig_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *hostServiceClient) GetSessionState(ctx context.Context, in *GetSessionStateRequest, opts ...grpc.CallOption) (*GetSessionStateResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(GetSessionStateResponse)
+	err := c.cc.Invoke(ctx, HostService_GetSessionState_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *hostServiceClient) GetAvailableModels(ctx context.Context, in *GetAvailableModelsRequest, opts ...grpc.CallOption) (*GetAvailableModelsResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(GetAvailableModelsResponse)
+	err := c.cc.Invoke(ctx, HostService_GetAvailableModels_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *hostServiceClient) Notify(ctx context.Context, in *NotifyRequest, opts ...grpc.CallOption) (*NotifyResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(NotifyResponse)
+	err := c.cc.Invoke(ctx, HostService_Notify_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *hostServiceClient) Log(ctx context.Context, in *LogRequest, opts ...grpc.CallOption) (*LogResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(LogResponse)
+	err := c.cc.Invoke(ctx, HostService_Log_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+// HostServiceServer is the server API for HostService service.
+// All implementations must embed UnimplementedHostServiceServer
+// for forward compatibility.
+//
+// HostService is served by the tau host and called by plugins via the
+// go-plugin broker. It gives plugins read access to host config/state and
+// the ability to push notifications and structured logs back to tau.
+type HostServiceServer interface {
+	GetConfig(context.Context, *GetConfigRequest) (*GetConfigResponse, error)
+	SetConfig(context.Context, *SetConfigRequest) (*SetConfigResponse, error)
+	GetSessionState(context.Context, *GetSessionStateRequest) (*GetSessionStateResponse, error)
+	GetAvailableModels(context.Context, *GetAvailableModelsRequest) (*GetAvailableModelsResponse, error)
+	Notify(context.Context, *NotifyRequest) (*NotifyResponse, error)
+	Log(context.Context, *LogRequest) (*LogResponse, error)
+	mustEmbedUnimplementedHostServiceServer()
+}
+
+// UnimplementedHostServiceServer must be embedded to have
+// forward compatible implementations.
+//
+// NOTE: this should be embedded by value instead of pointer to avoid a nil
+// pointer dereference when methods are called.
+type UnimplementedHostServiceServer struct{}
+
+func (UnimplementedHostServiceServer) GetConfig(context.Context, *GetConfigRequest) (*GetConfigResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method GetConfig not implemented")
+}
+func (UnimplementedHostServiceServer) SetConfig(context.Context, *SetConfigRequest) (*SetConfigResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method SetConfig not implemented")
+}
+func (UnimplementedHostServiceServer) GetSessionState(context.Context, *GetSessionStateRequest) (*GetSessionStateResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method GetSessionState not implemented")
+}
+func (UnimplementedHostServiceServer) GetAvailableModels(context.Context, *GetAvailableModelsRequest) (*GetAvailableModelsResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method GetAvailableModels not implemented")
+}
+func (UnimplementedHostServiceServer) Notify(context.Context, *NotifyRequest) (*NotifyResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method Notify not implemented")
+}
+func (UnimplementedHostServiceServer) Log(context.Context, *LogRequest) (*LogResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method Log not implemented")
+}
+func (UnimplementedHostServiceServer) mustEmbedUnimplementedHostServiceServer() {}
+func (UnimplementedHostServiceServer) testEmbeddedByValue()                     {}
+
+// UnsafeHostServiceServer may be embedded to opt out of forward compatibility for this service.
+// Use of this interface is not recommended, as added methods to HostServiceServer will
+// result in compilation errors.
+type UnsafeHostServiceServer interface {
+	mustEmbedUnimplementedHostServiceServer()
+}
+
+func RegisterHostServiceServer(s grpc.ServiceRegistrar, srv HostServiceServer) {
+	// If the following call panics, it indicates UnimplementedHostServiceServer was
+	// embedded by pointer and is nil.  This will cause panics if an
+	// unimplemented method is ever invoked, so we test this at initialization
+	// time to prevent it from happening at runtime later due to I/O.
+	if t, ok := srv.(interface{ testEmbeddedByValue() }); ok {
+		t.testEmbeddedByValue()
+	}
+	s.RegisterService(&HostService_ServiceDesc, srv)
+}
+
+func _HostService_GetConfig_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(GetConfigRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(HostServiceServer).GetConfig(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: HostService_GetConfig_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(HostServiceServer).GetConfig(ctx, req.(*GetConfigRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _HostService_SetConfig_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(SetConfigRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(HostServiceServer).SetConfig(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: HostService_SetConfig_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(HostServiceServer).SetConfig(ctx, req.(*SetConfigRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _HostService_GetSessionState_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(GetSessionStateRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(HostServiceServer).GetSessionState(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: HostService_GetSessionState_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(HostServiceServer).GetSessionState(ctx, req.(*GetSessionStateRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _HostService_GetAvailableModels_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(GetAvailableModelsRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(HostServiceServer).GetAvailableModels(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: HostService_GetAvailableModels_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(HostServiceServer).GetAvailableModels(ctx, req.(*GetAvailableModelsRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _HostService_Notify_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(NotifyRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(HostServiceServer).Notify(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: HostService_Notify_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(HostServiceServer).Notify(ctx, req.(*NotifyRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _HostService_Log_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(LogRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(HostServiceServer).Log(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: HostService_Log_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(HostServiceServer).Log(ctx, req.(*LogRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+// HostService_ServiceDesc is the grpc.ServiceDesc for HostService service.
+// It's only intended for direct use with grpc.RegisterService,
+// and not to be introspected or modified (even as a copy)
+var HostService_ServiceDesc = grpc.ServiceDesc{
+	ServiceName: "proto.HostService",
+	HandlerType: (*HostServiceServer)(nil),
+	Methods: []grpc.MethodDesc{
+		{
+			MethodName: "GetConfig",
+			Handler:    _HostService_GetConfig_Handler,
+		},
+		{
+			MethodName: "SetConfig",
+			Handler:    _HostService_SetConfig_Handler,
+		},
+		{
+			MethodName: "GetSessionState",
+			Handler:    _HostService_GetSessionState_Handler,
+		},
+		{
+			MethodName: "GetAvailableModels",
+			Handler:    _HostService_GetAvailableModels_Handler,
+		},
+		{
+			MethodName: "Notify",
+			Handler:    _HostService_Notify_Handler,
+		},
+		{
+			MethodName: "Log",
+			Handler:    _HostService_Log_Handler,
+		},
+	},
+	Streams:  []grpc.StreamDesc{},
+	Metadata: "extension.proto",
 }
