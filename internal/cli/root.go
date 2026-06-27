@@ -39,6 +39,7 @@ func NewRootCommand(version string) *urfavecli.Command {
 			modelsCmd(),
 			refreshCmd(),
 			sessionsCmd(),
+			skillsCmd(),
 		},
 		Flags: []urfavecli.Flag{
 			&urfavecli.StringFlag{
@@ -92,6 +93,10 @@ func NewRootCommand(version string) *urfavecli.Command {
 			&urfavecli.BoolFlag{
 				Name:  "no-web",
 				Usage: "Do not start the web UI",
+			},
+			&urfavecli.StringSliceFlag{
+				Name:  "skill-dir",
+				Usage: "Additional skill directories (repeatable)",
 			},
 		},
 		Action: func(ctx context.Context, cmd *urfavecli.Command) error {
@@ -166,5 +171,6 @@ func chatOptionsFromCmd(cmd *urfavecli.Command, cfg tauconfig.Config, provider t
 		Web:             cmd.Bool("web"),
 		WebPort:         cmd.Int("port"),
 		NoWeb:           cmd.Bool("no-web"),
+		SkillDirs:       cmd.StringSlice("skill-dir"),
 	}
 }

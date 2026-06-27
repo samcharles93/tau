@@ -11,6 +11,7 @@ import (
 	"github.com/gorilla/websocket"
 	tauchat "github.com/samcharles93/tau/internal/chat"
 	"github.com/samcharles93/tau/internal/eventbus"
+	"github.com/samcharles93/tau/internal/skills"
 )
 
 // Runtime is the coordinator side of the bridge: it accepts commands.
@@ -21,12 +22,14 @@ type Runtime interface {
 
 // InitInfo is sent to every browser on WebSocket connection.
 type InitInfo struct {
-	SessionID string
-	Model     string
-	Provider  string
-	Models    []tauchat.ChatModelRef
-	Providers []string
-	Commands  []tauchat.CommandRef
+	SessionID          string
+	Model              string
+	Provider           string
+	Models             []tauchat.ChatModelRef
+	Providers          []string
+	Commands           []tauchat.CommandRef
+	Skills             []tauchat.SkillInfo
+	ExtensionCommands  []tauchat.ExtensionCommand
 }
 
 // Bridge fans out ChatEvent values to all connected WebSocket clients and
@@ -39,6 +42,7 @@ type Bridge struct {
 	bus     *eventbus.Bus
 	client  *eventbus.Client
 	sub     *eventbus.Subscriber[tauchat.ChatEvent]
+	skillsSub *eventbus.SubscriberFunc[skills.Event]
 
 	mu       sync.RWMutex
 	clients  map[*client]struct{}
@@ -64,7 +68,17 @@ func NewBridge(runtime Runtime, bus *eventbus.Bus, init InitInfo, logger *slog.L
 		return nil, errors.New("event bus is required")
 	}
 
-	initData, err := MarshalInit(init.SessionID, init.Model, init.Provider, init.Models, init.Providers, init.Commands)
+	// Convert skills to the bridge-level type for the init message.
+	bridgeSkills := make([]SkillInfo, 0, len(init.Skills))
+	for _, s := range init.Skills {
+		bridgeSkills = append(bridgeSkills, SkillInfo{
+			Name:        s.Name,
+			Description: s.Description,
+			Scope:       s.Scope,
+		})
+	}
+
+	initData, err := MarshalInit(init.SessionID, init.Model, init.Provider, init.Models, init.Providers, init.Commands, bridgeSkills, init.ExtensionCommands)
 	if err != nil {
 		return nil, fmt.Errorf("marshal init message: %w", err)
 	}
@@ -87,6 +101,20 @@ func NewBridge(runtime Runtime, bus *eventbus.Bus, init InitInfo, logger *slog.L
 			CheckOrigin:     func(r *http.Request) bool { return true },
 		},
 	}
+
+	// Subscribe to skills events after b is initialised so the callback
+	// can safely reference the bridge instance.
+	b.skillsSub = eventbus.SubscribeFunc(busClient, func(evt skills.Event) {
+		skillsList := make([]tauchat.SkillInfo, 0, len(evt.ActiveSkills))
+		for _, s := range evt.ActiveSkills {
+			skillsList = append(skillsList, tauchat.SkillInfo{
+				Name:        s.Name,
+				Description: s.Description,
+				Scope:       string(s.Scope),
+			})
+		}
+		b.broadcastEvent(tauchat.SkillsChangedEvent{Skills: skillsList})
+	})
 
 	b.wg.Add(1)
 	go b.broadcastLoop()
@@ -146,6 +174,9 @@ func (b *Bridge) Close() error {
 
 	if b.sub != nil {
 		b.sub.Close()
+	}
+	if b.skillsSub != nil {
+		b.skillsSub.Close()
 	}
 	if b.client != nil {
 		b.client.Close()

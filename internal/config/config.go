@@ -23,6 +23,10 @@ type Config struct {
 	// Plugins holds per-plugin config blocks (`plugins.<name>:`), passed through
 	// to plugins via the HostService.GetConfig reverse RPC.
 	Plugins map[string]map[string]any `yaml:"plugins"`
+	// DisabledSkills lists skill names to exclude from the active catalog.
+	DisabledSkills []string `yaml:"disabled_skills,omitempty"`
+	// SkillPaths lists additional directories to scan for skills.
+	SkillPaths []string `yaml:"skill_paths,omitempty"`
 }
 
 func (c *Config) UnmarshalYAML(value *yaml.Node) error {
@@ -33,6 +37,8 @@ func (c *Config) UnmarshalYAML(value *yaml.Node) error {
 		UI              UIConfig                  `yaml:"ui"`
 		Debug           bool                      `yaml:"debug"`
 		Plugins         map[string]map[string]any `yaml:"plugins"`
+		DisabledSkills  []string                  `yaml:"disabled_skills"`
+		SkillPaths      []string                  `yaml:"skill_paths"`
 	}
 	var raw rawConfig
 	if err := value.Decode(&raw); err != nil {
@@ -43,6 +49,8 @@ func (c *Config) UnmarshalYAML(value *yaml.Node) error {
 	c.UI = raw.UI
 	c.Debug = raw.Debug
 	c.Plugins = raw.Plugins
+	c.DisabledSkills = raw.DisabledSkills
+	c.SkillPaths = raw.SkillPaths
 	if raw.Providers.Kind != 0 {
 		providers, err := decodeProviders(raw.Providers)
 		if err != nil {
@@ -633,6 +641,46 @@ func firstNonNilAnyMap(values ...map[string]any) map[string]any {
 	return nil
 }
 
+// mergeStringSlices combines two slices, deduplicating entries. Local
+// entries are appended after global entries; duplicates are dropped so the
+// local config can add to the global list without repeating items.
+func mergeStringSlices(global, local []string) []string {
+	if len(global) == 0 {
+		if len(local) == 0 {
+			return nil
+		}
+		out := make([]string, len(local))
+		copy(out, local)
+		return out
+	}
+	if len(local) == 0 {
+		out := make([]string, len(global))
+		copy(out, global)
+		return out
+	}
+	seen := make(map[string]struct{}, len(global)+len(local))
+	out := make([]string, 0, len(global)+len(local))
+	for _, v := range global {
+		trimmed := strings.TrimSpace(v)
+		if trimmed == "" {
+			continue
+		}
+		seen[strings.ToLower(trimmed)] = struct{}{}
+		out = append(out, v)
+	}
+	for _, v := range local {
+		trimmed := strings.TrimSpace(v)
+		if trimmed == "" {
+			continue
+		}
+		if _, exists := seen[strings.ToLower(trimmed)]; exists {
+			continue
+		}
+		out = append(out, v)
+	}
+	return out
+}
+
 func mergeConfigs(globalCfg, localCfg Config) Config {
 	merged := globalCfg
 	if strings.TrimSpace(localCfg.DefaultProvider) != "" {
@@ -642,6 +690,12 @@ func mergeConfigs(globalCfg, localCfg Config) Config {
 		merged.DefaultModel = localCfg.DefaultModel
 	}
 	merged.Debug = globalCfg.Debug || localCfg.Debug
+
+	// Merge disabled skills: local appends to global (project-local can add
+	// more disabled skills but cannot re-enable globally disabled ones).
+	merged.DisabledSkills = mergeStringSlices(globalCfg.DisabledSkills, localCfg.DisabledSkills)
+	// Merge skill paths: local appends to global.
+	merged.SkillPaths = mergeStringSlices(globalCfg.SkillPaths, localCfg.SkillPaths)
 
 	providers := make(map[string]ProviderConfig, len(globalCfg.Providers)+len(localCfg.Providers))
 	order := make([]string, 0, len(globalCfg.Providers)+len(localCfg.Providers))

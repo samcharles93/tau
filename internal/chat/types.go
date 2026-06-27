@@ -554,6 +554,22 @@ type CommandsChangedEvent struct {
 
 func (CommandsChangedEvent) IsChatEvent() {}
 
+// SkillInfo is a lightweight skill descriptor published over the WebSocket
+// bridge to the web UI. It omits security-sensitive fields such as file paths.
+type SkillInfo struct {
+	Name        string `json:"name"`
+	Description string `json:"description"`
+	Scope       string `json:"scope"`
+}
+
+// SkillsChangedEvent is published when the skill catalog changes following a
+// refresh cycle. Consumers use it to keep their skill listings in sync.
+type SkillsChangedEvent struct {
+	Skills []SkillInfo `json:"skills"`
+}
+
+func (SkillsChangedEvent) IsChatEvent() {}
+
 type ExtensionCommandResultEvent struct {
 	Name       string    `json:"name"`
 	Output     string    `json:"output"`

@@ -5,12 +5,14 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"strings"
 
 	"github.com/samcharles93/tau/internal/app"
 	tauchat "github.com/samcharles93/tau/internal/chat"
 	"github.com/samcharles93/tau/internal/config"
 	"github.com/samcharles93/tau/internal/providers"
 	"github.com/samcharles93/tau/internal/sessions"
+	"github.com/samcharles93/tau/internal/skills"
 	"github.com/samcharles93/tau/internal/store"
 	urfavecli "github.com/urfave/cli/v3"
 )
@@ -215,4 +217,149 @@ func loadProvider(cmd *urfavecli.Command) (config.Config, config.ProviderConfig,
 func noProvidersError() error {
 	return fmt.Errorf("no usable providers: set a provider API key (e.g. OPENROUTER_API_KEY), "+
 		"run tau and use /login to enable a provider, or declare one in %s", config.GlobalPath())
+}
+
+func skillsCmd() *urfavecli.Command {
+	return &urfavecli.Command{
+		Name:  "skills",
+		Usage: "List and inspect available skills",
+		Commands: []*urfavecli.Command{
+			skillsListCmd(),
+			skillsInfoCmd(),
+		},
+	}
+}
+
+func skillsListCmd() *urfavecli.Command {
+	return &urfavecli.Command{
+		Name:  "list",
+		Usage: "List all discovered skills",
+		Action: func(ctx context.Context, cmd *urfavecli.Command) error {
+			cfg, err := config.LoadConfigAllowEmpty()
+			if err != nil {
+				return err
+			}
+
+			cwd, _ := os.Getwd()
+
+			sources := skills.DefaultSources(cwd)
+			sources = append(sources, skills.AdditionalSources(cfg.SkillPaths, skills.ScopeUser)...)
+			sources = append(sources, skills.AdditionalSources(cmd.Root().StringSlice("skill-dir"), skills.ScopeUser)...)
+
+			allSkills, diagnostics := skills.Discover(sources)
+
+			// Build disabled lookup so status can be shown even for disabled skills.
+			disabledSet := make(map[string]bool)
+			for _, name := range cfg.DisabledSkills {
+				disabledSet[strings.ToLower(strings.TrimSpace(name))] = true
+			}
+
+			if len(allSkills) == 0 {
+				fmt.Println("No skills found.")
+				return nil
+			}
+
+			fmt.Printf("%-38s  %-58s  %-8s  %-10s  %s\n",
+				"NAME", "DESCRIPTION", "SCOPE", "INVOCABLE", "STATUS")
+			for _, skill := range allSkills {
+				status := "active"
+				if disabledSet[strings.ToLower(skill.Name)] {
+					status = "disabled"
+				}
+
+				userInv := "yes"
+				if !skill.UserInvocable {
+					userInv = "no"
+				}
+
+				fmt.Printf("%-38s  %-58s  %-8s  %-10s  %s\n",
+					skill.Name,
+					truncateString(skill.Description, 58),
+					skill.Scope,
+					userInv,
+					status,
+				)
+			}
+
+			if len(diagnostics) > 0 {
+				fmt.Fprintf(os.Stderr, "\n%d diagnostic(s):\n", len(diagnostics))
+				for _, d := range diagnostics {
+					fmt.Fprintf(os.Stderr, "  [%s] %s: %s\n", d.Severity, d.Path, d.Message)
+				}
+			}
+
+			return nil
+		},
+	}
+}
+
+func skillsInfoCmd() *urfavecli.Command {
+	return &urfavecli.Command{
+		Name:  "info",
+		Usage: "Show detailed information about a skill",
+		Action: func(ctx context.Context, cmd *urfavecli.Command) error {
+			if cmd.Args().Len() == 0 {
+				return fmt.Errorf("skill name is required")
+			}
+
+			skillName := cmd.Args().First()
+
+			cfg, err := config.LoadConfigAllowEmpty()
+			if err != nil {
+				return err
+			}
+
+			cwd, _ := os.Getwd()
+
+			sources := skills.DefaultSources(cwd)
+			sources = append(sources, skills.AdditionalSources(cfg.SkillPaths, skills.ScopeUser)...)
+			sources = append(sources, skills.AdditionalSources(cmd.Root().StringSlice("skill-dir"), skills.ScopeUser)...)
+
+			allSkills, _ := skills.Discover(sources)
+
+			var found *skills.Skill
+			for _, s := range allSkills {
+				if strings.EqualFold(s.Name, skillName) {
+					found = s
+					break
+				}
+			}
+
+			if found == nil {
+				return fmt.Errorf("skill %q not found", skillName)
+			}
+
+			fmt.Printf("Name:              %s\n", found.Name)
+			fmt.Printf("Description:       %s\n", found.Description)
+			fmt.Printf("Scope:             %s\n", found.Scope)
+			fmt.Printf("Path:              %s\n", found.Path)
+
+			userInv := "yes"
+			if !found.UserInvocable {
+				userInv = "no"
+			}
+			fmt.Printf("User-invocable:    %s\n", userInv)
+
+			if found.License != "" {
+				fmt.Printf("License:           %s\n", found.License)
+			}
+			if found.Compatibility != "" {
+				fmt.Printf("Compatibility:     %s\n", found.Compatibility)
+			}
+			if len(found.Metadata) > 0 {
+				fmt.Printf("Metadata:\n")
+				for k, v := range found.Metadata {
+					fmt.Printf("  %s: %s\n", k, v)
+				}
+			}
+			if found.AllowedTools != "" {
+				fmt.Printf("Allowed tools:     %s\n", found.AllowedTools)
+			}
+
+			// Preview first 200 chars of instructions.
+			fmt.Printf("Instructions:\n%s\n", truncateString(found.Instructions, 200))
+
+			return nil
+		},
+	}
 }

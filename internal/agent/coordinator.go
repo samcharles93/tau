@@ -21,6 +21,7 @@ import (
 	tauconfig "github.com/samcharles93/tau/internal/config"
 	"github.com/samcharles93/tau/internal/eventbus"
 	"github.com/samcharles93/tau/internal/sessions"
+	"github.com/samcharles93/tau/internal/skills"
 	"github.com/samcharles93/tau/pkg/plugin/api"
 )
 
@@ -69,6 +70,8 @@ type Coordinator struct {
 	startupEventsOnce sync.Once
 	commands          chan chat.ChatCommand
 	modelLookup       ModelLookup
+	skillTracker      *skills.Tracker
+	allowedTools      map[string]bool
 
 	mu       sync.Mutex
 	sessions map[string]*coordinatorSession
@@ -108,6 +111,9 @@ type CoordinatorConfig struct {
 	AutoExportJSONL   bool
 	OnClose           func()
 	StartupEvents     []chat.ChatEvent
+
+	// SkillTracker records skills activated in the current session.
+	SkillTracker *skills.Tracker
 
 	// OnPluginEvent dispatches lifecycle events to the plugin manager.
 	// The coordinator fires this at turn boundaries, tool execution boundaries,
@@ -167,6 +173,8 @@ func NewCoordinator(ctx context.Context, cfg CoordinatorConfig) (*Coordinator, e
 		startupEvents:     append([]chat.ChatEvent(nil), cfg.StartupEvents...),
 		commands:          make(chan chat.ChatCommand, commandBufferSize),
 		modelLookup:       cfg.ModelLookup,
+		skillTracker:      cfg.SkillTracker,
+		allowedTools:      nil,
 		sessions:          make(map[string]*coordinatorSession),
 		shutdown:          make(map[string]struct{}),
 		prompts:           make(map[string]chan interactivePromptResponse),

@@ -13,6 +13,7 @@ import (
 	"github.com/samcharles93/tau/internal/eventbus"
 	commandreg "github.com/samcharles93/tau/internal/registry"
 	"github.com/samcharles93/tau/internal/sessions"
+	"github.com/samcharles93/tau/internal/skills"
 	"github.com/samcharles93/tau/internal/tui"
 )
 
@@ -45,10 +46,6 @@ func RunChat(ctx context.Context, opts ChatOptions) error {
 	// per turn from the session state.
 	streamer := buildDynamicStreamer(pr)
 
-	// Build the full system prompt — project context (AGENTS.md) + user override.
-	cwd, _ := os.Getwd()
-	systemPrompt := buildAgentSystemPrompt("", cwd) // Left user prompt there in case we want to expand this later.
-
 	// Initialize session store at the RunChat level so it outlives the
 	// coordinator (needed for --resume and exit summary).
 	rawStore, storeErr := sessions.OpenStore()
@@ -64,6 +61,28 @@ func RunChat(ctx context.Context, opts ChatOptions) error {
 	// ordering of published events and typed routing via Go generics.
 	bus := eventbus.New()
 	defer bus.Close()
+
+	// Skills manager — centralises discovery and publishes events on the bus
+	// so subscribers (TUI, bridge) stay in sync when the catalog changes.
+	skillsMgr := skills.NewManager(bus)
+	defer skillsMgr.Close()
+
+	cwd, _ := os.Getwd()
+	// Refresh the skill catalog once at startup. Disabled skills are read from
+	// config so user preferences persist across sessions. CLI --skill-dir flags
+	// are merged with config SkillPaths.
+	extraPaths := append([]string{}, opts.Config.SkillPaths...)
+	extraPaths = append(extraPaths, opts.SkillDirs...)
+	if _, err := skillsMgr.Refresh(skills.DiscoveryConfig{
+		WorkingDir:     cwd,
+		ExtraPaths:     extraPaths,
+		DisabledSkills: opts.Config.DisabledSkills,
+	}); err != nil {
+		slog.Warn("skill discovery failed", "err", err)
+	}
+
+	// Build the full system prompt — project context (AGENTS.md) + skill catalog.
+	systemPrompt := buildAgentSystemPrompt("", cwd, skillsMgr) // Left user prompt there in case we want to expand this later.
 
 	// Collect startup notifications for the coordinator event stream so the
 	// TUI receives them on first subscribe. Model discovery failures are
@@ -100,7 +119,7 @@ func RunChat(ctx context.Context, opts ChatOptions) error {
 	// Auth is resolved by the runtime when the provider is created.
 	// The coordinator only needs a token source for legacy compatibility;
 	// pass an empty token.
-	result, err := newCoordinator(ctx, opts, "", sessionManager, startupEvents, bus, streamer, available)
+	result, err := newCoordinator(ctx, opts, "", sessionManager, startupEvents, bus, streamer, available, skillsMgr)
 	if err != nil {
 		if sessionManager != nil {
 			if err := sessionManager.Close(); err != nil {
@@ -172,12 +191,15 @@ func RunChat(ctx context.Context, opts ChatOptions) error {
 	// and receives deltas via CommandsChangedEvent on the bus.
 	initialCommands := commandRefsFromRegistry(result.CommandRegistry.All())
 
+	// Extract the initial active skill set to seed the Web UI bridge.
+	initialSkills := skillsFromManager(skillsMgr)
+
 	// Optionally start the Web UI bridge and server.
 	var webURL string
 	var webShutdown func()
 	var webWait func()
 	if !opts.NoWeb {
-		webRes, err := startWebUI(coordinator, bus, opts, sessionID, model.ID, available, tauconfig.ProviderNames(opts.Config), initialCommands, slog.Default())
+		webRes, err := startWebUI(coordinator, bus, opts, sessionID, model.ID, available, tauconfig.ProviderNames(opts.Config), initialCommands, initialSkills, result.ExtensionCommands, slog.Default())
 		if err != nil {
 			slog.Warn("web ui failed", "err", err)
 		} else if webRes != nil {
@@ -245,4 +267,19 @@ func commandRefsFromRegistry(cmds []commandreg.Command) []tauchat.CommandRef {
 		})
 	}
 	return refs
+}
+
+// skillsFromManager extracts a lightweight SkillInfo slice from the skills
+// manager's active skill snapshot, suitable for seeding the Web UI bridge.
+func skillsFromManager(mgr *skills.Manager) []tauchat.SkillInfo {
+	snapshot := mgr.Snapshot()
+	out := make([]tauchat.SkillInfo, 0, len(snapshot.ActiveSkills))
+	for _, s := range snapshot.ActiveSkills {
+		out = append(out, tauchat.SkillInfo{
+			Name:        s.Name,
+			Description: s.Description,
+			Scope:       string(s.Scope),
+		})
+	}
+	return out
 }

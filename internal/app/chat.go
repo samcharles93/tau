@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
+	"sort"
 	"strings"
 	"time"
 
@@ -40,9 +41,10 @@ type ChatOptions struct {
 	ReasoningEffort string
 	Version         string
 	ResumeSessionID string
-	Web             bool // --web: auto-open browser
-	WebPort         int  // --port: 0 = ephemeral
-	NoWeb           bool // --no-web: do not start web UI
+	Web             bool     // --web: auto-open browser
+	WebPort         int      // --port: 0 = ephemeral
+	NoWeb           bool     // --no-web: do not start web UI
+	SkillDirs       []string // --skill-dir: additional skill directories
 }
 
 // printExitSummary prints session metadata after the TUI exits.
@@ -165,12 +167,17 @@ func buildSessionConfig(opts ChatOptions, model tauchat.ChatModelRef, systemProm
 // buildAgentSystemPrompt builds the full system prompt for the agent,
 // combining project context (AGENTS.md), the skill catalog and working
 // directory info
-func buildAgentSystemPrompt(userPrompt, cwd string) string {
+func buildAgentSystemPrompt(userPrompt, cwd string, skillsMgr *skills.Manager) string {
 	contextFiles := agent.DiscoverContextFiles(cwd)
 
-	sources := skills.DefaultSources(cwd)
-	allSkills, _ := skills.Discover(sources)
-	activeSkills := skills.FilterDisabled(allSkills, nil)
+	var activeSkills []*skills.Skill
+	if skillsMgr != nil {
+		activeSkills = skillsMgr.Snapshot().ActiveSkills
+	} else {
+		sources := skills.DefaultSources(cwd)
+		allSkills, _ := skills.Discover(sources)
+		activeSkills = skills.FilterDisabled(allSkills, nil)
+	}
 
 	return agent.BuildSystemPrompt(agent.PromptConfig{
 		ContextFiles: contextFiles,
@@ -399,18 +406,19 @@ func newRuntimeForProviders(providers []tauconfig.ProviderConfig, insecure bool)
 // the caller can seed the TUI with the initial command snapshot before the
 // bus delivers the first CommandsChangedEvent.
 type newCoordinatorResult struct {
-	Coordinator     *agent.Coordinator
-	CommandRegistry *commandreg.Registry
+	Coordinator        *agent.Coordinator
+	CommandRegistry    *commandreg.Registry
+	ExtensionCommands  []tauchat.ExtensionCommand
 }
 
 // newCoordinator creates and returns an agent coordinator with the standard
 // tool registry, config, and session persistence.
-func newCoordinator(ctx context.Context, opts ChatOptions, bearerToken string, sessionManager *sessions.Manager, startupEvents []tauchat.ChatEvent, bus *eventbus.Bus, streamer agent.Streamer, modelRefs []tauchat.ChatModelRef) (*newCoordinatorResult, error) {
+func newCoordinator(ctx context.Context, opts ChatOptions, bearerToken string, sessionManager *sessions.Manager, startupEvents []tauchat.ChatEvent, bus *eventbus.Bus, streamer agent.Streamer, modelRefs []tauchat.ChatModelRef, skillsMgr *skills.Manager) (*newCoordinatorResult, error) {
 	cwd, _ := os.Getwd()
 	cmdRegClient := bus.Client("command-registry")
 	cmdReg := commandreg.New(cwd, cmdRegClient)
 
-	coordinator, err := buildCoordinator(ctx, coordinatorConfig{
+	coordinator, extCmds, err := buildCoordinator(ctx, coordinatorConfig{
 		Bus:             bus,
 		ChatOptions:     opts,
 		BearerToken:     bearerToken,
@@ -421,14 +429,16 @@ func newCoordinator(ctx context.Context, opts ChatOptions, bearerToken string, s
 		AutoExportJSONL: true,
 		Streamer:        streamer,
 		ModelRefs:       modelRefs,
+		SkillsManager:   skillsMgr,
 	})
 	if err != nil {
 		cmdReg.Close()
 		return nil, err
 	}
 	return &newCoordinatorResult{
-		Coordinator:     coordinator,
-		CommandRegistry: cmdReg,
+		Coordinator:        coordinator,
+		CommandRegistry:    cmdReg,
+		ExtensionCommands:  extCmds,
 	}, nil
 }
 
@@ -445,14 +455,17 @@ type coordinatorConfig struct {
 	AutoExportJSONL bool
 	Streamer        agent.Streamer
 	ModelRefs       []tauchat.ChatModelRef
+	// SkillsManager provides the skill catalog snapshot. When nil the
+	// coordinator falls back to inline discovery (headless path).
+	SkillsManager *skills.Manager
 }
 
 // buildCoordinator creates a coordinator with the full plugin/tool setup.
-func buildCoordinator(ctx context.Context, cfg coordinatorConfig) (*agent.Coordinator, error) {
+func buildCoordinator(ctx context.Context, cfg coordinatorConfig) (*agent.Coordinator, []tauchat.ExtensionCommand, error) {
 	cwd, _ := os.Getwd()
 	registry := tools.NewRegistry()
 	if err := tools.RegisterBuiltins(registry, cwd); err != nil {
-		return nil, fmt.Errorf("registering built-in tools: %w", err)
+		return nil, nil, fmt.Errorf("registering built-in tools: %w", err)
 	}
 
 	// Notifications pushed by plugins via HostService.Notify surface as chat
@@ -481,7 +494,7 @@ func buildCoordinator(ctx context.Context, cfg coordinatorConfig) (*agent.Coordi
 		Notify:       pluginNotify,
 	})
 	if err != nil {
-		return nil, fmt.Errorf("plugin manager: %w", err)
+		return nil, nil, fmt.Errorf("plugin manager: %w", err)
 	}
 
 	registry.SetPluginToolExecutor(func(ctx context.Context, pluginName, toolName string, args json.RawMessage) (tools.Result, error) {
@@ -490,6 +503,30 @@ func buildCoordinator(ctx context.Context, cfg coordinatorConfig) (*agent.Coordi
 
 	if err := pluginMgr.Load(ctx); err != nil {
 		slog.Warn("plugin manager load failed", "err", err)
+		notifyPub.Publish(tauchat.ChatNotificationEvent{
+			Message:    "Plugin load failed: " + err.Error(),
+			Level:      tauchat.ChatNotificationError,
+			OccurredAt: time.Now().UTC(),
+		})
+	} else {
+		// Publish extension commands so the TUI/Web UI pick them up without
+		// requiring a manual /reload.
+		extCmds := pluginMgr.ExtensionCommands()
+		if len(extCmds) > 0 {
+			notifyPub.Publish(tauchat.ExtensionCommandsChangedEvent{
+				Commands:   extCmds,
+				OccurredAt: time.Now().UTC(),
+			})
+		}
+		// Notify the user that plugins loaded successfully, including counts.
+		loadedMsg := pluginLoadMessage(pluginMgr)
+		if loadedMsg != "" {
+			notifyPub.Publish(tauchat.ChatNotificationEvent{
+				Message:    loadedMsg,
+				Level:      tauchat.ChatNotificationInfo,
+				OccurredAt: time.Now().UTC(),
+			})
+		}
 	}
 
 	// Subscribe the plugin manager to fire-and-forget lifecycle events
@@ -534,7 +571,12 @@ func buildCoordinator(ctx context.Context, cfg coordinatorConfig) (*agent.Coordi
 		// Discover skills once and share with the registry to avoid
 		// redundant filesystem walks (the prompt builder also uses
 		// skill discovery).
-		allSkills, _ := skills.Discover(skills.DefaultSources(cwd))
+		var allSkills []*skills.Skill
+		if cfg.SkillsManager != nil {
+			allSkills = cfg.SkillsManager.Snapshot().AllSkills
+		} else {
+			allSkills, _ = skills.Discover(skills.DefaultSources(cwd))
+		}
 		cfg.CommandRegistry.MergeSkills(allSkills)
 	}
 
@@ -564,9 +606,33 @@ func buildCoordinator(ctx context.Context, cfg coordinatorConfig) (*agent.Coordi
 		},
 	})
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
-	return coordinator, nil
+	return coordinator, pluginMgr.ExtensionCommands(), nil
+}
+
+// pluginLoadMessage builds a human-readable summary of loaded plugins
+// for the startup notification. Returns empty string when no plugins loaded.
+func pluginLoadMessage(mgr *plugin.Manager) string {
+	extCmds := mgr.ExtensionCommands()
+	if len(extCmds) == 0 {
+		return ""
+	}
+	// Count unique plugin names from command ExtensionName fields.
+	plugins := make(map[string]int) // plugin name → command count
+	for _, cmd := range extCmds {
+		plugins[cmd.ExtensionName]++
+	}
+	var parts []string
+	for name, count := range plugins {
+		if count == 1 {
+			parts = append(parts, name+" (1 command)")
+		} else {
+			parts = append(parts, fmt.Sprintf("%s (%d commands)", name, count))
+		}
+	}
+	sort.Strings(parts)
+	return "Plugins loaded: " + strings.Join(parts, ", ")
 }
 
 func staticTokenSource(token string) agent.TokenSource {

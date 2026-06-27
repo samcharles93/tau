@@ -15,6 +15,12 @@ export interface Envelope<T = unknown> {
   payload: T
 }
 
+export interface SkillInfo {
+  name: string
+  description: string
+  scope: string
+}
+
 export interface InitMessage {
   type: 'init'
   session_id: string
@@ -25,6 +31,8 @@ export interface InitMessage {
   /** Available provider names, if the backend advertises them. */
   providers?: string[]
   commands?: CommandRef[]
+  skills?: SkillInfo[]
+  extension_commands?: ExtensionCommand[]
 }
 
 export interface CommandRef {
@@ -32,6 +40,25 @@ export interface CommandRef {
   label: string
   description?: string
   accepts_args?: boolean
+}
+
+export interface ExtensionCommand {
+  name: string
+  description?: string
+  extension_name: string
+}
+
+export interface ExtensionCommandsChangedEvent {
+  commands: ExtensionCommand[]
+  occurred_at: string
+}
+
+export interface ExtensionsReloadedEvent {
+  result: {
+    extension_count: number
+    commands: ExtensionCommand[]
+  }
+  occurred_at: string
 }
 
 // ── Events (server -> client) ───────────────────────────────────────────────
@@ -218,6 +245,10 @@ export interface SessionLoadedEvent {
 
 export interface SessionDeletedEvent {
   session_id: string
+}
+
+export interface SkillsChangedEvent {
+  skills: SkillInfo[]
 }
 
 // ── Commands (client -> server) ─────────────────────────────────────────────

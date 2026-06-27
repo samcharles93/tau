@@ -12,6 +12,7 @@ import (
 	tauchat "github.com/samcharles93/tau/internal/chat"
 	"github.com/samcharles93/tau/internal/eventbus"
 	"github.com/samcharles93/tau/internal/sessions"
+	"github.com/samcharles93/tau/internal/skills"
 )
 
 const stdInTimeout = 60 * time.Minute
@@ -45,7 +46,24 @@ func RunStdIn(ctx context.Context, opts ChatOptions, prompt string) error {
 	}
 
 	cwd, _ := os.Getwd()
-	systemPrompt := buildAgentSystemPrompt("", cwd)
+
+	// Create a local event bus and skills manager for headless mode.
+	bus := eventbus.New()
+	defer bus.Close()
+
+	skillsMgr := skills.NewManager(bus)
+	defer skillsMgr.Close()
+	extraPaths := append([]string{}, opts.Config.SkillPaths...)
+	extraPaths = append(extraPaths, opts.SkillDirs...)
+	if _, err := skillsMgr.Refresh(skills.DiscoveryConfig{
+		WorkingDir:     cwd,
+		ExtraPaths:     extraPaths,
+		DisabledSkills: opts.Config.DisabledSkills,
+	}); err != nil {
+		slog.Warn("skill discovery failed", "err", err)
+	}
+
+	systemPrompt := buildAgentSystemPrompt("", cwd, skillsMgr)
 
 	rawStore, storeErr := sessions.OpenStore()
 	var sessionManager *sessions.Manager
@@ -55,14 +73,15 @@ func RunStdIn(ctx context.Context, opts ChatOptions, prompt string) error {
 		sessionManager = sessions.NewManager(rawStore)
 	}
 
-	coordinator, err := buildCoordinator(ctx, coordinatorConfig{
-		Bus:             eventbus.New(),
+	coordinator, _, err := buildCoordinator(ctx, coordinatorConfig{
+		Bus:             bus,
 		ChatOptions:     opts,
 		BearerToken:     "",
 		SessionManager:  sessionManager,
 		InteractiveUI:   false,
 		AutoExportJSONL: false,
 		Streamer:        streamer,
+		SkillsManager:   skillsMgr,
 	})
 	if err != nil {
 		if sessionManager != nil {

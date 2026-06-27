@@ -12,6 +12,11 @@
     <span v-if="session.model" class="font-mono">{{ session.model }}</span>
     <span v-if="session.provider" class="text-muted-foreground/70">{{ session.provider }}</span>
 
+    <span v-if="session.skills.length > 0" class="flex items-center gap-1">
+      <ZapIcon class="size-3" />
+      {{ session.skills.length }} skill{{ session.skills.length !== 1 ? 's' : '' }}
+    </span>
+
     <span v-if="clients !== null" class="flex items-center gap-1" :title="`${clients} web client(s) connected`">
       <UsersIcon class="size-3" />
       {{ clients }}
@@ -31,7 +36,7 @@
 
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, ref } from 'vue'
-import { CheckIcon, CopyIcon, UsersIcon } from '@lucide/vue'
+import { CheckIcon, CopyIcon, UsersIcon, ZapIcon } from '@lucide/vue'
 import { useConnection } from '@/composables/useConnection'
 import { useSessionStore } from '@/stores/session'
 

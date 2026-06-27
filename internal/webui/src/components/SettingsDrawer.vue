@@ -97,6 +97,30 @@
             </SelectContent>
           </Select>
         </div>
+
+        <!-- Skills -->
+        <div class="border-t border-border pt-3 mt-1">
+          <Label class="mb-2 block">Skills</Label>
+          <div v-if="session.skills.length === 0" class="text-xs text-muted-foreground italic">
+            No skills discovered
+          </div>
+          <div v-else class="flex flex-col gap-2">
+            <div v-for="s in session.skills" :key="s.name" class="flex flex-col gap-0.5">
+              <div class="flex items-center gap-1.5">
+                <span class="font-mono text-xs">{{ s.name }}</span>
+                <span
+                  class="rounded px-1 py-0.5 text-[10px] font-medium leading-none"
+                  :class="s.scope === 'user'
+                    ? 'bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-400'
+                    : 'bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400'"
+                >
+                  {{ s.scope }}
+                </span>
+              </div>
+              <span v-if="s.description" class="text-xs text-muted-foreground">{{ s.description }}</span>
+            </div>
+          </div>
+        </div>
       </div>
     </SheetContent>
   </Sheet>

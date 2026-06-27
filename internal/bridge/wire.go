@@ -23,15 +23,26 @@ type EventEnvelope struct {
 	Payload tauchat.ChatEvent `json:"payload"`
 }
 
+// SkillInfo is the bridge-level representation of a skill sent to WebSocket
+// clients. It mirrors tauchat.SkillInfo but is defined here to avoid a direct
+// dependency on the chat layer for this struct.
+type SkillInfo struct {
+	Name        string `json:"name"`
+	Description string `json:"description"`
+	Scope       string `json:"scope"`
+}
+
 // InitMessage is sent once on connection so the SPA can render initial state.
 type InitMessage struct {
-	Type      string                 `json:"type"`
-	SessionID string                 `json:"session_id"`
-	Model     string                 `json:"model"`
-	Provider  string                 `json:"provider"`
-	Models    []tauchat.ChatModelRef `json:"models,omitempty"`
-	Providers []string               `json:"providers,omitempty"`
-	Commands  []tauchat.CommandRef   `json:"commands,omitempty"`
+	Type               string                      `json:"type"`
+	SessionID          string                      `json:"session_id"`
+	Model              string                      `json:"model"`
+	Provider           string                      `json:"provider"`
+	Models             []tauchat.ChatModelRef      `json:"models,omitempty"`
+	Providers          []string                    `json:"providers,omitempty"`
+	Commands           []tauchat.CommandRef        `json:"commands,omitempty"`
+	Skills             []SkillInfo                 `json:"skills,omitempty"`
+	ExtensionCommands  []tauchat.ExtensionCommand  `json:"extension_commands,omitempty"`
 }
 
 // MarshalEvent serializes a ChatEvent into an envelope with a type discriminator.
@@ -56,15 +67,17 @@ func UnmarshalCommand(data []byte) (tauchat.ChatCommand, error) {
 }
 
 // MarshalInit builds the one-time init message.
-func MarshalInit(sessionID, model, provider string, models []tauchat.ChatModelRef, providers []string, commands []tauchat.CommandRef) ([]byte, error) {
+func MarshalInit(sessionID, model, provider string, models []tauchat.ChatModelRef, providers []string, commands []tauchat.CommandRef, skills []SkillInfo, extCmds []tauchat.ExtensionCommand) ([]byte, error) {
 	return json.Marshal(InitMessage{
-		Type:      "init",
-		SessionID: sessionID,
-		Model:     model,
-		Provider:  provider,
-		Models:    models,
-		Providers: providers,
-		Commands:  commands,
+		Type:              "init",
+		SessionID:         sessionID,
+		Model:             model,
+		Provider:          provider,
+		Models:            models,
+		Providers:         providers,
+		Commands:          commands,
+		Skills:            skills,
+		ExtensionCommands: extCmds,
 	})
 }
 
@@ -112,6 +125,8 @@ func eventTypeName(ev tauchat.ChatEvent) string {
 		return "SessionExportedEvent"
 	case tauchat.CommandsChangedEvent:
 		return "CommandsChangedEvent"
+	case tauchat.SkillsChangedEvent:
+		return "SkillsChangedEvent"
 	default:
 		return "UnknownChatEvent"
 	}

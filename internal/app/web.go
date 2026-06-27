@@ -32,6 +32,8 @@ func startWebUI(
 	availableModels []tauchat.ChatModelRef,
 	availableProviders []string,
 	commands []tauchat.CommandRef,
+	skills []tauchat.SkillInfo,
+	extCmds []tauchat.ExtensionCommand,
 	logger *slog.Logger,
 ) (*webServerResult, error) {
 	if opts.NoWeb {
@@ -39,12 +41,14 @@ func startWebUI(
 	}
 
 	bridge, err := webbridge.NewBridge(runtime, bus, webbridge.InitInfo{
-		SessionID: sessionID,
-		Model:     modelID,
-		Provider:  opts.Provider.Name,
-		Models:    availableModels,
-		Providers: availableProviders,
-		Commands:  commands,
+		SessionID:         sessionID,
+		Model:             modelID,
+		Provider:          opts.Provider.Name,
+		Models:            availableModels,
+		Providers:         availableProviders,
+		Commands:          commands,
+		Skills:            skills,
+		ExtensionCommands: extCmds,
 	}, logger)
 	if err != nil {
 		return nil, fmt.Errorf("web bridge: %w", err)

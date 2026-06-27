@@ -10,6 +10,9 @@ import {
   type ChatSessionState,
   type ChatUsage,
   type CommandRef,
+  type ExtensionCommand,
+  type ExtensionCommandsChangedEvent,
+  type ExtensionsReloadedEvent,
   type ChatNotificationEvent,
   type ChatResponseCompletedEvent,
   type ChatResponseDeltaEvent,
@@ -26,6 +29,8 @@ import {
   type SessionsListedEvent,
   type SessionDeletedEvent,
   type SessionSummary,
+  type SkillInfo,
+  type SkillsChangedEvent,
   type SubmitChatPromptCommand,
   type UpdateChatSessionCommand,
 } from '@/lib/protocol'
@@ -106,6 +111,7 @@ export const useSessionStore = defineStore('session', () => {
   const provider = ref('')
   const providers = ref<string[]>([])
   const commands = ref<CommandRef[]>([])
+  const extensionCommands = ref<ExtensionCommand[]>([])
   const availableModels = ref<ChatModelRef[]>([])
   const messages = ref<DisplayMessage[]>([])
   const notices = ref<Notice[]>([])
@@ -114,6 +120,7 @@ export const useSessionStore = defineStore('session', () => {
   const status = ref('idle')
   const parameters = ref<ChatParameters>({ max_tokens: 0, temperature: 0, reasoning_effort: '' })
   const activePrompt = ref<InteractivePrompt | null>(null)
+  const skills = ref<SkillInfo[]>([])
   const sessions = ref<SessionSummary[]>([])
   // Token usage and pricing for the current model, surfaced in the input bar.
   const usage = ref<ChatUsage>({})
@@ -209,6 +216,8 @@ export const useSessionStore = defineStore('session', () => {
         provider.value = init.provider
         providers.value = init.providers ?? []
         commands.value = init.commands ?? []
+        skills.value = init.skills ?? []
+        extensionCommands.value = init.extension_commands ?? []
         // availableModels is ChatModelRef[] but the wire delivers it as a plain
         // object array; cast through unknown to satisfy the type checker.
         availableModels.value = (init.models ?? []) as ChatModelRef[]
@@ -317,6 +326,21 @@ export const useSessionStore = defineStore('session', () => {
         const ev = msg.payload as SessionDeletedEvent
         // Remove the session from the list if it exists.
         sessions.value = sessions.value.filter((s) => s.id !== ev.session_id)
+        break
+      }
+      case 'SkillsChangedEvent': {
+        const ev = msg.payload as SkillsChangedEvent
+        skills.value = ev.skills ?? []
+        break
+      }
+      case 'ExtensionCommandsChangedEvent': {
+        const ev = msg.payload as ExtensionCommandsChangedEvent
+        extensionCommands.value = ev.commands ?? []
+        break
+      }
+      case 'ExtensionsReloadedEvent': {
+        const ev = msg.payload as ExtensionsReloadedEvent
+        extensionCommands.value = ev.result?.commands ?? []
         break
       }
     }
@@ -527,6 +551,8 @@ export const useSessionStore = defineStore('session', () => {
     provider,
     providers,
     commands,
+    skills,
+    extensionCommands,
     availableModels,
     messages,
     notices,
