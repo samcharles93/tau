@@ -55,8 +55,8 @@ func TestReadDocTool(t *testing.T) {
 		if res.IsError {
 			t.Fatalf("unexpected error in tool output: %s", res.Content)
 		}
-		if !strings.Contains(res.Content, "Example Tau configuration") {
-			t.Errorf("expected content to contain 'Example Tau configuration', got: %q", res.Content)
+		if !strings.Contains(res.Content, "Tau configuration example") {
+			t.Errorf("expected content to contain 'Tau configuration example', got: %q", res.Content)
 		}
 	})
 

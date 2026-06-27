@@ -1,61 +1,49 @@
-# Example Tau configuration.
-# Copy to ~/.config/tau/config.yaml for global use or .tau.yaml in a project.
-# Keep secrets out of config files; reference API keys with environment variables.
+# Tau configuration example.
+# Copy to ~/.config/tau/config.yaml for global use, or .tau.yaml in a project.
 #
-# Since Tau 0.x, provider and model metadata are loaded from the models.dev
-# catalog. Most model fields below are only needed when overriding catalog data.
-# See docs/ai-sdk.md for the recommended minimal configuration.
+# Most model metadata (context window, pricing, reasoning capabilities) is
+# loaded from the embedded offline snapshot — you do not need to repeat it
+# here. Only specify auth and optional overrides.
+#
+# Well-known providers are auto-detected when their API key env var is set.
+# See docs/ai-sdk.md for the full provider list and integration details.
 
-default_provider: hosted-example
-default_model: example-chat-model
+# Default provider and model used when no --provider / --model flag is passed.
+default_provider: openrouter
+default_model: deepseek/deepseek-chat-v3-0324
 
 providers:
-  - name: hosted-example
-    type: hosted
-    api: openai-completions
-    base_url: https://hosted-provider.example.invalid
+  # OpenAI-compatible provider (standard pattern)
+  - name: openrouter
+    base_url: https://openrouter.ai/api/v1
     auth:
       type: api_key
-      api_key_env: EXAMPLE_PROVIDER_API_KEY
-    models:
-      - id: example-chat-model
-        name: Example Chat Model
-        context_window: 128000
-        default_max_tokens: 8192
-        max_tokens: 32768
-        input:
-          - text
+      api_key_env: OPENROUTER_API_KEY
 
-  - name: local-example
-    type: local
-    api: openai-completions
-    base_url: http://local-provider.example.invalid
+  # Provider with no API key (e.g. local Ollama server)
+  - name: ollama
+    base_url: http://localhost:11434/v1
     auth:
       type: none
-    models:
-      - id: example-local-model
-        name: Example Local Model
-        context_window: 32768
-        default_max_tokens: 4096
-        max_tokens: 8192
-        input:
-          - text
 
-  - name: browser-login-example
-    type: hosted
-    api: openai-completions
-    base_url: https://browser-provider.example.invalid
+  # Anthropic uses the native Messages API (not OpenAI-compatible).
+  # type: anthropic is required. base_url must be the host only — no /v1.
+  - name: anthropic
+    base_url: https://api.anthropic.com
+    type: anthropic
     auth:
-      type: oauth_pkce
-      authorize_url: https://auth-provider.example.invalid/oauth/authorize
-      token_url: https://auth-provider.example.invalid/oauth/token
-      client_id: example-client-id
-      idp: example-idp
-    models:
-      - id: example-oauth-model
-        name: Example OAuth Model
-        context_window: 128000
-        default_max_tokens: 8192
-        max_tokens: 32768
-        input:
-          - text
+      type: api_key
+      api_key_env: ANTHROPIC_API_KEY
+
+  # Custom / self-hosted endpoint
+  - name: my-provider
+    base_url: https://llm.example.com/v1
+    auth:
+      type: api_key
+      api_key_env: MY_PROVIDER_API_KEY
+
+ui:
+  show_reasoning: true   # Display model reasoning content (default: false)
+
+# Path to your plugin binaries directory (optional)
+# plugins_dir: ~/.config/tau/plugins

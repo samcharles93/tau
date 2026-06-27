@@ -1,76 +1,22 @@
-# Tau-native DeepSeek example for daily testing.
-# Copy to .tau.yaml for local testing, or merge into your global Tau config.
-# Keep secrets out of config files; set DEEPSEEK_API_KEY in your environment.
+# DeepSeek configuration example.
+# Copy to .tau.yaml in your project, or merge into ~/.config/tau/config.yaml.
+#
+# Set DEEPSEEK_API_KEY in your environment — tau auto-detects it, so you can
+# run `tau` without any config file at all once the key is exported.
+#
+# Model metadata (context window, reasoning, pricing) comes from the embedded
+# snapshot. The minimal config below is all you need.
 
 default_provider: deepseek
-default_model: deepseek-v4-pro
+default_model: deepseek-chat
 
 providers:
   - name: deepseek
-    type: hosted
-    api: openai-completions
-    # Use the provider root. Tau appends /v1/chat/completions for chat requests.
-    base_url: https://api.deepseek.com
+    base_url: https://api.deepseek.com/v1
     auth:
       type: api_key
       api_key_env: DEEPSEEK_API_KEY
-    models:
-      - id: deepseek-v4-pro
-        name: DeepSeek V4 Pro
-        context_window: 128000
-        default_max_tokens: 8192
-        max_tokens: 32768
-        input:
-          - text
-        reasoning: true
-        thinking:
-          mode: effort
-        compat:
-          # Include the full DeepSeek V4 Pro compat block when overriding metadata.
-          supports_developer_role: false
-          supports_reasoning_effort: true
-          supports_tool_choice: false
-          max_tokens_field: max_tokens
-          thinking_format: deepseek
-          reasoning_effort_map:
-            high: high
-            xhigh: max
-          extra_body:
-            thinking:
-              type: enabled
-          requires_assistant_content_for_tool_calls: true
-          requires_reasoning_content_for_tool_calls: true
-          requires_reasoning_content_on_assistant_messages: true
-          # Tau stores reasoning_content requirements as metadata. Full replay
-          # needs follow-up streaming parsing support to capture model
-          # reasoning_content from responses before it can be resent.
 
-      - id: deepseek-v4-flash
-        name: DeepSeek V4 Flash
-        context_window: 128000
-        default_max_tokens: 8192
-        max_tokens: 32768
-        input:
-          - text
-        reasoning: true
-        thinking:
-          mode: effort
-        compat:
-          # Include the full DeepSeek V4 Flash compat block when overriding metadata.
-          supports_developer_role: false
-          supports_reasoning_effort: true
-          supports_tool_choice: false
-          max_tokens_field: max_tokens
-          thinking_format: deepseek
-          reasoning_effort_map:
-            high: high
-            xhigh: max
-          extra_body:
-            thinking:
-              type: enabled
-          requires_assistant_content_for_tool_calls: true
-          requires_reasoning_content_for_tool_calls: true
-          requires_reasoning_content_on_assistant_messages: true
-          # Tau stores reasoning_content requirements as metadata. Full replay
-          # needs follow-up streaming parsing support to capture model
-          # reasoning_content from responses before it can be resent.
+# Optional: show model reasoning tokens in the TUI
+ui:
+  show_reasoning: true

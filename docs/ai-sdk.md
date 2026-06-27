@@ -1,206 +1,213 @@
 # Tau AI SDK Integration
 
-Tau delegates its LLM provider protocol handling to
-[`github.com/samcharles93/ai-sdk`](https://github.com/samcharles93/ai-sdk),
-a Go re-interpretation of the Vercel AI SDK. This document explains how the
-integration works, where the boundary is, and how provider/model discovery is
-configured.
-
-## Why an external SDK?
-
-Keeping the LLM protocol layer in a dedicated library means:
-
-* Provider-specific quirks (DeepSeek reasoning, Anthropic thinking, Gemini
-  native API, etc.) live in one place.
-* Tau is insulated from provider wire-format churn.
-* The same SDK can be reused by other Earendil projects (e.g. `pi`, `crush`,
-  `fantasy`) without copying code into each repo.
+Tau delegates LLM provider protocol handling to
+`github.com/samcharles93/ai-sdk`, a Go library modelled on the Vercel AI SDK.
+This document describes the current integration: how providers are resolved,
+how models are discovered, and how the streamer works.
 
 ## Architecture
 
 ```
-┌─────────────┐     ┌─────────────┐     ┌─────────────────────────────┐
-│   Tau CLI   │────▶│   pkg/ai    │────▶│ github.com/samcharles93/ai- │
-│  TUI / App  │     │  adapter    │     │ sdk                         │
-│             │◀────│             │◀────│ (providers + core.Stream)   │
-└─────────────┘     └─────────────┘     └─────────────────────────────┘
-                           │
-                           ▼
-                    ┌─────────────┐
-                    │ models.dev  │
-                    │  catalog    │
-                    └─────────────┘
+internal/providers/          ← tau's provider catalogue and auth state
+    catalog.go               ← well-known providers: IDs, base URLs, auth kind
+    state.go                 ← ~/.config/tau/auth.yaml (enabled/disabled/OAuth)
+    resolve.go               ← merges config + state + env → usable provider set
+    effective.go             ← Effective() entry point
+
+internal/providers/snapshot/
+    snapshot.go              ← //go:embed models.json; Catalog() → runtime.Catalog
+    models.json              ← offline curated catalogue (11 providers, ~427 models)
+    gen/main.go              ← regenerate from models.dev (go generate)
+
+internal/app/
+    chat.go                  ← newRuntimeForProviders(), aggregateModelRefs()
+    provider_runtime.go      ← live-reloadable runtime wrapper (providerRuntime)
+    streamer.go              ← Streamer / NewDynamicStreamer — agent.Streamer impl
+    live_models.go           ← liveModelRefs() for dynamic providers (Ollama)
+
+github.com/samcharles93/ai-sdk (external)
+    pkg/runtime              ← Runtime, Catalog, ProviderConfig, ModelInfo
+    pkg/chat                 ← Provider, Request, Response interfaces
+    pkg/provider/openai      ← OpenAI-compatible HTTP client (default)
+    pkg/provider/anthropic   ← Native Anthropic Messages API client
 ```
 
-`pkg/ai` is a thin adapter. It does **not** replace tau's coordinator, event
-bus, tool registry, or session store. It only replaces the raw
-provider-protocol streaming implementation.
+The coordinator, event bus, tool registry, and session store are all
+tau-internal — ai-sdk only handles the raw provider streaming protocol.
 
-## Components
+## Provider Catalogue
 
-### `pkg/ai/catalog`
+`internal/providers/catalog.go` contains the built-in list of well-known
+providers. Each `CatalogEntry` carries:
 
-A `Catalog` loads the canonical [models.dev](https://models.dev) `api.json`
-catalog from disk cache (`~/.config/tau/models.json`) or network. It merges in
-an optional user overrides file (`~/.config/tau/api.overrides.json`) and
-exposes provider metadata:
+| Field | Purpose |
+| ----- | ------- |
+| `ID` | tau's canonical name (e.g. `"deepseek"`) |
+| `DisplayName` | Human-readable label shown in `/login` menus |
+| `BaseURL` | Default API endpoint |
+| `EnvVars` | Environment variables to probe for the API key (first set wins) |
+| `Auth` | `AuthAPIKey`, `AuthOAuth`, or `AuthNone` |
+| `Class` | ai-sdk runtime class; empty → `"openai-compatible"` |
+| `CatalogID` | models.dev key when it differs from tau's `ID` (e.g. Gemini → `"google"`) |
+| `LiveModels` | When `true`, model list is fetched from `/v1/models` at runtime |
 
-* `API(provider)` — default base URL.
-* `NPM(provider)` — the ai-sdk package name (e.g. `@ai-sdk/deepseek`).
-* `APIKeyEnv(provider)` — the environment variable that holds the API key.
-* `Models(provider)` / `Model(provider, id)` — model metadata.
+### Built-in providers
 
-Environment variables:
+| tau ID | Display name | Auth | Notes |
+| ------ | ------------ | ---- | ----- |
+| `openai` | OpenAI | API key (`OPENAI_API_KEY`) | |
+| `anthropic` | Anthropic (Claude) | API key (`ANTHROPIC_API_KEY`) | Native Messages API, class `"anthropic"` |
+| `deepseek` | DeepSeek | API key (`DEEPSEEK_API_KEY`) | |
+| `openrouter` | OpenRouter | API key (`OPENROUTER_API_KEY`) | |
+| `gemini` | Google Gemini | API key (`GEMINI_API_KEY`) | models.dev key `"google"` |
+| `groq` | Groq | API key (`GROQ_API_KEY`) | |
+| `mistral` | Mistral | API key (`MISTRAL_API_KEY`) | |
+| `together` | Together AI | API key (`TOGETHER_API_KEY`) | |
+| `xai` | xAI (Grok) | API key (`XAI_API_KEY`) | |
+| `cerebras` | Cerebras | API key (`CEREBRAS_API_KEY`) | |
+| `minimax` | MiniMax | API key (`MINIMAX_API_KEY`) | |
+| `ollama` | Ollama (local) | None | Live model discovery from localhost:11434 |
+| `ollama-cloud` | Ollama (cloud) | API key (`OLLAMA_API_KEY`) | |
 
-* `TAU_MODELS_CATALOG_URL` — override the catalog URL.
-* `TAU_MODELS_CATALOG_TTL` — override the 24h default TTL.
+Providers are activated either by the user's hand-written `config.yaml`,
+by the managed `auth.yaml` (via `/login`), or by auto-detecting a set API key
+in the environment.
 
-### `pkg/ai/provider`
+## Model Catalogue (Embedded Snapshot)
 
-`ResolveChatProvider` maps an npm package name to the matching ai-sdk Go
-provider constructor. Supported packages include:
+Interactive mode (`RunChat`) and the TUI's `/model` picker load models from an
+**embedded offline snapshot** (`internal/providers/snapshot/models.json`). This
+means:
 
-| npm package | ai-sdk Go package |
-|-------------|-------------------|
-| `@ai-sdk/openai` | `pkg/provider/openai` |
-| `@ai-sdk/anthropic` | `pkg/provider/anthropic` |
-| `@ai-sdk/azure` | `pkg/provider/azure` |
-| `@ai-sdk/cohere` | `pkg/provider/cohere` |
-| `@ai-sdk/deepseek` | `pkg/provider/deepseek` |
-| `@ai-sdk/gemini` | `pkg/provider/gemini` |
-| `@ai-sdk/groq` | `pkg/provider/groq` |
-| `@ai-sdk/mistral` | `pkg/provider/mistral` |
-| `@ai-sdk/ollama` | `pkg/provider/ollama` |
-| `@ai-sdk/perplexity` | `pkg/provider/perplexity` |
-| `@ai-sdk/xai` | `pkg/provider/xai` |
+- No network request is needed at startup.
+- Only models with `tool_call: true` are included (tau requires tool calling).
+- The snapshot is curated to tau's built-in provider set.
 
-If a provider has no npm mapping, or the SDK provider cannot be constructed,
-tau falls back to its built-in OpenAI-compatible streamer.
+The snapshot is generated by:
 
-### `pkg/ai/streamer`
+```bash
+go generate ./internal/providers/snapshot/...
+# or directly:
+go run ./internal/providers/snapshot/gen/main.go \
+    -output internal/providers/snapshot/models.json
+```
 
-`Streamer` adapts an ai-sdk `chat.Provider` into tau's `agent.Streamer`
-interface (`StreamChatCompletionFull`). The coordinator turn loop, event
-emission, tool execution, and session persistence remain in tau.
+The generator fetches `models.dev`, filters to tau providers and tool-capable
+models, then writes deterministic JSON. Commit the updated `models.json` after
+running the generator.
 
-## Configuration
+**`tau models` / `tau refresh` subcommands** still use the network catalog
+(`models.dev`) and are independent of the embedded snapshot. They are useful
+for exploring what a provider offers, but interactive mode ignores them.
 
-### Recommended minimal `.tau.yaml`
+## Model Discovery Flow (Interactive Mode)
+
+1. `providers.Effective()` → merged `[]ProviderConfig` from config + auth state + env.
+2. `newRuntimeForProviders(provs)` → builds `runtime.Runtime` loaded with the
+   embedded `snapshot.Catalog()`.
+3. `aggregateModelRefs(ctx, rt, insecure, provs)` iterates providers:
+   - `LiveModels: true` (Ollama local) → `liveModelRefs()` → GET `/v1/models`
+   - others → `rt.Models(providerID)` from snapshot, filtered by `toolCapable()`
+   - every `ChatModelRef` carries `Provider: providerID` so the UI can route correctly.
+4. `pickModel(...)` selects the model from `--model` flag or `default_model`
+   config; returns a zero ref (empty ID) if neither is set — the session starts
+   unselected and the user chooses with `/model`.
+
+## Dynamic Streamer
+
+A single `Streamer` serves all providers for the lifetime of a session. It
+resolves the provider **per turn** using a `providerResolver` closure:
+
+```go
+// On each turn, reads the session's current provider + model
+ref := session.Provider.Name + "/" + session.Model.ID
+provider, modelID, err := providerRuntime.runtime().ChatProvider(ctx, ref)
+```
+
+This means switching model or provider (via `/model` or `/login`) takes effect
+on the next turn without rebuilding the coordinator.
+
+`providerRuntime.reload(ctx)` is called after `/login` or `/logout` to rebuild
+the underlying runtime with the updated provider set, so newly enabled providers
+are immediately available.
+
+## URL Normalisation Rule
+
+ai-sdk's openai client applies the following rule to base URLs:
+
+- URL with a path (e.g. `https://api.deepseek.com/v1`) → used as-is.
+- Host-only URL (e.g. `https://api.anthropic.com`) → `/v1` is appended.
+- Endpoint path is `/chat/completions` (no `/v1` prefix).
+  Final URL: `baseURL + "/chat/completions"`.
+
+**Common mistake:** a `base_url` that already contains `/v1` must be left as-is.
+Adding `/v1` again creates double-path URLs like `/v1/v1/chat/completions` and
+causes 404 errors.
+
+All built-in catalog entries already use the correct form. Only hand-written
+provider configs in `config.yaml` can hit this issue.
+
+## Provider Classes
+
+| Class | Used for | Protocol |
+| ----- | -------- | -------- |
+| `openai-compatible` (default) | All standard providers | OpenAI Chat Completions API over HTTPS |
+| `anthropic` | Anthropic only | Native Messages API; `x-api-key` header; base URL must be host-only |
+
+`resolveProviderClass()` in `internal/app/chat.go` maps the provider's `Type`
+field (from `config.yaml`) to a class. Unknown types fall through to
+`"openai-compatible"`. The class for Anthropic is set in the built-in catalog
+entry; hand-written Anthropic configs must set `type: anthropic`.
+
+## Recommended Minimal Configuration
+
+The provider catalogue and embedded model snapshot supply defaults for every
+well-known provider. A minimal config only needs auth:
 
 ```yaml
-default_provider: deepseek
-default_model: deepseek-v4-flash
+# ~/.config/tau/config.yaml
 
 providers:
   - name: deepseek
-    base_url: https://api.deepseek.com
+    base_url: https://api.deepseek.com/v1
     auth:
       type: api_key
       api_key_env: DEEPSEEK_API_KEY
+
+default_provider: deepseek
+default_model: deepseek-chat
 ```
 
-The `type`, `api`, `models.*` context/output/reasoning/cost/compat fields
-are no longer required because models.dev and the ai-sdk provider supply them.
-You only need `base_url` and the auth details if they differ from the
-catalog defaults.
+Alternatively, set `DEEPSEEK_API_KEY` in your environment and run `tau`
+without any config — the auto-detection path will pick it up.
 
-### Overriding catalog data
+Model metadata (context window, pricing, reasoning capabilities) comes from the
+embedded snapshot; you do not need to repeat it in `config.yaml` unless you are
+overriding a specific value.
 
-Create `~/.config/tau/api.overrides.json`:
+## Enabling Providers Without config.yaml
 
-```json
-{
-  "providers": {
-    "deepseek": {
-      "models": {
-        "deepseek-v4-flash": {
-          "output": 16384
-        }
-      }
-    }
-  }
-}
-```
+Tau auto-detects API keys from the environment. Exporting any of the env vars
+listed in the provider catalogue above is enough to enable that provider. The
+TUI's `/login` command handles guided API-key entry and persists the key to
+`~/.config/tau/auth.yaml`.
 
-The overrides file uses the same schema as `models.dev/api.json`. Override
-values win over catalog values; new providers or models in overrides are
-added to the catalog view.
+## Adding a New Provider
 
-### Refreshing the catalog
+1. Add a `CatalogEntry` to the `catalog` slice in `internal/providers/catalog.go`.
+2. Set `Class` if the provider is not OpenAI-compatible.
+3. Set `CatalogID` if models.dev uses a different key than tau's `ID`.
+4. Set `LiveModels: true` if the model list is dynamic (local servers).
+5. Run `go generate ./internal/providers/snapshot/...` to update `models.json`.
+6. Update tests in `internal/providers/providers_test.go`.
 
-```bash
-tau refresh
-```
+## Reasoning / Effort
 
-This fetches a fresh `api.json`, writes it to `~/.config/tau/models.json`,
-and lists the models for the configured provider.
+Models that support adjustable reasoning effort advertise `reasoning_options`
+in the models.dev catalog. The snapshot generator carries these through to
+`ModelInfo.ReasoningOptions`. At runtime:
 
-## Provider-specific notes
-
-### DeepSeek
-
-The ai-sdk `deepseek` provider handles `reasoning_content` replay and the
-`max_tokens` field automatically. Tau still controls whether reasoning is
-shown via `ui.show_reasoning` in config.
-
-### Azure
-
-Because the ai-sdk Azure provider needs an `Endpoint` rather than a `BaseURL`,
-tau passes `base_url` from config as the endpoint. Make sure your config
-`base_url` is the full Azure resource endpoint.
-
-### Ollama
-
-Ollama has no required API key. Only `base_url` is needed.
-
-## Migration from pre-ai-sdk tau
-
-Old config files that spell out every model field still load, but most model
-metadata is now ignored unless the catalog is unavailable. To migrate:
-
-1. Remove `type` and `api` from provider entries.
-2. Remove model metadata (`context_window`, `default_max_tokens`,
-   `max_tokens`, `input`, `reasoning`, `thinking`, `compat`, `cost`) unless
-   you need to override a specific value.
-3. If you do need an override, prefer `~/.config/tau/api.overrides.json` over
-   inline config so it follows the same schema as the upstream catalog.
-
-## Adding a new provider
-
-If models.dev already lists the provider, no code change is usually needed.
-If the provider is not in models.dev, or you want to use a local/enterprise
-endpoint, add an entry to `~/.config/tau/api.overrides.json` with at least
-`id`, `npm`, `api`, and `env`:
-
-```json
-{
-  "providers": {
-    "acme": {
-      "id": "acme",
-      "npm": "@ai-sdk/openai",
-      "api": "https://llm.acme.example.com/v1",
-      "env": ["ACME_API_KEY"],
-      "models": {
-        "acme-70b": {
-          "id": "acme-70b",
-          "context": 128000,
-          "output": 4096,
-          "tool_call": true
-        }
-      }
-    }
-  }
-}
-```
-
-Then reference it in `.tau.yaml`:
-
-```yaml
-default_provider: acme
-providers:
-  - name: acme
-    base_url: https://llm.acme.example.com/v1
-    auth:
-      type: api_key
-      api_key_env: ACME_API_KEY
-```
+- `modelInfoToModelConfig()` extracts effort levels into `ModelConfig.ReasoningEfforts`.
+- The TUI's `/effort` command offers only the levels the model advertises.
+- `Streamer.buildRequest()` maps tau effort levels to OpenAI API values
+  (`low`, `medium`, `high`, `max` → `xhigh`) via `effortToOpenAI()`.

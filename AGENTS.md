@@ -320,9 +320,13 @@ Use this section to quickly find the right files for a given change.
 | ------ | -------------- | --------------- | ------------- | ---------------- |
 | `"coordinator"` | `ChatEvent` | — | `agent.NewCoordinator` | — |
 | `"tui"` | — | `ChatEvent` | `tui.RunInline` | `inlineChat.eventLoop` |
+| `"web"` | — | `ChatEvent` | `bridge.NewBridge` | `bridge.broadcastLoop` → WebSocket clients |
+| `"plugin-host"` | `ChatEvent` | — | `app.buildCoordinator` | — (plugin notifications) |
+| `"plugin-manager"` | — | `PluginLifecycleEvent`, `ScheduleTickEvent` | `app.buildCoordinator` | plugin event dispatch |
 | `"skills"` | `skills.Event` | — | `skills.NewManager` | (nothing yet) |
 | `"registry"` | `chat.CommandsChangedEvent` | — | `registry.New` | — |
 | `"coordinator"` | `chat.PluginLifecycleEvent` | — | `agent.NewCoordinator` | — |
+| `"command-registry"` | — | — | `app.newCoordinator` | — |
 
 ### When to Use the Event Bus
 
@@ -335,10 +339,13 @@ Use this section to quickly find the right files for a given change.
 
 ### Changing the App Orchestration Layer
 
-- `internal/app/chat.go` — `ChatOptions`, `buildCoordinator()`, `buildSessionConfig()`, `buildAgentSystemPrompt()`, `pickModel()`, `buildModelRefresher()`, `buildStreamer()`, `printExitSummary()`
-- `internal/app/run.go` — `RunChat()` (interactive entry point), wires config → coordinator → TUI
-- `internal/app/stdin.go` — `RunStdIn()` (headless/stdin entry point)
-- `internal/app/streamer.go` — `Streamer` struct (ai-sdk adapter implementing `agent.Streamer`)
+- `internal/app/chat.go` — `ChatOptions`, `buildCoordinator()`, `buildSessionConfig()`, `buildAgentSystemPrompt()`, `pickModel()`, `buildModelRefresher()`, `buildDynamicStreamer()`, `aggregateModelRefs()`, `toolCapable()`, `newRuntimeForProviders()`, `modelInfoToRef()`, `resolveProviderClass()`, `printExitSummary()`
+- `internal/app/run.go` — `RunChat()` (interactive entry point), wires config → coordinator → TUI; starts web UI bridge
+- `internal/app/stdin.go` — `RunStdIn()` (headless/stdin entry point); requires a model to be selected
+- `internal/app/streamer.go` — `Streamer`/`NewDynamicStreamer()`/`NewStreamer()` — ai-sdk adapter implementing `agent.Streamer`; `buildRequest()` maps session state to ai-sdk request
+- `internal/app/provider_runtime.go` — `providerRuntime` — mutex-guarded holder for ai-sdk `runtime.Runtime` + provider set; `reload()` rebuilds from current state (after `/login`); `runtime()` / `snapshot()` accessors
+- `internal/app/live_models.go` — `liveModelRefs()` / `liveModelIDs()` — queries a running provider's `/models` endpoint for local discovery (Ollama); `providerAPIKey()` resolves key from literal or env var
+- `internal/app/web.go` — `startWebUI()` — launches the WebSocket bridge and HTTP server for the browser client
 - `internal/app/platform.go` — `ResolveToken()`, `ModelsOptions`, model discovery via ai-sdk runtime
 - `internal/app/id.go` — Session ID generation
 - `internal/app/doc.go` — Package-level documentation
@@ -368,12 +375,23 @@ Use this section to quickly find the right files for a given change.
 
 ### Changing Provider/API Integration
 
-LLM provider integration is handled through the external [`github.com/samcharles93/ai-sdk`](https://github.com/samcharles93/ai-sdk) library:
+LLM provider integration is handled through the external `github.com/samcharles93/ai-sdk` library (`v0.1.6`):
 
-- `internal/app/streamer.go` — `Streamer` struct adapting ai-sdk `chat.Provider` into `agent.Streamer` interface
-- `internal/app/platform.go` — Token resolution (`ResolveToken`), model discovery, runtime construction via ai-sdk `runtime.Runtime`
-- Model metadata is sourced from the [models.dev](https://models.dev) catalog, cached at `~/.config/tau/models.json`, with optional overrides at `~/.config/tau/api.overrides.json`
-- See [`docs/ai-sdk.md`](docs/ai-sdk.md) for full integration documentation
+**Provider catalog (tau-side):**
+- `internal/providers/catalog.go` — `CatalogEntry` (ID, DisplayName, BaseURL, EnvVars, Auth, Class, CatalogID, LiveModels); `Catalog()`, `Lookup()`, `DetectEnvVar()`
+- `internal/providers/state.go` — `State` (Enabled/Disabled/OAuth persisted in `~/.config/tau/auth.yaml`); `Enable()`, `Disable()`, `SetOAuth()`, `RemoveOAuth()`, `Save()`
+- `internal/providers/resolve.go` — `Resolve()`, `Menu()`, `Effective()` — merges hand-written config + state + env into the usable provider set
+- `internal/providers/effective.go` — `Effective()` returns the merged `Config` + `State` for the current environment
+
+**Embedded model snapshot:**
+- `internal/providers/snapshot/snapshot.go` — `//go:embed models.json` → `Catalog()` returns an `*runtime.Catalog`; loaded at binary startup, no network needed
+- `internal/providers/snapshot/models.json` — curated, tool-capable models from 11 providers (427 models); regenerate with `go generate ./internal/providers/snapshot/...`
+- `internal/providers/snapshot/gen/main.go` — snapshot generator: fetches models.dev, filters by tau catalog + `tool_call=true`, writes deterministic JSON
+
+**ai-sdk runtime wiring:**
+- `internal/app/chat.go:newRuntimeForProviders()` — builds `runtime.Runtime` from provider configs + embedded snapshot; `resolveProviderClass()` maps tau provider → ai-sdk class (default `"openai-compatible"`, `"anthropic"` for Anthropic native API)
+- ai-sdk URL rule: base URLs with `/v1` in the path are left as-is; host-only URLs get `/v1` appended. Endpoint paths do NOT include `/v1` (e.g., `/chat/completions` not `/v1/chat/completions`). Violating this causes 404s.
+- `internal/providers/snapshot/models.json` is the single authoritative model catalogue at runtime. `~/.config/tau/models.json` is no longer used.
 
 ### Changing Search / Indexing
 
@@ -619,3 +637,196 @@ go test -run TestCoordinator ./...   # Run specific test
 go build -o tau ./cmd/tau            # Build CLI binary
 go install ./cmd/tau                 # Install to $GOPATH/bin
 ```
+
+---
+
+## Provider & Model System
+
+### Architecture Overview
+
+```
+internal/providers/          ← tau's writable provider layer
+├── catalog.go               ← built-in well-known providers (IDs, base URLs, env vars, auth kind)
+├── state.go                 ← ~/.config/tau/auth.yaml: enabled/disabled/OAuth credentials
+├── resolve.go               ← merges config + state + env → ResolvedProvider list
+├── effective.go             ← Effective() → usable []ProviderConfig for the runtime
+
+internal/providers/snapshot/
+├── snapshot.go              ← //go:embed models.json; Catalog() → *runtime.Catalog
+├── models.json              ← 427 tool-capable models, 11 providers; offline, curated
+└── gen/main.go              ← generator: fetches models.dev, filters, writes models.json
+
+internal/app/
+├── provider_runtime.go      ← providerRuntime: mutex-guarded runtime + provider set; reload()
+├── live_models.go           ← liveModelRefs() — queries /models for dynamic providers (Ollama)
+└── chat.go                  ← aggregateModelRefs(), toolCapable(), newRuntimeForProviders()
+```
+
+### Model Discovery Flow
+
+At startup (`RunChat`):
+
+1. `providers.Effective()` → usable `[]ProviderConfig` (config + state + env merged).
+2. `newRuntimeForProviders(provs)` — builds `runtime.Runtime`; loads embedded snapshot via `snapshot.Catalog()`.
+3. `aggregateModelRefs(ctx, rt, insecure, provs)`:
+   - For each provider: if `entry.LiveModels` (e.g. `ollama`), call `liveModelRefs()` → GET `/models`.
+   - Otherwise: `rt.Models(providerName)` → snapshot models → filter by `toolCapable()`.
+   - Each `ChatModelRef` carries `Provider: providerID` so the UI can route correctly.
+4. `pickModel(allModels, opts.Model, ...)` — zero ref (empty ID) allowed; session starts unselected.
+
+### Dynamic Streamer & Cross-Provider Switching
+
+The single `Streamer` (built by `buildDynamicStreamer`) resolves its provider **per turn**:
+
+```go
+// app/streamer.go
+type providerResolver func(ctx, session) (aisdkchat.Provider, modelID, error)
+
+// Per-turn: reads session.Provider.Name + session.Model.ID, asks providerRuntime
+func(ctx, session) (Provider, string, error) {
+    ref := session.Provider.Name + "/" + session.Model.ID
+    return pr.runtime().ChatProvider(ctx, ref)
+}
+```
+
+This means `/model deepseek-v3` + provider patch takes effect on the **next turn** without restarting the coordinator.
+
+`providerRuntime.reload(ctx)` is called by the model refresher (after `/login`/`/logout`) and rebuilds the runtime with updated provider state.
+
+### Provider Classes
+
+| Provider | ai-sdk Class | Notes |
+| -------- | ------------ | ----- |
+| openai, deepseek, mistral, groq, … | `openai-compatible` | Default; uses OpenAI Chat Completions API |
+| anthropic | `anthropic` | Native Messages API; `x-api-key` header; base URL must be host-only (no `/v1`) |
+| gemini | `openai-compatible` | Google's OpenAI-compatible endpoint |
+| ollama (local) | `openai-compatible` | Live `/models` discovery; no key required |
+
+`resolveProviderClass()` in `internal/app/chat.go` maps `provider.Type` → class; falls through to `"openai-compatible"` if no match.
+
+### URL Normalisation Rule (ai-sdk)
+
+ai-sdk's openai client (`pkg/provider/openai`) applies:
+- Base URL with path (e.g. `https://api.deepseek.com/v1`) → used as-is.
+- Host-only URL (e.g. `https://api.anthropic.com`) → `/v1` appended automatically.
+- Endpoint path: `/chat/completions` (no `/v1` prefix) — ai-sdk builds `baseURL + "/chat/completions"`.
+
+**Common mistake**: Passing `baseURL + "/v1"` for a host-only URL doubles to `/v1/v1/...` and causes 404s.
+
+### Embedding a New Provider
+
+1. Add `CatalogEntry` to the `catalog` slice in `internal/providers/catalog.go`.
+2. Set `Class` if not OpenAI-compatible (see table above).
+3. Set `CatalogID` if models.dev uses a different key.
+4. Set `LiveModels: true` if models come from a live `/models` endpoint.
+5. Run `go generate ./internal/providers/snapshot/...` to update `models.json`.
+6. Update `internal/providers/providers_test.go` (add `TestMenuReflectsState` assertions).
+
+### Regenerating models.json
+
+```bash
+go generate ./internal/providers/snapshot/...
+# or directly:
+go run ./internal/providers/snapshot/gen/main.go -output internal/providers/snapshot/models.json
+```
+
+Pass `-input /path/to/models.json` to use a local models.dev dump instead of fetching live.
+
+---
+
+## Web UI Architecture
+
+The web UI is a Vue 3 SPA served over WebSocket. Source lives in `internal/webui/`; the built bundle is embedded into the Go binary via `internal/spa/spa.go`.
+
+### Directory Layout
+
+```
+internal/webui/src/
+├── lib/
+│   └── protocol.ts          ← Wire types mirroring Go's chat types (MUST stay in sync with internal/bridge/wire.go)
+├── stores/
+│   └── session.ts           ← Pinia store: all mutable UI state; applies inbound events; sends commands
+├── composables/
+│   ├── useWebSocket.ts      ← WebSocket connection with JSON envelope send/receive
+│   └── useConnection.ts     ← Reconnect logic + bound sender
+├── pages/
+│   └── ChatPage.vue         ← Root page: mounts all components, feeds events into session store
+├── components/
+│   ├── SettingsDrawer.vue   ← Session settings sheet (model, provider, temperature, reasoning effort)
+│   ├── ChatMessage.vue      ← Renders DisplayMessage (text / reasoning / tool parts in order)
+│   ├── StatusBar.vue        ← Bottom bar: provider, model, token usage, cost
+│   ├── ChatInput.vue        ← Prompt input + send / cancel
+│   ├── SessionSwitcher.vue  ← Session list / load / delete panel
+│   ├── ReasoningPanel.vue   ← Collapsible reasoning content display
+│   ├── ToolCard.vue         ← Running/completed tool card
+│   └── ToastContainer.vue   ← Ephemeral notification toasts
+└── layouts/
+    └── ChatLayout.vue       ← Full-page layout shell
+
+internal/spa/
+└── spa.go                   ← //go:embed dist; http.FileSystem for serving the built SPA
+```
+
+### WebSocket Wire Protocol
+
+Every message is a JSON object `{ "type": "<discriminator>", "payload": { ... } }`. Types are defined in `internal/bridge/wire.go` (Go) and `internal/webui/src/lib/protocol.ts` (TypeScript). **Both files must be kept in sync.**
+
+**Connection init** (server → client, sent once on connect):
+```json
+{ "type": "init", "session_id": "…", "model": "…", "provider": "…", "models": […], "providers": […], "commands": […] }
+```
+
+**Server → client events** (wrapped in `{ "type": "ChatSessionSnapshotEvent", "payload": { … } }`):
+- `ChatSessionSnapshotEvent` — full authoritative session state; replayed to new connections
+- `ChatResponseDeltaEvent` / `ChatReasoningDeltaEvent` — streaming text/reasoning chunks
+- `ChatToolCallDeltaEvent` / `ChatToolExecutionStartedEvent` / `ChatToolExecutionCompletedEvent` / `ChatToolOutputEvent` — tool lifecycle
+- `ChatResponseCompletedEvent` — turn end + final state
+- `ChatNotificationEvent` — info/warn/error toasts
+- `InteractivePromptRequestedEvent` — tool confirm/question dialogs
+- `SessionsListedEvent` / `SessionLoadedEvent` / `SessionDeletedEvent` — session management
+
+**Client → server commands** (same envelope format, e.g. `{ "type": "SubmitChatPromptCommand", "payload": { … } }`):
+- `SubmitChatPromptCommand` — send a user prompt
+- `UpdateChatSessionCommand` — patch session (model, provider, temperature, etc.)
+- `CancelChatRequestCommand` — cancel in-flight request
+- `ResetChatSessionCommand` — clear conversation
+- `ListSessionsCommand` / `LoadSessionCommand` / `DeleteSessionCommand` / `ExportSessionCommand`
+- `RespondInteractivePromptCommand` — answer a tool dialog
+
+### Session Store (`stores/session.ts`)
+
+The Pinia store is the single source of truth for all client-side state. Key flows:
+
+- **`apply(msg)`** — the main inbound event reducer; routes each `type` to state mutation
+- **`absorbState(state)`** — hydrates model, provider, parameters, usage from an authoritative `ChatSessionState`; rebuilds `messages` from history on first connect or reconnect (`pendingResync`)
+- **`updateSettings(patch)`** — sends `UpdateChatSessionCommand`; also updates `model`/`provider`/`parameters` optimistically
+- `DisplayMessage` uses ordered `parts: MessagePart[]` (`text | reasoning | tool`) to preserve the model's actual output timeline
+
+### Model/Provider Switching (Web UI)
+
+`SettingsDrawer.vue` → `applyModelById(id)`:
+1. Look up `id` in `session.availableModels` (populated from `init.models` on connect).
+2. Build patch: `{ model: { id }, provider: ref.provider }`.
+3. Call `session.updateSettings(patch)` → sends `UpdateChatSessionCommand` over WebSocket.
+4. Backend `Coordinator.handleUpdate()` applies the patch to session state, emits `ChatSessionSnapshotEvent`.
+5. Client `absorbState()` updates `model` and `provider` refs, store reflects the change.
+
+**Critical**: always include `provider` in the patch when switching models. Omitting it leaves the session on the old provider (the same bug affected the web UI before the `applyModelById` refactor).
+
+### Building the Web UI
+
+```bash
+task webui                          # pnpm install + pnpm build → internal/spa/dist/
+```
+
+The SPA bundle is embedded in the binary at build time via `internal/spa/spa.go`. After any Vue/TS change you **must** run `task webui` before rebuilding the Go binary for the change to take effect in the served UI. Running `task` (default) builds the web UI then the binary in one step.
+
+### Bridge (`internal/bridge/`)
+
+`bridge.Bridge` sits between the coordinator and browser clients:
+- Creates its own `"web"` bus client; subscribes to `ChatEvent`.
+- `broadcastLoop()` receives events and fans them out to all connected WebSocket `client`s.
+- Caches the last `ChatSessionSnapshotEvent` as `lastSnapshot`; replays it to newly connecting browsers so they see existing conversation state immediately.
+- `UpgradeHTTP()` handles the WebSocket handshake; sends `initData` + `lastSnapshot` immediately.
+- `client.readLoop()` receives commands from the browser and forwards them to `bridge.runtime.Send()`.
+- Ping/pong keepalives every 30 s; 60 s read deadline extended on pong.
