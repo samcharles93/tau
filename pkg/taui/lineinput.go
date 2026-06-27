@@ -26,11 +26,19 @@ type LineInput struct {
 	hintFn   func(string) string
 
 	cursorR, cursorG, cursorB uint8 // cursor background colour (0 = default grey)
+
+	// History buffer for readline-style recall of submitted prompts.
+	// historyPos is -1 when live-editing; 0..len(history)-1 when browsing.
+	history     []string
+	historyPos  int
+	historySave string
 }
 
 // NewLineInput creates an input with the given prompt prefix (e.g. "› ").
 // The input starts focused so the block cursor is visible immediately.
-func NewLineInput(prompt string) *LineInput { return &LineInput{prompt: prompt, focused: true} }
+func NewLineInput(prompt string) *LineInput {
+	return &LineInput{prompt: prompt, focused: true, historyPos: -1}
+}
 
 // SetOnSubmit registers the callback fired (with the full multi-line text) when
 // the user presses Enter. The input is cleared before the callback runs.
@@ -81,6 +89,62 @@ func (li *LineInput) Clear() {
 	li.cursor = 0
 }
 
+// AddToHistory appends s to the history buffer, skipping adjacent duplicates.
+// The history position is reset to live-editing mode.
+func (li *LineInput) AddToHistory(s string) {
+	li.mu.Lock()
+	defer li.mu.Unlock()
+	if len(li.history) > 0 && li.history[len(li.history)-1] == s {
+		return
+	}
+	li.history = append(li.history, s)
+	li.historyPos = -1
+}
+
+// SetHistory replaces the history buffer with entries. Used when loading a
+// session to seed the buffer from persisted user messages.
+func (li *LineInput) SetHistory(entries []string) {
+	li.mu.Lock()
+	defer li.mu.Unlock()
+	li.history = append([]string(nil), entries...)
+	li.historyPos = -1
+}
+
+// navigateHistory moves through the history buffer. dir < 0 goes older (up),
+// dir > 0 goes newer (down). On first entry into history mode (from live
+// editing), the current draft is saved so it can be restored when moving past
+// the newest entry. Caller must hold li.mu.
+func (li *LineInput) navigateHistory(dir int) {
+	if len(li.history) == 0 {
+		return
+	}
+	if li.historyPos == -1 {
+		if dir > 0 {
+			return // nothing newer than live editing
+		}
+		// Entering history mode: save the current draft.
+		li.historySave = string(li.runes)
+		li.historyPos = len(li.history) - 1
+	} else {
+		li.historyPos += dir
+		// Clamp and restore draft when moving past the newest entry.
+		if li.historyPos < 0 {
+			li.historyPos = -1
+			li.runes = []rune(li.historySave)
+			li.cursor = len(li.runes)
+			li.historySave = ""
+			return
+		}
+		if li.historyPos >= len(li.history) {
+			li.historyPos = len(li.history) - 1
+			return
+		}
+	}
+	entry := li.history[li.historyPos]
+	li.runes = []rune(entry)
+	li.cursor = len(li.runes)
+}
+
 // Invalidate is a no-op.
 func (li *LineInput) Invalidate() {}
 
@@ -97,6 +161,8 @@ func (li *LineInput) HandleInput(data string) bool {
 		submit = string(li.runes)
 		li.runes = li.runes[:0]
 		li.cursor = 0
+		li.historyPos = -1
+		li.historySave = ""
 		didSubmit = true
 
 	case "\x0a",
@@ -130,10 +196,18 @@ func (li *LineInput) HandleInput(data string) bool {
 	case "\x1b[1;5C", "\x1b[1;3C": // Ctrl+Right / Alt+Right — jump word right
 		li.cursor = li.wordRightLocked()
 
-	case "\x1b[A", "\x1bOA": // Up — move to previous logical line
-		li.moveVertLocked(-1)
-	case "\x1b[B", "\x1bOB": // Down — move to next logical line
-		li.moveVertLocked(1)
+	case "\x1b[A", "\x1bOA": // Up — history or previous logical line
+		if li.atFirstLineStart() {
+			li.navigateHistory(-1)
+		} else {
+			li.moveVertLocked(-1)
+		}
+	case "\x1b[B", "\x1bOB": // Down — history or next logical line
+		if li.atLastLineEnd() {
+			li.navigateHistory(1)
+		} else {
+			li.moveVertLocked(1)
+		}
 
 	case "\x01", "\x1b[H", "\x1bOH", "\x1b[1~", "\x1b[7~": // Home / Ctrl+A
 		li.cursor = 0
@@ -163,6 +237,18 @@ func (li *LineInput) HandleInput(data string) bool {
 		onSubmit(submit)
 	}
 	return true
+}
+
+// atFirstLineStart reports whether the cursor is at the very start of the
+// first logical line. Caller holds li.mu.
+func (li *LineInput) atFirstLineStart() bool {
+	return li.cursor == 0
+}
+
+// atLastLineEnd reports whether the cursor is at the very end of the last
+// logical line. Caller holds li.mu.
+func (li *LineInput) atLastLineEnd() bool {
+	return li.cursor >= len(li.runes)
 }
 
 // moveVertLocked moves the cursor up (-1) or down (+1) one logical line within

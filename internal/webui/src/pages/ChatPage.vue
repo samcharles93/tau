@@ -56,9 +56,21 @@ import { useSessionStore } from '@/stores/session'
 const session = useSessionStore()
 const { container, scrollToBottom, onScroll } = useAutoScroll()
 
-// Re-pin to the bottom whenever the conversation grows or streams.
+// Re-pin to the bottom whenever the conversation grows or streams. Inspecting
+// only the trailing part keeps this cheap, while still reacting to streamed
+// text, reasoning, and tool output as they grow.
 watch(
-  () => session.messages.map((m) => m.content).join('|'),
+  () => {
+    const m = session.messages[session.messages.length - 1]
+    if (!m) return ''
+    const last = m.parts[m.parts.length - 1]
+    const tail = !last
+      ? 0
+      : last.kind === 'tool'
+        ? `${last.tool.output.length}:${last.tool.status}`
+        : last.text.length
+    return `${session.messages.length}:${m.parts.length}:${tail}`
+  },
   () => scrollToBottom(),
   { flush: 'post' },
 )

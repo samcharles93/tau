@@ -570,6 +570,7 @@ internal/tui/
 ### Command Handling
 
 User input is processed by `inlineChat.onSubmit()`:
+
 1. If input starts with `/`, look up the command in `slashByName` and call its `run` closure.
 2. Otherwise, send a `SubmitChatPromptCommand` to the coordinator.
 
@@ -578,7 +579,7 @@ User input is processed by `inlineChat.onSubmit()`:
 ## Event Flow (End to End)
 
 ```flow
-User types "/model gpt-4" → Tab
+User types "/model gpt-5.4" → Tab
         │
         ▼
 inlineChat.onSubmit() → inline_commands: handleModelCommand()

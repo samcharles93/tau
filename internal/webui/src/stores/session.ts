@@ -2,11 +2,13 @@ import { defineStore } from 'pinia'
 import { ref } from 'vue'
 import {
   command,
+  type ChatCost,
   type ChatModelRef,
   type ChatParameters,
   type ChatReasoningDeltaEvent,
   type ChatSessionPatch,
   type ChatSessionState,
+  type ChatUsage,
   type CommandRef,
   type ChatNotificationEvent,
   type ChatResponseCompletedEvent,
@@ -40,14 +42,22 @@ export interface ToolCall {
   output: string
 }
 
+/**
+ * A single ordered segment of an assistant turn. Reasoning, text, and tool
+ * calls are kept in arrival order so the rendered timeline reflects what the
+ * model actually did (reason → call tools → read results → answer), rather
+ * than collapsing everything into fixed reasoning/text/tools buckets.
+ */
+export type MessagePart =
+  | { kind: 'text'; id: string; text: string }
+  | { kind: 'reasoning'; id: string; text: string }
+  | { kind: 'tool'; id: string; tool: ToolCall }
+
 export interface DisplayMessage {
   id: string
   role: 'user' | 'assistant'
-  content: string
-  /** Streamed chain-of-thought for this assistant turn, if any. */
-  reasoning: string
-  /** Tools invoked during an assistant turn, in call order. */
-  tools: ToolCall[]
+  /** Ordered timeline of this turn's content. */
+  parts: MessagePart[]
   streaming: boolean
 }
 
@@ -67,6 +77,29 @@ export interface InteractivePrompt {
 let seq = 0
 const nextId = () => `m${++seq}`
 
+/** Concatenated text of all text parts in a message. */
+export function messageText(m: DisplayMessage): string {
+  return m.parts
+    .filter((p): p is Extract<MessagePart, { kind: 'text' }> => p.kind === 'text')
+    .map((p) => p.text)
+    .join('\n\n')
+}
+
+/** Concatenated text of all reasoning parts in a message. */
+export function messageReasoning(m: DisplayMessage): string {
+  return m.parts
+    .filter((p): p is Extract<MessagePart, { kind: 'reasoning' }> => p.kind === 'reasoning')
+    .map((p) => p.text)
+    .join('\n\n')
+}
+
+/** All tool calls in a message, in order. */
+export function messageTools(m: DisplayMessage): ToolCall[] {
+  return m.parts
+    .filter((p): p is Extract<MessagePart, { kind: 'tool' }> => p.kind === 'tool')
+    .map((p) => p.tool)
+}
+
 export const useSessionStore = defineStore('session', () => {
   const sessionId = ref('')
   const model = ref('')
@@ -82,8 +115,17 @@ export const useSessionStore = defineStore('session', () => {
   const parameters = ref<ChatParameters>({ max_tokens: 0, temperature: 0, reasoning_effort: '' })
   const activePrompt = ref<InteractivePrompt | null>(null)
   const sessions = ref<SessionSummary[]>([])
+  // Token usage and pricing for the current model, surfaced in the input bar.
+  const usage = ref<ChatUsage>({})
+  const contextWindow = ref(0)
+  const cost = ref<ChatCost>({})
 
   let sendEnvelope: ((e: Envelope) => boolean) | null = null
+  // Tracks whether we have seen the first `init`. A second `init` means the
+  // socket reconnected, so the next authoritative snapshot must replace local
+  // state to recover anything missed while offline.
+  let initialized = false
+  let pendingResync = false
 
   function bindSender(fn: (e: Envelope) => boolean) {
     sendEnvelope = fn
@@ -95,22 +137,66 @@ export const useSessionStore = defineStore('session', () => {
     const msg: DisplayMessage = {
       id: nextId(),
       role: 'assistant',
-      content: '',
-      reasoning: '',
-      tools: [],
+      parts: [],
       streaming: true,
     }
     messages.value.push(msg)
     return msg
   }
 
+  /** Append/extend the trailing text part, opening a new one after a tool. */
+  function writeText(a: DisplayMessage, snapshot: string, delta: string) {
+    const last = a.parts[a.parts.length - 1]
+    if (last && last.kind === 'text') {
+      last.text = snapshot || last.text + delta
+    } else {
+      a.parts.push({ kind: 'text', id: nextId(), text: snapshot || delta })
+    }
+  }
+
+  /** Append/extend the trailing reasoning part. */
+  function writeReasoning(a: DisplayMessage, snapshot: string, delta: string) {
+    const last = a.parts[a.parts.length - 1]
+    if (last && last.kind === 'reasoning') {
+      last.text = snapshot || last.text + delta
+    } else {
+      a.parts.push({ kind: 'reasoning', id: nextId(), text: snapshot || delta })
+    }
+  }
+
+  /** Find or create a tool part by call id within the active assistant turn. */
+  function upsertTool(a: DisplayMessage, callId: string): ToolCall {
+    const existing = findTool(callId)
+    if (existing) return existing
+    const tool: ToolCall = {
+      callId,
+      name: '',
+      argumentsSummary: '',
+      status: 'running',
+      output: '',
+    }
+    a.parts.push({ kind: 'tool', id: nextId(), tool })
+    return tool
+  }
+
   /** Find a tool by call id within any rendered message. */
   function findTool(callId: string): ToolCall | undefined {
     for (const m of messages.value) {
-      const t = m.tools.find((tool: ToolCall) => tool.callId === callId)
-      if (t) return t
+      for (const p of m.parts) {
+        if (p.kind === 'tool' && p.tool.callId === callId) return p.tool
+      }
     }
     return undefined
+  }
+
+  /** The final assistant content carried by an authoritative state, if any. */
+  function lastAssistantContent(state: ChatSessionState | undefined): string {
+    if (!state?.messages?.length) return ''
+    for (let i = state.messages.length - 1; i >= 0; i--) {
+      const m = state.messages[i]
+      if (m.role === 'assistant' && m.content) return m.content
+    }
+    return ''
   }
 
   /** Reduce a single inbound wire message into store state. */
@@ -126,6 +212,10 @@ export const useSessionStore = defineStore('session', () => {
         // availableModels is ChatModelRef[] but the wire delivers it as a plain
         // object array; cast through unknown to satisfy the type checker.
         availableModels.value = (init.models ?? []) as ChatModelRef[]
+        applyModelMetadata(model.value)
+        // A repeat init signals a reconnect: force a resync from the next snapshot.
+        if (initialized) pendingResync = true
+        initialized = true
         break
       }
       case 'ChatSessionSnapshotEvent': {
@@ -140,54 +230,30 @@ export const useSessionStore = defineStore('session', () => {
       }
       case 'ChatResponseDeltaEvent': {
         const ev = msg.payload as ChatResponseDeltaEvent
-        const a = activeAssistant()
-        a.content = ev.snapshot || a.content + ev.delta
+        writeText(activeAssistant(), ev.snapshot, ev.delta)
         streaming.value = true
         break
       }
       case 'ChatReasoningDeltaEvent': {
         const ev = msg.payload as ChatReasoningDeltaEvent
-        const a = activeAssistant()
-        a.reasoning = ev.snapshot || a.reasoning + ev.delta
+        writeReasoning(activeAssistant(), ev.snapshot, ev.delta)
         streaming.value = true
         break
       }
       case 'ChatToolCallDeltaEvent': {
         const ev = msg.payload as ChatToolCallDeltaEvent
         if (!ev.call_id) break
-        const a = activeAssistant()
-        const existing = a.tools.find((t) => t.callId === ev.call_id)
-        if (existing) {
-          if (ev.tool_name) existing.name = ev.tool_name
-          if (ev.arguments_summary) existing.argumentsSummary = ev.arguments_summary
-        } else {
-          a.tools.push({
-            callId: ev.call_id,
-            name: ev.tool_name,
-            argumentsSummary: ev.arguments_summary,
-            status: 'running',
-            output: '',
-          })
-        }
+        const tool = upsertTool(activeAssistant(), ev.call_id)
+        if (ev.tool_name) tool.name = ev.tool_name
+        if (ev.arguments_summary) tool.argumentsSummary = ev.arguments_summary
         break
       }
       case 'ChatToolExecutionStartedEvent': {
         const ev = msg.payload as ChatToolExecutionStartedEvent
-        const a = activeAssistant()
-        const existing = a.tools.find((t) => t.callId === ev.call_id)
-        if (existing) {
-          existing.name = ev.tool_name
-          existing.argumentsSummary = ev.arguments_summary || existing.argumentsSummary
-          existing.status = 'running'
-        } else {
-          a.tools.push({
-            callId: ev.call_id,
-            name: ev.tool_name,
-            argumentsSummary: ev.arguments_summary,
-            status: 'running',
-            output: '',
-          })
-        }
+        const tool = upsertTool(activeAssistant(), ev.call_id)
+        tool.name = ev.tool_name
+        tool.argumentsSummary = ev.arguments_summary || tool.argumentsSummary
+        tool.status = 'running'
         break
       }
       case 'ChatToolOutputEvent': {
@@ -210,9 +276,11 @@ export const useSessionStore = defineStore('session', () => {
         const a = messages.value[messages.value.length - 1]
         if (a && a.role === 'assistant') {
           a.streaming = false
-          if (ev.state?.messages?.length) {
-            const lastAssistant = [...ev.state.messages].reverse().find((m) => m.role === 'assistant')
-            if (lastAssistant?.content) a.content = lastAssistant.content
+          const finalText = lastAssistantContent(ev.state)
+          if (finalText) {
+            const lastText = [...a.parts].reverse().find((p) => p.kind === 'text')
+            if (lastText && lastText.kind === 'text') lastText.text = finalText
+            else a.parts.push({ kind: 'text', id: nextId(), text: finalText })
           }
         }
         if (ev.state) absorbState(ev.state)
@@ -258,32 +326,86 @@ export const useSessionStore = defineStore('session', () => {
   function absorbState(state: ChatSessionState) {
     if (!state) return
     sessionId.value = state.session_id || sessionId.value
-    if (state.model?.id) model.value = state.model.id
+    if (state.model?.id) {
+      model.value = state.model.id
+      if (state.model.context_window) contextWindow.value = state.model.context_window
+      if (state.model.cost) cost.value = state.model.cost
+    }
     if (state.status) status.value = state.status
     if (state.parameters) parameters.value = { ...state.parameters }
+    if (state.last_usage) usage.value = state.last_usage
 
     // On a fresh connection the local stream is empty; hydrate it from the
-    // replayed snapshot so a browser joining mid-session sees the history.
-    if (messages.value.length === 0 && state.messages?.length) {
-      hydrateFromHistory(state.messages)
+    // replayed snapshot so a browser joining mid-session sees the history. A
+    // reconnect (pendingResync) also rebuilds to recover missed events.
+    if (messages.value.length === 0 || pendingResync) {
+      if (state.messages?.length) hydrateFromHistory(state.messages)
+      pendingResync = false
     }
+  }
+
+  /** Update context-window / pricing from the advertised model list. */
+  function applyModelMetadata(id: string) {
+    const ref = availableModels.value.find((m) => m.id === id)
+    if (!ref) return
+    if (ref.context_window) contextWindow.value = ref.context_window
+    if (ref.cost) cost.value = ref.cost
   }
 
   /** Rebuild display messages from persisted conversation history. */
   function hydrateFromHistory(history: ChatSessionState['messages']) {
     const hydrated: DisplayMessage[] = []
+    // Tool result messages (role: 'tool') update the matching tool call from a
+    // prior assistant message rather than becoming a display message themselves.
+    const toolMap = new Map<string, ToolCall>()
+
     for (const m of history) {
+      if (m.role === 'system') continue
+
+      if (m.role === 'tool') {
+        if (m.tool_call_id) {
+          const tool = toolMap.get(m.tool_call_id)
+          if (tool) {
+            tool.status = 'ok'
+            if (m.content) tool.resultSummary = m.content
+          }
+        }
+        continue
+      }
+
       if (m.role !== 'user' && m.role !== 'assistant') continue
-      if (!m.content) continue
-      hydrated.push({
-        id: nextId(),
-        role: m.role,
-        content: m.content,
-        reasoning: m.reasoning_content ?? '',
-        tools: [],
-        streaming: false,
-      })
+
+      // Assistant messages may carry tool_calls without text content, so only
+      // skip when all possible content fields are empty.
+      if (!m.content && !m.reasoning_content && !m.tool_calls?.length) continue
+
+      const parts: MessagePart[] = []
+
+      if (m.reasoning_content) {
+        parts.push({ kind: 'reasoning', id: nextId(), text: m.reasoning_content })
+      }
+
+      if (m.content) {
+        parts.push({ kind: 'text', id: nextId(), text: m.content })
+      }
+
+      if (m.tool_calls) {
+        for (const tc of m.tool_calls) {
+          const tool: ToolCall = {
+            callId: tc.id,
+            name: tc.function.name,
+            argumentsSummary: tc.function.arguments,
+            status: 'ok', // Historical tools that made it into the log completed.
+            output: '',
+          }
+          toolMap.set(tc.id, tool)
+          parts.push({ kind: 'tool', id: nextId(), tool })
+        }
+      }
+
+      hydrated.push({ id: nextId(), role: m.role, parts, streaming: false })
     }
+
     messages.value = hydrated
   }
 
@@ -306,9 +428,7 @@ export const useSessionStore = defineStore('session', () => {
     messages.value.push({
       id: nextId(),
       role: 'user',
-      content: text,
-      reasoning: '',
-      tools: [],
+      parts: [{ kind: 'text', id: nextId(), text }],
       streaming: false,
     })
 
@@ -340,7 +460,10 @@ export const useSessionStore = defineStore('session', () => {
       temperature: patch.temperature ?? parameters.value.temperature,
       reasoning_effort: patch.reasoning_effort ?? parameters.value.reasoning_effort,
     }
-    if (patch.model?.id) model.value = patch.model.id
+    if (patch.model?.id) {
+      model.value = patch.model.id
+      applyModelMetadata(patch.model.id)
+    }
     if (patch.provider) provider.value = patch.provider
 
     const payload: UpdateChatSessionCommand = { session_id: sessionId.value, patch }
@@ -400,6 +523,9 @@ export const useSessionStore = defineStore('session', () => {
     parameters,
     activePrompt,
     sessions,
+    usage,
+    contextWindow,
+    cost,
     bindSender,
     apply,
     submitPrompt,

@@ -26,24 +26,50 @@ const (
 	kittyLockMods = 64 | 128 // CapsLock | NumLock
 )
 
-// canonicalKey normalizes Kitty keyboard-protocol CSI-u key events back to the
-// legacy bytes the rest of the codebase matches on, regardless of whether the
-// protocol is active or which lock keys happen to be on:
-//   - unmodified disambiguated keys (Esc/Enter/Tab/Backspace) -> their byte;
-//   - Ctrl+<letter> -> the control byte (so Ctrl+C quit, Ctrl+J newline, etc.);
-//   - other modifier combos -> the same CSI-u form with lock bits stripped, so
-//     exact-match handlers like Shift+Enter ("\x1b[13;2u") still fire.
+// canonicalKey normalizes Kitty keyboard-protocol key events back to the legacy
+// bytes/sequences the rest of the codebase matches on, regardless of whether the
+// protocol is active or which lock keys happen to be on. Lock modifiers
+// (NumLock/CapsLock) are stripped from the modifier field so, e.g., an Up arrow
+// reported as "\x1b[1;129A" with NumLock on still resolves to "\x1b[A":
+//   - CSI-u unmodified keys (Esc/Enter/Tab/Backspace) -> their byte;
+//   - CSI-u Ctrl+<letter> -> the control byte (Ctrl+C quit, Ctrl+J newline, ...);
+//   - cursor/navigation/function keys -> their bare or canonically-modified form.
 func canonicalKey(seq string) string {
-	cp, mod, ok := parseCSIu(seq)
+	keyNum, mod, final, ok := parseCSI(seq)
 	if !ok {
 		return seq
 	}
 
-	// No modifier (or only lock modifiers) -> treat as the bare key.
 	bits := 0
 	if mod > 0 {
 		bits = (mod - 1) &^ kittyLockMods
 	}
+
+	if final == 'u' {
+		return canonicalCSIu(keyNum, mod, bits, seq)
+	}
+
+	// Cursor / navigation / function keys ("\x1b[<n>;<mod><final>"). With no
+	// real modifier left, collapse to the bare legacy form; otherwise re-emit
+	// with the lock bits removed so handlers like Ctrl+Left ("\x1b[1;5D") match.
+	if mod == 0 {
+		return seq // already bare; nothing to normalize
+	}
+	if final == '~' {
+		if bits == 0 {
+			return fmt.Sprintf("\x1b[%d~", keyNum)
+		}
+		return fmt.Sprintf("\x1b[%d;%d~", keyNum, bits+1)
+	}
+	if bits == 0 {
+		return fmt.Sprintf("\x1b[%c", final)
+	}
+	return fmt.Sprintf("\x1b[1;%d%c", bits+1, final)
+}
+
+// canonicalCSIu resolves a CSI-u key event given its codepoint, raw modifier and
+// lock-stripped modifier bits.
+func canonicalCSIu(cp, mod, bits int, seq string) string {
 	if bits == 0 {
 		switch cp {
 		case 27:
@@ -56,12 +82,10 @@ func canonicalKey(seq string) string {
 			return "\x7f"
 		}
 		if mod > 0 {
-			return fmt.Sprintf("\x1b[%du", cp) // e.g. unmodified letter under locks
+			return fmt.Sprintf("\x1b[%du", cp)
 		}
 		return seq
 	}
-
-	// Ctrl alone + a letter -> the corresponding control byte.
 	if bits == kittyModCtrl {
 		switch {
 		case cp >= 'a' && cp <= 'z':
@@ -70,36 +94,52 @@ func canonicalKey(seq string) string {
 			return string(byte(cp))
 		}
 	}
-
-	// Any other combo: re-emit with lock bits removed so the canonical CSI-u
-	// form (e.g. Shift+Enter "\x1b[13;2u") matches downstream.
 	return fmt.Sprintf("\x1b[%d;%du", cp, bits+1)
 }
 
-// parseCSIu decodes a Kitty "\x1b[<codepoint>[:alt];<modifier>[:event]u" key
-// event into its codepoint and raw modifier value (0 when no modifier field is
-// present). It returns ok=false for anything that is not a CSI-u key event.
-func parseCSIu(seq string) (codepoint, modifier int, ok bool) {
-	if !strings.HasPrefix(seq, "\x1b[") || !strings.HasSuffix(seq, "u") {
-		return 0, 0, false
+// isKeyFinal reports whether b terminates a CSI keyboard event we normalize.
+// 'R' (cursor-position report) and mouse finals are deliberately excluded.
+func isKeyFinal(b byte) bool {
+	switch b {
+	case 'A', 'B', 'C', 'D', 'E', 'F', 'H', 'P', 'Q', 'S', 'Z', '~', 'u':
+		return true
+	}
+	return false
+}
+
+// parseCSI decodes a CSI key event "\x1b[<num>[:alt][;<mod>[:event]]<final>"
+// into its leading number (1 for bare cursor keys), raw modifier value (0 when
+// absent) and final byte. It returns ok=false for non-key CSI sequences such as
+// mouse reports ("\x1b[<…M") or device-attribute replies.
+func parseCSI(seq string) (keyNum, modifier int, final byte, ok bool) {
+	if !strings.HasPrefix(seq, "\x1b[") || len(seq) < 3 {
+		return 0, 0, 0, false
+	}
+	final = seq[len(seq)-1]
+	if !isKeyFinal(final) {
+		return 0, 0, 0, false
 	}
 	body := seq[2 : len(seq)-1]
+	if body == "" {
+		return 1, 0, final, true // bare cursor key, e.g. "\x1b[A"
+	}
+	if body[0] < '0' || body[0] > '9' {
+		return 0, 0, 0, false // "?", "<", etc. — not a plain key event
+	}
 
-	cpField, modField, hasMod := strings.Cut(body, ";")
-	cpField, _, _ = strings.Cut(cpField, ":") // drop shifted-key/base-layout codepoints
-	cp, err := strconv.Atoi(cpField)
+	keyField, modField, hasMod := strings.Cut(body, ";")
+	keyField, _, _ = strings.Cut(keyField, ":")
+	keyNum, err := strconv.Atoi(keyField)
 	if err != nil {
-		return 0, 0, false
+		return 0, 0, 0, false
 	}
-	if !hasMod || modField == "" {
-		return cp, 0, true
+	if hasMod && modField != "" {
+		mf, _, _ := strings.Cut(modField, ":")
+		if v, err := strconv.Atoi(mf); err == nil {
+			modifier = v
+		}
 	}
-	modField, _, _ = strings.Cut(modField, ":") // drop event-type sub-parameter
-	mod, err := strconv.Atoi(modField)
-	if err != nil {
-		return 0, 0, false
-	}
-	return cp, mod, true
+	return keyNum, modifier, final, true
 }
 
 // stdinBuffer splits raw terminal input into discrete key sequences and

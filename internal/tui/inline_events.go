@@ -206,6 +206,8 @@ func (c *inlineChat) handleEvent(ev tauchat.ChatEvent) {
 		for _, m := range e.State.Messages {
 			c.printMessage(m)
 		}
+		// Seed the input history from persisted user messages.
+		c.seedHistoryFromMessages(e.State.Messages)
 
 	case tauchat.SessionDeletedEvent:
 		msg := "Session deleted: " + e.SessionID

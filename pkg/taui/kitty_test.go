@@ -39,6 +39,17 @@ func TestCanonicalKeyStripsLockModifiers(t *testing.T) {
 	cases := map[string]string{
 		"\x1b[13;130u": "\x1b[13;2u", // Shift+Enter + NumLock -> Shift+Enter
 		"\x1b[13;2u":   "\x1b[13;2u", // already canonical -> unchanged
+
+		// Cursor keys with NumLock on (modifier 129 = 1+NumLock) collapse to the
+		// bare legacy form so the line input / completions handlers match.
+		"\x1b[1;129A": "\x1b[A", // Up + NumLock
+		"\x1b[1;129B": "\x1b[B", // Down + NumLock
+		"\x1b[1;129C": "\x1b[C", // Right + NumLock
+		"\x1b[1;129D": "\x1b[D", // Left + NumLock
+
+		// A real modifier alongside NumLock keeps the modifier, drops the lock.
+		"\x1b[1;133D": "\x1b[1;5D", // Ctrl+Left + NumLock -> Ctrl+Left (word jump)
+		"\x1b[3;129~": "\x1b[3~",   // Delete + NumLock -> Delete
 	}
 	for in, want := range cases {
 		if got := canonicalKey(in); got != want {

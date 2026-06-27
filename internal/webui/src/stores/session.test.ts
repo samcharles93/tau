@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { createPinia, setActivePinia } from 'pinia'
-import { useSessionStore } from './session'
+import { messageReasoning, messageText, messageTools, useSessionStore } from './session'
 import type { Envelope } from '@/lib/protocol'
 
 function event(type: string, payload: unknown) {
@@ -34,7 +34,7 @@ describe('session store', () => {
 
     expect(s.messages).toHaveLength(1)
     expect(s.messages[0].role).toBe('assistant')
-    expect(s.messages[0].content).toBe('Hello')
+    expect(messageText(s.messages[0])).toBe('Hello')
     expect(s.messages[0].streaming).toBe(true)
     expect(s.streaming).toBe(true)
   })
@@ -49,8 +49,8 @@ describe('session store', () => {
         arguments_summary: 'path=x',
       }),
     )
-    expect(s.messages[0].tools).toHaveLength(1)
-    expect(s.messages[0].tools[0].status).toBe('running')
+    expect(messageTools(s.messages[0])).toHaveLength(1)
+    expect(messageTools(s.messages[0])[0].status).toBe('running')
 
     s.apply(
       event('ChatToolExecutionCompletedEvent', {
@@ -60,8 +60,8 @@ describe('session store', () => {
         result_summary: 'ok',
       }),
     )
-    expect(s.messages[0].tools[0].status).toBe('ok')
-    expect(s.messages[0].tools[0].resultSummary).toBe('ok')
+    expect(messageTools(s.messages[0])[0].status).toBe('ok')
+    expect(messageTools(s.messages[0])[0].resultSummary).toBe('ok')
   })
 
   it('marks failed tools as error', () => {
@@ -69,7 +69,7 @@ describe('session store', () => {
     s.apply(event('ChatResponseDeltaEvent', { session_id: 's', request_id: 'r', delta: 'x', snapshot: 'x' }))
     s.apply(event('ChatToolExecutionStartedEvent', { call_id: 'c1', tool_name: 'bash', arguments_summary: '' }))
     s.apply(event('ChatToolExecutionCompletedEvent', { call_id: 'c1', tool_name: 'bash', is_error: true, result_summary: 'boom' }))
-    expect(s.messages[0].tools[0].status).toBe('error')
+    expect(messageTools(s.messages[0])[0].status).toBe('error')
   })
 
   it('finalises the turn and absorbs parameters on completion', () => {
@@ -139,7 +139,7 @@ describe('session store', () => {
     expect(ok).toBe(true)
     expect(s.messages).toHaveLength(1)
     expect(s.messages[0].role).toBe('user')
-    expect(s.messages[0].content).toBe('hello world')
+    expect(messageText(s.messages[0])).toBe('hello world')
 
     expect(sent).toHaveLength(1)
     expect(sent[0].type).toBe('SubmitChatPromptCommand')
@@ -195,7 +195,7 @@ describe('session store — enhancements', () => {
     s.apply(event('ChatReasoningDeltaEvent', { delta: 'think', snapshot: 'think' }))
     s.apply(event('ChatReasoningDeltaEvent', { delta: 'ing', snapshot: 'thinking' }))
     expect(s.messages).toHaveLength(1)
-    expect(s.messages[0].reasoning).toBe('thinking')
+    expect(messageReasoning(s.messages[0])).toBe('thinking')
   })
 
   it('streams live tool output by call id', () => {
@@ -203,7 +203,7 @@ describe('session store — enhancements', () => {
     s.apply(event('ChatToolExecutionStartedEvent', { call_id: 'c1', tool_name: 'bash', arguments_summary: 'ls' }))
     s.apply(event('ChatToolOutputEvent', { call_id: 'c1', chunk: 'line1\n' }))
     s.apply(event('ChatToolOutputEvent', { call_id: 'c1', chunk: 'line2\n' }))
-    expect(s.messages[0].tools[0].output).toBe('line1\nline2\n')
+    expect(messageTools(s.messages[0])[0].output).toBe('line1\nline2\n')
   })
 
   it('upserts a tool from a tool-call delta before execution starts', () => {
@@ -211,8 +211,8 @@ describe('session store — enhancements', () => {
     s.apply(event('ChatResponseDeltaEvent', { delta: 'x', snapshot: 'x' }))
     s.apply(event('ChatToolCallDeltaEvent', { call_id: 'c1', index: 0, tool_name: 'read', arguments_summary: 'pa' }))
     s.apply(event('ChatToolCallDeltaEvent', { call_id: 'c1', index: 0, tool_name: 'read', arguments_summary: 'path=x' }))
-    expect(s.messages[0].tools).toHaveLength(1)
-    expect(s.messages[0].tools[0].argumentsSummary).toBe('path=x')
+    expect(messageTools(s.messages[0])).toHaveLength(1)
+    expect(messageTools(s.messages[0])[0].argumentsSummary).toBe('path=x')
   })
 
   it('captures an interactive prompt and responds, clearing it', () => {
@@ -249,5 +249,67 @@ describe('session store — enhancements', () => {
     s.apply(event('SessionDeletedEvent', { session_id: 'a' }))
     expect(s.sessions).toHaveLength(1)
     expect(s.sessions[0].id).toBe('b')
+  })
+
+  it('orders reasoning, text and tools chronologically within a turn', () => {
+    const s = useSessionStore()
+    s.apply(event('ChatReasoningDeltaEvent', { delta: 'plan', snapshot: 'plan' }))
+    s.apply(event('ChatResponseDeltaEvent', { delta: 'checking', snapshot: 'checking' }))
+    s.apply(event('ChatToolExecutionStartedEvent', { call_id: 'c1', tool_name: 'bash', arguments_summary: 'ls' }))
+    s.apply(event('ChatToolExecutionCompletedEvent', { call_id: 'c1', tool_name: 'bash', is_error: false, result_summary: 'ok' }))
+    // The next iteration's text uses a fresh snapshot, so it opens a NEW text
+    // part after the tool rather than merging back into the first.
+    s.apply(event('ChatResponseDeltaEvent', { delta: 'done', snapshot: 'done' }))
+
+    const parts = s.messages[0].parts
+    expect(parts.map((p) => p.kind)).toEqual(['reasoning', 'text', 'tool', 'text'])
+    const last = parts[parts.length - 1]
+    expect(last.kind).toBe('text')
+    if (last.kind === 'text') expect(last.text).toBe('done')
+  })
+
+  it('absorbs token usage, context window and cost from state', () => {
+    const s = useSessionStore()
+    s.apply(
+      event('ChatSessionSnapshotEvent', {
+        state: {
+          session_id: 's',
+          status: 'idle',
+          model: { id: 'm', context_window: 1000, cost: { input: 3, output: 15 } },
+          parameters: { max_tokens: 0, temperature: 0 },
+          messages: [],
+          last_usage: { prompt_tokens: 100, completion_tokens: 50, total_tokens: 150 },
+        },
+      }),
+    )
+    expect(s.usage.total_tokens).toBe(150)
+    expect(s.contextWindow).toBe(1000)
+    expect(s.cost.input).toBe(3)
+  })
+
+  it('resyncs messages from the authoritative snapshot after a reconnect', () => {
+    const s = useSessionStore()
+    s.apply({ type: 'init', session_id: 's', model: 'm', provider: 'p' })
+    s.apply(event('ChatResponseDeltaEvent', { delta: 'partial', snapshot: 'partial' }))
+    expect(s.messages).toHaveLength(1)
+
+    // A repeated init marks a reconnect; the next snapshot replaces local state.
+    s.apply({ type: 'init', session_id: 's', model: 'm', provider: 'p' })
+    s.apply(
+      event('ChatSessionSnapshotEvent', {
+        state: {
+          session_id: 's',
+          status: 'idle',
+          model: { id: 'm' },
+          parameters: { max_tokens: 0, temperature: 0 },
+          messages: [
+            { role: 'user', content: 'hi' },
+            { role: 'assistant', content: 'hello there' },
+          ],
+        },
+      }),
+    )
+    expect(s.messages).toHaveLength(2)
+    expect(messageText(s.messages[1])).toBe('hello there')
   })
 })

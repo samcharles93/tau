@@ -75,7 +75,7 @@ The embedded SPA approach is borrowed from the sibling project `spawn` (`/work/a
 ### Components
 
 | Component | Package | Responsibility |
-|---|---|---|
+| --------- | ------- | -------------- |
 | WebSocket bridge | `internal/bridge` | Subscribes to `ChatEvent`, forwards to browsers; receives JSON commands and calls `Coordinator.Send()` |
 | HTTP/WS server | `internal/server` | Serves the embedded SPA and mounts the WebSocket endpoint |
 | Embedded SPA | `internal/spa/dist` | Built `dist/` of the Vue app, embedded with `//go:embed` |
@@ -192,7 +192,7 @@ No coordinator changes are required. The bridge uses the existing `ChatRuntime` 
 
 ### 6.2 Source layout
 
-```
+```tree
 internal/webui/
 ├── index.html
 ├── package.json
@@ -248,7 +248,7 @@ internal/webui/
 Added to `internal/cli/root.go`:
 
 | Flag | Type | Default | Description |
-|---|---|---|---|
+| ---- | ---- | ------- | ----------- |
 | `--web` | bool | false | Start the web UI and open the browser |
 | `--port` | int | 0 | HTTP port (0 = auto-assign ephemeral) |
 | `--no-web` | bool | false | Do not start the web server |
@@ -402,7 +402,7 @@ The AsyncAPI document will be expanded with concrete message schemas once the co
 ## 10. Testing Strategy
 
 | Layer | Test approach |
-|---|---|
+| ----- | ------------- |
 | `internal/bridge` | Unit tests with a mock `ChatRuntime` and fake WebSocket; verify commands forwarded and events broadcast |
 | `internal/server` | `httptest` + `websocket` client; verify SPA fallback, `/ws` upgrade, `/health` |
 | `internal/app` | Integration test: start `RunChat` with `--no-web`, `--web`, and `--port` flags; assert server binds |
@@ -414,7 +414,7 @@ The AsyncAPI document will be expanded with concrete message schemas once the co
 ## 11. Risks and Mitigations
 
 | Risk | Impact | Mitigation |
-|---|---|---|
+| ---- | ------ | ---------- |
 | Binary size bloat from embedded SPA | Medium | Code-split SPA; lazy-load routes; only embed `dist/` assets |
 | WebSocket reconnection complexity | Medium | Robust `useWebSocket` with exponential backoff; replay last event snapshot on reconnect |
 | Concurrent input from TUI and browser | Low | Coordinator serializes `ChatCommand` via its send channel; last-write-wins is acceptable in this phase |
@@ -507,26 +507,26 @@ called out explicitly.
 
 ### Tier 2 — TUI feature parity
 
-4. **Reasoning panel.** `ChatReasoningDeltaEvent` is on the wire but unrendered.
+1. **Reasoning panel.** `ChatReasoningDeltaEvent` is on the wire but unrendered.
    Add a collapsible `ReasoningPanel` that streams reasoning tokens per turn.
-5. **Live tool output.** `ChatToolCallDeltaEvent` (streaming arguments) and
+2. **Live tool output.** `ChatToolCallDeltaEvent` (streaming arguments) and
    `ChatToolOutputEvent` (live stdout chunks) are currently ignored. Stream them
    into `ToolCard` so output appears as it is produced, not only on completion.
-6. **Interactive prompts.** `InteractivePromptRequestedEvent` /
+3. **Interactive prompts.** `InteractivePromptRequestedEvent` /
    `RespondInteractivePromptCommand` drive tool confirmations and questions. The
    web UI must render these as a dialog, otherwise an approval-gated tool hangs
    for web users.
-7. **Slash commands.** `init` already carries the `commands` (`CommandRef`) list;
+4. **Slash commands.** `init` already carries the `commands` (`CommandRef`) list;
    surface a `/`-triggered autocomplete menu in `ChatInput`.
 
 ### Tier 3 — Richer UX
 
-8. **Real model selector.** Model is currently a free-text field. *Backend:*
+1. **Real model selector.** Model is currently a free-text field. *Backend:*
    include the available-models list in `init` (the coordinator already builds
    model refs). *Frontend:* replace the text field with a `ModelSelect` dropdown.
-9. **Toast notices.** Notices currently accumulate inline in the stream. Move
+2. **Toast notices.** Notices currently accumulate inline in the stream. Move
    transient info/warn/error to a Sonner-style toast container.
-10. **Session switcher.** `ListSessions` / `LoadSession` / `DeleteSession` /
+3. **Session switcher.** `ListSessions` / `LoadSession` / `DeleteSession` /
     `ExportSession` commands and their events are already defined; add a sidebar
     to browse, resume, export, and delete sessions.
 

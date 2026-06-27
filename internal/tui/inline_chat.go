@@ -261,6 +261,8 @@ func (c *inlineChat) onSubmit(prompt string) {
 		return
 	}
 
+	c.input.AddToHistory(trimmed)
+
 	c.mu.Lock()
 	if c.running {
 		c.queue = append(c.queue, trimmed)
@@ -287,6 +289,7 @@ func (c *inlineChat) onSteer(prompt string) {
 	}
 	c.engine.PrintAbove("%s %s", c.bold("⏎"), prompt)
 	c.input.Clear()
+	c.input.AddToHistory(prompt)
 	_ = c.runtime.Send(tauchat.SteerChatPromptCommand{
 		SessionID:   c.sid(),
 		RequestID:   newRequestID(),
@@ -333,6 +336,20 @@ func (c *inlineChat) doTurn(prompt string) {
 
 func (c *inlineChat) commit(line string) {
 	c.engine.PrintAbove("%s\n", line)
+}
+
+// seedHistoryFromMessages extracts user-role messages and seeds the input
+// history buffer. Used when loading a persisted session.
+func (c *inlineChat) seedHistoryFromMessages(messages []tauchat.ChatMessage) {
+	var prompts []string
+	for _, m := range messages {
+		if m.Role == tauchat.ChatRoleUser && strings.TrimSpace(m.Content) != "" {
+			prompts = append(prompts, m.Content)
+		}
+	}
+	if len(prompts) > 0 {
+		c.input.SetHistory(prompts)
+	}
 }
 
 // blockString formats a rendered box (its lines) as a single scrollback string:

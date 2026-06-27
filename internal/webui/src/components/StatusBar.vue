@@ -78,7 +78,7 @@ async function pollHealth() {
 
 onMounted(() => {
   pollHealth()
-  timer = setInterval(pollHealth, 5000)
+  timer = setInterval(pollHealth, 30000)
 })
 onUnmounted(() => {
   if (timer) clearInterval(timer)

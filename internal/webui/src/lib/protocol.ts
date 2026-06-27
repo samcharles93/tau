@@ -39,6 +39,24 @@ export interface CommandRef {
 export interface ChatModelRef {
   id: string
   url?: string
+  /** Maximum context window in tokens, when the backend advertises it. */
+  context_window?: number
+  /** Per-1M-token pricing, when the backend advertises it. */
+  cost?: ChatCost
+}
+
+export interface ChatCost {
+  input?: number
+  output?: number
+  cache_read?: number
+  cache_write?: number
+}
+
+export interface ChatUsage {
+  prompt_tokens?: number
+  completion_tokens?: number
+  output_tokens?: number
+  total_tokens?: number
 }
 
 export interface ChatParameters {
@@ -55,12 +73,26 @@ export interface ChatSessionState {
   messages: ChatMessage[]
   pending_assistant?: string
   active_request_id?: string
+  last_usage?: ChatUsage
 }
 
 export interface ChatMessage {
   role: 'system' | 'user' | 'assistant' | 'tool'
   content?: string
   reasoning_content?: string
+  tool_calls?: ChatToolCall[]
+  tool_call_id?: string
+}
+
+export interface ChatToolCall {
+  id: string
+  type: string // always "function"
+  function: ChatFunctionCall
+}
+
+export interface ChatFunctionCall {
+  name: string
+  arguments: string // JSON string
 }
 
 export interface ChatSessionSnapshotEvent {

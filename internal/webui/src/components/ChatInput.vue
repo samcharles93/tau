@@ -46,11 +46,17 @@
         Send
       </button>
     </form>
+
+    <!-- Token usage / cost for the current session, pinned bottom-right. -->
+    <div class="flex justify-end px-3 pb-1.5">
+      <UsageIndicator />
+    </div>
   </div>
 </template>
 
 <script setup lang="ts">
 import { computed, nextTick, ref } from 'vue'
+import UsageIndicator from '@/components/UsageIndicator.vue'
 import { useSessionStore } from '@/stores/session'
 import type { CommandRef } from '@/lib/protocol'
 
