@@ -107,10 +107,16 @@ type ChatToolDefFunction struct {
 }
 
 // ChatModelRef identifies the selected model route for a session.
+//
+// Provider tags the model with the provider it was discovered from so the TUI
+// can switch the session's provider alongside the model when the user selects a
+// model from the aggregated, cross-provider list. It is empty for models that
+// were not aggregated (e.g. a single-provider headless run).
 type ChatModelRef struct {
-	ID     string             `json:"id"`
-	URL    string             `json:"url"`
-	Config config.ModelConfig `json:"-"`
+	ID       string             `json:"id"`
+	URL      string             `json:"url"`
+	Provider string             `json:"provider,omitempty"`
+	Config   config.ModelConfig `json:"-"`
 }
 
 func (m ChatModelRef) Validate() error {
@@ -201,8 +207,12 @@ func (c ChatSessionConfig) Validate() error {
 	if strings.TrimSpace(c.Provider.Name) == "" || strings.TrimSpace(c.Provider.BaseURL) == "" {
 		return errors.New("chat provider is required")
 	}
-	if err := c.Model.Validate(); err != nil {
-		return err
+	// An empty model is permitted: the session launches unselected and the user
+	// picks a model with /model. A model that is set must still be valid.
+	if strings.TrimSpace(c.Model.ID) != "" {
+		if err := c.Model.Validate(); err != nil {
+			return err
+		}
 	}
 	return c.Parameters.Validate()
 }

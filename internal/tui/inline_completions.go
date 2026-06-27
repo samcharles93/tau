@@ -123,7 +123,13 @@ func (c *inlineChat) modelMatches() []taui.Match {
 	slices.SortFunc(models, func(a, b tauchat.ChatModelRef) int { return strings.Compare(a.ID, b.ID) })
 	out := make([]taui.Match, 0, len(models))
 	for _, m := range models {
-		out = append(out, taui.Match{Word: m.ID, Description: m.URL})
+		// Show the provider the model belongs to (dimmed, in its own column)
+		// rather than the raw base URL.
+		desc := m.Provider
+		if desc == "" {
+			desc = m.URL
+		}
+		out = append(out, taui.Match{Word: m.ID, Description: desc})
 	}
 	return out
 }

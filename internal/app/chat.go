@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/pkg/browser"
+	aisdkchat "github.com/samcharles93/ai-sdk/pkg/chat"
 	"github.com/samcharles93/ai-sdk/pkg/runtime"
 
 	"github.com/samcharles93/tau/internal/agent"
@@ -19,6 +20,8 @@ import (
 	tauconfig "github.com/samcharles93/tau/internal/config"
 	"github.com/samcharles93/tau/internal/eventbus"
 	"github.com/samcharles93/tau/internal/plugin"
+	"github.com/samcharles93/tau/internal/providers"
+	"github.com/samcharles93/tau/internal/providers/snapshot"
 	commandreg "github.com/samcharles93/tau/internal/registry"
 	"github.com/samcharles93/tau/internal/sessions"
 	"github.com/samcharles93/tau/internal/skills"
@@ -76,19 +79,66 @@ func formatTokensHuman(n int) string {
 }
 
 // buildModelRefresher returns a ModelRefresher closure that re-discovers
-// models from the configured provider. The closure captures the provider and
-// insecure flag so the TUI does not need to import infrastructure packages.
-func buildModelRefresher(rt *runtime.Runtime, providerID, baseURL string) tui.ModelRefresher {
+// models across every supplied provider, tagging each model with the provider
+// it came from. The aggregated list is what powers cross-provider /model
+// selection. The closure captures the providers so the TUI does not need to
+// import infrastructure packages.
+func buildModelRefresher(pr *providerRuntime) tui.ModelRefresher {
 	return func(ctx context.Context) ([]tauchat.ChatModelRef, error) {
-		if err := rt.Catalog().Fetch(ctx); err != nil {
+		// Rebuild the runtime from current provider state so models from
+		// providers enabled since launch (via /login) appear, and the dynamic
+		// streamer can route to them.
+		if err := pr.reload(ctx); err != nil {
 			return nil, err
 		}
-		models, err := rt.Models(providerID)
-		if err != nil {
-			return nil, err
-		}
-		return modelInfoRefs(models, baseURL), nil
+		rt, provs := pr.snapshot()
+		return aggregateModelRefs(ctx, rt, pr.insecure, provs), nil
 	}
+}
+
+// aggregateModelRefs collects model references from every provider, tagging
+// each with its provider. Providers flagged for live discovery (e.g. a local
+// Ollama server) are listed from their /models endpoint at runtime; the rest
+// come from the embedded snapshot, filtered to tool-capable models. Providers
+// that fail to enumerate are skipped rather than failing the whole list.
+func aggregateModelRefs(ctx context.Context, rt *runtime.Runtime, insecure bool, provs []tauconfig.ProviderConfig) []tauchat.ChatModelRef {
+	var out []tauchat.ChatModelRef
+	for _, p := range provs {
+		if entry, ok := providers.Lookup(p.Name); ok && entry.LiveModels {
+			refs, err := liveModelRefs(ctx, p, insecure)
+			if err != nil {
+				slog.Debug("live model discovery failed", "provider", p.Name, "err", err)
+				continue
+			}
+			out = append(out, refs...)
+			continue
+		}
+		models, err := rt.Models(p.Name)
+		if err != nil {
+			slog.Debug("model enumeration failed", "provider", p.Name, "err", err)
+			continue
+		}
+		out = append(out, modelInfoRefs(toolCapable(models), p.Name, p.BaseURL)...)
+	}
+	return out
+}
+
+// toolCapable keeps only models that advertise tool / function calling — the
+// minimum capability tau's agent loop needs, so models that can't call tools
+// never clutter the picker. If none of a provider's models advertise it (the
+// catalogue carries no capability data for that provider), the full list is
+// returned rather than rendering the provider empty.
+func toolCapable(models []runtime.ModelInfo) []runtime.ModelInfo {
+	filtered := make([]runtime.ModelInfo, 0, len(models))
+	for _, m := range models {
+		if m.ToolCall {
+			filtered = append(filtered, m)
+		}
+	}
+	if len(filtered) == 0 {
+		return models
+	}
+	return filtered
 }
 
 func buildSessionConfig(opts ChatOptions, model tauchat.ChatModelRef, systemPrompt string) tauchat.ChatSessionConfig {
@@ -130,34 +180,39 @@ func buildAgentSystemPrompt(userPrompt, cwd string) string {
 	})
 }
 
-func pickModel(models []runtime.ModelInfo, requestedModel, defaultModel, baseURL string) (tauchat.ChatModelRef, error) {
+// pickModel resolves the requested or default model to a full reference. When
+// neither a --model flag nor a default_model is set it returns a zero ref (and
+// no error): the interactive session launches unselected and the user chooses a
+// model with /model. Headless callers that require a model must check for an
+// empty ID themselves.
+func pickModel(models []runtime.ModelInfo, requestedModel, defaultModel, provider, baseURL string) (tauchat.ChatModelRef, error) {
 	selectedModel := strings.TrimSpace(requestedModel)
 	if selectedModel == "" {
 		selectedModel = strings.TrimSpace(defaultModel)
 	}
 	if selectedModel == "" {
-		return tauchat.ChatModelRef{}, errors.New("chat model is required; pass --model or set default_model")
+		return tauchat.ChatModelRef{}, nil
 	}
 
 	for _, m := range models {
 		if m.ID != selectedModel {
 			continue
 		}
-		return modelInfoToRef(m, baseURL), nil
+		return modelInfoToRef(m, provider, baseURL), nil
 	}
 
-	return tauchat.ChatModelRef{ID: selectedModel, URL: strings.TrimRight(baseURL, "/")}, nil
+	return tauchat.ChatModelRef{ID: selectedModel, URL: strings.TrimRight(baseURL, "/"), Provider: provider}, nil
 }
 
-func modelInfoRefs(models []runtime.ModelInfo, baseURL string) []tauchat.ChatModelRef {
+func modelInfoRefs(models []runtime.ModelInfo, provider, baseURL string) []tauchat.ChatModelRef {
 	refs := make([]tauchat.ChatModelRef, 0, len(models))
 	for _, m := range models {
-		refs = append(refs, modelInfoToRef(m, baseURL))
+		refs = append(refs, modelInfoToRef(m, provider, baseURL))
 	}
 	return refs
 }
 
-func modelInfoToRef(m runtime.ModelInfo, baseURL string) tauchat.ChatModelRef {
+func modelInfoToRef(m runtime.ModelInfo, provider, baseURL string) tauchat.ChatModelRef {
 	// Catalogue models often carry no per-model URL; fall back to the provider
 	// base URL so the model reference passes validation when switching models.
 	url := strings.TrimRight(m.URL, "/")
@@ -165,9 +220,10 @@ func modelInfoToRef(m runtime.ModelInfo, baseURL string) tauchat.ChatModelRef {
 		url = strings.TrimRight(baseURL, "/")
 	}
 	return tauchat.ChatModelRef{
-		ID:     m.ID,
-		URL:    url,
-		Config: modelInfoToModelConfig(m),
+		ID:       m.ID,
+		URL:      url,
+		Provider: provider,
+		Config:   modelInfoToModelConfig(m),
 	}
 }
 
@@ -196,7 +252,36 @@ func modelInfoToModelConfig(m runtime.ModelInfo) tauconfig.ModelConfig {
 	if eff, ok := m.Extra["reasoning_effort"].(string); ok {
 		cfg.ReasoningEffort = eff
 	}
+	// Carry the model's selectable reasoning effort levels (models.dev
+	// reasoning_options of type "effort") so the TUI can offer exactly those.
+	for _, opt := range m.ReasoningOptions {
+		if strings.EqualFold(opt.Type, "effort") && len(opt.Values) > 0 {
+			cfg.ReasoningEfforts = append(cfg.ReasoningEfforts, opt.Values...)
+		}
+	}
 	return cfg
+}
+
+// buildDynamicStreamer constructs a streamer that resolves its provider/model
+// per turn from the session state, against a runtime configured with every
+// usable provider. Switching model or provider mid-session (via /model or
+// /login) therefore takes effect on the next turn with no coordinator rebuild.
+// When no provider/model is selected it returns a friendly error pointing the
+// user at /login and /model.
+func buildDynamicStreamer(pr *providerRuntime) agent.Streamer {
+	return NewDynamicStreamer(func(ctx context.Context, session tauchat.ChatSessionState) (aisdkchat.Provider, string, error) {
+		providerName := strings.TrimSpace(session.Provider.Name)
+		modelID := strings.TrimSpace(session.Model.ID)
+		if providerName == "" || modelID == "" {
+			return nil, "", errors.New("no model selected — enable a provider with /login, then choose a model with /model")
+		}
+		ref := providerName + "/" + modelID
+		provider, resolvedID, err := pr.runtime().ChatProvider(ctx, ref)
+		if err != nil {
+			return nil, "", fmt.Errorf("resolving provider for %q: %w", ref, err)
+		}
+		return provider, resolvedID, nil
+	})
 }
 
 // buildStreamer constructs an ai-sdk-backed streamer for the selected
@@ -217,11 +302,14 @@ func buildStreamer(
 }
 
 // resolveProviderClass maps a tau provider config to an ai-sdk runtime class.
-// The config's `type` is honoured only when it names a registered class (e.g.
-// `type: deepseek`). tau's deployment kinds — `hosted`, `local` — are not
-// runtime classes, so any provider speaking the OpenAI chat-completions dialect
-// (the `api: openai-completions` default) resolves to the generic
-// openai-compatible class.
+// The config's `type` is honoured when it names a registered class (e.g.
+// `type: gemini`). Otherwise tau's curated catalog supplies an OpenAI-compatible
+// base URL for every provider, so the generic openai-compatible class is the
+// correct, coherent default. We deliberately do not derive the class from the
+// models.dev npm mapping: that data is inconsistent (id mismatches, unmapped
+// packages) and would pair a non-OpenAI client with our OpenAI-style base URLs.
+// tau's deployment kinds — `hosted`, `local` — are not runtime classes and fall
+// through to the default here.
 func resolveProviderClass(provider tauconfig.ProviderConfig) string {
 	if t := strings.TrimSpace(provider.Type); t != "" {
 		if _, ok := runtime.GetClass(t); ok {
@@ -231,61 +319,80 @@ func resolveProviderClass(provider tauconfig.ProviderConfig) string {
 	return "openai-compatible"
 }
 
-// newRuntimeForProvider creates a runtime configured for a tau provider.
-// It maps tau's provider configuration to the ai-sdk runtime config and
-// registers the built-in provider classes. The provider class is resolved
-// by [resolveProviderClass].
+// newRuntimeForProvider creates a runtime configured for a single tau provider.
+// It is a convenience wrapper over [newRuntimeForProviders] for headless paths
+// that only ever talk to one provider.
 func newRuntimeForProvider(provider tauconfig.ProviderConfig, insecure bool) *runtime.Runtime {
+	return newRuntimeForProviders([]tauconfig.ProviderConfig{provider}, insecure)
+}
+
+// newRuntimeForProviders creates a runtime configured for every supplied tau
+// provider. Registering all usable providers in one runtime lets the dynamic
+// streamer and the model refresher resolve any of them by name, which is what
+// makes cross-provider model switching work within a single session. The
+// provider class for each is resolved by [resolveProviderClass].
+func newRuntimeForProviders(providers []tauconfig.ProviderConfig, insecure bool) *runtime.Runtime {
 	runtime.RegisterBuiltinClasses()
 
-	authType := runtime.AuthTypeAPIKey
-	switch provider.Auth.Type {
-	case tauconfig.AuthTypeNone:
-		authType = runtime.AuthTypeNone
-	case tauconfig.AuthTypeOAuthPKCE:
-		authType = runtime.AuthTypeOAuthPKCE
-	}
-
-	models := make([]runtime.ModelConfig, 0, len(provider.Models))
-	for _, m := range provider.Models {
-		extra := make(map[string]any)
-		// Store compat config that runtime.ModelInfo doesn't natively carry.
-		extra["tau_compat"] = m.Compat
-		if m.ReasoningEffort != "" {
-			extra["reasoning_effort"] = m.ReasoningEffort
+	cfgs := make(map[string]runtime.ProviderConfig, len(providers))
+	for _, provider := range providers {
+		authType := runtime.AuthTypeAPIKey
+		switch provider.Auth.Type {
+		case tauconfig.AuthTypeNone:
+			authType = runtime.AuthTypeNone
+		case tauconfig.AuthTypeOAuthPKCE:
+			authType = runtime.AuthTypeOAuthPKCE
 		}
-		models = append(models, runtime.ModelConfig{
-			ID:              m.ID,
-			Name:            m.Name,
-			URL:             m.URL,
-			ContextWindow:   m.ContextWindow,
-			MaxOutputTokens: m.DefaultMaxTokens,
-			Reasoning:       m.Reasoning,
-			Extra:           extra,
-		})
+
+		models := make([]runtime.ModelConfig, 0, len(provider.Models))
+		for _, m := range provider.Models {
+			extra := make(map[string]any)
+			// Store compat config that runtime.ModelInfo doesn't natively carry.
+			extra["tau_compat"] = m.Compat
+			if m.ReasoningEffort != "" {
+				extra["reasoning_effort"] = m.ReasoningEffort
+			}
+			models = append(models, runtime.ModelConfig{
+				ID:              m.ID,
+				Name:            m.Name,
+				URL:             m.URL,
+				ContextWindow:   m.ContextWindow,
+				MaxOutputTokens: m.DefaultMaxTokens,
+				Reasoning:       m.Reasoning,
+				Extra:           extra,
+			})
+		}
+
+		cfgs[provider.Name] = runtime.ProviderConfig{
+			ID:       provider.Name,
+			Class:    resolveProviderClass(provider),
+			BaseURL:  strings.TrimRight(provider.BaseURL, "/"),
+			Insecure: insecure,
+			Auth: runtime.AuthConfig{
+				Type:            authType,
+				APIKeyEnv:       provider.Auth.APIKeyEnv,
+				APIKey:          provider.Auth.APIKey,
+				AuthorizeURL:    provider.Auth.AuthorizeURL,
+				TokenURL:        provider.Auth.TokenURL,
+				ClientID:        provider.Auth.ClientID,
+				IDP:             provider.Auth.IDP,
+				TokenAuthMethod: provider.Auth.TokenAuthMethod,
+			},
+			Models: models,
+		}
 	}
 
-	return runtime.NewRuntime(runtime.Config{
-		Providers: map[string]runtime.ProviderConfig{
-			provider.Name: {
-				ID:       provider.Name,
-				Class:    resolveProviderClass(provider),
-				BaseURL:  strings.TrimRight(provider.BaseURL, "/"),
-				Insecure: insecure,
-				Auth: runtime.AuthConfig{
-					Type:            authType,
-					APIKeyEnv:       provider.Auth.APIKeyEnv,
-					APIKey:          provider.Auth.APIKey,
-					AuthorizeURL:    provider.Auth.AuthorizeURL,
-					TokenURL:        provider.Auth.TokenURL,
-					ClientID:        provider.Auth.ClientID,
-					IDP:             provider.Auth.IDP,
-					TokenAuthMethod: provider.Auth.TokenAuthMethod,
-				},
-				Models: models,
-			},
-		},
-	})
+	cfg := runtime.Config{Providers: cfgs}
+	// Prefer the embedded, curated model snapshot so discovery works offline and
+	// is restricted to tool-capable models from providers tau knows about. Fall
+	// back to a catalogue-less runtime (callers may still LoadCatalog from the
+	// network) if the embed somehow fails to load.
+	if cat, err := snapshot.Catalog(); err != nil {
+		slog.Warn("embedded model snapshot unavailable, falling back to network catalog", "err", err)
+		return runtime.NewRuntime(cfg)
+	} else {
+		return runtime.NewRuntimeWithCatalog(cfg, cat)
+	}
 }
 
 // newCoordinatorResult bundles a coordinator with its command registry so

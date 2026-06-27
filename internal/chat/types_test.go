@@ -54,6 +54,24 @@ func TestNewChatSessionStateDefaultsAndRequest(t *testing.T) {
 	}
 }
 
+func TestNewChatSessionStateAllowsUnselectedModel(t *testing.T) {
+	now := time.Date(2026, 5, 21, 10, 0, 0, 0, time.UTC)
+	// A session may launch with a provider but no model selected; the user
+	// picks one later with /model. This must not be rejected.
+	session, err := NewChatSessionState("s1", ChatSessionConfig{
+		Provider: testProvider(),
+	}, now)
+	if err != nil {
+		t.Fatalf("NewChatSessionState() with empty model error = %v", err)
+	}
+	if session.Model.ID != "" {
+		t.Fatalf("model id = %q, want empty", session.Model.ID)
+	}
+	if session.Status != ChatSessionIdle {
+		t.Fatalf("status = %q, want %q", session.Status, ChatSessionIdle)
+	}
+}
+
 func TestChatSessionTurnLifecycle(t *testing.T) {
 	now := time.Date(2026, 5, 21, 10, 0, 0, 0, time.UTC)
 	session, err := NewChatSessionState("s1", ChatSessionConfig{

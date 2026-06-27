@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
+	"strings"
 	"time"
 
 	tauchat "github.com/samcharles93/tau/internal/chat"
@@ -18,28 +19,31 @@ import (
 // RunChat orchestrates an interactive chat session: resolves tokens and model,
 // creates the coordinator, then launches the TUI.
 func RunChat(ctx context.Context, opts ChatOptions) error {
-	rt := newRuntimeForProvider(opts.Provider, opts.Insecure)
+	// Build a runtime holding every usable provider so the dynamic streamer
+	// and refresher can resolve any of them by name, enabling cross-provider
+	// model switching within a single session.
+	usableProviders := opts.Config.Providers
+	rt := newRuntimeForProviders(usableProviders, opts.Insecure)
+	// Wrap the runtime so it can be rebuilt live when provider state changes
+	// (e.g. after /login), keeping the streamer and refresher in sync.
+	pr := newProviderRuntime(rt, usableProviders, opts.Insecure)
 
+	// Models come from the embedded snapshot loaded in newRuntimeForProviders,
+	// so discovery needs no network.
 	var discoverErr error
-	if err := rt.LoadCatalog(ctx); err != nil {
-		discoverErr = err
-		slog.Warn("model catalog load failed", "err", err)
-	}
-
 	allModels, modelsErr := rt.Models(opts.Provider.Name)
-	if modelsErr != nil && discoverErr == nil {
+	if modelsErr != nil {
 		discoverErr = modelsErr
 	}
 
-	model, err := pickModel(allModels, opts.Model, opts.Config.DefaultModel, opts.Provider.BaseURL)
+	model, err := pickModel(allModels, opts.Model, opts.Config.DefaultModel, opts.Provider.Name, opts.Provider.BaseURL)
 	if err != nil {
 		return err
 	}
 
-	streamer, err := buildStreamer(ctx, rt, opts.Provider.Name, model)
-	if err != nil {
-		return fmt.Errorf("building streamer: %w", err)
-	}
+	// One dynamic streamer serves every provider; it picks the provider/model
+	// per turn from the session state.
+	streamer := buildDynamicStreamer(pr)
 
 	// Build the full system prompt — project context (AGENTS.md) + user override.
 	cwd, _ := os.Getwd()
@@ -74,8 +78,24 @@ func RunChat(ctx context.Context, opts ChatOptions) error {
 	}
 
 	// Build the available model refs early so the coordinator can use them
-	// for model metadata lookups (context window, pricing).
-	available := modelInfoRefs(allModels, opts.Provider.BaseURL)
+	// for model metadata lookups (context window, pricing). Aggregate across
+	// every usable provider so /model can switch providers live.
+	available := aggregateModelRefs(ctx, rt, opts.Insecure, usableProviders)
+
+	// When no model is selected at launch (no --model, no default_model), the
+	// session starts unselected. Point the user at /model (or /login if there
+	// is nothing to choose from yet).
+	if strings.TrimSpace(model.ID) == "" {
+		hint := "No model selected — use /model to choose one."
+		if len(available) == 0 {
+			hint = "No models available — use /login to enable a provider."
+		}
+		startupEvents = append(startupEvents, tauchat.ChatNotificationEvent{
+			Message:    hint,
+			Level:      tauchat.ChatNotificationInfo,
+			OccurredAt: time.Now().UTC(),
+		})
+	}
 
 	// Auth is resolved by the runtime when the provider is created.
 	// The coordinator only needs a token source for legacy compatibility;
@@ -120,7 +140,7 @@ func RunChat(ctx context.Context, opts ChatOptions) error {
 		// discovery/fallback so the runtime has the URL and model config. Stored
 		// sessions only persist the model ID.
 		if loaded.Model.ID != "" {
-			loadedModel, pickErr := pickModel(allModels, loaded.Model.ID, "", opts.Provider.BaseURL)
+			loadedModel, pickErr := pickModel(allModels, loaded.Model.ID, "", opts.Provider.Name, opts.Provider.BaseURL)
 			if pickErr != nil {
 				return fmt.Errorf("resume session %q model %q: %w", resumeID, loaded.Model.ID, pickErr)
 			}
@@ -146,7 +166,7 @@ func RunChat(ctx context.Context, opts ChatOptions) error {
 	}
 
 	// Build a refresher closure that the TUI can use to re-discover models.
-	refresher := buildModelRefresher(rt, opts.Provider.Name, opts.Provider.BaseURL)
+	refresher := buildModelRefresher(pr)
 
 	// Command registry owns command state; TUI initialises from snapshot
 	// and receives deltas via CommandsChangedEvent on the bus.

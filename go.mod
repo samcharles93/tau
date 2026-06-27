@@ -10,7 +10,7 @@ require (
 	github.com/hashicorp/go-plugin v1.8.0
 	github.com/pkg/browser v0.0.0-20240102092130-5ac0b6a4141c
 	github.com/rivo/uniseg v0.4.7
-	github.com/samcharles93/ai-sdk v0.1.3
+	github.com/samcharles93/ai-sdk v0.1.6
 	github.com/stretchr/testify v1.11.1
 	github.com/urfave/cli/v3 v3.9.0
 	google.golang.org/grpc v1.81.1

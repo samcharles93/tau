@@ -9,6 +9,7 @@ import (
 	"github.com/samcharles93/tau/internal/app"
 	tauchat "github.com/samcharles93/tau/internal/chat"
 	"github.com/samcharles93/tau/internal/config"
+	"github.com/samcharles93/tau/internal/providers"
 	"github.com/samcharles93/tau/internal/sessions"
 	"github.com/samcharles93/tau/internal/store"
 	urfavecli "github.com/urfave/cli/v3"
@@ -195,13 +196,23 @@ func truncateString(s string, maxLen int) string {
 }
 
 func loadProvider(cmd *urfavecli.Command) (config.Config, config.ProviderConfig, error) {
-	cfg, err := config.LoadConfig()
+	cfg, _, err := providers.Effective()
 	if err != nil {
 		return config.Config{}, config.ProviderConfig{}, err
+	}
+	if len(cfg.Providers) == 0 {
+		return config.Config{}, config.ProviderConfig{}, noProvidersError()
 	}
 	provider, err := config.ResolveProvider(cfg, cmd.Root().String("provider"))
 	if err != nil {
 		return config.Config{}, config.ProviderConfig{}, err
 	}
 	return cfg, provider, nil
+}
+
+// noProvidersError explains how to get providers when none are usable, covering
+// both auto-detected env keys and the interactive /login flow.
+func noProvidersError() error {
+	return fmt.Errorf("no usable providers: set a provider API key (e.g. OPENROUTER_API_KEY), "+
+		"run tau and use /login to enable a provider, or declare one in %s", config.GlobalPath())
 }

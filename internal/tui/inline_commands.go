@@ -68,6 +68,14 @@ func init() {
 			run: func(c *inlineChat, _ string) { c.refreshModels() },
 		},
 		{
+			name: "login", usage: "[provider]", description: "enable a provider (or list providers)",
+			run: (*inlineChat).handleLoginCommand, complete: argProviders,
+		},
+		{
+			name: "logout", usage: "<provider>", description: "disable a provider / remove its login",
+			run: (*inlineChat).handleLogoutCommand, complete: argProviders,
+		},
+		{
 			name: "reload", description: "reload extensions",
 			run: func(c *inlineChat, _ string) {
 				c.send(tauchat.ReloadExtensionsCommand{RequestedAt: time.Now().UTC()})
@@ -172,10 +180,9 @@ func (c *inlineChat) handleReasoningCommand(args string) {
 	}
 }
 
-// reasoningEffortLevels cycle in order.
-var reasoningEffortLevels = []string{"off", "low", "medium", "high", "max"}
-
-// effortDisplay maps effort levels to their display labels.
+// effortDisplay maps the standard effort levels to richer display labels.
+// Levels coming from a model's reasoning_options that aren't listed here fall
+// back to a plain "effort: <level>".
 var effortDisplay = map[string]string{
 	"off":    "effort: off",
 	"low":    "effort: low (~512 tok)",
@@ -184,38 +191,89 @@ var effortDisplay = map[string]string{
 	"max":    "effort: max (unlimited)",
 }
 
-func (c *inlineChat) handleEffortCommand(args string) {
+// currentModelRef returns the selected model's ref from the available list, or
+// a zero ref when nothing is selected or it isn't in the list.
+func (c *inlineChat) currentModelRef() tauchat.ChatModelRef {
 	c.mu.Lock()
-	effort := c.reasoningEffort
-	set := false
-	switch strings.ToLower(strings.TrimSpace(args)) {
-	case "off", "none":
-		effort, set = "off", true
-	case "low":
-		effort, set = "low", true
-	case "med", "medium":
-		effort, set = "medium", true
-	case "high":
-		effort, set = "high", true
-	case "max":
-		effort, set = "max", true
-	}
-	if !set {
-		next := reasoningEffortLevels[1] // default to low if unrecognised
-		for i, level := range reasoningEffortLevels {
-			if level == effort {
-				next = reasoningEffortLevels[(i+1)%len(reasoningEffortLevels)]
-				break
-			}
+	defer c.mu.Unlock()
+	for _, m := range c.availableModels {
+		if m.ID == c.modelName {
+			return m
 		}
-		effort = next
+	}
+	return tauchat.ChatModelRef{}
+}
+
+// effortLevels is the cycle of reasoning-effort levels for a model: "off" plus
+// the model's advertised reasoning_options, falling back to the standard ladder
+// when the model advertises none (or we have no metadata for it).
+func effortLevels(model tauchat.ChatModelRef) []string {
+	levels := []string{"off"}
+	if len(model.Config.ReasoningEfforts) > 0 {
+		return append(levels, model.Config.ReasoningEfforts...)
+	}
+	return append(levels, "low", "medium", "high", "max")
+}
+
+func effortLabel(level string) string {
+	if l, ok := effortDisplay[level]; ok {
+		return l
+	}
+	return "effort: " + level
+}
+
+func nextEffort(current string, levels []string) string {
+	for i, l := range levels {
+		if l == current {
+			return levels[(i+1)%len(levels)]
+		}
+	}
+	if len(levels) > 1 {
+		return levels[1] // skip "off", default to the lowest real effort
+	}
+	return levels[0]
+}
+
+func (c *inlineChat) handleEffortCommand(args string) {
+	model := c.currentModelRef()
+	cfg := model.Config
+
+	// Gate on capability: when we have real metadata for the model and it is not
+	// a reasoning model, there is no effort to set. Models we have no metadata
+	// for (e.g. live Ollama models) stay permissive.
+	hasMetadata := cfg.ContextWindow > 0 || cfg.Reasoning || len(cfg.ReasoningEfforts) > 0
+	isReasoning := cfg.Reasoning || len(cfg.ReasoningEfforts) > 0
+	if model.ID != "" && hasMetadata && !isReasoning {
+		c.pushNotice(model.ID + " doesn't support reasoning")
+		return
+	}
+
+	levels := effortLevels(model)
+
+	arg := strings.ToLower(strings.TrimSpace(args))
+	switch arg {
+	case "none":
+		arg = "off"
+	case "med":
+		arg = "medium"
+	}
+
+	c.mu.Lock()
+	var effort string
+	switch {
+	case arg == "":
+		effort = nextEffort(c.reasoningEffort, levels)
+	case slices.Contains(levels, arg):
+		effort = arg
+	default:
+		c.mu.Unlock()
+		c.pushNotice(fmt.Sprintf("%s supports: %s", model.ID, strings.Join(levels, ", ")))
+		return
 	}
 	c.reasoningEffort = effort
 	c.mu.Unlock()
 
-	if label, ok := effortDisplay[effort]; ok {
-		c.pushNotice(label)
-	}
+	c.pushNotice(effortLabel(effort))
 	c.send(tauchat.UpdateChatSessionCommand{
 		SessionID: c.sid(),
 		Patch:     tauchat.ChatSessionPatch{ReasoningEffort: &effort},
@@ -252,14 +310,25 @@ func (c *inlineChat) handleModelCommand(modelID string) {
 		c.engine.PrintAbove("%s %s", c.grey("✗"), fmt.Sprintf("model %q is not in the available model list", modelID))
 		return
 	}
+	patch := tauchat.ChatSessionPatch{Model: &model}
+	// When the model carries a provider tag (aggregated cross-provider list),
+	// switch the session's provider too so the dynamic streamer routes to it.
+	if model.Provider != "" {
+		provider := model.Provider
+		patch.Provider = &provider
+	}
 	c.send(tauchat.UpdateChatSessionCommand{
 		SessionID: c.sid(),
-		Patch:     tauchat.ChatSessionPatch{Model: &model},
+		Patch:     patch,
 	})
 	c.mu.Lock()
 	c.modelName = model.ID
 	c.mu.Unlock()
-	c.pushNotice("model: " + model.ID)
+	notice := "model: " + model.ID
+	if model.Provider != "" {
+		notice += " (" + model.Provider + ")"
+	}
+	c.pushNotice(notice)
 }
 
 func (c *inlineChat) handleSystemCommand(prompt string) {

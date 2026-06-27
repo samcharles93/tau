@@ -175,15 +175,19 @@ func (a *AuthConfig) UnmarshalYAML(value *yaml.Node) error {
 
 // ModelConfig stores optional configured model metadata for a provider.
 type ModelConfig struct {
-	ID               string         `yaml:"id" json:"id"`
-	Name             string         `yaml:"name,omitempty" json:"name,omitempty"`
-	URL              string         `yaml:"url,omitempty" json:"url,omitempty"`
-	ContextWindow    int            `yaml:"context_window,omitempty" json:"context_window,omitempty"`
-	DefaultMaxTokens int            `yaml:"default_max_tokens,omitempty" json:"default_max_tokens,omitempty"`
-	MaxTokens        int            `yaml:"max_tokens,omitempty" json:"max_tokens,omitempty"`
-	Input            []string       `yaml:"input,omitempty" json:"input,omitempty"`
-	Reasoning        bool           `yaml:"reasoning,omitempty" json:"reasoning,omitempty"`
-	ReasoningEffort  string         `yaml:"reasoning_effort,omitempty" json:"reasoning_effort,omitempty"`
+	ID               string   `yaml:"id" json:"id"`
+	Name             string   `yaml:"name,omitempty" json:"name,omitempty"`
+	URL              string   `yaml:"url,omitempty" json:"url,omitempty"`
+	ContextWindow    int      `yaml:"context_window,omitempty" json:"context_window,omitempty"`
+	DefaultMaxTokens int      `yaml:"default_max_tokens,omitempty" json:"default_max_tokens,omitempty"`
+	MaxTokens        int      `yaml:"max_tokens,omitempty" json:"max_tokens,omitempty"`
+	Input            []string `yaml:"input,omitempty" json:"input,omitempty"`
+	Reasoning        bool     `yaml:"reasoning,omitempty" json:"reasoning,omitempty"`
+	ReasoningEffort  string   `yaml:"reasoning_effort,omitempty" json:"reasoning_effort,omitempty"`
+	// ReasoningEfforts are the effort levels the model accepts (from models.dev
+	// reasoning_options), e.g. [low medium high]. Empty when the model exposes
+	// no selectable effort (reasoning is fixed) or isn't a reasoning model.
+	ReasoningEfforts []string       `yaml:"reasoning_efforts,omitempty" json:"reasoning_efforts,omitempty"`
 	Thinking         ThinkingConfig `yaml:"thinking,omitempty" json:"thinking"`
 	Cost             CostConfig     `yaml:"cost,omitempty" json:"cost"`
 	Compat           CompatConfig   `yaml:"compat,omitempty" json:"compat"`
@@ -443,8 +447,22 @@ func LoadConfig() (Config, error) {
 	return LoadConfigFrom(cwd)
 }
 
-// LoadConfigFrom loads and merges global config and .tau.yaml from cwd.
+// LoadConfigFrom loads and merges global config and .tau.yaml from cwd,
+// requiring at least one configured provider.
 func LoadConfigFrom(cwd string) (Config, error) {
+	return loadConfigFrom(cwd, true)
+}
+
+// LoadConfigAllowEmpty loads and merges configuration without requiring any
+// providers. It is used by the provider-management layer, which supplements
+// hand-written config with auto-detected and OAuth providers; an empty config
+// is a valid starting point there rather than a fatal error.
+func LoadConfigAllowEmpty() (Config, error) {
+	cwd, _ := os.Getwd()
+	return loadConfigFrom(cwd, false)
+}
+
+func loadConfigFrom(cwd string, requireProviders bool) (Config, error) {
 	globalPath := GlobalPath()
 	localPath := LocalPath(cwd)
 
@@ -457,7 +475,7 @@ func LoadConfigFrom(cwd string) (Config, error) {
 		return Config{}, err
 	}
 	cfg := mergeConfigs(globalCfg, localCfg)
-	if len(cfg.Providers) == 0 {
+	if len(cfg.Providers) == 0 && requireProviders {
 		if !globalFound && !localFound {
 			return Config{}, fmt.Errorf("no Tau providers configured; create %s or %s", globalPath, localPath)
 		}

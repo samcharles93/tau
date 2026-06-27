@@ -237,12 +237,18 @@ func (c *Completions) Render(width int) []string {
 	}
 	end := start + size
 
+	// Align descriptions into a column: pad each word to the widest word that
+	// has a description (capped so very long words don't push the column off
+	// screen). Computed across all filtered rows so the column stays put while
+	// scrolling.
+	descCol := c.descColumn()
+
 	for i := start; i < end; i++ {
 		row := c.filtered[i]
 		if g := c.groupOf(i); g != nil && g.start == i && g.title != "" {
 			out = append(out, dim(g.title, colour))
 		}
-		out = append(out, c.renderRow(i == c.selected, row.text, row.match.Description, row.hl, colour))
+		out = append(out, c.renderRow(i == c.selected, row.text, row.match.Description, row.hl, colour, descCol))
 	}
 	for i := range out {
 		out[i] = truncateANSIToWidth(out[i], width)
@@ -266,13 +272,33 @@ func dim(s string, colour bool) string {
 	return s
 }
 
-func (c *Completions) renderRow(selected bool, word, desc string, hl [][2]int, colour bool) string {
+// descColumn returns the width to pad words to so descriptions line up in a
+// column. It is the widest word among filtered rows that carry a description,
+// capped by descColumnMax. Rows without descriptions don't influence it.
+func (c *Completions) descColumn() int {
+	const descColumnMax = 44
+	col := 0
+	for i := range c.filtered {
+		if c.filtered[i].match.Description == "" {
+			continue
+		}
+		if w := VisibleWidth(c.filtered[i].text); w > col {
+			col = w
+		}
+	}
+	if col > descColumnMax {
+		col = descColumnMax
+	}
+	return col
+}
+
+func (c *Completions) renderRow(selected bool, word, desc string, hl [][2]int, colour bool, descCol int) string {
 	prefix := "  "
 	if !colour {
 		if selected {
-			return "› " + word + desc
+			return "› " + word + descGutter(word, desc, descCol)
 		}
-		return prefix + word + desc
+		return prefix + word + descGutter(word, desc, descCol)
 	}
 	// Build word with bold highlights on matched spans.
 	body := word
@@ -300,9 +326,32 @@ func (c *Completions) renderRow(selected bool, word, desc string, hl [][2]int, c
 		body = termkit.FgOnly(prefix+body, termkit.ColorGrey)
 	}
 	if desc != "" {
+		// Pad outside the highlight so the selection bar stays tight to the
+		// word while descriptions still line up in a column.
+		body += padTo(word, descCol)
 		body += termkit.FgOnly(" "+desc, termkit.ColorGrey)
 	}
 	return body
+}
+
+// padTo returns the spaces needed to pad word's visible width up to col, or ""
+// if the word already meets or exceeds it (an over-long outlier).
+func padTo(word string, col int) string {
+	gap := col - VisibleWidth(word)
+	if gap < 1 {
+		return ""
+	}
+	return strings.Repeat(" ", gap)
+}
+
+// descGutter aligns desc into the description column for the no-colour render
+// path: pad the word to the column, then a one-space gutter, then desc. Empty
+// when there is no description.
+func descGutter(word, desc string, col int) string {
+	if desc == "" {
+		return ""
+	}
+	return padTo(word, col) + " " + desc
 }
 
 // ── refresh ──────────────────────────────────────────────────────────────────

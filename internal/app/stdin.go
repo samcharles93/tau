@@ -2,9 +2,11 @@ package app
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"os"
+	"strings"
 	"time"
 
 	tauchat "github.com/samcharles93/tau/internal/chat"
@@ -21,20 +23,20 @@ func RunStdIn(ctx context.Context, opts ChatOptions, prompt string) error {
 
 	rt := newRuntimeForProvider(opts.Provider, opts.Insecure)
 
+	// Models come from the embedded snapshot; no network catalogue load needed.
 	var discoverErr error
-	if err := rt.LoadCatalog(ctx); err != nil {
-		discoverErr = err
-		slog.Warn("model catalog load failed", "err", err)
-	}
-
 	allModels, modelsErr := rt.Models(opts.Provider.Name)
-	if modelsErr != nil && discoverErr == nil {
+	if modelsErr != nil {
 		discoverErr = modelsErr
 	}
 
-	model, err := pickModel(allModels, opts.Model, opts.Config.DefaultModel, opts.Provider.BaseURL)
+	model, err := pickModel(allModels, opts.Model, opts.Config.DefaultModel, opts.Provider.Name, opts.Provider.BaseURL)
 	if err != nil {
 		return err
+	}
+	// Headless one-shot has no interactive model picker, so a model is required.
+	if strings.TrimSpace(model.ID) == "" {
+		return errors.New("chat model is required in non-interactive mode; pass --model or set default_model")
 	}
 
 	streamer, err := buildStreamer(ctx, rt, opts.Provider.Name, model)

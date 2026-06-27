@@ -10,18 +10,38 @@ import (
 	tauchat "github.com/samcharles93/tau/internal/chat"
 )
 
+// providerResolver resolves the ai-sdk provider and model ID to use for a given
+// session. A static resolver (NewStreamer) always returns the same provider; a
+// dynamic resolver (NewDynamicStreamer) picks the provider per call from the
+// session's selected provider/model, which is what enables live cross-provider
+// switching during a chat.
+type providerResolver func(ctx context.Context, session tauchat.ChatSessionState) (aisdkchat.Provider, string, error)
+
 // Streamer adapts an ai-sdk chat.Provider into tau's agent.Streamer
 // interface (StreamChatCompletionFull). It preserves tau's existing
 // coordinator turn loop, event bus, and tool execution while delegating the
 // raw provider protocol to ai-sdk.
 type Streamer struct {
-	provider aisdkchat.Provider
-	modelID  string
+	resolve providerResolver
 }
 
-// NewStreamer returns a Streamer backed by the given ai-sdk provider.
+// NewStreamer returns a Streamer permanently bound to the given ai-sdk
+// provider and model. Used by headless one-shot runs that never switch
+// providers.
 func NewStreamer(provider aisdkchat.Provider, modelID string) *Streamer {
-	return &Streamer{provider: provider, modelID: modelID}
+	return &Streamer{
+		resolve: func(context.Context, tauchat.ChatSessionState) (aisdkchat.Provider, string, error) {
+			return provider, modelID, nil
+		},
+	}
+}
+
+// NewDynamicStreamer returns a Streamer that resolves its provider per call.
+// The resolver reads the session's selected provider/model, so changing either
+// (via /model or /login) takes effect on the next turn without rebuilding the
+// coordinator.
+func NewDynamicStreamer(resolve providerResolver) *Streamer {
+	return &Streamer{resolve: resolve}
 }
 
 // StreamChatCompletionFull implements agent.Streamer.
@@ -32,13 +52,17 @@ func (s *Streamer) StreamChatCompletionFull(
 	extraHeaders map[string]string,
 	cb tauchat.StreamCallbacks,
 ) (tauchat.CompletionResult, error) {
-	if s.provider == nil {
+	provider, modelID, err := s.resolve(ctx, session)
+	if err != nil {
+		return tauchat.CompletionResult{}, err
+	}
+	if provider == nil {
 		return tauchat.CompletionResult{}, errors.New("ai: provider is nil")
 	}
 
-	req := s.buildRequest(session)
+	req := s.buildRequest(session, modelID)
 	streamCtx := aisdkchat.WithContextHeaders(ctx, extraHeaders)
-	stream, err := s.provider.ChatStream(streamCtx, req)
+	stream, err := provider.ChatStream(streamCtx, req)
 	if err != nil {
 		return tauchat.CompletionResult{}, err
 	}
@@ -91,7 +115,7 @@ func (s *Streamer) StreamChatCompletionFull(
 	return result, nil
 }
 
-func (s *Streamer) buildRequest(session tauchat.ChatSessionState) aisdkchat.Request {
+func (s *Streamer) buildRequest(session tauchat.ChatSessionState, fallbackModelID string) aisdkchat.Request {
 	req := aisdkchat.Request{
 		Model:       session.Model.ID,
 		MaxTokens:   session.Parameters.MaxTokens,
@@ -106,7 +130,7 @@ func (s *Streamer) buildRequest(session tauchat.ChatSessionState) aisdkchat.Requ
 		}
 	}
 	if req.Model == "" {
-		req.Model = s.modelID
+		req.Model = fallbackModelID
 	}
 
 	for _, m := range session.RequestMessages() {
