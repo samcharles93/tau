@@ -174,14 +174,23 @@ function applyProvider(value: unknown) {
   }
 }
 
+// applyModelById switches the session to a model, also switching the provider
+// when the model is tagged with one (aggregated cross-provider list) so the
+// backend routes to the right provider instead of keeping the previous one.
+function applyModelById(id: string) {
+  if (!id || id === session.model) return
+  const ref = session.availableModels.find((m) => m.id === id)
+  const patch: ChatSessionPatch = { model: { id } }
+  if (ref?.provider) patch.provider = ref.provider
+  apply(patch)
+}
+
 function applyModel() {
-  const id = form.model.trim()
-  if (id && id !== session.model) apply({ model: { id } })
+  applyModelById(form.model.trim())
 }
 
 function applyModelValue(value: unknown) {
-  const id = typeof value === 'string' ? value.trim() : ''
-  if (id && id !== session.model) apply({ model: { id } })
+  applyModelById(typeof value === 'string' ? value.trim() : '')
 }
 
 function applyReasoning(value: unknown) {

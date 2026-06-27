@@ -39,6 +39,9 @@ export interface CommandRef {
 export interface ChatModelRef {
   id: string
   url?: string
+  /** Provider the model belongs to, so selecting it can switch the session's
+   * provider too (aggregated, cross-provider model list). */
+  provider?: string
   /** Maximum context window in tokens, when the backend advertises it. */
   context_window?: number
   /** Per-1M-token pricing, when the backend advertises it. */
