@@ -2,6 +2,7 @@ package tui
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"slices"
 	"strings"
@@ -417,6 +418,32 @@ func (c *inlineChat) width() int {
 
 func toolBoxBg(p theme.ToolStatus) taui.BgFn {
 	return func(s string) string { return termkit.FgBgOnly(s, p.FG, p.BG) }
+}
+
+// skillToolName is the registry name of the Skill tool. When the executing
+// tool is the Skill tool, the TUI renders its box on a purple background and
+// shows the activated skill name as the row label instead of raw JSON args.
+const skillToolName = "Skill"
+
+// skillBoxBg returns the purple background style for the Skill tool's box,
+// selected by lifecycle state.
+func skillBoxBg(state theme.ToolStatus) taui.BgFn {
+	return toolBoxBg(state)
+}
+
+// skillStatusLabel extracts a clean, human-readable label from the Skill
+// tool's raw JSON arguments (e.g. `{"name":"go-development"}` →
+// `go-development`). Falls back to the raw summary if the args don't parse.
+func skillStatusLabel(rawArgs string) string {
+	var parsed struct {
+		Name string `json:"name"`
+	}
+	if err := json.Unmarshal([]byte(rawArgs), &parsed); err == nil {
+		if name := strings.TrimSpace(parsed.Name); name != "" {
+			return name
+		}
+	}
+	return rawArgs
 }
 
 // ── Controller ──────────────────────────────────────────────────────────────

@@ -72,8 +72,14 @@ func (c *inlineChat) handleEvent(ev tauchat.ChatEvent) {
 
 	case tauchat.ChatToolExecutionStartedEvent:
 		c.engine.Update(func() {
-			tr := taui.NewToolRow(e.ToolName, e.ArgumentsSummary)
-			tbox := taui.NewBox().Padding(2, 1).Bg(toolBoxBg(theme.ToolRunning)).ExpandW().Build()
+			label := e.ArgumentsSummary
+			bgStatus := theme.ToolRunning
+			if e.ToolName == skillToolName {
+				label = skillStatusLabel(e.ArgumentsSummary)
+				bgStatus = theme.SkillRunning
+			}
+			tr := taui.NewToolRow(e.ToolName, label)
+			tbox := taui.NewBox().Padding(2, 1).Bg(toolBoxBg(bgStatus)).ExpandW().Build()
 			tbox.AddChild(tr)
 			if c.activeTools == nil {
 				c.activeTools = make(map[string]*activeToolBox)
@@ -92,10 +98,18 @@ func (c *inlineChat) handleEvent(ev tauchat.ChatEvent) {
 			if e.IsError {
 				detail = "failed"
 				tb.row.Fail(detail)
-				tb.box.SetBgFn(toolBoxBg(theme.ToolFailed))
+				if e.ToolName == skillToolName {
+					tb.box.SetBgFn(skillBoxBg(theme.SkillFailed))
+				} else {
+					tb.box.SetBgFn(toolBoxBg(theme.ToolFailed))
+				}
 			} else {
 				tb.row.Succeed(detail)
-				tb.box.SetBgFn(toolBoxBg(theme.ToolSuccess))
+				if e.ToolName == skillToolName {
+					tb.box.SetBgFn(skillBoxBg(theme.SkillSuccess))
+				} else {
+					tb.box.SetBgFn(toolBoxBg(theme.ToolSuccess))
+				}
 			}
 		})
 		c.engine.RequestRender()

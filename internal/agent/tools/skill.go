@@ -60,14 +60,6 @@ func RegisterSkillTool(reg *Registry, skillsMgr *skills.Manager, tracker *skills
 				}
 			}
 
-			// Emit a clearly defined, durable line in the TUI scrollback so the
-			// user can see which skill the agent just loaded. Routed via
-			// UIBridge.Log → ChatToolOutputEvent → PrintAbove, the same path
-			// streaming tools use for their output.
-			if ui != nil {
-				ui.Log("skill loaded: " + matched.Name)
-			}
-
 			return Result{Content: matched.Instructions}, nil
 		},
 	}

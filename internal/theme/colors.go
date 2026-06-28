@@ -37,4 +37,25 @@ var (
 	// SteeringFG is the navy blue foreground used for the steering indicator
 	// in the status line when the user interrupts the agent mid-turn.
 	SteeringFG = termkit.Color{100, 130, 220}
+
+	// SkillRunning is the lilac state shown while the Skill tool is executing,
+	// so a skill load is visually distinct from a regular tool call.
+	SkillRunning = ToolStatus{
+		BG: termkit.Color{140, 110, 180},
+		FG: termkit.Color{245, 235, 255},
+	}
+
+	// SkillSuccess is the lilac state shown when the Skill tool activates a
+	// skill cleanly.
+	SkillSuccess = ToolStatus{
+		BG: termkit.Color{140, 110, 180},
+		FG: termkit.Color{245, 235, 255},
+	}
+
+	// SkillFailed is the mauve state shown when the Skill tool errors (e.g.
+	// unknown skill name).
+	SkillFailed = ToolStatus{
+		BG: termkit.Color{165, 70, 120},
+		FG: termkit.Color{255, 220, 230},
+	}
 )
