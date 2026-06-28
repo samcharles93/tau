@@ -322,7 +322,7 @@ func (c *Completions) renderRow(selected bool, word, desc string, hl [][2]int, c
 	}
 	chevron := "  "
 	if selected {
-		chevron = "▸ "
+		chevron = "▶ "
 	}
 	body = termkit.FgOnly(chevron+body, termkit.ColorGrey)
 	if desc != "" {
