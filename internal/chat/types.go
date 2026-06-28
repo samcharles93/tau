@@ -126,20 +126,22 @@ func (m ChatModelRef) Validate() error {
 	return nil
 }
 
-// MarshalJSON surfaces the resolved model's context-window size and pricing to
-// wire consumers (e.g. the web UI) so they can render context usage and cost.
-// The Config field itself stays off the wire; only these derived fields are
-// exposed alongside the existing id/url.
+// MarshalJSON surfaces the resolved model's context-window size, pricing, and
+// reasoning effort levels to wire consumers (e.g. the web UI). The Config
+// field itself stays off the wire; only these derived fields are exposed
+// alongside the existing id/url.
 func (m ChatModelRef) MarshalJSON() ([]byte, error) {
 	type alias ChatModelRef
 	return json.Marshal(struct {
 		alias
-		ContextWindow int               `json:"context_window,omitempty"`
-		Cost          config.CostConfig `json:"cost,omitzero"`
+		ContextWindow    int               `json:"context_window,omitempty"`
+		Cost             config.CostConfig `json:"cost,omitzero"`
+		ReasoningEfforts []string          `json:"reasoning_efforts,omitempty"`
 	}{
-		alias:         alias(m),
-		ContextWindow: m.Config.ContextWindow,
-		Cost:          m.Config.Cost,
+		alias:            alias(m),
+		ContextWindow:    m.Config.ContextWindow,
+		Cost:             m.Config.Cost,
+		ReasoningEfforts: m.Config.ReasoningEfforts,
 	})
 }
 
