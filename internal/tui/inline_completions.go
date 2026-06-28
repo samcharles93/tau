@@ -170,12 +170,21 @@ var reasoningMatches = []taui.Match{
 	{Word: "toggle", Description: "toggle reasoning visibility"},
 }
 
-var effortMatches = []taui.Match{
-	{Word: "off", Description: "no reasoning effort"},
-	{Word: "low", Description: "low effort (~512 tokens)"},
-	{Word: "medium", Description: "medium effort (~2048 tokens)"},
-	{Word: "high", Description: "high effort (~8192 tokens)"},
-	{Word: "max", Description: "maximum effort (unlimited)"},
+// argEffort builds completion matches for the /effort command from the
+// current model's advertised reasoning effort levels. When the model
+// advertises none, only "off" is offered.
+func argEffort(c *inlineChat, _ []string, argsBefore int) (string, []taui.Match) {
+	if argsBefore > 0 {
+		return "", nil
+	}
+	model := c.currentModelRef()
+	levels := model.Config.ReasoningEfforts
+	matches := make([]taui.Match, 0, len(levels)+1)
+	matches = append(matches, taui.Match{Word: "off", Description: "no reasoning effort"})
+	for _, l := range levels {
+		matches = append(matches, taui.Match{Word: l, Description: "effort: " + l})
+	}
+	return "Effort", matches
 }
 
 var sessionSubMatches = []taui.Match{

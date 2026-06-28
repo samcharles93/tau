@@ -52,8 +52,8 @@ func init() {
 			run: (*inlineChat).handleReasoningCommand, complete: firstArg("Reasoning", reasoningMatches),
 		},
 		{
-			name: "effort", usage: "[level]", description: "set reasoning effort (off/low/medium/high/max)",
-			run: (*inlineChat).handleEffortCommand, complete: firstArg("Effort", effortMatches),
+			name: "effort", usage: "[level]", description: "set reasoning effort",
+			run: (*inlineChat).handleEffortCommand, complete: argEffort,
 		},
 		{
 			name: "session", usage: "[list|info|export|delete|<id>]", description: "manage saved sessions",
@@ -180,15 +180,10 @@ func (c *inlineChat) handleReasoningCommand(args string) {
 	}
 }
 
-// effortDisplay maps the standard effort levels to richer display labels.
-// Levels coming from a model's reasoning_options that aren't listed here fall
-// back to a plain "effort: <level>".
-var effortDisplay = map[string]string{
-	"off":    "effort: off",
-	"low":    "effort: low (~512 tok)",
-	"medium": "effort: medium (~2k tok)",
-	"high":   "effort: high (~8k tok)",
-	"max":    "effort: max (unlimited)",
+// effortLabel returns a display label for a reasoning effort level.
+// Generic — no hardcoded map, no stale token estimates.
+func effortLabel(level string) string {
+	return "effort: " + level
 }
 
 // currentModelRef returns the selected model's ref from the available list, or
@@ -204,22 +199,17 @@ func (c *inlineChat) currentModelRef() tauchat.ChatModelRef {
 	return tauchat.ChatModelRef{}
 }
 
-// effortLevels is the cycle of reasoning-effort levels for a model: "off" plus
-// the model's advertised reasoning_options, falling back to the standard ladder
-// when the model advertises none (or we have no metadata for it).
+// effortLevels returns the cycle of reasoning-effort levels for a model:
+// "off" plus the model's advertised reasoning_options. When the model
+// advertises none (or we have no metadata for it), only "off" is offered
+// — tau doesn't guess wire values for unlisted models.
 func effortLevels(model tauchat.ChatModelRef) []string {
-	levels := []string{"off"}
 	if len(model.Config.ReasoningEfforts) > 0 {
-		return append(levels, model.Config.ReasoningEfforts...)
+		out := make([]string, 0, len(model.Config.ReasoningEfforts)+1)
+		out = append(out, "off")
+		return append(out, model.Config.ReasoningEfforts...)
 	}
-	return append(levels, "low", "medium", "high", "max")
-}
-
-func effortLabel(level string) string {
-	if l, ok := effortDisplay[level]; ok {
-		return l
-	}
-	return "effort: " + level
+	return []string{"off"}
 }
 
 func nextEffort(current string, levels []string) string {

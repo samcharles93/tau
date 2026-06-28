@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	tauchat "github.com/samcharles93/tau/internal/chat"
+	"github.com/samcharles93/tau/internal/config"
 	"github.com/samcharles93/tau/internal/tui/notify"
 	"github.com/samcharles93/tau/pkg/taui"
 )
@@ -58,16 +59,19 @@ func newTestChat(t *testing.T) (*inlineChat, *recordingRuntime) {
 	engine := taui.NewTUI(nullTerminal{})
 	rt := &recordingRuntime{}
 	c := &inlineChat{
-		engine:            engine,
-		stage:             &taui.Container{},
-		ctx:               context.Background(),
-		runtime:           rt,
-		notifyQueue:       notify.NewQueue(),
-		sessionID:         "sess-1",
-		modelName:         "model-a",
-		provider:          "prov",
-		reasoningEffort:   "low",
-		availableModels:   []tauchat.ChatModelRef{{ID: "model-a"}, {ID: "model-b"}},
+		engine:          engine,
+		stage:           &taui.Container{},
+		ctx:             context.Background(),
+		runtime:         rt,
+		notifyQueue:     notify.NewQueue(),
+		sessionID:       "sess-1",
+		modelName:       "model-a",
+		provider:        "prov",
+		reasoningEffort: "low",
+		availableModels: []tauchat.ChatModelRef{
+			{ID: "model-a", Config: config.ModelConfig{ReasoningEfforts: []string{"low", "medium", "high", "max"}}},
+			{ID: "model-b", Config: config.ModelConfig{ReasoningEfforts: []string{"low", "medium", "high", "max"}}},
+		},
 		extensionCommands: map[string]tauchat.ExtensionCommand{},
 		bold:              func(s string) string { return s },
 		grey:              func(s string) string { return s },
