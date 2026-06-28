@@ -64,6 +64,7 @@ type TUI struct {
 	// Input segmentation (paste handling + batched-key splitting).
 	input *stdinBuffer
 
+	started bool
 	stopped bool
 	done    chan struct{}
 }
@@ -98,8 +99,17 @@ func (t *TUI) SetFocus(c Component) {
 	}
 }
 
-// Start begins the render loop and input handling.
+// Start begins the render loop and input handling. It is not safe to call
+// multiple times — subsequent calls after the first are no-ops.
 func (t *TUI) Start() {
+	t.mu.Lock()
+	if t.started {
+		t.mu.Unlock()
+		return
+	}
+	t.started = true
+	t.mu.Unlock()
+
 	t.input = newStdinBuffer(t.dispatchKey, t.dispatchPaste)
 	t.Terminal.Start(
 		func(data string) { t.input.process(data) },
@@ -152,6 +162,9 @@ func (t *TUI) RequestRender() {
 
 	elapsed := time.Since(t.lastRender)
 	delay := max(0, minRenderInterval-elapsed)
+	if t.renderTimer != nil {
+		t.renderTimer.Stop()
+	}
 	t.renderTimer = time.AfterFunc(delay, func() {
 		t.mu.Lock()
 		defer t.mu.Unlock()

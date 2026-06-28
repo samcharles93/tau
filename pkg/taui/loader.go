@@ -1,6 +1,7 @@
 package taui
 
 import (
+	"sync"
 	"time"
 
 	"github.com/samcharles93/tau/pkg/taui/termkit"
@@ -18,6 +19,8 @@ type Loader struct {
 	running      bool
 	stopCh       chan struct{}
 	onTick       func() // called after each frame to trigger re-render
+
+	mu sync.Mutex // guards Text, baseMessage, frames, currentFrame, running, stopCh
 }
 
 // Default SpinnerFrames from termkit.
@@ -33,12 +36,14 @@ func NewLoader(message string, spinnerFn, msgFn func(string) string) *Loader {
 		frames:      append([]string(nil), DefaultFrames...),
 		interval:    80 * time.Millisecond,
 	}
-	l.updateDisplay() // show initial frame + coloured message before Start()
+	l.updateDisplayLocked() // show initial frame + coloured message before Start()
 	return l
 }
 
 // SetIndicator configures the spinner animation.
 func (l *Loader) SetIndicator(frames []string, intervalMs int) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
 	if frames != nil {
 		l.frames = append([]string(nil), frames...)
 	}
@@ -50,22 +55,28 @@ func (l *Loader) SetIndicator(frames []string, intervalMs int) {
 
 // OnTick registers a callback invoked after each frame change.
 func (l *Loader) OnTick(fn func()) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
 	l.onTick = fn
 }
 
 // Start begins the animation.
 func (l *Loader) Start() {
+	l.mu.Lock()
+	defer l.mu.Unlock()
 	if l.running {
 		return
 	}
 	l.running = true
 	l.stopCh = make(chan struct{})
-	l.updateDisplay()
+	l.updateDisplayLocked()
 	go l.animate()
 }
 
 // Stop halts the animation.
 func (l *Loader) Stop() {
+	l.mu.Lock()
+	defer l.mu.Unlock()
 	if !l.running {
 		return
 	}
@@ -75,13 +86,17 @@ func (l *Loader) Stop() {
 
 // SetMessage updates the displayed message.
 func (l *Loader) SetMessage(msg string) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
 	l.baseMessage = msg
-	l.updateDisplay()
+	l.updateDisplayLocked()
 }
 
-// Render returns the spinner line.
+// Render returns the spinner line. A blank line is prepended for vertical
+// spacing so the spinner doesn't sit flush against the component above it.
 func (l *Loader) Render(width int) []string {
-	// Blank line above for spacing, then the spinner line.
+	l.mu.Lock()
+	defer l.mu.Unlock()
 	return []string{"", l.Text.Render(width)[0]}
 }
 
@@ -93,16 +108,21 @@ func (l *Loader) animate() {
 		case <-l.stopCh:
 			return
 		case <-ticker.C:
+			l.mu.Lock()
 			l.currentFrame = (l.currentFrame + 1) % len(l.frames)
-			l.updateDisplay()
-			if l.onTick != nil {
-				l.onTick()
+			l.updateDisplayLocked()
+			onTick := l.onTick
+			l.mu.Unlock()
+			if onTick != nil {
+				onTick()
 			}
 		}
 	}
 }
 
-func (l *Loader) updateDisplay() {
+// updateDisplayLocked rebuilds the displayed text from the current frame and
+// message. Caller must hold l.mu.
+func (l *Loader) updateDisplayLocked() {
 	frame := l.frames[l.currentFrame]
 	indicator := frame
 	if l.spinnerFn != nil && termkit.ColorEnabled() {

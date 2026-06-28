@@ -450,7 +450,7 @@ func runePrefix(s string, n int) string {
 }
 
 func fuzzyFilterSlice[T any](items []T, query string, getText func(T) string) []T {
-	tokens := splitTokens(query)
+	tokens := splitFields(query)
 	if len(tokens) == 0 {
 		return items
 	}
@@ -510,10 +510,6 @@ func queryPositionsToSpans(positions []int, word string) [][2]int {
 		}
 	}
 	return merged
-}
-
-func splitTokens(q string) []string {
-	return splitFields(q)
 }
 
 func splitFields(s string) []string {

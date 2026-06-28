@@ -2,7 +2,6 @@ package taui
 
 import (
 	"regexp"
-	"sort"
 	"strings"
 )
 
@@ -115,43 +114,4 @@ func fuzzySwap(q string) string {
 		return m[2] + m[1]
 	}
 	return ""
-}
-
-// FuzzyFilter returns items whose text fuzzy-matches the query, best first.
-// Space-separated tokens are all required (AND). Empty query returns items
-// unchanged.
-func FuzzyFilter[T any](items []T, query string, getText func(T) string) []T {
-	tokens := strings.Fields(query)
-	if len(tokens) == 0 {
-		return items
-	}
-
-	type scored struct {
-		item  T
-		score float64
-	}
-	var out []scored
-	for _, it := range items {
-		text := getText(it)
-		total := 0.0
-		ok := true
-		for _, tok := range tokens {
-			m := FuzzyMatch(tok, text)
-			if !m.Match {
-				ok = false
-				break
-			}
-			total += m.Score
-		}
-		if ok {
-			out = append(out, scored{it, total})
-		}
-	}
-	sort.SliceStable(out, func(i, j int) bool { return out[i].score < out[j].score })
-
-	result := make([]T, len(out))
-	for i, s := range out {
-		result[i] = s.item
-	}
-	return result
 }

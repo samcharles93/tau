@@ -56,7 +56,7 @@ func (c Color) Bg() string {
 // ─────────────────────────────────────────────────────────────────────────────
 
 var (
-	colorMu      sync.RWMutex
+	colorMu      sync.Mutex
 	colorChecked bool
 	colorOn      bool
 )
@@ -64,13 +64,6 @@ var (
 // ColorEnabled reports whether ANSI sequences should be emitted.
 // It returns false when output is not a character device or NO_COLOR is set.
 func ColorEnabled() bool {
-	colorMu.RLock()
-	if colorChecked {
-		defer colorMu.RUnlock()
-		return colorOn
-	}
-	colorMu.RUnlock()
-
 	colorMu.Lock()
 	defer colorMu.Unlock()
 	if colorChecked {
@@ -86,7 +79,7 @@ func ColorEnabled() bool {
 	return colorOn
 }
 
-// DisableColor forces colour off for the remainder of the process.
+// DisableColor forces colour off for subsequent ColorEnabled calls.
 func DisableColor() {
 	colorMu.Lock()
 	defer colorMu.Unlock()

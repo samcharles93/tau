@@ -87,7 +87,8 @@ func stripANSI(s string) string {
 
 func isCSITerminator(b byte) bool {
 	switch b {
-	case 'm', 'G', 'K', 'H', 'J', 'A', 'B', 'C', 'D', 'E', 'F', 'S', 'T', 'f', 'h', 'l', 's', 'u':
+	case 'm', 'G', 'K', 'H', 'J', 'A', 'B', 'C', 'D', 'E', 'F', 'S', 'T', 'f', 'h', 'l', 's', 'u',
+		'\'', 'p', 'q', 'r', 't':
 		return true
 	}
 	return false

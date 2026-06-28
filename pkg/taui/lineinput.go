@@ -113,7 +113,9 @@ func (li *LineInput) SetHistory(entries []string) {
 // navigateHistory moves through the history buffer. dir < 0 goes older (up),
 // dir > 0 goes newer (down). On first entry into history mode (from live
 // editing), the current draft is saved so it can be restored when moving past
-// the newest entry. Caller must hold li.mu.
+// the newest entry.
+//
+// Caller must hold li.mu.
 func (li *LineInput) navigateHistory(dir int) {
 	if len(li.history) == 0 {
 		return
@@ -149,6 +151,11 @@ func (li *LineInput) navigateHistory(dir int) {
 func (li *LineInput) Invalidate() {}
 
 // HandleInput applies one key sequence. Returns true if it was consumed.
+//
+// The submit callback runs after the lock is released so it can safely call
+// TUI methods without deadlocking. The submitted value is captured to a local
+// before clearing state and unlocking — the render goroutine sees the cleared
+// input for one frame, which is correct (the prompt was just submitted).
 func (li *LineInput) HandleInput(data string) bool {
 	li.mu.Lock()
 

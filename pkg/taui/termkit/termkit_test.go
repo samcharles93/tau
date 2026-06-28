@@ -26,11 +26,7 @@ func TestStyle_colorDisabled(t *testing.T) {
 }
 
 func TestStyle_colorEnabled(t *testing.T) {
-	// Force color on for this test.
-	colorMu.Lock()
-	colorOn = true
-	colorChecked = true
-	colorMu.Unlock()
+	ForceColor()
 
 	got := Style("hello", Bold)
 	if !strings.Contains(got, Bold) || !strings.Contains(got, Reset) || !strings.Contains(got, "hello") {
