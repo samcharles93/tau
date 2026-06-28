@@ -113,6 +113,12 @@ func (m *Manager) hasCapability(name, capability string) bool {
 	return slices.Contains(caps, capability)
 }
 
+// SetInteractiveHandler sets the interactive prompt handler on the shared host
+// service so plugins can call Confirm/Input via the HostService RPCs.
+func (m *Manager) SetInteractiveHandler(h InteractiveHandler) {
+	m.host.interactivePrompt = h
+}
+
 // Load discovers and starts all plugin binaries in the plugins directory.
 func (m *Manager) Load(ctx context.Context) error {
 	entries, err := os.ReadDir(m.cfg.PluginsDir)
