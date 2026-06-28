@@ -27,6 +27,7 @@ func pluginsCmd() *urfavecli.Command {
 			pluginUninstallCmd(),
 			pluginUpdateCmd(),
 			pluginPublishCmd(),
+			pluginVersionPublishCmd(),
 		},
 	}
 }
@@ -333,6 +334,9 @@ func pluginPublishCmd() *urfavecli.Command {
 	return &urfavecli.Command{
 		Name:  "publish",
 		Usage: "Publish a plugin to the registry (requires TAU_REGISTRY_TOKEN)",
+		Flags: []urfavecli.Flag{
+			&urfavecli.StringFlag{Name: "id", Usage: "Explicit extension ID (derived from repo if omitted)"},
+		},
 		Action: func(ctx context.Context, cmd *urfavecli.Command) error {
 			data, err := os.ReadFile("tau.json")
 			if err != nil {
@@ -357,8 +361,11 @@ func pluginPublishCmd() *urfavecli.Command {
 				return fmt.Errorf("invalid tau.json: %w", err)
 			}
 
-			if manifest.Name == "" || manifest.Description == "" || manifest.Author == "" || manifest.Repo == "" {
-				return fmt.Errorf("tau.json is missing required fields: name, description, author, repository")
+			if manifest.Name == "" || manifest.Description == "" || manifest.Author == "" {
+				return fmt.Errorf("tau.json is missing required fields: name, description, author")
+			}
+			if manifest.Repo == "" && cmd.String("id") == "" {
+				return fmt.Errorf("tau.json is missing repository field; either add it or pass --id")
 			}
 
 			client, err := newRegistryClient()
@@ -367,6 +374,7 @@ func pluginPublishCmd() *urfavecli.Command {
 			}
 
 			req := &registry.PublishRequest{
+				ID:            cmd.String("id"),
 				Name:          manifest.Name,
 				Description:   manifest.Description,
 				Author:        manifest.Author,
@@ -384,6 +392,64 @@ func pluginPublishCmd() *urfavecli.Command {
 			}
 
 			fmt.Printf("  ✓ %s published to registry\n", manifest.Name)
+			return nil
+		},
+	}
+}
+
+func pluginVersionPublishCmd() *urfavecli.Command {
+	return &urfavecli.Command{
+		Name:  "version-publish",
+		Usage: "Publish a plugin version to the registry (requires TAU_REGISTRY_TOKEN)",
+		Flags: []urfavecli.Flag{
+			&urfavecli.StringFlag{Name: "version", Usage: "Semver version (e.g. 0.1.0)", Required: true},
+			&urfavecli.StringFlag{Name: "url", Usage: "Release URL for this version"},
+			&urfavecli.StringFlag{Name: "notes", Usage: "Release notes (markdown)"},
+			&urfavecli.StringFlag{Name: "checksum", Usage: "SHA256 checksum of the source"},
+			&urfavecli.Int64Flag{Name: "size", Usage: "Total size in bytes"},
+			&urfavecli.StringFlag{Name: "go-version", Usage: "Go version used to build"},
+			&urfavecli.StringFlag{Name: "min-tau", Usage: "Minimum tau version required"},
+			&urfavecli.StringFlag{Name: "platforms", Usage: "Platforms JSON file (array of {os,arch,url,checksum,size})"},
+		},
+		Action: func(ctx context.Context, cmd *urfavecli.Command) error {
+			if cmd.Args().Len() == 0 {
+				return fmt.Errorf("extension ID is required: tau plugin version-publish <id> --version <ver>")
+			}
+			id := cmd.Args().First()
+
+			client, err := newRegistryClient()
+			if err != nil {
+				return err
+			}
+
+			var platforms []registry.Platform
+			if pf := cmd.String("platforms"); pf != "" {
+				data, err := os.ReadFile(pf)
+				if err != nil {
+					return fmt.Errorf("read platforms file: %w", err)
+				}
+				if err := json.Unmarshal(data, &platforms); err != nil {
+					return fmt.Errorf("invalid platforms file: %w", err)
+				}
+			}
+
+			req := &registry.CreateVersionRequest{
+				Version:       cmd.String("version"),
+				Checksum:      cmd.String("checksum"),
+				Size:          int64(cmd.Int("size")),
+				GoVersion:     cmd.String("go-version"),
+				ReleaseURL:    cmd.String("url"),
+				ReleaseNotes:  cmd.String("notes"),
+				MinTauVersion: cmd.String("min-tau"),
+				Platforms:     platforms,
+			}
+
+			fmt.Printf("Publishing %s@%s...\n", id, req.Version)
+			if err := client.PublishVersion(ctx, id, req); err != nil {
+				return fmt.Errorf("version publish failed: %w", err)
+			}
+
+			fmt.Printf("  ✓ %s@%s published to registry\n", id, req.Version)
 			return nil
 		},
 	}

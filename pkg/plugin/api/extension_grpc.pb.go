@@ -2,7 +2,7 @@
 // versions:
 // - protoc-gen-go-grpc v1.6.2
 // - protoc             v7.34.0
-// source: extension.proto
+// source: pkg/plugin/api/extension.proto
 
 package api
 
@@ -429,7 +429,7 @@ var ExtensionService_ServiceDesc = grpc.ServiceDesc{
 		},
 	},
 	Streams:  []grpc.StreamDesc{},
-	Metadata: "extension.proto",
+	Metadata: "pkg/plugin/api/extension.proto",
 }
 
 const (
@@ -439,6 +439,8 @@ const (
 	HostService_GetAvailableModels_FullMethodName = "/proto.HostService/GetAvailableModels"
 	HostService_Notify_FullMethodName             = "/proto.HostService/Notify"
 	HostService_Log_FullMethodName                = "/proto.HostService/Log"
+	HostService_Confirm_FullMethodName            = "/proto.HostService/Confirm"
+	HostService_Input_FullMethodName              = "/proto.HostService/Input"
 )
 
 // HostServiceClient is the client API for HostService service.
@@ -455,6 +457,8 @@ type HostServiceClient interface {
 	GetAvailableModels(ctx context.Context, in *GetAvailableModelsRequest, opts ...grpc.CallOption) (*GetAvailableModelsResponse, error)
 	Notify(ctx context.Context, in *NotifyRequest, opts ...grpc.CallOption) (*NotifyResponse, error)
 	Log(ctx context.Context, in *LogRequest, opts ...grpc.CallOption) (*LogResponse, error)
+	Confirm(ctx context.Context, in *ConfirmRequest, opts ...grpc.CallOption) (*ConfirmResponse, error)
+	Input(ctx context.Context, in *InputRequest, opts ...grpc.CallOption) (*InputResponse, error)
 }
 
 type hostServiceClient struct {
@@ -525,6 +529,26 @@ func (c *hostServiceClient) Log(ctx context.Context, in *LogRequest, opts ...grp
 	return out, nil
 }
 
+func (c *hostServiceClient) Confirm(ctx context.Context, in *ConfirmRequest, opts ...grpc.CallOption) (*ConfirmResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(ConfirmResponse)
+	err := c.cc.Invoke(ctx, HostService_Confirm_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *hostServiceClient) Input(ctx context.Context, in *InputRequest, opts ...grpc.CallOption) (*InputResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(InputResponse)
+	err := c.cc.Invoke(ctx, HostService_Input_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // HostServiceServer is the server API for HostService service.
 // All implementations must embed UnimplementedHostServiceServer
 // for forward compatibility.
@@ -539,6 +563,8 @@ type HostServiceServer interface {
 	GetAvailableModels(context.Context, *GetAvailableModelsRequest) (*GetAvailableModelsResponse, error)
 	Notify(context.Context, *NotifyRequest) (*NotifyResponse, error)
 	Log(context.Context, *LogRequest) (*LogResponse, error)
+	Confirm(context.Context, *ConfirmRequest) (*ConfirmResponse, error)
+	Input(context.Context, *InputRequest) (*InputResponse, error)
 	mustEmbedUnimplementedHostServiceServer()
 }
 
@@ -566,6 +592,12 @@ func (UnimplementedHostServiceServer) Notify(context.Context, *NotifyRequest) (*
 }
 func (UnimplementedHostServiceServer) Log(context.Context, *LogRequest) (*LogResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method Log not implemented")
+}
+func (UnimplementedHostServiceServer) Confirm(context.Context, *ConfirmRequest) (*ConfirmResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method Confirm not implemented")
+}
+func (UnimplementedHostServiceServer) Input(context.Context, *InputRequest) (*InputResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method Input not implemented")
 }
 func (UnimplementedHostServiceServer) mustEmbedUnimplementedHostServiceServer() {}
 func (UnimplementedHostServiceServer) testEmbeddedByValue()                     {}
@@ -696,6 +728,42 @@ func _HostService_Log_Handler(srv interface{}, ctx context.Context, dec func(int
 	return interceptor(ctx, in, info, handler)
 }
 
+func _HostService_Confirm_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(ConfirmRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(HostServiceServer).Confirm(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: HostService_Confirm_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(HostServiceServer).Confirm(ctx, req.(*ConfirmRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _HostService_Input_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(InputRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(HostServiceServer).Input(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: HostService_Input_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(HostServiceServer).Input(ctx, req.(*InputRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 // HostService_ServiceDesc is the grpc.ServiceDesc for HostService service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -727,7 +795,15 @@ var HostService_ServiceDesc = grpc.ServiceDesc{
 			MethodName: "Log",
 			Handler:    _HostService_Log_Handler,
 		},
+		{
+			MethodName: "Confirm",
+			Handler:    _HostService_Confirm_Handler,
+		},
+		{
+			MethodName: "Input",
+			Handler:    _HostService_Input_Handler,
+		},
 	},
 	Streams:  []grpc.StreamDesc{},
-	Metadata: "extension.proto",
+	Metadata: "pkg/plugin/api/extension.proto",
 }

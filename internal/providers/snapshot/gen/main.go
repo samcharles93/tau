@@ -42,6 +42,20 @@ type modelCaps struct {
 	ToolCall bool `json:"tool_call"`
 }
 
+// nemotronModels are the nemotron model IDs that need reasoning effort levels
+// added because models.dev only provides "toggle" type.
+var nemotronModels = map[string]bool{
+	"nemotron-3-ultra":                       true,
+	"nemotron-3-super":                       true,
+	"nemotron-3-nano:30b":                    true,
+	"nvidia/nemotron-3-ultra-550b-a55b":      true,
+	"nvidia/nemotron-3-super-120b-a12b":      true,
+	"nvidia/nemotron-3-nano-30b-a3b":         true,
+	"nvidia/nemotron-3-ultra-550b-a55b:free": true,
+	"nvidia/nemotron-3-super-120b-a12b:free": true,
+	"nvidia/nemotron-3-nano-30b-a3b:free":    true,
+}
+
 func main() {
 	input := flag.String("input", "", "path to a local models.dev api.json (default: fetch live)")
 	out := flag.String("o", "internal/providers/snapshot/models.json", "output path for the snapshot")
@@ -73,6 +87,47 @@ func main() {
 			if !caps.ToolCall {
 				dropped++
 				continue
+			}
+			// Fix known incorrect model limits from models.dev
+			if id == "nemotron-3-ultra" {
+				var model map[string]any
+				if err := json.Unmarshal(rawModel, &model); err == nil {
+					if limit, ok := model["limit"].(map[string]any); ok {
+						limit["output"] = 65536
+						if fixed, err := json.Marshal(model); err == nil {
+							rawModel = fixed
+						}
+					}
+				}
+			}
+			// Fix reasoning_options for nemotron models: models.dev only provides
+			// "toggle" type, but tau needs "effort" type with values for the UI
+			// to offer selectable reasoning levels. Add standard effort levels.
+			if nemotronModels[id] {
+				var model map[string]any
+				if err := json.Unmarshal(rawModel, &model); err == nil {
+					if reasoningOpts, ok := model["reasoning_options"].([]any); ok {
+						hasEffort := false
+						for _, opt := range reasoningOpts {
+							if optMap, ok := opt.(map[string]any); ok {
+								if optMap["type"] == "effort" {
+									hasEffort = true
+									break
+								}
+							}
+						}
+						if !hasEffort {
+							reasoningOpts = append(reasoningOpts, map[string]any{
+								"type":   "effort",
+								"values": []string{"low", "medium", "high"},
+							})
+							model["reasoning_options"] = reasoningOpts
+							if fixed, err := json.Marshal(model); err == nil {
+								rawModel = fixed
+							}
+						}
+					}
+				}
 			}
 			models[id] = rawModel
 			kept++

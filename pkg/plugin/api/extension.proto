@@ -262,6 +262,26 @@ message NotifyRequest {
 }
 message NotifyResponse {}
 
+// Confirm grants plugins the ability to ask the user for confirmation.
+message ConfirmRequest {
+  string title = 1;
+  string description = 2;
+}
+message ConfirmResponse {
+  bool confirmed = 1;
+  bool canceled = 2;
+}
+
+// Input grants plugins the ability to prompt the user for text.
+message InputRequest {
+  string title = 1;
+  string placeholder = 2;
+}
+message InputResponse {
+  string value = 1;
+  bool canceled = 2;
+}
+
 // HostService is served by the tau host and called by plugins via the
 // go-plugin broker. It gives plugins read access to host config/state and
 // the ability to push notifications and structured logs back to tau.
@@ -272,4 +292,6 @@ service HostService {
   rpc GetAvailableModels(GetAvailableModelsRequest) returns (GetAvailableModelsResponse);
   rpc Notify(NotifyRequest) returns (NotifyResponse);
   rpc Log(LogRequest) returns (LogResponse);
+  rpc Confirm(ConfirmRequest) returns (ConfirmResponse);
+  rpc Input(InputRequest) returns (InputResponse);
 }

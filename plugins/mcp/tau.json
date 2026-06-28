@@ -1,0 +1,8 @@
+{
+    "name": "MCP Plugin",
+    "description": "Connects to MCP servers and registers their tools with tau's agent coordinator",
+    "author": "tau",
+    "category": "plugin",
+    "license": "MIT",
+    "tags": ["mcp", "tools", "agent"]
+}

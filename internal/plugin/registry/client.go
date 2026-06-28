@@ -118,6 +118,7 @@ type Stats struct {
 
 // PublishRequest is the body for POST /extensions.
 type PublishRequest struct {
+	ID            string   `json:"id,omitempty"` // explicit extension ID; if empty, derived from repo
 	Name          string   `json:"name"`
 	Description   string   `json:"description"`
 	Author        string   `json:"author"`
@@ -127,6 +128,18 @@ type PublishRequest struct {
 	Homepage      string   `json:"homepage,omitempty"`
 	Tags          []string `json:"tags"`
 	MinTauVersion string   `json:"min_tau_version,omitempty"`
+}
+
+// CreateVersionRequest is the body for POST /extensions/:id/versions.
+type CreateVersionRequest struct {
+	Version       string     `json:"version"`
+	Checksum      string     `json:"checksum"`
+	Size          int64      `json:"size"`
+	GoVersion     string     `json:"go_version"`
+	ReleaseURL    string     `json:"release_url"`
+	ReleaseNotes  string     `json:"release_notes"`
+	MinTauVersion string     `json:"min_tau_version"`
+	Platforms     []Platform `json:"platforms"`
 }
 
 // APIError is returned when the registry responds with a non-2xx status.
@@ -261,6 +274,26 @@ func (c *Client) PublishExtension(ctx context.Context, ext *PublishRequest) erro
 	}
 
 	resp, err := c.do(ctx, "POST", "/api/v1/extensions", body)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusCreated {
+		return parseError(resp)
+	}
+	return nil
+}
+
+// PublishVersion creates a new version for an extension. Requires an API token.
+func (c *Client) PublishVersion(ctx context.Context, id string, v *CreateVersionRequest) error {
+	body, err := json.Marshal(v)
+	if err != nil {
+		return fmt.Errorf("marshal version: %w", err)
+	}
+
+	path := fmt.Sprintf("/api/v1/extensions/%s/versions", url.PathEscape(id))
+	resp, err := c.do(ctx, "POST", path, body)
 	if err != nil {
 		return err
 	}

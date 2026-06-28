@@ -1,34 +1,47 @@
 <template>
-  <div class="relative">
-    <!-- Slash-command autocomplete, surfaced from the init command list. -->
-    <div
+  <div
+    ref="wrapper"
+    class="relative rounded-md"
+    :class="isOverDropZone ? 'ring-2 ring-primary' : ''"
+  >
+    <CompletionMenu
       v-if="showMenu"
-      class="absolute bottom-full left-3 mb-1 w-80 overflow-hidden rounded-md border border-border bg-popover shadow-lg"
-    >
-      <button
-        v-for="(cmd, i) in matches"
-        :key="cmd.name"
-        type="button"
-        class="flex w-full flex-col gap-0.5 px-3 py-1.5 text-left text-xs"
-        :class="i === selected ? 'bg-muted' : ''"
-        @mousedown.prevent="accept(cmd)"
-        @mouseenter="selected = i"
-      >
-        <span class="font-mono text-foreground">{{ cmd.name }}</span>
-        <span v-if="cmd.description" class="truncate text-muted-foreground">{{ cmd.description }}</span>
-      </button>
-    </div>
+      :items="completionItems"
+      :selected="selected"
+      @accept="accept"
+      @hover="selected = $event"
+    />
+
+    <InputContextBar />
+
+    <AttachmentChips :attachments="attachments.attachments.value" @remove="attachments.remove" />
 
     <form class="flex items-end gap-2 p-3" @submit.prevent="submit">
+      <input ref="fileInput" type="file" multiple class="hidden" @change="onFilePicked" />
+      <button
+        type="button"
+        class="flex h-10 w-10 shrink-0 items-center justify-center rounded-md text-muted-foreground hover:bg-muted hover:text-foreground"
+        title="Attach files"
+        @click="fileInput?.click()"
+      >
+        <PaperclipIcon class="size-4" />
+      </button>
       <textarea
         ref="textarea"
         v-model="draft"
         rows="1"
         :placeholder="placeholder"
         class="max-h-48 min-h-[2.5rem] flex-1 resize-none rounded-md border border-input bg-card px-3 py-2 text-sm outline-none focus:ring-1 focus:ring-ring"
-        @input="autogrow"
+        @input="onInput"
         @keydown="onKeydown"
+        @paste="onPaste"
       />
+      <span
+        v-if="draft.length"
+        class="shrink-0 self-end pb-2.5 text-xs tabular-nums text-muted-foreground/60 select-none"
+      >
+        {{ draft.length }}&thinsp;·&thinsp;~{{ Math.ceil(draft.length / 4) }}t
+      </span>
       <button
         v-if="streaming"
         type="button"
@@ -40,7 +53,7 @@
       <button
         v-else
         type="submit"
-        :disabled="!draft.trim()"
+        :disabled="!draft.trim() && !attachments.hasAttachments.value"
         class="h-10 rounded-md bg-primary px-4 text-sm font-medium text-primary-foreground disabled:opacity-40"
       >
         Send
@@ -55,10 +68,16 @@
 </template>
 
 <script setup lang="ts">
-import { computed, nextTick, ref } from 'vue'
+import { computed, nextTick, onMounted, ref } from 'vue'
+import { useDropZone } from '@vueuse/core'
+import { PaperclipIcon } from '@lucide/vue'
 import UsageIndicator from '@/components/UsageIndicator.vue'
+import CompletionMenu, { type CompletionItem } from '@/components/input/CompletionMenu.vue'
+import InputContextBar from '@/components/input/InputContextBar.vue'
+import AttachmentChips from '@/components/input/AttachmentChips.vue'
+import { usePromptHistory } from '@/composables/usePromptHistory'
+import { useAttachments } from '@/composables/useAttachments'
 import { useSessionStore } from '@/stores/session'
-import type { CommandRef } from '@/lib/protocol'
 
 withDefaults(defineProps<{ placeholder?: string; streaming?: boolean }>(), {
   placeholder: 'How can I assist you today?',
@@ -68,47 +87,79 @@ withDefaults(defineProps<{ placeholder?: string; streaming?: boolean }>(), {
 const emit = defineEmits<{ submit: [text: string]; stop: [] }>()
 
 const session = useSessionStore()
+const history = usePromptHistory()
+const attachments = useAttachments()
+
 const draft = ref('')
 const textarea = ref<HTMLTextAreaElement | null>(null)
+const fileInput = ref<HTMLInputElement | null>(null)
+const wrapper = ref<HTMLElement | null>(null)
 const selected = ref(0)
 const menuDismissed = ref(false)
 
-// The menu shows while typing a `/command` token (before any space/args).
-const matches = computed<CommandRef[]>(() => {
-  const value = draft.value
-  if (!value.startsWith('/') || value.includes(' ') || value.includes('\n')) return []
-  const token = value.slice(1).toLowerCase()
+const slashMode = computed(() => draft.value.startsWith('/') && !/[ \n]/.test(draft.value))
+
+const completionItems = computed<CompletionItem[]>(() => {
+  if (!slashMode.value) return []
+  const token = draft.value.slice(1).toLowerCase()
   return session.commands
     .filter((c) => c.name.replace(/^\//, '').toLowerCase().startsWith(token))
-    .slice(0, 8)
+    .slice(0, 24)
+    .map((c) => ({
+      id: `cmd:${c.name}`,
+      group: 'commands' as const,
+      name: c.name,
+      description: c.description,
+      acceptsArgs: c.accepts_args,
+    }))
 })
 
-const showMenu = computed(() => !menuDismissed.value && matches.value.length > 0)
+const showMenu = computed(() => !menuDismissed.value && completionItems.value.length > 0)
+
+const { isOverDropZone } = useDropZone(wrapper, { onDrop })
+
+onMounted(() => {
+  draft.value = history.loadDraft()
+})
 
 function autogrow() {
-  menuDismissed.value = false
-  selected.value = 0
   const el = textarea.value
   if (!el) return
   el.style.height = 'auto'
   el.style.height = `${el.scrollHeight}px`
 }
 
+function onInput() {
+  menuDismissed.value = false
+  selected.value = 0
+  history.saveDraft(draft.value)
+  history.resetCursor()
+  autogrow()
+}
+
+function isOnFirstLine(el: HTMLTextAreaElement): boolean {
+  return !el.value.slice(0, el.selectionStart ?? 0).includes('\n')
+}
+
+function isOnLastLine(el: HTMLTextAreaElement): boolean {
+  return !el.value.slice(el.selectionEnd ?? el.value.length).includes('\n')
+}
+
 function onKeydown(e: KeyboardEvent) {
   if (showMenu.value) {
     if (e.key === 'ArrowDown') {
       e.preventDefault()
-      selected.value = (selected.value + 1) % matches.value.length
+      selected.value = (selected.value + 1) % completionItems.value.length
       return
     }
     if (e.key === 'ArrowUp') {
       e.preventDefault()
-      selected.value = (selected.value - 1 + matches.value.length) % matches.value.length
+      selected.value = (selected.value - 1 + completionItems.value.length) % completionItems.value.length
       return
     }
     if (e.key === 'Tab' || (e.key === 'Enter' && !e.shiftKey)) {
       e.preventDefault()
-      accept(matches.value[selected.value])
+      accept(completionItems.value[selected.value])
       return
     }
     if (e.key === 'Escape') {
@@ -118,23 +169,66 @@ function onKeydown(e: KeyboardEvent) {
     }
   }
 
+  const el = textarea.value
+  if (e.key === 'ArrowUp' && el && isOnFirstLine(el)) {
+    const entry = history.prev()
+    if (entry != null) {
+      e.preventDefault()
+      draft.value = entry
+      nextTick(autogrow)
+    }
+    return
+  }
+  if (e.key === 'ArrowDown' && el && isOnLastLine(el)) {
+    const entry = history.next()
+    if (entry != null) {
+      e.preventDefault()
+      draft.value = entry
+      nextTick(autogrow)
+    }
+    return
+  }
+
   if (e.key === 'Enter' && !e.shiftKey) {
     e.preventDefault()
     submit()
   }
 }
 
-function accept(cmd: CommandRef) {
-  draft.value = cmd.accepts_args ? `${cmd.name} ` : cmd.name
+function accept(item: CompletionItem) {
+  if (!item) return
+  draft.value = item.acceptsArgs ? `${item.name} ` : item.name
   menuDismissed.value = true
   nextTick(() => textarea.value?.focus())
 }
 
+async function onFilePicked(e: Event) {
+  const files = (e.target as HTMLInputElement).files
+  if (files) await Promise.all([...files].map((f) => attachments.addFile(f)))
+  if (fileInput.value) fileInput.value.value = ''
+}
+
+async function onDrop(files: File[] | null) {
+  if (files) await Promise.all(files.map((f) => attachments.addFile(f)))
+}
+
+async function onPaste(e: ClipboardEvent) {
+  const files = [...(e.clipboardData?.files ?? [])]
+  if (!files.length) return
+  e.preventDefault()
+  await Promise.all(files.map((f) => attachments.addFile(f)))
+}
+
 function submit() {
   const text = draft.value.trim()
-  if (!text) return
-  emit('submit', text)
+  const suffix = attachments.buildPromptSuffix()
+  const full = `${text}${suffix}`.trim()
+  if (!full) return
+  history.push(text || full)
+  history.saveDraft('')
+  emit('submit', full)
   draft.value = ''
+  attachments.clear()
   menuDismissed.value = false
   nextTick(autogrow)
 }

@@ -14,9 +14,10 @@ import (
 // open: the host ignores unknown values, so new capability types can be added
 // without breaking existing plugins.
 const (
-	CapabilityCommands = "commands"
-	CapabilityTools    = "tools"
-	CapabilityEvents   = "events"
+	CapabilityCommands    = "commands"
+	CapabilityTools       = "tools"
+	CapabilityEvents      = "events"
+	CapabilityInteractive = "interactive"
 )
 
 // Capable is an optional interface for plugins to declare which capabilities

@@ -35,27 +35,6 @@
           </div>
         </div>
 
-        <!-- Model: searchable grouped combobox, or free-text fallback -->
-        <div class="flex flex-col gap-1.5">
-          <Label for="set-model">Model</Label>
-          <ModelCombobox
-            v-if="filteredModels.length"
-            id="set-model"
-            v-model="form.model"
-            :models="filteredModels"
-            placeholder="Select model"
-            @update:model-value="applyModelValue"
-          />
-          <Input
-            v-else
-            id="set-model"
-            v-model="form.model"
-            placeholder="model id"
-            @keydown.enter="applyModel"
-            @blur="applyModel"
-          />
-        </div>
-
         <!-- Temperature -->
         <div class="flex flex-col gap-1.5">
           <Label for="set-temp">Temperature</Label>
@@ -147,7 +126,6 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select'
-import ModelCombobox from '@/components/ModelCombobox.vue'
 import { useSessionStore } from '@/stores/session'
 import type { ChatSessionPatch } from '@/lib/protocol'
 
@@ -156,15 +134,6 @@ const NONE = 'none'
 const session = useSessionStore()
 const open = ref(false)
 const hasMultipleProviders = computed(() => (session.providers?.length ?? 0) > 1)
-
-// When a provider is selected, show only that provider's models.
-// Falls back to all models when no provider filter applies.
-const filteredModels = computed(() => {
-  const all = session.availableModels
-  if (!form.provider) return all
-  const byProvider = all.filter((m) => m.provider === form.provider)
-  return byProvider.length ? byProvider : all
-})
 
 // reasoningOptions builds the selectable effort levels from the current
 // model's advertised reasoning_efforts. Only "None" is offered when the
@@ -180,7 +149,6 @@ const reasoningOptions = computed(() => {
 
 const form = reactive({
   provider: '',
-  model: '',
   temperature: 0,
   maxTokens: 0,
   reasoning: NONE,
@@ -190,7 +158,6 @@ const form = reactive({
 watch(open, (isOpen) => {
   if (!isOpen) return
   form.provider = session.provider
-  form.model = session.model
   form.temperature = session.parameters.temperature
   form.maxTokens = session.parameters.max_tokens
   form.reasoning = session.parameters.reasoning_effort || NONE
@@ -208,32 +175,13 @@ function apply(patch: ChatSessionPatch) {
 function applyProvider(value: unknown) {
   const provider = typeof value === 'string' ? value.trim() : ''
   if (provider && provider !== session.provider) {
-    // When switching provider, send the provider name along with current model.
-    apply({ provider, model: { id: form.model || session.model } })
+    apply({ provider, model: { id: session.model } })
   }
-}
-
-// applyModelById switches the session to a model, also switching the provider
-// when the model is tagged with one (aggregated cross-provider list) so the
-// backend routes to the right provider instead of keeping the previous one.
-function applyModelById(id: string) {
-  if (!id || id === session.model) return
-  const ref = session.availableModels.find((m) => m.id === id)
-  const patch: ChatSessionPatch = { model: { id } }
-  if (ref?.provider) patch.provider = ref.provider
-  apply(patch)
-}
-
-function applyModel() {
-  applyModelById(form.model.trim())
-}
-
-function applyModelValue(value: unknown) {
-  applyModelById(typeof value === 'string' ? value.trim() : '')
 }
 
 function applyReasoning(value: unknown) {
   const v = typeof value === 'string' ? value : NONE
   apply({ reasoning_effort: v === NONE ? '' : v })
 }
+
 </script>

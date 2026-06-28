@@ -1,6 +1,12 @@
 package api
 
-import "context"
+import (
+	"context"
+	"errors"
+)
+
+// ErrPromptCanceled is returned by Host.Confirm/Input when the user cancels.
+var ErrPromptCanceled = errors.New("prompt canceled by user")
 
 // Host is the plugin-facing handle to tau host services. A plugin that wants to
 // read config, query session state, or push notifications/logs back to the host
@@ -18,6 +24,10 @@ type Host interface {
 	GetAvailableModels(ctx context.Context) ([]string, error)
 	// Notify pushes a user-visible notification to the host UI (TUI + web).
 	Notify(ctx context.Context, level, message string) error
+	// Confirm asks the user for confirmation. Returns false if canceled.
+	Confirm(ctx context.Context, title, description string) (bool, error)
+	// Input prompts the user for free-form text input.
+	Input(ctx context.Context, title, placeholder string) (string, error)
 	// Log forwards a structured log line to the host logger.
 	Log(ctx context.Context, level, message string, fields map[string]string) error
 }
@@ -69,6 +79,28 @@ func (h *hostClient) GetAvailableModels(ctx context.Context) ([]string, error) {
 func (h *hostClient) Notify(ctx context.Context, level, message string) error {
 	_, err := h.client.Notify(ctx, &NotifyRequest{Level: level, Message: message})
 	return err
+}
+
+func (h *hostClient) Confirm(ctx context.Context, title, description string) (bool, error) {
+	resp, err := h.client.Confirm(ctx, &ConfirmRequest{Title: title, Description: description})
+	if err != nil {
+		return false, err
+	}
+	if resp.Canceled {
+		return false, ErrPromptCanceled
+	}
+	return resp.Confirmed, nil
+}
+
+func (h *hostClient) Input(ctx context.Context, title, placeholder string) (string, error) {
+	resp, err := h.client.Input(ctx, &InputRequest{Title: title, Placeholder: placeholder})
+	if err != nil {
+		return "", err
+	}
+	if resp.Canceled {
+		return "", ErrPromptCanceled
+	}
+	return resp.Value, nil
 }
 
 func (h *hostClient) Log(ctx context.Context, level, message string, fields map[string]string) error {

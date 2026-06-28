@@ -3,6 +3,7 @@ package plugin
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"log/slog"
 	"os"
 	"path/filepath"
@@ -13,6 +14,13 @@ import (
 
 // Notifier pushes a user-visible notification to the host UI (TUI + web).
 type Notifier func(level, message string)
+
+// InteractiveHandler lets plugins prompt the user for confirmation or text input.
+// It is set by the coordinator via SetInteractiveHandler.
+type InteractiveHandler interface {
+	Confirm(ctx context.Context, title, description string) (bool, error)
+	Input(ctx context.Context, title, placeholder string) (string, error)
+}
 
 // hostService implements api.HostServiceServer. A single instance is shared by
 // all plugins; requests carry the plugin name so config is correctly scoped.
@@ -28,9 +36,10 @@ type hostService struct {
 	kv *kvStore
 
 	// Optional host capabilities. Nil fields degrade gracefully.
-	notify       Notifier
-	models       func() []string
-	sessionState func(sessionID string) (stateJSON string, found bool)
+	notify            Notifier
+	models            func() []string
+	sessionState      func(sessionID string) (stateJSON string, found bool)
+	interactivePrompt InteractiveHandler
 }
 
 func (h *hostService) GetConfig(_ context.Context, req *api.GetConfigRequest) (*api.GetConfigResponse, error) {
@@ -92,6 +101,34 @@ func (h *hostService) Notify(_ context.Context, req *api.NotifyRequest) (*api.No
 		h.notify(req.Level, req.Message)
 	}
 	return &api.NotifyResponse{}, nil
+}
+
+func (h *hostService) Confirm(ctx context.Context, req *api.ConfirmRequest) (*api.ConfirmResponse, error) {
+	if h.interactivePrompt == nil {
+		return &api.ConfirmResponse{Canceled: true}, nil
+	}
+	confirmed, err := h.interactivePrompt.Confirm(ctx, req.Title, req.Description)
+	if err != nil {
+		if errors.Is(err, context.Canceled) {
+			return &api.ConfirmResponse{Canceled: true}, nil
+		}
+		return nil, err
+	}
+	return &api.ConfirmResponse{Confirmed: confirmed}, nil
+}
+
+func (h *hostService) Input(ctx context.Context, req *api.InputRequest) (*api.InputResponse, error) {
+	if h.interactivePrompt == nil {
+		return &api.InputResponse{Canceled: true}, nil
+	}
+	value, err := h.interactivePrompt.Input(ctx, req.Title, req.Placeholder)
+	if err != nil {
+		if errors.Is(err, context.Canceled) {
+			return &api.InputResponse{Canceled: true}, nil
+		}
+		return nil, err
+	}
+	return &api.InputResponse{Value: value}, nil
 }
 
 func (h *hostService) Log(_ context.Context, req *api.LogRequest) (*api.LogResponse, error) {

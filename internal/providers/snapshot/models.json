@@ -3534,7 +3534,6 @@
         "family": "devstral",
         "attachment": false,
         "reasoning": false,
-        "reasoning_options": [],
         "tool_call": true,
         "release_date": "2025-12-09",
         "last_updated": "2026-01-19",
@@ -3558,7 +3557,6 @@
         "family": "devstral",
         "attachment": true,
         "reasoning": false,
-        "reasoning_options": [],
         "tool_call": true,
         "release_date": "2025-12-09",
         "last_updated": "2026-01-19",
@@ -3981,7 +3979,6 @@
         "family": "kimi-k2",
         "attachment": false,
         "reasoning": false,
-        "reasoning_options": [],
         "tool_call": true,
         "knowledge": "2024-10",
         "release_date": "2025-07-11",
@@ -4150,7 +4147,6 @@
         "family": "ministral",
         "attachment": true,
         "reasoning": false,
-        "reasoning_options": [],
         "tool_call": true,
         "release_date": "2024-12-01",
         "last_updated": "2026-01-19",
@@ -4175,7 +4171,6 @@
         "family": "ministral",
         "attachment": true,
         "reasoning": false,
-        "reasoning_options": [],
         "tool_call": true,
         "release_date": "2024-10-22",
         "last_updated": "2026-01-19",
@@ -4200,7 +4195,6 @@
         "family": "ministral",
         "attachment": true,
         "reasoning": false,
-        "reasoning_options": [],
         "tool_call": true,
         "release_date": "2024-12-01",
         "last_updated": "2026-01-19",
@@ -4225,7 +4219,6 @@
         "family": "mistral-large",
         "attachment": true,
         "reasoning": false,
-        "reasoning_options": [],
         "tool_call": true,
         "release_date": "2025-12-02",
         "last_updated": "2026-01-19",
@@ -4245,49 +4238,14 @@
         }
       },
       "nemotron-3-nano:30b": {
-        "id": "nemotron-3-nano:30b",
-        "name": "nemotron-3-nano:30b",
-        "family": "nemotron",
         "attachment": false,
-        "reasoning": true,
-        "reasoning_options": [
-          {
-            "type": "toggle"
-          }
-        ],
-        "tool_call": true,
-        "temperature": true,
-        "release_date": "2025-12-15",
+        "family": "nemotron",
+        "id": "nemotron-3-nano:30b",
         "last_updated": "2026-01-19",
-        "modalities": {
-          "input": [
-            "text"
-          ],
-          "output": [
-            "text"
-          ]
-        },
-        "open_weights": true,
         "limit": {
           "context": 1048576,
           "output": 131072
-        }
-      },
-      "nemotron-3-super": {
-        "id": "nemotron-3-super",
-        "name": "nemotron-3-super",
-        "family": "nemotron",
-        "attachment": false,
-        "reasoning": true,
-        "reasoning_options": [
-          {
-            "type": "toggle"
-          }
-        ],
-        "tool_call": true,
-        "temperature": true,
-        "release_date": "2026-03-11",
-        "last_updated": "2026-03-12",
+        },
         "modalities": {
           "input": [
             "text"
@@ -4296,27 +4254,35 @@
             "text"
           ]
         },
+        "name": "nemotron-3-nano:30b",
         "open_weights": true,
+        "reasoning": true,
+        "reasoning_options": [
+          {
+            "type": "toggle"
+          },
+          {
+            "type": "effort",
+            "values": [
+              "low",
+              "medium",
+              "high"
+            ]
+          }
+        ],
+        "release_date": "2025-12-15",
+        "temperature": true,
+        "tool_call": true
+      },
+      "nemotron-3-super": {
+        "attachment": false,
+        "family": "nemotron",
+        "id": "nemotron-3-super",
+        "last_updated": "2026-03-12",
         "limit": {
           "context": 262144,
           "output": 65536
-        }
-      },
-      "nemotron-3-ultra": {
-        "id": "nemotron-3-ultra",
-        "name": "nemotron-3-ultra",
-        "family": "nemotron",
-        "attachment": false,
-        "reasoning": true,
-        "reasoning_options": [
-          {
-            "type": "toggle"
-          }
-        ],
-        "tool_call": true,
-        "temperature": true,
-        "release_date": "2026-06-04",
-        "last_updated": "2026-06-04",
+        },
         "modalities": {
           "input": [
             "text"
@@ -4325,11 +4291,62 @@
             "text"
           ]
         },
+        "name": "nemotron-3-super",
         "open_weights": true,
+        "reasoning": true,
+        "reasoning_options": [
+          {
+            "type": "toggle"
+          },
+          {
+            "type": "effort",
+            "values": [
+              "low",
+              "medium",
+              "high"
+            ]
+          }
+        ],
+        "release_date": "2026-03-11",
+        "temperature": true,
+        "tool_call": true
+      },
+      "nemotron-3-ultra": {
+        "attachment": false,
+        "family": "nemotron",
+        "id": "nemotron-3-ultra",
+        "last_updated": "2026-06-04",
         "limit": {
           "context": 262144,
-          "output": 128000
-        }
+          "output": 65536
+        },
+        "modalities": {
+          "input": [
+            "text"
+          ],
+          "output": [
+            "text"
+          ]
+        },
+        "name": "nemotron-3-ultra",
+        "open_weights": true,
+        "reasoning": true,
+        "reasoning_options": [
+          {
+            "type": "toggle"
+          },
+          {
+            "type": "effort",
+            "values": [
+              "low",
+              "medium",
+              "high"
+            ]
+          }
+        ],
+        "release_date": "2026-06-04",
+        "temperature": true,
+        "tool_call": true
       },
       "qwen3-coder-next": {
         "id": "qwen3-coder-next",
@@ -4337,7 +4354,6 @@
         "family": "qwen",
         "attachment": false,
         "reasoning": false,
-        "reasoning_options": [],
         "tool_call": true,
         "release_date": "2026-02-02",
         "last_updated": "2026-02-08",
@@ -4361,7 +4377,6 @@
         "family": "qwen",
         "attachment": false,
         "reasoning": false,
-        "reasoning_options": [],
         "tool_call": true,
         "release_date": "2025-07-22",
         "last_updated": "2026-01-19",
@@ -4436,7 +4451,6 @@
         "family": "qwen",
         "attachment": true,
         "reasoning": false,
-        "reasoning_options": [],
         "tool_call": true,
         "release_date": "2025-09-22",
         "last_updated": "2026-01-19",
@@ -4494,7 +4508,6 @@
         "family": "rnj",
         "attachment": false,
         "reasoning": false,
-        "reasoning_options": [],
         "tool_call": true,
         "release_date": "2025-12-06",
         "last_updated": "2026-01-19",
@@ -7497,6 +7510,7 @@
         "family": "north",
         "attachment": false,
         "reasoning": true,
+        "reasoning_options": [],
         "tool_call": true,
         "structured_output": false,
         "temperature": true,
@@ -8208,6 +8222,7 @@
         "family": "gemini",
         "attachment": true,
         "reasoning": true,
+        "reasoning_options": [],
         "tool_call": true,
         "structured_output": true,
         "temperature": true,
@@ -10024,6 +10039,7 @@
         "family": "kimi-k2",
         "attachment": true,
         "reasoning": true,
+        "reasoning_options": [],
         "tool_call": true,
         "structured_output": true,
         "temperature": true,
@@ -10081,47 +10097,18 @@
         }
       },
       "nvidia/nemotron-3-nano-30b-a3b": {
-        "id": "nvidia/nemotron-3-nano-30b-a3b",
-        "name": "Nemotron 3 Nano 30B A3B",
-        "family": "nemotron",
         "attachment": false,
-        "reasoning": true,
-        "reasoning_options": [],
-        "tool_call": true,
-        "structured_output": true,
-        "temperature": true,
-        "release_date": "2025-12-15",
-        "last_updated": "2025-12-15",
-        "modalities": {
-          "input": [
-            "text"
-          ],
-          "output": [
-            "text"
-          ]
+        "cost": {
+          "input": 0.05,
+          "output": 0.2
         },
-        "open_weights": true,
+        "family": "nemotron",
+        "id": "nvidia/nemotron-3-nano-30b-a3b",
+        "last_updated": "2025-12-15",
         "limit": {
           "context": 262144,
           "output": 228000
         },
-        "cost": {
-          "input": 0.05,
-          "output": 0.2
-        }
-      },
-      "nvidia/nemotron-3-nano-30b-a3b:free": {
-        "id": "nvidia/nemotron-3-nano-30b-a3b:free",
-        "name": "Nemotron 3 Nano 30B A3B (free)",
-        "family": "nemotron",
-        "attachment": false,
-        "reasoning": true,
-        "reasoning_options": [],
-        "tool_call": true,
-        "structured_output": false,
-        "temperature": true,
-        "release_date": "2025-12-15",
-        "last_updated": "2025-12-15",
         "modalities": {
           "input": [
             "text"
@@ -10130,15 +10117,62 @@
             "text"
           ]
         },
+        "name": "Nemotron 3 Nano 30B A3B",
         "open_weights": true,
+        "reasoning": true,
+        "reasoning_options": [
+          {
+            "type": "effort",
+            "values": [
+              "low",
+              "medium",
+              "high"
+            ]
+          }
+        ],
+        "release_date": "2025-12-15",
+        "structured_output": true,
+        "temperature": true,
+        "tool_call": true
+      },
+      "nvidia/nemotron-3-nano-30b-a3b:free": {
+        "attachment": false,
+        "cost": {
+          "input": 0,
+          "output": 0
+        },
+        "family": "nemotron",
+        "id": "nvidia/nemotron-3-nano-30b-a3b:free",
+        "last_updated": "2025-12-15",
         "limit": {
           "context": 256000,
           "output": 256000
         },
-        "cost": {
-          "input": 0,
-          "output": 0
-        }
+        "modalities": {
+          "input": [
+            "text"
+          ],
+          "output": [
+            "text"
+          ]
+        },
+        "name": "Nemotron 3 Nano 30B A3B (free)",
+        "open_weights": true,
+        "reasoning": true,
+        "reasoning_options": [
+          {
+            "type": "effort",
+            "values": [
+              "low",
+              "medium",
+              "high"
+            ]
+          }
+        ],
+        "release_date": "2025-12-15",
+        "structured_output": false,
+        "temperature": true,
+        "tool_call": true
       },
       "nvidia/nemotron-3-nano-omni-30b-a3b-reasoning:free": {
         "id": "nvidia/nemotron-3-nano-omni-30b-a3b-reasoning:free",
@@ -10174,47 +10208,18 @@
         }
       },
       "nvidia/nemotron-3-super-120b-a12b": {
-        "id": "nvidia/nemotron-3-super-120b-a12b",
-        "name": "Nemotron 3 Super 120B A12B",
-        "family": "nemotron",
         "attachment": false,
-        "reasoning": true,
-        "reasoning_options": [],
-        "tool_call": true,
-        "structured_output": true,
-        "temperature": true,
-        "release_date": "2026-03-11",
-        "last_updated": "2026-03-11",
-        "modalities": {
-          "input": [
-            "text"
-          ],
-          "output": [
-            "text"
-          ]
+        "cost": {
+          "input": 0.085,
+          "output": 0.4
         },
-        "open_weights": true,
+        "family": "nemotron",
+        "id": "nvidia/nemotron-3-super-120b-a12b",
+        "last_updated": "2026-03-11",
         "limit": {
           "context": 262144,
           "output": 16384
         },
-        "cost": {
-          "input": 0.085,
-          "output": 0.4
-        }
-      },
-      "nvidia/nemotron-3-super-120b-a12b:free": {
-        "id": "nvidia/nemotron-3-super-120b-a12b:free",
-        "name": "Nemotron 3 Super (free)",
-        "family": "nemotron",
-        "attachment": false,
-        "reasoning": true,
-        "reasoning_options": [],
-        "tool_call": true,
-        "structured_output": true,
-        "temperature": true,
-        "release_date": "2026-03-11",
-        "last_updated": "2026-03-11",
         "modalities": {
           "input": [
             "text"
@@ -10223,28 +10228,37 @@
             "text"
           ]
         },
+        "name": "Nemotron 3 Super 120B A12B",
         "open_weights": true,
+        "reasoning": true,
+        "reasoning_options": [
+          {
+            "type": "effort",
+            "values": [
+              "low",
+              "medium",
+              "high"
+            ]
+          }
+        ],
+        "release_date": "2026-03-11",
+        "structured_output": true,
+        "temperature": true,
+        "tool_call": true
+      },
+      "nvidia/nemotron-3-super-120b-a12b:free": {
+        "attachment": false,
+        "cost": {
+          "input": 0,
+          "output": 0
+        },
+        "family": "nemotron",
+        "id": "nvidia/nemotron-3-super-120b-a12b:free",
+        "last_updated": "2026-03-11",
         "limit": {
           "context": 262144,
           "output": 262144
         },
-        "cost": {
-          "input": 0,
-          "output": 0
-        }
-      },
-      "nvidia/nemotron-3-ultra-550b-a55b": {
-        "id": "nvidia/nemotron-3-ultra-550b-a55b",
-        "name": "Nemotron 3 Ultra 550B A55B",
-        "family": "nemotron",
-        "attachment": false,
-        "reasoning": true,
-        "reasoning_options": [],
-        "tool_call": true,
-        "structured_output": true,
-        "temperature": true,
-        "release_date": "2026-06-04",
-        "last_updated": "2026-06-04",
         "modalities": {
           "input": [
             "text"
@@ -10253,29 +10267,38 @@
             "text"
           ]
         },
+        "name": "Nemotron 3 Super (free)",
         "open_weights": true,
+        "reasoning": true,
+        "reasoning_options": [
+          {
+            "type": "effort",
+            "values": [
+              "low",
+              "medium",
+              "high"
+            ]
+          }
+        ],
+        "release_date": "2026-03-11",
+        "structured_output": true,
+        "temperature": true,
+        "tool_call": true
+      },
+      "nvidia/nemotron-3-ultra-550b-a55b": {
+        "attachment": false,
+        "cost": {
+          "cache_read": 0.1,
+          "input": 0.5,
+          "output": 2.2
+        },
+        "family": "nemotron",
+        "id": "nvidia/nemotron-3-ultra-550b-a55b",
+        "last_updated": "2026-06-04",
         "limit": {
           "context": 262144,
           "output": 16384
         },
-        "cost": {
-          "input": 0.5,
-          "output": 2.2,
-          "cache_read": 0.1
-        }
-      },
-      "nvidia/nemotron-3-ultra-550b-a55b:free": {
-        "id": "nvidia/nemotron-3-ultra-550b-a55b:free",
-        "name": "Nemotron 3 Ultra (free)",
-        "family": "nemotron",
-        "attachment": false,
-        "reasoning": true,
-        "reasoning_options": [],
-        "tool_call": true,
-        "structured_output": false,
-        "temperature": true,
-        "release_date": "2026-06-04",
-        "last_updated": "2026-06-04",
         "modalities": {
           "input": [
             "text"
@@ -10284,15 +10307,62 @@
             "text"
           ]
         },
+        "name": "Nemotron 3 Ultra 550B A55B",
         "open_weights": true,
+        "reasoning": true,
+        "reasoning_options": [
+          {
+            "type": "effort",
+            "values": [
+              "low",
+              "medium",
+              "high"
+            ]
+          }
+        ],
+        "release_date": "2026-06-04",
+        "structured_output": true,
+        "temperature": true,
+        "tool_call": true
+      },
+      "nvidia/nemotron-3-ultra-550b-a55b:free": {
+        "attachment": false,
+        "cost": {
+          "input": 0,
+          "output": 0
+        },
+        "family": "nemotron",
+        "id": "nvidia/nemotron-3-ultra-550b-a55b:free",
+        "last_updated": "2026-06-04",
         "limit": {
           "context": 1000000,
           "output": 65536
         },
-        "cost": {
-          "input": 0,
-          "output": 0
-        }
+        "modalities": {
+          "input": [
+            "text"
+          ],
+          "output": [
+            "text"
+          ]
+        },
+        "name": "Nemotron 3 Ultra (free)",
+        "open_weights": true,
+        "reasoning": true,
+        "reasoning_options": [
+          {
+            "type": "effort",
+            "values": [
+              "low",
+              "medium",
+              "high"
+            ]
+          }
+        ],
+        "release_date": "2026-06-04",
+        "structured_output": false,
+        "temperature": true,
+        "tool_call": true
       },
       "nvidia/nemotron-nano-12b-v2-vl:free": {
         "id": "nvidia/nemotron-nano-12b-v2-vl:free",
@@ -11861,7 +11931,7 @@
       },
       "openai/gpt-oss-120b": {
         "id": "openai/gpt-oss-120b",
-        "name": "gpt-oss-120b",
+        "name": "GPT OSS 120B",
         "family": "gpt-oss",
         "attachment": false,
         "reasoning": true,
@@ -11878,7 +11948,6 @@
         "tool_call": true,
         "structured_output": true,
         "temperature": true,
-        "knowledge": "2024-06-30",
         "release_date": "2025-08-05",
         "last_updated": "2025-08-05",
         "modalities": {
@@ -11918,7 +11987,6 @@
         "tool_call": true,
         "structured_output": false,
         "temperature": true,
-        "knowledge": "2024-06-30",
         "release_date": "2025-08-05",
         "last_updated": "2025-08-05",
         "modalities": {
@@ -12504,6 +12572,7 @@
         "name": "Laguna M.1",
         "attachment": false,
         "reasoning": true,
+        "reasoning_options": [],
         "tool_call": true,
         "structured_output": false,
         "temperature": true,
@@ -12565,6 +12634,7 @@
         "name": "Laguna XS.2",
         "attachment": false,
         "reasoning": true,
+        "reasoning_options": [],
         "tool_call": true,
         "structured_output": false,
         "temperature": true,
@@ -13985,8 +14055,8 @@
           "output": 262140
         },
         "cost": {
-          "input": 0.2885,
-          "output": 2.65
+          "input": 0.2596,
+          "output": 2.385
         }
       },
       "qwen/qwen3.6-35b-a3b": {
@@ -14299,6 +14369,16 @@
         "name": "Fugu Ultra",
         "attachment": true,
         "reasoning": true,
+        "reasoning_options": [
+          {
+            "type": "effort",
+            "values": [
+              "max",
+              "xhigh",
+              "high"
+            ]
+          }
+        ],
         "tool_call": true,
         "structured_output": true,
         "temperature": false,
@@ -15120,6 +15200,7 @@
         "family": "glm",
         "attachment": true,
         "reasoning": true,
+        "reasoning_options": [],
         "tool_call": true,
         "structured_output": false,
         "temperature": true,

@@ -49,10 +49,9 @@ func (p *MCPPlugin) SetHost(h pluginapi.Host) {
 	p.host = h
 }
 
-// Capabilities advertises that this plugin provides tools only; it has no
-// slash commands and does not handle lifecycle events.
+// Capabilities advertises that this plugin provides tools and slash commands.
 func (p *MCPPlugin) Capabilities() []string {
-	return []string{pluginapi.CapabilityTools}
+	return []string{pluginapi.CapabilityTools, pluginapi.CapabilityCommands}
 }
 
 type mcpSession struct {
@@ -89,14 +88,27 @@ func main() {
 	})
 }
 
-// Metadata returns the plugin name and commands (MCP tools become commands).
+// Metadata returns the plugin name and slash commands.
 func (p *MCPPlugin) Metadata() (string, []*pluginapi.Command) {
-	return "mcp-plugin", nil // tools handled via Tools(), not commands
+	return "mcp-plugin", []*pluginapi.Command{
+		{Name: "mcp-list", Description: "list connected MCP servers", ExtensionName: "mcp-plugin"},
+		{Name: "mcp-reconnect", Description: "reconnect to an MCP server by name", ExtensionName: "mcp-plugin"},
+		{Name: "mcp-reload", Description: "reload all MCP servers from config", ExtensionName: "mcp-plugin"},
+	}
 }
 
-// RunCommand executes a slash command. Not used for MCP tools.
+// RunCommand executes a slash command.
 func (p *MCPPlugin) RunCommand(ctx context.Context, name, args string) (string, error) {
-	return "", fmt.Errorf("tau-plugin-mcp: unknown command %q", name)
+	switch name {
+	case "mcp-list":
+		return p.cmdList()
+	case "mcp-reconnect":
+		return p.cmdReconnect(strings.TrimSpace(args))
+	case "mcp-reload":
+		return p.cmdReload(ctx)
+	default:
+		return "", fmt.Errorf("tau-plugin-mcp: unknown command %q", name)
+	}
 }
 
 // Reload reconnects to MCP servers.
@@ -178,6 +190,122 @@ func (p *MCPPlugin) ExecuteTool(ctx context.Context, toolName, arguments string)
 	return session.callTool(ctx, shortName, arguments)
 }
 
+// --- Slash command handlers ---
+
+func (p *MCPPlugin) cmdList() (string, error) {
+	p.mu.RLock()
+	defer p.mu.RUnlock()
+
+	if len(p.sessions) == 0 {
+		return "No MCP servers connected.", nil
+	}
+
+	var b strings.Builder
+	b.WriteString("Connected MCP servers:\n")
+	for name, s := range p.sessions {
+		tools, err := s.listTools(context.Background())
+		toolCount := 0
+		if err == nil {
+			toolCount = len(tools)
+		}
+		fmt.Fprintf(&b, "  %-20s  %d tools\n", name, toolCount)
+	}
+	return b.String(), nil
+}
+
+func (p *MCPPlugin) cmdReconnect(serverName string) (string, error) {
+	if serverName == "" {
+		return "", fmt.Errorf("usage: /mcp-reconnect <server>")
+	}
+
+	if p.host != nil {
+		_ = p.host.Notify(context.Background(), "info", "Reconnecting to MCP server: "+serverName)
+	}
+
+	p.mu.Lock()
+	s, ok := p.sessions[serverName]
+	if !ok {
+		p.mu.Unlock()
+		return "", fmt.Errorf("server %q not found — use /mcp-list to see connected servers", serverName)
+	}
+	s.session.Close()
+	if s.cmd != nil && s.cmd.Process != nil {
+		s.cmd.Process.Kill()
+	}
+	delete(p.sessions, serverName)
+	p.mu.Unlock()
+
+	servers, err := p.readConfig()
+	if err != nil {
+		return "", fmt.Errorf("read config: %w", err)
+	}
+
+	for _, cfg := range servers {
+		if cfg.Name == serverName && cfg.Command != "" {
+			if err := p.connectServer(context.Background(), cfg); err != nil {
+				return "", fmt.Errorf("reconnect failed: %w", err)
+			}
+			return fmt.Sprintf("✓ reconnected to %s", serverName), nil
+		}
+	}
+	return "", fmt.Errorf("server %q not found in config", serverName)
+}
+
+func (p *MCPPlugin) cmdReload(ctx context.Context) (string, error) {
+	if p.host != nil {
+		_ = p.host.Notify(ctx, "info", "Reloading all MCP servers...")
+	}
+
+	p.mu.Lock()
+	for name, s := range p.sessions {
+		s.session.Close()
+		if s.cmd != nil && s.cmd.Process != nil {
+			s.cmd.Process.Kill()
+		}
+		delete(p.sessions, name)
+	}
+	p.mu.Unlock()
+
+	if err := p.loadServers(ctx); err != nil {
+		return "", fmt.Errorf("reload failed: %w", err)
+	}
+
+	p.mu.RLock()
+	count := len(p.sessions)
+	p.mu.RUnlock()
+
+	if p.host != nil {
+		_ = p.host.Notify(ctx, "info", fmt.Sprintf("Reloaded %d MCP server(s)", count))
+	}
+	return fmt.Sprintf("✓ reloaded %d MCP server(s)", count), nil
+}
+
+// connectServer connects to a single configured server.
+func (p *MCPPlugin) connectServer(ctx context.Context, cfg serverConfig) error {
+	cmd := exec.CommandContext(ctx, cfg.Command, cfg.Args...)
+	client := mcp.NewClient(&mcp.Implementation{
+		Name:    "tau-plugin-mcp",
+		Version: "0.1.0",
+	}, nil)
+
+	session, err := client.Connect(ctx, &mcp.CommandTransport{Command: cmd}, nil)
+	if err != nil {
+		return fmt.Errorf("connect to %s: %w", cfg.Name, err)
+	}
+
+	p.mu.Lock()
+	p.sessions[cfg.Name] = &mcpSession{
+		name:    cfg.Name,
+		session: session,
+		client:  client,
+		cmd:     cmd,
+	}
+	p.mu.Unlock()
+
+	p.logger.Info("tau-plugin-mcp: connected to server", "name", cfg.Name)
+	return nil
+}
+
 // loadServers connects to all configured MCP servers.
 func (p *MCPPlugin) loadServers(ctx context.Context) error {
 	servers, err := p.readConfig()
@@ -189,30 +317,11 @@ func (p *MCPPlugin) loadServers(ctx context.Context) error {
 		if cfg.Command == "" {
 			continue
 		}
-
-		cmd := exec.CommandContext(ctx, cfg.Command, cfg.Args...)
-		client := mcp.NewClient(&mcp.Implementation{
-			Name:    "tau-plugin-mcp",
-			Version: "0.1.0",
-		}, nil)
-
-		session, err := client.Connect(ctx, &mcp.CommandTransport{Command: cmd}, nil)
-		if err != nil {
+		if err := p.connectServer(ctx, cfg); err != nil {
 			p.logger.Warn("tau-plugin-mcp: failed to connect to server",
 				"name", cfg.Name, "command", cfg.Command, "err", err)
 			continue
 		}
-
-		p.mu.Lock()
-		p.sessions[cfg.Name] = &mcpSession{
-			name:    cfg.Name,
-			session: session,
-			client:  client,
-			cmd:     cmd,
-		}
-		p.mu.Unlock()
-
-		p.logger.Info("tau-plugin-mcp: connected to server", "name", cfg.Name)
 	}
 
 	return nil
