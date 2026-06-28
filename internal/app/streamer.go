@@ -243,18 +243,15 @@ func buildToolCalls(calls map[int]*assembledToolCall) []tauchat.ChatToolCall {
 }
 
 // effortToOpenAI maps tau's reasoning effort levels to OpenAI API values.
+// Tau stores the exact wire value (from models.dev ReasoningEfforts or the
+// fallback ladder) as the internal level. The only translation needed is
+// tau's soft-off sentinel "off" → API "none".
 func effortToOpenAI(tauLevel string) string {
 	switch tauLevel {
-	case "off", "none":
+	case "off":
 		return "none"
-	case "low":
-		return "low"
-	case "medium":
-		return "medium"
-	case "high":
-		return "high"
-	case "max":
-		return "xhigh"
+	case "none", "minimal", "low", "medium", "high", "xhigh", "max":
+		return tauLevel
 	default:
 		return "medium"
 	}
