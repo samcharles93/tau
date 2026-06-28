@@ -320,11 +320,11 @@ func (c *Completions) renderRow(selected bool, word, desc string, hl [][2]int, c
 		}
 		body = sb.String()
 	}
+	chevron := "  "
 	if selected {
-		body = termkit.FgBgOnly(prefix+body, termkit.ColorObsidian, termkit.ColorGrey)
-	} else {
-		body = termkit.FgOnly(prefix+body, termkit.ColorGrey)
+		chevron = "▸ "
 	}
+	body = termkit.FgOnly(chevron+body, termkit.ColorGrey)
 	if desc != "" {
 		// Pad outside the highlight so the selection bar stays tight to the
 		// word while descriptions still line up in a column.
