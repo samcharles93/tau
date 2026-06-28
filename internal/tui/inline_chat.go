@@ -119,6 +119,17 @@ func newInlineChat(
 		c.input.SetValueAndCursor(s, len([]rune(s)))
 		c.engine.RequestRender()
 	})
+	c.completions.SetOnDetail(func(word string) {
+		c.mu.Lock()
+		for _, s := range c.sessionSummaries {
+			if s.ID == word {
+				c.mu.Unlock()
+				c.printSessionInfo(s)
+				return
+			}
+		}
+		c.mu.Unlock()
+	})
 
 	box := taui.NewBox().Padding(1, 1).ExpandW().Build()
 	box.AddChild(c.header)

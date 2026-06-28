@@ -1,8 +1,10 @@
 package tui
 
 import (
+	"fmt"
 	"slices"
 	"strings"
+	"time"
 
 	tauchat "github.com/samcharles93/tau/internal/chat"
 	"github.com/samcharles93/tau/pkg/taui"
@@ -151,11 +153,49 @@ func (c *inlineChat) sessionMatches() []taui.Match {
 	c.mu.Lock()
 	summaries := slices.Clone(c.sessionSummaries)
 	c.mu.Unlock()
+	now := time.Now()
 	out := make([]taui.Match, 0, len(summaries))
 	for _, s := range summaries {
-		out = append(out, taui.Match{Word: s.ID, Description: s.ModelID})
+		parts := []string{s.ModelID}
+		if s.MessageCount > 0 {
+			parts = append(parts, fmt.Sprintf("%d msgs", s.MessageCount))
+		}
+		if !s.UpdatedAt.IsZero() {
+			parts = append(parts, relativeTime(now, s.UpdatedAt))
+		}
+		out = append(out, taui.Match{Word: s.ID, Description: strings.Join(parts, " · ")})
 	}
 	return out
+}
+
+// relativeTime returns a human-friendly relative timestamp like "2h ago"
+// or "3d ago" based on the time elapsed since t.
+func relativeTime(now, t time.Time) string {
+	d := now.Sub(t)
+	switch {
+	case d < time.Minute:
+		return "just now"
+	case d < time.Hour:
+		m := int(d.Minutes())
+		if m == 1 {
+			return "1m ago"
+		}
+		return fmt.Sprintf("%dm ago", m)
+	case d < 24*time.Hour:
+		h := int(d.Hours())
+		if h == 1 {
+			return "1h ago"
+		}
+		return fmt.Sprintf("%dh ago", h)
+	case d < 30*24*time.Hour:
+		dy := int(d.Hours() / 24)
+		if dy == 1 {
+			return "1d ago"
+		}
+		return fmt.Sprintf("%dd ago", dy)
+	default:
+		return t.Format("Jan 2")
+	}
 }
 
 // sessionArgs resolves completions for /session: subcommands for the first

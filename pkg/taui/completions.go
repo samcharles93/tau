@@ -59,6 +59,7 @@ type Completions struct {
 	provider CompletionProvider
 	input    *LineInput
 	onSelect func(string)
+	onDetail func(string)
 
 	mu       sync.Mutex
 	rawSet   *CompletionSet
@@ -88,6 +89,7 @@ func NewCompletions(input *LineInput, provider CompletionProvider) *Completions 
 }
 
 func (c *Completions) SetOnSelect(fn func(string)) { c.onSelect = fn }
+func (c *Completions) SetOnDetail(fn func(string)) { c.onDetail = fn }
 func (c *Completions) Invalidate()                 {}
 
 func (c *Completions) HandleInput(data string) bool {
@@ -145,6 +147,16 @@ func (c *Completions) HandleInput(data string) bool {
 		}
 	case "\x1b":
 		c.hideLocked()
+
+	case " ":
+		// Space on a selected completion item triggers the detail callback
+		// (used to show session info). Only consumed when onDetail is set.
+		if c.onDetail != nil && c.selected >= 0 && c.selected < n {
+			c.onDetail(c.filtered[c.selected].match.Word)
+			return true
+		}
+		consumed = false
+
 	default:
 		consumed = false
 	}

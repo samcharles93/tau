@@ -386,7 +386,17 @@ func (c *inlineChat) listSessions() {
 func (c *inlineChat) handleResumeCommand(rest string) {
 	id := strings.TrimSpace(rest)
 	if id == "" {
-		c.listSessions()
+		// Prefill "/resume " so the completion dropdown shows saved sessions
+		// for arrow-key selection, matching the /model UX.
+		c.mu.Lock()
+		n := len(c.sessionSummaries)
+		c.mu.Unlock()
+		if n == 0 {
+			c.pushNotice("no saved sessions — try /session list first")
+			return
+		}
+		c.input.SetValueAndCursor("/resume ", len([]rune("/resume ")))
+		c.engine.RequestRender()
 		return
 	}
 	c.loadSession(id)
