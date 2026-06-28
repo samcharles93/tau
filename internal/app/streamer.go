@@ -247,12 +247,8 @@ func buildToolCalls(calls map[int]*assembledToolCall) []tauchat.ChatToolCall {
 // fallback ladder) as the internal level. The only translation needed is
 // tau's soft-off sentinel "off" → API "none".
 func effortToOpenAI(tauLevel string) string {
-	switch tauLevel {
-	case "off":
+	if tauLevel == "off" {
 		return "none"
-	case "none", "minimal", "low", "medium", "high", "xhigh", "max":
-		return tauLevel
-	default:
-		return "medium"
 	}
+	return tauLevel
 }
