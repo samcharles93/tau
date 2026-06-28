@@ -74,17 +74,11 @@ tasks:
   build:all:
     desc: Cross-compile for all release targets
     cmds:
-      - task: build:darwin-amd64
       - task: build:darwin-arm64
+      - task: build:linux-amd64
+      - task: build:linux-arm64
       - task: build:windows-amd64
-
-  build:darwin-amd64:
-    desc: Build for macOS (Intel)
-    env:
-      GOOS: darwin
-      GOARCH: amd64
-    cmds:
-      - go build -ldflags "-s -w -X main.version={{.VERSION}}" -o dist/{{.BINARY}}-darwin-amd64 {{.CMD}}
+      - task: build:windows-arm64
 
   build:darwin-arm64:
     desc: Build for macOS (Apple Silicon)
@@ -94,13 +88,37 @@ tasks:
     cmds:
       - go build -ldflags "-s -w -X main.version={{.VERSION}}" -o dist/{{.BINARY}}-darwin-arm64 {{.CMD}}
 
+  build:linux-amd64:
+    desc: Build for Linux (x86_64)
+    env:
+      GOOS: linux
+      GOARCH: amd64
+    cmds:
+      - go build -ldflags "-s -w -X main.version={{.VERSION}}" -o dist/{{.BINARY}}-linux-amd64 {{.CMD}}
+
+  build:linux-arm64:
+    desc: Build for Linux (ARM64)
+    env:
+      GOOS: linux
+      GOARCH: arm64
+    cmds:
+      - go build -ldflags "-s -w -X main.version={{.VERSION}}" -o dist/{{.BINARY}}-linux-arm64 {{.CMD}}
+
   build:windows-amd64:
-    desc: Build for Windows
+    desc: Build for Windows (x86_64)
     env:
       GOOS: windows
       GOARCH: amd64
     cmds:
       - go build -ldflags "-s -w -X main.version={{.VERSION}}" -o dist/{{.BINARY}}-windows-amd64.exe {{.CMD}}
+
+  build:windows-arm64:
+    desc: Build for Windows (ARM64)
+    env:
+      GOOS: windows
+      GOARCH: arm64
+    cmds:
+      - go build -ldflags "-s -w -X main.version={{.VERSION}}" -o dist/{{.BINARY}}-windows-arm64.exe {{.CMD}}
 
   tidy:
     desc: Tidy go.mod and go.sum

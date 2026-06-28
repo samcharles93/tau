@@ -1,3 +1,10 @@
+
+@import url('https://fonts.googleapis.com/css2?family=Figtree:wght@400;500;600;700&display=swap');
+
+/*
+ ---break---
+ */
+
 /*
  * Tau Web UI
  *
@@ -5,8 +12,6 @@
  * first-class peer to the TUI: same events, same commands. Dark canvas, steel
  * structure, restrained accents. No cards by default; use sections and dividers.
  */
-
-@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap');
 
 @import "tailwindcss";
 
@@ -54,6 +59,7 @@
     --radius-md: calc(var(--radius) - 2px);
     --radius-lg: var(--radius);
     --radius-xl: calc(var(--radius) + 4px);
+    --font-heading: var(--font-sans);
 }
 
 :root {
@@ -185,3 +191,14 @@
     @apply absolute right-2 top-3 rounded border border-border bg-background/80 px-1.5 py-0.5 text-[10px] text-muted-foreground opacity-0 transition-opacity hover:text-foreground;
 }
 .prose-chat .code-block:hover .code-copy { @apply opacity-100; }
+/*
+ ---break---
+ */
+@layer base {
+  * {
+    @apply border-border outline-ring/50;
+    }
+  body {
+    @apply bg-background text-foreground;
+    }
+}

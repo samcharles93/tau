@@ -3,16 +3,30 @@
 Provider-agnostic, OpenAI-compatible chat client with an interactive terminal
 UI, a built-in Web UI, agentic tool-calling, and session persistence.
 
+## Install
+
+**Linux / macOS:**
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/samcharles93/tau/main/install.sh | sh
+```
+
+**Windows (PowerShell):**
+
+```powershell
+irm https://raw.githubusercontent.com/samcharles93/tau/main/install.ps1 | iex
+```
+
+**Go toolchain:**
+
+```bash
+go install github.com/samcharles93/tau/cmd/tau@latest
+```
+
 ## Quick start
 
 ```bash
-# Build (also builds the Web UI SPA)
-Taskfile.yaml
-
-# Or build just the Go binary if the Web UI dist is already present
-go build -o tau ./cmd/tau
-
-# Configure
+# Create a project config
 cat > .tau.yaml <<EOF
 default_provider: deepseek
 default_model: deepseek-v4-flash
@@ -26,16 +40,16 @@ providers:
 EOF
 
 # Chat (TUI + Web UI)
-./tau
+tau
 
 # Open the browser automatically
-./tau --web
+tau --web
 
 # TUI only
-./tau --no-web
+tau --no-web
 
 # Single-shot
-./tau -p "Explain the architecture of this codebase"
+tau -p "Explain the architecture of this codebase"
 ```
 
 ## Web UI
@@ -66,4 +80,5 @@ events and can send the same commands. Everything uses the existing
 ```bash
 task          # build Web UI + Go binary
 task check    # lint + format + test
+task build:all # cross-compile all release targets
 ```

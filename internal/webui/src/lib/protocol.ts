@@ -73,6 +73,10 @@ export interface ChatModelRef {
   context_window?: number
   /** Per-1M-token pricing, when the backend advertises it. */
   cost?: ChatCost
+  /** Supported reasoning effort levels, e.g. ["low","medium","high"]. Present
+   * only when the model exposes selectable effort. Empty/absent means reasoning
+   * is either unsupported or fixed (no user control). */
+  reasoning_efforts?: string[]
 }
 
 export interface ChatCost {

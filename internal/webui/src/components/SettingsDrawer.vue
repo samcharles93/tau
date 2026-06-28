@@ -35,17 +35,17 @@
           </div>
         </div>
 
-        <!-- Model: dropdown from available refs, or free-text fallback -->
+        <!-- Model: searchable grouped combobox, or free-text fallback -->
         <div class="flex flex-col gap-1.5">
           <Label for="set-model">Model</Label>
-          <Select v-if="session.availableModels.length" v-model="form.model" @update:model-value="applyModelValue">
-            <SelectTrigger id="set-model">
-              <SelectValue placeholder="Select model" />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem v-for="m in session.availableModels" :key="m.id" :value="m.id">{{ m.id }}</SelectItem>
-            </SelectContent>
-          </Select>
+          <ModelCombobox
+            v-if="filteredModels.length"
+            id="set-model"
+            v-model="form.model"
+            :models="filteredModels"
+            placeholder="Select model"
+            @update:model-value="applyModelValue"
+          />
           <Input
             v-else
             id="set-model"
@@ -147,21 +147,41 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select'
+import ModelCombobox from '@/components/ModelCombobox.vue'
 import { useSessionStore } from '@/stores/session'
 import type { ChatSessionPatch } from '@/lib/protocol'
 
 const NONE = 'none'
-const reasoningOptions = [
-  { value: NONE, label: 'None' },
-  { value: 'minimal', label: 'Minimal' },
-  { value: 'low', label: 'Low' },
-  { value: 'medium', label: 'Medium' },
-  { value: 'high', label: 'High' },
-]
+
+// Standard fallback ladder matching the TUI's effortLevels() default.
+const DEFAULT_EFFORT_LEVELS = ['low', 'medium', 'high', 'max']
 
 const session = useSessionStore()
 const open = ref(false)
 const hasMultipleProviders = computed(() => (session.providers?.length ?? 0) > 1)
+
+// When a provider is selected, show only that provider's models.
+// Falls back to all models when no provider filter applies.
+const filteredModels = computed(() => {
+  const all = session.availableModels
+  if (!form.provider) return all
+  const byProvider = all.filter((m) => m.provider === form.provider)
+  return byProvider.length ? byProvider : all
+})
+
+// Build reasoning effort options from the current model's advertised levels,
+// mirroring the TUI's effortLevels() logic. Falls back to the standard ladder
+// when the model has no metadata (live/Ollama models, unknown refs, etc.).
+const reasoningOptions = computed(() => {
+  const modelRef = session.availableModels.find((m) => m.id === session.model)
+  const efforts = modelRef?.reasoning_efforts?.length
+    ? modelRef.reasoning_efforts
+    : DEFAULT_EFFORT_LEVELS
+  return [
+    { value: NONE, label: 'None' },
+    ...efforts.map((e) => ({ value: e, label: e.charAt(0).toUpperCase() + e.slice(1) })),
+  ]
+})
 
 const form = reactive({
   provider: '',
