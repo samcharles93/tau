@@ -137,6 +137,7 @@ func (c *inlineChat) handleEvent(ev tauchat.ChatEvent) {
 		// commits the returned lines after it releases — no PrintAbove-in-Update
 		// deadlock.
 		c.steering.Store(false)
+		c.generating.Store(false)
 		c.engine.UpdateThenPrint(func() []string {
 			var above []string
 			if c.turnReasoning != nil {
@@ -163,11 +164,13 @@ func (c *inlineChat) handleEvent(ev tauchat.ChatEvent) {
 
 	case tauchat.ChatResponseCancelledEvent:
 		c.steering.Store(false)
+		c.generating.Store(false)
 		c.engine.Update(c.clearTurnLocked)
 		c.engine.PrintAbove("%s\n", c.grey("chat request cancelled"))
 
 	case tauchat.ChatRuntimeErrorEvent:
 		c.steering.Store(false)
+		c.generating.Store(false)
 		c.engine.PrintAbove("%s %s", c.grey("✗"), e.Message)
 		c.engine.Update(c.clearTurnLocked)
 

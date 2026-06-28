@@ -67,6 +67,7 @@ type inlineChat struct {
 	turnReasoning *taui.Paragraph
 	activeTools   map[string]*activeToolBox // parallel tool boxes by CallID
 	working       atomic.Bool
+	generating    atomic.Bool // true while model generation is active
 	steering      atomic.Bool
 	running       bool
 	queue         []string
@@ -291,6 +292,7 @@ func (c *inlineChat) onSubmit(prompt string) {
 	c.running = true
 	c.mu.Unlock()
 	c.steering.Store(false)
+	c.generating.Store(false)
 	c.cancelSent = false
 	go c.runTurn(trimmed)
 }
@@ -462,12 +464,13 @@ func (c *inlineCtrl) HandleInput(data string) bool {
 		return true
 
 	case "\x03": // Ctrl+C
-		if c.chat.working.Load() {
+		if c.chat.generating.Load() {
 			c.chat.cancelTurn()
 			return true
 		}
 		now := time.Now()
 		if now.Sub(c.chat.pendingQuit) < 800*time.Millisecond {
+			c.chat.engine.Terminal.SignalStop()
 			go c.chat.engine.Stop()
 			return true
 		}
@@ -476,7 +479,7 @@ func (c *inlineCtrl) HandleInput(data string) bool {
 		return true
 
 	case "\x1b": // Escape — cancel generation if running
-		if c.chat.working.Load() {
+		if c.chat.generating.Load() {
 			c.chat.cancelTurn()
 			return true
 		}
