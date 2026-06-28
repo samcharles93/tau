@@ -360,6 +360,19 @@ type ExportSessionCommand struct {
 
 func (ExportSessionCommand) IsChatCommand() {}
 
+// RunSkillCommand activates a skill by name from the catalog (user-invoked
+// via the /skill:<name> slash command). The coordinator activates the skill,
+// injects its instructions into the session system prompt, and emits a
+// Skill-tool-style box event so the TUI renders the lilac "loaded" feedback.
+type RunSkillCommand struct {
+	SessionID   string    `json:"session_id"`
+	SkillName   string    `json:"skill_name"`
+	Args        string    `json:"args,omitempty"`
+	RequestedAt time.Time `json:"requested_at"`
+}
+
+func (RunSkillCommand) IsChatCommand() {}
+
 // ChatEvent is the output contract from the runtime back to the UI.
 type ChatEvent interface{ IsChatEvent() }
 

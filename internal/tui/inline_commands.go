@@ -131,6 +131,19 @@ func (c *inlineChat) handleSlashCommand(text string) {
 		c.send(tauchat.RunExtensionCommandCommand{Name: ext.Name, Args: rest, RequestedAt: time.Now().UTC()})
 		return
 	}
+
+	// /skill:<name> — user-invoked skill activation. The coordinator activates
+	// the skill, injects its instructions, and emits the lilac "loaded" box.
+	if strings.HasPrefix(name, "skill:") {
+		skillName := strings.TrimSpace(strings.TrimPrefix(name, "skill:"))
+		if skillName == "" {
+			c.engine.PrintAbove("%s %s", c.grey("✗"), "missing skill name")
+			return
+		}
+		c.send(tauchat.RunSkillCommand{SessionID: c.sid(), SkillName: skillName, Args: rest, RequestedAt: time.Now().UTC()})
+		return
+	}
+
 	c.engine.PrintAbove("%s %s", c.grey("✗"), "unknown command: /"+name)
 }
 

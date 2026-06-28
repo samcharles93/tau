@@ -72,6 +72,7 @@ type Coordinator struct {
 	modelLookup       ModelLookup
 	projectDir        string
 	skillTracker      *skills.Tracker
+	skillsMgr         *skills.Manager
 	allowedTools      map[string]bool
 
 	mu       sync.Mutex
@@ -120,6 +121,10 @@ type CoordinatorConfig struct {
 
 	// SkillTracker records skills activated in the current session.
 	SkillTracker *skills.Tracker
+
+	// SkillsManager is the catalog used to resolve skill names for user-invoked
+	// skill activation (RunSkillCommand).
+	SkillsManager *skills.Manager
 
 	// OnPluginEvent dispatches lifecycle events to the plugin manager.
 	// The coordinator fires this at turn boundaries, tool execution boundaries,
@@ -181,6 +186,7 @@ func NewCoordinator(ctx context.Context, cfg CoordinatorConfig) (*Coordinator, e
 		modelLookup:       cfg.ModelLookup,
 		projectDir:        cfg.ProjectDir,
 		skillTracker:      cfg.SkillTracker,
+		skillsMgr:         cfg.SkillsManager,
 		allowedTools:      nil,
 		sessions:          make(map[string]*coordinatorSession),
 		shutdown:          make(map[string]struct{}),
@@ -290,6 +296,8 @@ func (c *Coordinator) handleCommand(cmd chat.ChatCommand) {
 		c.handleDeleteSession(command)
 	case chat.ExportSessionCommand:
 		c.handleExportSession(command)
+	case chat.RunSkillCommand:
+		c.handleRunSkill(command)
 	default:
 		c.emit(chat.ChatRuntimeErrorEvent{
 			Message:    fmt.Sprintf("unsupported command %T", cmd),
@@ -536,6 +544,110 @@ func (c *Coordinator) handleReset(cmd chat.ResetChatSessionCommand) {
 	c.mu.Unlock()
 
 	c.emit(chat.ChatSessionSnapshotEvent{State: snapshot})
+}
+
+// handleRunSkill activates a skill by name in response to a user-invoked
+// /skill:<name> command. It looks the skill up in the catalog, records the
+// activation in the tracker, applies any AllowedTools restriction, injects
+// the skill's instructions into the session system prompt so the model has
+// them for subsequent turns, and emits Skill-tool-style started/completed
+// events so the TUI renders the lilac "loaded" box.
+func (c *Coordinator) handleRunSkill(cmd chat.RunSkillCommand) {
+	now := normalizedTime(cmd.RequestedAt)
+
+	if c.skillsMgr == nil {
+		c.emit(chat.ChatRuntimeErrorEvent{
+			SessionID:  cmd.SessionID,
+			Message:    "skill manager unavailable",
+			Fatal:      false,
+			OccurredAt: now,
+		})
+		return
+	}
+
+	name := strings.TrimSpace(cmd.SkillName)
+	snapshot := c.skillsMgr.Snapshot()
+	matched := findSkillInSnapshot(snapshot.ActiveSkills, name)
+	if matched == nil {
+		matched = findSkillInSnapshot(snapshot.AllSkills, name)
+	}
+	if matched == nil {
+		c.emit(chat.ChatNotificationEvent{
+			Message:    "skill not found: " + name,
+			Level:      chat.ChatNotificationWarn,
+			OccurredAt: now,
+		})
+		return
+	}
+
+	if c.skillTracker != nil {
+		c.skillTracker.Activate(matched)
+	}
+	if matched.AllowedTools != "" {
+		c.SetAllowedTools(parseAllowedToolsList(matched.AllowedTools))
+	} else {
+		c.SetAllowedTools(nil)
+	}
+
+	c.mu.Lock()
+	session, ok := c.sessions[cmd.SessionID]
+	if ok && session != nil && session.state != nil {
+		session.state.SystemPrompt += "\n\n<activated_skill name=\"" + matched.Name + "\">\n" +
+			matched.Instructions + "\n</activated_skill>"
+		snap := chat.CloneChatSessionState(session.state)
+		c.mu.Unlock()
+		c.emit(chat.ChatSessionSnapshotEvent{State: snap})
+	} else {
+		c.mu.Unlock()
+	}
+
+	// Emit the Skill-tool box lifecycle so the TUI renders the lilac "loaded"
+	// feedback, mirroring the agent-invoked Skill tool path.
+	callID := "skill_" + matched.Name
+	startedAt := time.Now().UTC()
+	c.emit(chat.ChatToolExecutionStartedEvent{
+		SessionID:        cmd.SessionID,
+		RequestID:        "",
+		CallID:           callID,
+		ToolName:         "Skill",
+		ArgumentsSummary: `{"name":"` + matched.Name + `"}`,
+		StartedAt:        startedAt,
+	})
+	completedAt := time.Now().UTC()
+	c.emit(chat.ChatToolExecutionCompletedEvent{
+		SessionID:     cmd.SessionID,
+		RequestID:     "",
+		CallID:        callID,
+		ToolName:      "Skill",
+		Status:        "success",
+		Duration:      completedAt.Sub(startedAt),
+		ResultSummary: "loaded",
+		IsError:       false,
+		CompletedAt:   completedAt,
+	})
+}
+
+// findSkillInSnapshot returns the first skill whose name matches
+// case-insensitively, or nil if none.
+func findSkillInSnapshot(set []*skills.Skill, name string) *skills.Skill {
+	lower := strings.ToLower(name)
+	for _, s := range set {
+		if s != nil && strings.ToLower(s.Name) == lower {
+			return s
+		}
+	}
+	return nil
+}
+
+// parseAllowedToolsList splits a comma/space-separated list of tool names.
+func parseAllowedToolsList(raw string) []string {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return nil
+	}
+	normalised := strings.ReplaceAll(raw, ",", " ")
+	parts := strings.Fields(normalised)
+	return parts
 }
 
 func (c *Coordinator) handleSteer(cmd chat.SteerChatPromptCommand) {

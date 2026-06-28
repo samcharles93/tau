@@ -641,6 +641,7 @@ func buildCoordinator(ctx context.Context, cfg coordinatorConfig) (*agent.Coordi
 		StartupEvents:     cfg.StartupEvents,
 		ProjectDir:        cwd,
 		SkillTracker:      skillTracker,
+		SkillsManager:     cfg.SkillsManager,
 		ExtensionReloader: pluginMgr,
 		OnPluginEvent: func(event string, sessionID string, payload *api.EventPayload) *api.EventResponse {
 			return pluginMgr.DispatchEvent(ctx, event, sessionID, payload)

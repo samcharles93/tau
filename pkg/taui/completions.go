@@ -123,20 +123,19 @@ func (c *Completions) HandleInput(data string) bool {
 		}
 		query := c.currentQuery()
 		// If LCP extends further than the current query, extend to it.
-		// Otherwise (LCP == query, or LCP is shorter — which happens when
-		// fuzzy matches diverge before the query ends) cycle to the next
-		// completion, like a terminal shell.
+		// Otherwise insert the best match (index 0) — this is what the user
+		// expects from the first Tab press. Arrow keys handle cycling.
 		if lcp != query && len([]rune(lcp)) > len([]rune(query)) {
 			c.extendQueryLocked(lcp)
 			c.mu.Unlock()
 			return true
 		}
-		c.selected = (c.selected + 1) % n
-		chosen = c.fullReplace(c.filtered[c.selected])
+		c.selected = 0
+		chosen = c.fullReplace(c.filtered[0])
 		choose = true
-	case "\x1b[Z": // Shift+Tab — cycle backwards like a shell
+	case "\x1b[Z": // Shift+Tab — insert the last match (bottom of list)
 		if n > 0 {
-			c.selected = (c.selected - 1 + n) % n
+			c.selected = n - 1
 			chosen = c.fullReplace(c.filtered[c.selected])
 			choose = true
 		}
