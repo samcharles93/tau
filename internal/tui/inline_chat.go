@@ -475,7 +475,11 @@ func (c *inlineCtrl) HandleInput(data string) bool {
 			return true
 		}
 		c.chat.pendingQuit = now
-		c.chat.engine.PrintAbove("%s", c.chat.grey("quit: press Ctrl+C again"))
+		c.chat.mu.Lock()
+		if c.chat.notifyQueue != nil {
+			c.chat.notifyQueue.Push(notify.Notification{Message: "quit: press Ctrl+C again", Level: notify.LevelInfo, Duration: 3 * time.Second})
+		}
+		c.chat.mu.Unlock()
 		return true
 
 	case "\x1b": // Escape — cancel generation if running
