@@ -240,9 +240,6 @@ func (c *inlineChat) computeStatus() string {
 // steerIndicator returns an animated [STEERING...] label in navy blue that
 // cycles the dot count every 300ms (driven by statusLoop's ticker).
 func (c *inlineChat) steerIndicator() string {
-	c.mu.Lock()
-	c.cancelSent = false
-	c.mu.Unlock()
 	// Simple static counter; the status loop calls computeStatus at 300ms
 	// so the dots naturally animate without a separate timer.
 	const label = "STEERING"
@@ -312,6 +309,7 @@ func (c *inlineChat) onSteer(prompt string) {
 	c.engine.PrintAbove("%s %s", c.bold("⏎"), prompt)
 	c.input.Clear()
 	c.input.AddToHistory(prompt)
+	c.steering.Store(true)
 	_ = c.runtime.Send(tauchat.SteerChatPromptCommand{
 		SessionID:   c.sid(),
 		RequestID:   newRequestID(),
