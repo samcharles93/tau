@@ -119,16 +119,24 @@ func (c *Completions) HandleInput(data string) bool {
 		for i := 1; i < n; i++ {
 			lcp = commonPrefix(lcp, c.filtered[i].text)
 		}
-		if lcp != c.currentQuery() {
+		query := c.currentQuery()
+		// If LCP extends further than the current query, extend to it.
+		// Otherwise (LCP == query, or LCP is shorter — which happens when
+		// fuzzy matches diverge before the query ends) cycle to the next
+		// completion, like a terminal shell.
+		if lcp != query && len([]rune(lcp)) > len([]rune(query)) {
 			c.extendQueryLocked(lcp)
 			c.mu.Unlock()
 			return true
 		}
+		c.selected = (c.selected + 1) % n
 		chosen = c.fullReplace(c.filtered[c.selected])
 		choose = true
-	case "\x1b[Z":
+	case "\x1b[Z": // Shift+Tab — cycle backwards like a shell
 		if n > 0 {
 			c.selected = (c.selected - 1 + n) % n
+			chosen = c.fullReplace(c.filtered[c.selected])
+			choose = true
 		}
 	case "\r":
 		if c.selected >= 0 && c.selected < n {
