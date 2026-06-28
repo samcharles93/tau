@@ -49,9 +49,10 @@ func (p *MCPPlugin) SetHost(h pluginapi.Host) {
 	p.host = h
 }
 
-// Capabilities advertises that this plugin provides tools and slash commands.
+// Capabilities advertises that this plugin provides tools, slash commands, and
+// interactive prompts (Confirm/Input via HostService).
 func (p *MCPPlugin) Capabilities() []string {
-	return []string{pluginapi.CapabilityTools, pluginapi.CapabilityCommands}
+	return []string{pluginapi.CapabilityTools, pluginapi.CapabilityCommands, pluginapi.CapabilityInteractive}
 }
 
 type mcpSession struct {

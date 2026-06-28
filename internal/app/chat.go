@@ -650,6 +650,10 @@ func buildCoordinator(ctx context.Context, cfg coordinatorConfig) (*agent.Coordi
 	// Wire up the allowed-tools callback now that the coordinator exists.
 	setAllowedToolsFn = coordinator.SetAllowedTools
 
+	// Wire the coordinator's interactive UI bridge to the plugin host so
+	// plugin slash commands can call Host.Confirm / Host.Input.
+	pluginMgr.SetInteractiveHandler(coordinator.UIBridge())
+
 	return coordinator, pluginMgr.ExtensionCommands(), nil
 }
 
