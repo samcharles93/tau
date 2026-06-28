@@ -257,7 +257,6 @@ func RunChat(ctx context.Context, opts ChatOptions) error {
 		AvailableModels:    available,
 		AvailableProviders: tauconfig.ProviderNames(opts.Config),
 		InitialCommands:    initialCommands,
-		InitialSkills:      initialSkills,
 		Bus:                bus,
 		RefreshModels:      refresher,
 		ShowReasoning:      opts.Config.UI.ShowReasoning,
