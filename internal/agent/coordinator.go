@@ -759,6 +759,12 @@ func (c *Coordinator) handleRunExtensionCommand(cmd chat.RunExtensionCommandComm
 	})
 }
 
+// UIBridge returns the coordinator's interactive UI bridge so plugin commands
+// can prompt the user via the HostService Confirm/Input RPCs.
+func (c *Coordinator) UIBridge() tools.UIBridge {
+	return c.uiBridge
+}
+
 func (c *Coordinator) isIdle() bool {
 	c.mu.Lock()
 	defer c.mu.Unlock()
