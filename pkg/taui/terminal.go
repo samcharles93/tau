@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"os"
 	"os/signal"
-	"syscall"
+	"sync"
 	"time"
 
 	"github.com/samcharles93/tau/pkg/taui/termkit"
@@ -44,6 +44,8 @@ type ProcessTerminal struct {
 
 	// Restore state
 	originalTermios *TermiosState
+
+	wg sync.WaitGroup // tracks stdin + resize goroutines for clean shutdown
 }
 
 // NewProcessTerminal creates a terminal backed by the real stdin/stdout.
@@ -75,10 +77,12 @@ func (t *ProcessTerminal) Start(onInput func(data string), onResize func()) {
 	// Hide cursor.
 	_, _ = os.Stdout.WriteString(termkit.HideCursor)
 
-	// Resize signal handling.
+	// Resize signal handling (SIGWINCH on Unix, no-op on Windows).
 	sigCh := make(chan os.Signal, 1)
-	signal.Notify(sigCh, syscall.SIGWINCH)
-	go func() {
+	if sigWINCH != nil {
+		signal.Notify(sigCh, sigWINCH)
+	}
+	t.wg.Go(func() {
 		for {
 			select {
 			case <-t.stopCh:
@@ -91,10 +95,10 @@ func (t *ProcessTerminal) Start(onInput func(data string), onResize func()) {
 				}
 			}
 		}
-	}()
+	})
 
 	// Read stdin in a goroutine.
-	go t.readStdin()
+	t.wg.Go(t.readStdin)
 }
 
 func (t *ProcessTerminal) readStdin() {
@@ -130,9 +134,14 @@ const (
 	kittyKeyboardPop  = "\x1b[<u"
 )
 
-// Stop restores terminal state.
+// Stop restores terminal state. It blocks until the stdin and resize
+// goroutines have exited, guaranteeing no further reads or signal handlers
+// fire after terminal settings are restored.
 func (t *ProcessTerminal) Stop() {
 	close(t.stopCh)
+
+	// Wait for goroutines to exit before restoring terminal state.
+	t.wg.Wait()
 
 	// Clear any read deadline left set by the input poll loop.
 	_ = os.Stdin.SetReadDeadline(time.Time{})
