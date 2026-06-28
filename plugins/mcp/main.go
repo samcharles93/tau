@@ -219,8 +219,17 @@ func (p *MCPPlugin) cmdReconnect(serverName string) (string, error) {
 		return "", fmt.Errorf("usage: /mcp-reconnect <server>")
 	}
 
+	// Confirm before disconnecting.
 	if p.host != nil {
-		_ = p.host.Notify(context.Background(), "info", "Reconnecting to MCP server: "+serverName)
+		confirmed, err := p.host.Confirm(context.Background(),
+			"Reconnect MCP server",
+			"Disconnect and reconnect to "+serverName+"? This will interrupt any active connections.")
+		if err != nil || !confirmed {
+			if err != nil {
+				return "", fmt.Errorf("confirmation failed: %w", err)
+			}
+			return "Cancelled.", nil
+		}
 	}
 
 	p.mu.Lock()
