@@ -20,6 +20,8 @@ type Config struct {
 	Providers       []ProviderConfig `yaml:"providers"`
 	UI              UIConfig         `yaml:"ui"`
 	Debug           bool             `yaml:"debug"`
+	// Registry configures the plugin registry connection.
+	Registry RegistryConfig `yaml:"registry"`
 	// Plugins holds per-plugin config blocks (`plugins.<name>:`), passed through
 	// to plugins via the HostService.GetConfig reverse RPC.
 	Plugins map[string]map[string]any `yaml:"plugins"`
@@ -29,6 +31,12 @@ type Config struct {
 	SkillPaths []string `yaml:"skill_paths,omitempty"`
 }
 
+// RegistryConfig configures the plugin registry connection.
+type RegistryConfig struct {
+	URL   string `yaml:"url" json:"url"`
+	Token string `yaml:"token" json:"token,omitempty"`
+}
+
 func (c *Config) UnmarshalYAML(value *yaml.Node) error {
 	type rawConfig struct {
 		DefaultProvider string                    `yaml:"default_provider"`
@@ -36,6 +44,7 @@ func (c *Config) UnmarshalYAML(value *yaml.Node) error {
 		Providers       yaml.Node                 `yaml:"providers"`
 		UI              UIConfig                  `yaml:"ui"`
 		Debug           bool                      `yaml:"debug"`
+		Registry        RegistryConfig            `yaml:"registry"`
 		Plugins         map[string]map[string]any `yaml:"plugins"`
 		DisabledSkills  []string                  `yaml:"disabled_skills"`
 		SkillPaths      []string                  `yaml:"skill_paths"`
@@ -48,6 +57,7 @@ func (c *Config) UnmarshalYAML(value *yaml.Node) error {
 	c.DefaultModel = raw.DefaultModel
 	c.UI = raw.UI
 	c.Debug = raw.Debug
+	c.Registry = raw.Registry
 	c.Plugins = raw.Plugins
 	c.DisabledSkills = raw.DisabledSkills
 	c.SkillPaths = raw.SkillPaths
@@ -691,6 +701,14 @@ func mergeConfigs(globalCfg, localCfg Config) Config {
 	}
 	merged.Debug = globalCfg.Debug || localCfg.Debug
 
+	// Local registry config overrides global (URL and token).
+	if strings.TrimSpace(localCfg.Registry.URL) != "" {
+		merged.Registry.URL = localCfg.Registry.URL
+	}
+	if strings.TrimSpace(localCfg.Registry.Token) != "" {
+		merged.Registry.Token = localCfg.Registry.Token
+	}
+
 	// Merge disabled skills: local appends to global (project-local can add
 	// more disabled skills but cannot re-enable globally disabled ones).
 	merged.DisabledSkills = mergeStringSlices(globalCfg.DisabledSkills, localCfg.DisabledSkills)
@@ -818,7 +836,7 @@ func SaveDefaultProviderAndModel(cwd, provider, model string) error {
 	if err != nil {
 		return fmt.Errorf("marshal local config: %w", err)
 	}
-	if err := os.WriteFile(path, out, 0644); err != nil {
+	if err := os.WriteFile(path, out, 0o644); err != nil {
 		return fmt.Errorf("write local config: %w", err)
 	}
 	return nil

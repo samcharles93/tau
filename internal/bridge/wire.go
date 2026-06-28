@@ -34,15 +34,15 @@ type SkillInfo struct {
 
 // InitMessage is sent once on connection so the SPA can render initial state.
 type InitMessage struct {
-	Type               string                      `json:"type"`
-	SessionID          string                      `json:"session_id"`
-	Model              string                      `json:"model"`
-	Provider           string                      `json:"provider"`
-	Models             []tauchat.ChatModelRef      `json:"models,omitempty"`
-	Providers          []string                    `json:"providers,omitempty"`
-	Commands           []tauchat.CommandRef        `json:"commands,omitempty"`
-	Skills             []SkillInfo                 `json:"skills,omitempty"`
-	ExtensionCommands  []tauchat.ExtensionCommand  `json:"extension_commands,omitempty"`
+	Type              string                     `json:"type"`
+	SessionID         string                     `json:"session_id"`
+	Model             string                     `json:"model"`
+	Provider          string                     `json:"provider"`
+	Models            []tauchat.ChatModelRef     `json:"models,omitempty"`
+	Providers         []string                   `json:"providers,omitempty"`
+	Commands          []tauchat.CommandRef       `json:"commands,omitempty"`
+	Skills            []SkillInfo                `json:"skills,omitempty"`
+	ExtensionCommands []tauchat.ExtensionCommand `json:"extension_commands,omitempty"`
 }
 
 // MarshalEvent serializes a ChatEvent into an envelope with a type discriminator.

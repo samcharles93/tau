@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
+	"path/filepath"
 	"sort"
 	"strings"
 	"time"
@@ -406,9 +407,9 @@ func newRuntimeForProviders(providers []tauconfig.ProviderConfig, insecure bool)
 // the caller can seed the TUI with the initial command snapshot before the
 // bus delivers the first CommandsChangedEvent.
 type newCoordinatorResult struct {
-	Coordinator        *agent.Coordinator
-	CommandRegistry    *commandreg.Registry
-	ExtensionCommands  []tauchat.ExtensionCommand
+	Coordinator       *agent.Coordinator
+	CommandRegistry   *commandreg.Registry
+	ExtensionCommands []tauchat.ExtensionCommand
 }
 
 // newCoordinator creates and returns an agent coordinator with the standard
@@ -436,9 +437,9 @@ func newCoordinator(ctx context.Context, opts ChatOptions, bearerToken string, s
 		return nil, err
 	}
 	return &newCoordinatorResult{
-		Coordinator:        coordinator,
-		CommandRegistry:    cmdReg,
-		ExtensionCommands:  extCmds,
+		Coordinator:       coordinator,
+		CommandRegistry:   cmdReg,
+		ExtensionCommands: extCmds,
 	}, nil
 }
 
@@ -549,6 +550,30 @@ func buildCoordinator(ctx context.Context, cfg coordinatorConfig) (*agent.Coordi
 		payload, _ := evt.Payload.(*api.EventPayload)
 		pluginMgr.DispatchEvent(ctx, evt.Event, evt.SessionID, payload)
 	})
+
+	// Plugin hot reload: poll for sentinel file written by CLI install/uninstall.
+	// Runs independently of the schedule tick so plugin changes are picked up
+	// even when TAU_SCHEDULE_INTERVAL is not set.
+	go func() {
+		ticker := time.NewTicker(10 * time.Second)
+		defer ticker.Stop()
+		sentinelPath := filepath.Join(tauconfig.Dir(), plugin.SentinelFile)
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+				if _, err := os.Stat(sentinelPath); err == nil {
+					if _, reloadErr := pluginMgr.ReloadExtensions(ctx, false); reloadErr != nil {
+						slog.Warn("plugin reload failed", "error", reloadErr)
+					}
+					if err := os.Remove(sentinelPath); err != nil {
+						slog.Warn("failed to remove plugin sentinel", "error", err)
+					}
+				}
+			}
+		}
+	}()
 
 	// Schedule ticks: if TAU_SCHEDULE_INTERVAL is set, publish a
 	// ScheduleTickEvent on the bus at that interval. The plugin manager

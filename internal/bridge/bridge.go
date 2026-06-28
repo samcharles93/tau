@@ -22,14 +22,14 @@ type Runtime interface {
 
 // InitInfo is sent to every browser on WebSocket connection.
 type InitInfo struct {
-	SessionID          string
-	Model              string
-	Provider           string
-	Models             []tauchat.ChatModelRef
-	Providers          []string
-	Commands           []tauchat.CommandRef
-	Skills             []tauchat.SkillInfo
-	ExtensionCommands  []tauchat.ExtensionCommand
+	SessionID         string
+	Model             string
+	Provider          string
+	Models            []tauchat.ChatModelRef
+	Providers         []string
+	Commands          []tauchat.CommandRef
+	Skills            []tauchat.SkillInfo
+	ExtensionCommands []tauchat.ExtensionCommand
 }
 
 // Bridge fans out ChatEvent values to all connected WebSocket clients and
@@ -38,10 +38,10 @@ type InitInfo struct {
 // It creates its own "web" client on the event bus and implements the Web UI
 // side of the command/event boundary without interpreting either direction.
 type Bridge struct {
-	runtime Runtime
-	bus     *eventbus.Bus
-	client  *eventbus.Client
-	sub     *eventbus.Subscriber[tauchat.ChatEvent]
+	runtime   Runtime
+	bus       *eventbus.Bus
+	client    *eventbus.Client
+	sub       *eventbus.Subscriber[tauchat.ChatEvent]
 	skillsSub *eventbus.SubscriberFunc[skills.Event]
 
 	mu       sync.RWMutex

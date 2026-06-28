@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"io"
 	"net/http"
+	"sync"
 	"testing"
 	"time"
 
@@ -17,11 +18,14 @@ import (
 )
 
 type stubRuntime struct {
+	mu   sync.Mutex
 	sent []tauchat.ChatCommand
 }
 
 func (r *stubRuntime) Send(cmd tauchat.ChatCommand) error {
+	r.mu.Lock()
 	r.sent = append(r.sent, cmd)
+	r.mu.Unlock()
 	return nil
 }
 
@@ -95,8 +99,12 @@ func TestStartWebUIServesAndAcceptsCommands(t *testing.T) {
 	assert.Equal(t, "sess-1", initMsg["session_id"])
 
 	ws.WriteMessage(websocket.TextMessage, []byte(`{"type":"SubmitChatPromptCommand","payload":{"session_id":"sess-1","request_id":"r1","prompt":"hello","submitted_at":"2026-06-27T00:00:00Z"}}`))
-	require.Eventually(t, func() bool { return len(rt.sent) > 0 }, time.Second, 10*time.Millisecond)
-	assert.IsType(t, tauchat.SubmitChatPromptCommand{}, rt.sent[0])
+	require.Eventually(t, func() bool {
+		rt.mu.Lock()
+		defer rt.mu.Unlock()
+		return len(rt.sent) > 0
+	}, time.Second, 10*time.Millisecond)
+	require.IsType(t, tauchat.SubmitChatPromptCommand{}, rt.sent[0])
 }
 
 func TestStartWebUIDisabled(t *testing.T) {

@@ -3,6 +3,7 @@ package bridge
 import (
 	"net/http"
 	"net/http/httptest"
+	"sync"
 	"testing"
 	"time"
 
@@ -14,11 +15,14 @@ import (
 )
 
 type fakeRuntime struct {
+	mu   sync.Mutex
 	sent []tauchat.ChatCommand
 }
 
 func (r *fakeRuntime) Send(cmd tauchat.ChatCommand) error {
+	r.mu.Lock()
 	r.sent = append(r.sent, cmd)
+	r.mu.Unlock()
 	return nil
 }
 
@@ -50,8 +54,12 @@ func TestBridgeForwardsCommandFromClient(t *testing.T) {
 	err = clientConn.WriteMessage(websocket.TextMessage, payload)
 	require.NoError(t, err)
 
-	require.Eventually(t, func() bool { return len(rt.sent) > 0 }, time.Second, 10*time.Millisecond)
-	assert.IsType(t, tauchat.SubmitChatPromptCommand{}, rt.sent[0])
+	require.Eventually(t, func() bool {
+		rt.mu.Lock()
+		defer rt.mu.Unlock()
+		return len(rt.sent) > 0
+	}, time.Second, 10*time.Millisecond)
+	require.IsType(t, tauchat.SubmitChatPromptCommand{}, rt.sent[0])
 }
 
 func TestBridgeBroadcastsEventToClient(t *testing.T) {

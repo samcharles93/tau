@@ -1130,7 +1130,7 @@ func (c *Coordinator) buildToolDefs() []chat.ChatToolDef {
 	c.mu.Unlock()
 
 	var filtered []tools.Schema
-	if allowed == nil || len(allowed) == 0 {
+	if len(allowed) == 0 {
 		filtered = schemas
 	} else {
 		for _, s := range schemas {
