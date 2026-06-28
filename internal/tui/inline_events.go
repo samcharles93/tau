@@ -95,6 +95,14 @@ func (c *inlineChat) handleEvent(ev tauchat.ChatEvent) {
 				return
 			}
 			detail := e.ResultSummary
+			if e.ToolName == skillToolName {
+				// Don't dump the skill instructions in the box; the model already
+				// received them as the tool result. A clean "loaded" label keeps
+				// the box scannable.
+				if !e.IsError {
+					detail = "loaded"
+				}
+			}
 			if e.IsError {
 				detail = "failed"
 				tb.row.Fail(detail)
