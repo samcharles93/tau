@@ -124,9 +124,19 @@ func (t *TUI) Start() {
 
 // Stop halts the render loop and restores terminal state.
 func (t *TUI) Stop() {
+	// Signal the terminal's read loop to exit before we do anything else.
+	// This is safe to call multiple times (idempotent via sync.Once).
+	// For the /exit path (and other programmatic stops) this runs in a
+	// spawned goroutine, but it's the first thing it does — so the window
+	// between dispatchKey returning and the read loop checking stopCh is
+	// as small as possible. For the Ctrl+C path, dispatchKey calls
+	// SignalStop synchronously before spawning us, so the channel is
+	// already closed.
+	t.Terminal.SignalStop()
+
 	t.mu.Lock()
-	defer t.mu.Unlock()
 	if t.stopped {
+		t.mu.Unlock()
 		return
 	}
 	t.stopped = true
@@ -144,6 +154,10 @@ func (t *TUI) Stop() {
 		}
 		t.Terminal.Write("\r\n")
 	}
+	// Release the lock before Terminal.Stop() so the resize signal goroutine
+	// (which calls RequestRender → t.mu.Lock) can observe t.stopped and exit,
+	// unblocking t.wg.Wait() inside Terminal.Stop().
+	t.mu.Unlock()
 
 	t.Terminal.ShowCursor()
 	t.Terminal.Stop()
@@ -186,7 +200,17 @@ func (t *TUI) dispatchKey(seq string) {
 
 	// Ctrl+C — canonicalKey maps the Kitty CSI-u forms to \x03.
 	if seq == "\x03" {
-		t.Stop()
+		// Signal the terminal's read loop to stop from THIS goroutine (the
+		// stdin reader), so that when we unwind back to it stopCh is already
+		// closed and the loop exits immediately. Without this, the spawned
+		// Stop goroutine may not close stopCh before the read loop checks it
+		// and falls back into a blocking os.Stdin.Read — deadlocking Stop
+		// which waits on wg.Wait for that reader to exit.
+		t.Terminal.SignalStop()
+		// Launch Stop in a separate goroutine so Terminal.Stop() → wg.Wait()
+		// is not called from the stdin goroutine (which is tracked by that
+		// same WaitGroup). See inline_commands.go:/exit for the other caller.
+		go t.Stop()
 		return
 	}
 	if h, ok := t.focused.(InputHandler); ok {

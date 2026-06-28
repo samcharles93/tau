@@ -410,16 +410,17 @@ type newCoordinatorResult struct {
 	Coordinator       *agent.Coordinator
 	CommandRegistry   *commandreg.Registry
 	ExtensionCommands []tauchat.ExtensionCommand
+	PluginManager     *plugin.Manager
 }
 
 // newCoordinator creates and returns an agent coordinator with the standard
 // tool registry, config, and session persistence.
-func newCoordinator(ctx context.Context, opts ChatOptions, bearerToken string, sessionManager *sessions.Manager, startupEvents []tauchat.ChatEvent, bus *eventbus.Bus, streamer agent.Streamer, modelRefs []tauchat.ChatModelRef, skillsMgr *skills.Manager) (*newCoordinatorResult, error) {
+func newCoordinator(ctx context.Context, opts ChatOptions, bearerToken string, sessionManager *sessions.Manager, startupEvents []tauchat.ChatEvent, bus *eventbus.Bus, streamer agent.Streamer, modelRefs []tauchat.ChatModelRef, skillsMgr *skills.Manager, deferPlugins bool) (*newCoordinatorResult, error) {
 	cwd, _ := os.Getwd()
 	cmdRegClient := bus.Client("command-registry")
 	cmdReg := commandreg.New(cwd, cmdRegClient)
 
-	coordinator, extCmds, err := buildCoordinator(ctx, coordinatorConfig{
+	coordinator, extCmds, pluginMgr, err := buildCoordinator(ctx, coordinatorConfig{
 		Bus:             bus,
 		ChatOptions:     opts,
 		BearerToken:     bearerToken,
@@ -431,6 +432,7 @@ func newCoordinator(ctx context.Context, opts ChatOptions, bearerToken string, s
 		Streamer:        streamer,
 		ModelRefs:       modelRefs,
 		SkillsManager:   skillsMgr,
+		DeferPluginLoad: deferPlugins,
 	})
 	if err != nil {
 		cmdReg.Close()
@@ -440,6 +442,7 @@ func newCoordinator(ctx context.Context, opts ChatOptions, bearerToken string, s
 		Coordinator:       coordinator,
 		CommandRegistry:   cmdReg,
 		ExtensionCommands: extCmds,
+		PluginManager:     pluginMgr,
 	}, nil
 }
 
@@ -459,14 +462,17 @@ type coordinatorConfig struct {
 	// SkillsManager provides the skill catalog snapshot. When nil the
 	// coordinator falls back to inline discovery (headless path).
 	SkillsManager *skills.Manager
+	// DeferPluginLoad skips pluginMgr.Load() so the caller can defer it
+	// until after the TUI has subscribed to bus events.
+	DeferPluginLoad bool
 }
 
 // buildCoordinator creates a coordinator with the full plugin/tool setup.
-func buildCoordinator(ctx context.Context, cfg coordinatorConfig) (*agent.Coordinator, []tauchat.ExtensionCommand, error) {
+func buildCoordinator(ctx context.Context, cfg coordinatorConfig) (*agent.Coordinator, []tauchat.ExtensionCommand, *plugin.Manager, error) {
 	cwd, _ := os.Getwd()
 	registry := tools.NewRegistry()
 	if err := tools.RegisterBuiltins(registry, cwd); err != nil {
-		return nil, nil, fmt.Errorf("registering built-in tools: %w", err)
+		return nil, nil, nil, fmt.Errorf("registering built-in tools: %w", err)
 	}
 
 	// Create a skill Tracker and register the Skill tool. The allowed-tools
@@ -506,23 +512,26 @@ func buildCoordinator(ctx context.Context, cfg coordinatorConfig) (*agent.Coordi
 		Notify:       pluginNotify,
 	})
 	if err != nil {
-		return nil, nil, fmt.Errorf("plugin manager: %w", err)
+		return nil, nil, nil, fmt.Errorf("plugin manager: %w", err)
 	}
 
 	registry.SetPluginToolExecutor(func(ctx context.Context, pluginName, toolName string, args json.RawMessage) (tools.Result, error) {
 		return pluginMgr.ExecutePluginTool(ctx, pluginName, toolName, args)
 	})
 
-	if err := pluginMgr.Load(ctx); err != nil {
-		slog.Warn("plugin manager load failed", "err", err)
-		notifyPub.Publish(tauchat.ChatNotificationEvent{
-			Message:    "Plugin load failed: " + err.Error(),
-			Level:      tauchat.ChatNotificationError,
-			OccurredAt: time.Now().UTC(),
-		})
-	} else {
-		// Publish extension commands so the TUI/Web UI pick them up without
-		// requiring a manual /reload.
+	// loadPlugins starts plugin binaries, publishes extension commands,
+	// and notifies the user. Extracted so interactive callers can defer
+	// this step until after the TUI subscribes to bus events.
+	loadPlugins := func() {
+		if err := pluginMgr.Load(ctx); err != nil {
+			slog.Warn("plugin manager load failed", "err", err)
+			notifyPub.Publish(tauchat.ChatNotificationEvent{
+				Message:    "Plugin load failed: " + err.Error(),
+				Level:      tauchat.ChatNotificationError,
+				OccurredAt: time.Now().UTC(),
+			})
+			return
+		}
 		extCmds := pluginMgr.ExtensionCommands()
 		if len(extCmds) > 0 {
 			notifyPub.Publish(tauchat.ExtensionCommandsChangedEvent{
@@ -530,7 +539,6 @@ func buildCoordinator(ctx context.Context, cfg coordinatorConfig) (*agent.Coordi
 				OccurredAt: time.Now().UTC(),
 			})
 		}
-		// Notify the user that plugins loaded successfully, including counts.
 		loadedMsg := pluginLoadMessage(pluginMgr)
 		if loadedMsg != "" {
 			notifyPub.Publish(tauchat.ChatNotificationEvent{
@@ -539,6 +547,12 @@ func buildCoordinator(ctx context.Context, cfg coordinatorConfig) (*agent.Coordi
 				OccurredAt: time.Now().UTC(),
 			})
 		}
+	}
+
+	if cfg.DeferPluginLoad {
+		slog.Debug("plugin loading deferred until after TUI subscription")
+	} else {
+		loadPlugins()
 	}
 
 	// Subscribe the plugin manager to fire-and-forget lifecycle events
@@ -644,7 +658,7 @@ func buildCoordinator(ctx context.Context, cfg coordinatorConfig) (*agent.Coordi
 		},
 	})
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, nil, err
 	}
 
 	// Wire up the allowed-tools callback now that the coordinator exists.
@@ -654,7 +668,7 @@ func buildCoordinator(ctx context.Context, cfg coordinatorConfig) (*agent.Coordi
 	// plugin slash commands can call Host.Confirm / Host.Input.
 	pluginMgr.SetInteractiveHandler(coordinator.UIBridge())
 
-	return coordinator, pluginMgr.ExtensionCommands(), nil
+	return coordinator, pluginMgr.ExtensionCommands(), pluginMgr, nil
 }
 
 // pluginLoadMessage builds a human-readable summary of loaded plugins

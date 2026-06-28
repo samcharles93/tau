@@ -73,7 +73,7 @@ func RunStdIn(ctx context.Context, opts ChatOptions, prompt string) error {
 		sessionManager = sessions.NewManager(rawStore)
 	}
 
-	coordinator, _, err := buildCoordinator(ctx, coordinatorConfig{
+	coordinator, _, _, err := buildCoordinator(ctx, coordinatorConfig{
 		Bus:             bus,
 		ChatOptions:     opts,
 		BearerToken:     "",

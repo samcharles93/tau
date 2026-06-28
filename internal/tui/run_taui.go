@@ -27,6 +27,12 @@ func RunInline(ctx context.Context, runtime tauchat.ChatRuntime, cfg TUIConfig) 
 
 	chat := newInlineChat(ctx, engine, runtime, chatSub, cfg)
 
+	// Run the OnReady hook now that the TUI is subscribed to bus events.
+	// Used to load plugins at the right moment so events are received.
+	if cfg.OnReady != nil {
+		cfg.OnReady()
+	}
+
 	go func() {
 		<-ctx.Done()
 		chat.close()

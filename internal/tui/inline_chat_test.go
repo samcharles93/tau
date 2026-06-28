@@ -16,6 +16,7 @@ import (
 type nullTerminal struct{}
 
 func (nullTerminal) Start(func(string), func()) {}
+func (nullTerminal) SignalStop()                {}
 func (nullTerminal) Stop()                      {}
 func (nullTerminal) Write(string)               {}
 func (nullTerminal) Size() (int, int)           { return 80, 24 }

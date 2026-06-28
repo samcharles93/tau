@@ -19,6 +19,12 @@ type Terminal interface {
 	// Stop restores terminal state.
 	Stop()
 
+	// SignalStop closes the stop channel to request the stdin and resize
+	// goroutines exit, without waiting for them. It is safe to call multiple
+	// times and from any goroutine. Call Stop afterwards to wait for the
+	// goroutines and restore terminal state.
+	SignalStop()
+
 	// Write outputs data to the terminal.
 	Write(data string)
 
@@ -41,6 +47,10 @@ type ProcessTerminal struct {
 	inputFn  func(data string)
 	resizeFn func()
 	stopCh   chan struct{}
+
+	// stopOnce guards close(stopCh) so SignalStop and Stop are both safe to call
+	// multiple times and from any goroutine.
+	stopOnce sync.Once
 
 	// Restore state
 	originalTermios *TermiosState
@@ -134,11 +144,23 @@ const (
 	kittyKeyboardPop  = "\x1b[<u"
 )
 
+// SignalStop closes the stop channel to request the stdin and resize
+// goroutines exit, without waiting for them. It is idempotent (safe to call
+// multiple times and from any goroutine). Call Stop afterwards to wait for
+// the goroutines and restore terminal state.
+func (t *ProcessTerminal) SignalStop() {
+	t.stopOnce.Do(func() {
+		close(t.stopCh)
+	})
+}
+
 // Stop restores terminal state. It blocks until the stdin and resize
 // goroutines have exited, guaranteeing no further reads or signal handlers
 // fire after terminal settings are restored.
 func (t *ProcessTerminal) Stop() {
-	close(t.stopCh)
+	t.stopOnce.Do(func() {
+		close(t.stopCh)
+	})
 
 	// Wait for goroutines to exit before restoring terminal state.
 	t.wg.Wait()

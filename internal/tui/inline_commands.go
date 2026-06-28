@@ -91,7 +91,10 @@ func init() {
 		},
 		{
 			name: "exit", aliases: []string{"quit", "q"}, description: "quit",
-			run: func(c *inlineChat, _ string) { c.engine.Stop() },
+			// Stop in a separate goroutine so Terminal.Stop() → wg.Wait()
+			// is not called from the stdin goroutine (tracked by the same
+			// WaitGroup). See renderer.go:dispatchKey for the Ctrl+C caller.
+			run: func(c *inlineChat, _ string) { go c.engine.Stop() },
 		},
 	}
 

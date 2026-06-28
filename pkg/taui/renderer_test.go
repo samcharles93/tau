@@ -34,6 +34,7 @@ func (f *fakeTerm) out() string { return f.buf.String() }
 func (f *fakeTerm) reset()      { f.buf.Reset() }
 
 func (f *fakeTerm) Start(onInput func(data string), onResize func()) {}
+func (f *fakeTerm) SignalStop()                                      {}
 func (f *fakeTerm) Stop()                                            {}
 func (f *fakeTerm) Write(data string)                                { f.buf.WriteString(data) }
 func (f *fakeTerm) Size() (int, int)                                 { return f.cols, f.rows }

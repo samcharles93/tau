@@ -33,4 +33,8 @@ var (
 		BG: termkit.Color{48, 11, 11},
 		FG: termkit.Color{255, 160, 160},
 	}
+
+	// SteeringFG is the navy blue foreground used for the steering indicator
+	// in the status line when the user interrupts the agent mid-turn.
+	SteeringFG = termkit.Color{100, 130, 220}
 )

@@ -66,8 +66,13 @@ type inlineChat struct {
 	turnReasoning *taui.Paragraph
 	activeTools   map[string]*activeToolBox // parallel tool boxes by CallID
 	working       atomic.Bool
+	steering      atomic.Bool
 	running       bool
 	queue         []string
+
+	// Double Ctrl+C quit guard.
+	pendingQuit time.Time
+	cancelSent  bool
 }
 
 func newInlineChat(
@@ -219,6 +224,9 @@ func (c *inlineChat) computeStatus() string {
 	if prov != "" {
 		parts = append(parts, prov)
 	}
+	if c.steering.Load() {
+		parts = append(parts, c.steerIndicator())
+	}
 	if c.webURL != "" {
 		parts = append(parts, "web: "+c.webURL)
 	}
@@ -227,6 +235,18 @@ func (c *inlineChat) computeStatus() string {
 		s += " · " + note
 	}
 	return c.grey(s)
+}
+
+// steerIndicator returns an animated [STEERING...] label in navy blue that
+// cycles the dot count every 300ms (driven by statusLoop's ticker).
+func (c *inlineChat) steerIndicator() string {
+	c.mu.Lock()
+	c.cancelSent = false
+	c.mu.Unlock()
+	// Simple static counter; the status loop calls computeStatus at 300ms
+	// so the dots naturally animate without a separate timer.
+	const label = "STEERING"
+	return termkit.FgOnly("["+label+"."+strings.Repeat(".", int(time.Now().UnixMilli()/300)%3)+"]", theme.SteeringFG)
 }
 
 // pushNotice queues a transient info notification shown in the status line.
@@ -272,6 +292,8 @@ func (c *inlineChat) onSubmit(prompt string) {
 	}
 	c.running = true
 	c.mu.Unlock()
+	c.steering.Store(false)
+	c.cancelSent = false
 	go c.runTurn(trimmed)
 }
 
@@ -315,6 +337,7 @@ func (c *inlineChat) runTurn(prompt string) {
 
 func (c *inlineChat) doTurn(prompt string) {
 	c.working.Store(true)
+	c.cancelSent = false
 	defer c.working.Store(false)
 
 	c.engine.Update(func() { c.header.SetText(c.grey("τ tau is working…")) })
@@ -330,6 +353,26 @@ func (c *inlineChat) doTurn(prompt string) {
 		c.engine.PrintAbove("%s %s", c.grey("✗"), err.Error())
 		c.engine.Update(func() { c.header.SetText(c.grey(headerIdle)) })
 	}
+}
+
+// cancelTurn sends a CancelChatRequestCommand to stop the current generation.
+func (c *inlineChat) cancelTurn() {
+	c.mu.Lock()
+	if c.cancelSent {
+		c.mu.Unlock()
+		return
+	}
+	c.cancelSent = true
+	c.mu.Unlock()
+
+	c.steering.Store(false)
+	c.engine.PrintAbove("%s", c.grey("cancelling…"))
+	c.engine.Update(func() { c.header.SetText(c.grey(headerIdle)) })
+	_ = c.runtime.Send(tauchat.CancelChatRequestCommand{
+		SessionID:   c.sid(),
+		RequestID:   "",
+		RequestedAt: time.Now().UTC(),
+	})
 }
 
 // ── Scrollback helpers ──────────────────────────────────────────────────────
@@ -387,11 +430,33 @@ func (c *inlineCtrl) HandleInput(data string) bool {
 		c.chat.engine.RequestRender()
 		return true
 	}
-	// Ctrl+S → steer (idle=submit, busy=inject into current turn).
-	if data == "\x13" {
+
+	switch data {
+	case "\x13": // Ctrl+S → steer (idle=submit, busy=inject into current turn)
 		c.chat.onSteer(c.chat.input.Value())
 		return true
+
+	case "\x03": // Ctrl+C
+		if c.chat.working.Load() {
+			c.chat.cancelTurn()
+			return true
+		}
+		now := time.Now()
+		if now.Sub(c.chat.pendingQuit) < 800*time.Millisecond {
+			go c.chat.engine.Stop()
+			return true
+		}
+		c.chat.pendingQuit = now
+		c.chat.engine.PrintAbove("%s", c.chat.grey("quit: press Ctrl+C again"))
+		return true
+
+	case "\x1b": // Escape — cancel generation if running
+		if c.chat.working.Load() {
+			c.chat.cancelTurn()
+			return true
+		}
 	}
+
 	if c.chat.input.HandleInput(data) {
 		c.chat.engine.RequestRender()
 		return true

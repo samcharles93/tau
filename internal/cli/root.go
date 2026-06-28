@@ -13,9 +13,18 @@ import (
 	urfavecli "github.com/urfave/cli/v3"
 )
 
-func initLogging(debug bool) {
+func initLogging(debug bool, version string) {
 	logPath := filepath.Join(tauconfig.Dir(), "tau.log")
-	logFile, err := os.OpenFile(logPath, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o600)
+
+	// Rotate the log if it has grown too large (10 MiB). Keep one old copy.
+	const maxSize = 10 * 1024 * 1024
+	if info, err := os.Stat(logPath); err == nil && info.Size() > maxSize {
+		rotated := logPath + ".1"
+		_ = os.Remove(rotated)
+		_ = os.Rename(logPath, rotated)
+	}
+
+	logFile, err := os.OpenFile(logPath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o600)
 	if err != nil {
 		return
 	}
@@ -27,6 +36,9 @@ func initLogging(debug bool) {
 		Level:  level,
 		Format: taulogger.FormatText,
 	})
+
+	// Write a run separator so each launch is visually distinct in the log.
+	slog.Info("── tau start ──", "version", version, "pid", os.Getpid())
 }
 
 func NewRootCommand(version string) *urfavecli.Command {
@@ -117,7 +129,7 @@ func NewRootCommand(version string) *urfavecli.Command {
 			if err != nil {
 				return err
 			}
-			initLogging(cmd.Bool("verbose") || cfg.Debug)
+			initLogging(cmd.Bool("verbose") || cfg.Debug, version)
 			opts := chatOptionsFromCmd(cmd, cfg, selectedProvider, version)
 			prompt := cmd.String("prompt")
 			if prompt != "" {

@@ -30,4 +30,8 @@ type TUIConfig struct {
 	Debug           bool
 	// WebURL is the local address of the optional web UI. Empty means no web UI.
 	WebURL string
+	// OnReady is called after the TUI subscribes to bus events but before it
+	// blocks on the render loop. Used to defer plugin loading so the TUI
+	// receives the initial ExtensionCommandsChangedEvent on the bus.
+	OnReady func()
 }

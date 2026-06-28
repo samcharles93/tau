@@ -119,7 +119,7 @@ func RunChat(ctx context.Context, opts ChatOptions) error {
 	// Auth is resolved by the runtime when the provider is created.
 	// The coordinator only needs a token source for legacy compatibility;
 	// pass an empty token.
-	result, err := newCoordinator(ctx, opts, "", sessionManager, startupEvents, bus, streamer, available, skillsMgr)
+	result, err := newCoordinator(ctx, opts, "", sessionManager, startupEvents, bus, streamer, available, skillsMgr, true)
 	if err != nil {
 		if sessionManager != nil {
 			if err := sessionManager.Close(); err != nil {
@@ -131,6 +131,42 @@ func RunChat(ctx context.Context, opts ChatOptions) error {
 	coordinator := result.Coordinator
 	defer coordinator.Close()
 	defer result.CommandRegistry.Close()
+
+	// OnReady: after the TUI subscribes to bus events, load plugins so the
+	// initial ExtensionCommandsChangedEvent reaches every client (TUI, web).
+	// This is a bus publish so subscribers receive it — the coordinator's Send
+	// expects ChatCommand, not ChatEvent.
+	eventPub := eventbus.Publish[tauchat.ChatEvent](bus.Client("plugin-onready"))
+	var pluginOnReady func()
+	if result.PluginManager != nil {
+		pluginMgr := result.PluginManager
+		pluginOnReady = func() {
+			if err := pluginMgr.Load(ctx); err != nil {
+				slog.Warn("plugin manager load failed", "err", err)
+				eventPub.Publish(tauchat.ChatNotificationEvent{
+					Message:    "Plugin load failed: " + err.Error(),
+					Level:      tauchat.ChatNotificationInfo,
+					OccurredAt: time.Now().UTC(),
+				})
+				return
+			}
+			extCmds := pluginMgr.ExtensionCommands()
+			if len(extCmds) > 0 {
+				eventPub.Publish(tauchat.ExtensionCommandsChangedEvent{
+					Commands:   extCmds,
+					OccurredAt: time.Now().UTC(),
+				})
+			}
+			loadedMsg := pluginLoadMessage(pluginMgr)
+			if loadedMsg != "" {
+				eventPub.Publish(tauchat.ChatNotificationEvent{
+					Message:    loadedMsg,
+					Level:      tauchat.ChatNotificationInfo,
+					OccurredAt: time.Now().UTC(),
+				})
+			}
+		}
+	}
 
 	sessionID, err := newID()
 	if err != nil {
@@ -227,6 +263,7 @@ func RunChat(ctx context.Context, opts ChatOptions) error {
 		ReasoningEffort:    opts.ReasoningEffort,
 		Debug:              isDevel(opts.Version, opts.Config),
 		WebURL:             webURL,
+		OnReady:            pluginOnReady,
 	}
 
 	tuiErr := tui.Run(ctx, coordinator, tuiCfg)

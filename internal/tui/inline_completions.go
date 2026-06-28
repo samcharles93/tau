@@ -26,11 +26,24 @@ func (c *inlineChat) completionSet(ctx taui.CompletionContext) *taui.CompletionS
 	// The token under the cursor (empty when a space was just typed, meaning a
 	// fresh argument slot). replaceStart marks where a chosen completion is
 	// spliced in — the start of that token, or the cursor for an empty slot.
+	//
+	// IMPORTANT: replaceEnd covers the full word under the cursor, not just the
+	// characters before it. When the cursor is mid-word (e.g. /mo|del),
+	// using cur as replaceEnd would leave the trailing characters outside the
+	// replace range, causing duplication when LCP extension or full replace
+	// reconstructs the text.
 	token := ""
 	if !endsWithSpace && len(fields) > 0 {
 		token = fields[len(fields)-1]
 	}
 	replaceStart := cur - len([]rune(token))
+
+	// Compute the end of the word under/after the cursor so that when
+	// ReplaceEnd covers the entire token, not just the part before the cursor.
+	endOfWord := cur
+	for endOfWord < len(full) && full[endOfWord] != ' ' {
+		endOfWord++
+	}
 
 	var (
 		title   string
@@ -61,7 +74,7 @@ func (c *inlineChat) completionSet(ctx taui.CompletionContext) *taui.CompletionS
 	}
 	return &taui.CompletionSet{
 		ReplaceStart: replaceStart,
-		ReplaceEnd:   cur,
+		ReplaceEnd:   endOfWord,
 		Groups:       []taui.MatchGroup{{Title: title, Matches: matches}},
 	}
 }

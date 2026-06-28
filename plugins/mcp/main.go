@@ -104,7 +104,7 @@ func (p *MCPPlugin) RunCommand(ctx context.Context, name, args string) (string, 
 	case "mcp-list":
 		return p.cmdList()
 	case "mcp-reconnect":
-		return p.cmdReconnect(strings.TrimSpace(args))
+		return p.cmdReconnect(ctx, strings.TrimSpace(args))
 	case "mcp-reload":
 		return p.cmdReload(ctx)
 	default:
@@ -131,7 +131,8 @@ func (p *MCPPlugin) Reload(ctx context.Context) ([]*pluginapi.Diagnostic, []*plu
 			Message:  err.Error(),
 		}}, nil, nil
 	}
-	return nil, nil, nil
+	_, cmds := p.Metadata()
+	return nil, cmds, nil
 }
 
 // DispatchEvent handles lifecycle events.
@@ -214,14 +215,14 @@ func (p *MCPPlugin) cmdList() (string, error) {
 	return b.String(), nil
 }
 
-func (p *MCPPlugin) cmdReconnect(serverName string) (string, error) {
+func (p *MCPPlugin) cmdReconnect(ctx context.Context, serverName string) (string, error) {
 	if serverName == "" {
 		return "", fmt.Errorf("usage: /mcp-reconnect <server>")
 	}
 
 	// Confirm before disconnecting.
 	if p.host != nil {
-		confirmed, err := p.host.Confirm(context.Background(),
+		confirmed, err := p.host.Confirm(ctx,
 			"Reconnect MCP server",
 			"Disconnect and reconnect to "+serverName+"? This will interrupt any active connections.")
 		if err != nil || !confirmed {
