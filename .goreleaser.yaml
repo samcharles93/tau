@@ -2,8 +2,8 @@ version: 2
 
 before:
   hooks:
-    - cd internal/webui && pnpm install --frozen-lockfile
-    - cd internal/webui && pnpm build
+    - sh -c "cd internal/webui && pnpm install --frozen-lockfile"
+    - sh -c "cd internal/webui && pnpm build"
 
 builds:
   - id: tau
