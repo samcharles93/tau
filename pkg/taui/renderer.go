@@ -198,21 +198,6 @@ func (t *TUI) dispatchKey(seq string) {
 	// components (and existing `case "\x1b"` handlers) stay terminal-agnostic.
 	seq = canonicalKey(seq)
 
-	// Ctrl+C — canonicalKey maps the Kitty CSI-u forms to \x03.
-	if seq == "\x03" {
-		// Signal the terminal's read loop to stop from THIS goroutine (the
-		// stdin reader), so that when we unwind back to it stopCh is already
-		// closed and the loop exits immediately. Without this, the spawned
-		// Stop goroutine may not close stopCh before the read loop checks it
-		// and falls back into a blocking os.Stdin.Read — deadlocking Stop
-		// which waits on wg.Wait for that reader to exit.
-		t.Terminal.SignalStop()
-		// Launch Stop in a separate goroutine so Terminal.Stop() → wg.Wait()
-		// is not called from the stdin goroutine (which is tracked by that
-		// same WaitGroup). See inline_commands.go:/exit for the other caller.
-		go t.Stop()
-		return
-	}
 	if h, ok := t.focused.(InputHandler); ok {
 		if h.HandleInput(seq) {
 			t.RequestRender()
