@@ -16,15 +16,15 @@ jobs:
   release-please:
     runs-on: ubuntu-latest
     steps:
-      # Diagnostic: verify the PAT can clone from Gitea via actions/checkout.
-      # If this succeeds, the release-please-action's internal git handling is
-      # the problem; if this fails, the PAT lacks git access on the instance.
+      # Checkout sets up Basic git auth (AUTHORIZATION: basic)
+      # with the PAT. We replicate that globally so release-please's
+      # internal git clone (in /tmp) inherits it.
       - uses: actions/checkout@v4
         with:
           token: ${{ secrets.RELEASE_TOKEN }}
-      - name: Configure git for Gitea
+      - name: Configure git for Gitea (Basic auth)
         run: |
-          git config --global "http.https://git.catlow.cloud/.extraheader" "Authorization: token ${{ secrets.RELEASE_TOKEN }}"
+          git config --global url."https://sam:${{ secrets.RELEASE_TOKEN }}@git.catlow.cloud/".insteadOf "https://git.catlow.cloud/"
       - id: release
         # Gitea-native fork of release-please-action: same inputs/outputs
         # as googleapis/release-please-action, but uses the Gitea API
@@ -39,5 +39,3 @@ jobs:
           config-file: release-please-config.json
           manifest-file: .release-please-manifest.json
           token: ${{ secrets.RELEASE_TOKEN }}
-          repo-url: sam/tau
-          github-api-url: https://git.catlow.cloud/api/v1
