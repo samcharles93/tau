@@ -68,6 +68,11 @@ func init() {
 			run: func(c *inlineChat, _ string) { c.refreshModels() },
 		},
 		{
+			name: "cost", aliases: []string{"usage"},
+			description: "show token usage and cost for this session",
+			run:         (*inlineChat).handleCostCommand,
+		},
+		{
 			name: "login", usage: "[provider]", description: "enable a provider (or list providers)",
 			run: (*inlineChat).handleLoginCommand, complete: argProviders,
 		},
@@ -329,6 +334,9 @@ func (c *inlineChat) handleModelCommand(modelID string) {
 	})
 	c.mu.Lock()
 	c.modelName = model.ID
+	if model.Provider != "" {
+		c.provider = model.Provider
+	}
 	c.mu.Unlock()
 	notice := "model: " + model.ID
 	if model.Provider != "" {
@@ -368,6 +376,43 @@ func (c *inlineChat) refreshModels() {
 		c.pushNotice(fmt.Sprintf("refreshed models: %d available", len(models)))
 		c.engine.RequestRender()
 	}()
+}
+
+// handleCostCommand prints a tidy breakdown of token usage and cost for the
+// current session, mirroring printHelp's grey, aligned layout.
+func (c *inlineChat) handleCostCommand(_ string) {
+	if c.usage == nil {
+		c.pushNotice("no usage recorded yet")
+		return
+	}
+	totals := c.usage.Snapshot(c.sid())
+	if totals == nil || totals.TotalTokens == 0 {
+		c.pushNotice("no usage recorded yet")
+		return
+	}
+
+	ctxWindow := c.currentModelRef().Config.ContextWindow
+
+	var b strings.Builder
+	b.WriteString("Usage:")
+	fmt.Fprintf(&b, "\n  %-12s %s", "tokens",
+		fmt.Sprintf("↑%d in · ↓%d out · %d total", totals.PromptTokens, totals.CompletionTokens, totals.TotalTokens))
+	fmt.Fprintf(&b, "\n  %-12s %d", "turns", totals.TurnCount)
+	fmt.Fprintf(&b, "\n  %-12s %s", "cost", formatCost(totals.Cost))
+	fmt.Fprintf(&b, "\n  %-12s %s", "tools",
+		fmt.Sprintf("%d calls · %d errors", totals.ToolCalls, totals.ToolErrors))
+	if pct := formatContextPct(totals.LastPromptTokens, ctxWindow); pct != "" {
+		fmt.Fprintf(&b, "\n  %-12s %s", "context",
+			fmt.Sprintf("%s (%d / %d)", pct, totals.LastPromptTokens, ctxWindow))
+	}
+	if totals.LastModel != "" {
+		model := totals.LastModel
+		if totals.LastProvider != "" {
+			model += " (" + totals.LastProvider + ")"
+		}
+		fmt.Fprintf(&b, "\n  %-12s %s", "model", model)
+	}
+	c.engine.PrintAbove("%s", c.grey(b.String()))
 }
 
 // ── Session management ────────────────────────────────────────────────────────

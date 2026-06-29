@@ -6,6 +6,7 @@ import (
 
 	tauchat "github.com/samcharles93/tau/internal/chat"
 	"github.com/samcharles93/tau/internal/eventbus"
+	"github.com/samcharles93/tau/internal/metrics"
 	"github.com/samcharles93/tau/pkg/taui"
 )
 
@@ -22,10 +23,17 @@ func RunInline(ctx context.Context, runtime tauchat.ChatRuntime, cfg TUIConfig) 
 	chatSub := eventbus.Subscribe[tauchat.ChatEvent](tuiClient)
 	defer chatSub.Close()
 
+	// Subscribing the usage tracker to chat.MetricEvent is what activates the
+	// coordinator's metric emission (it's a no-op until something subscribes).
+	metricsClient := cfg.Bus.Client("tui-metrics")
+	defer metricsClient.Close()
+	tracker := metrics.NewUsageTracker(metricsClient)
+	defer tracker.Close()
+
 	term := taui.NewProcessTerminal()
 	engine := taui.NewTUI(term)
 
-	chat := newInlineChat(ctx, engine, runtime, chatSub, cfg)
+	chat := newInlineChat(ctx, engine, runtime, chatSub, tracker, cfg)
 
 	// Run the OnReady hook now that the TUI is subscribed to bus events.
 	// Used to load plugins at the right moment so events are received.

@@ -262,6 +262,9 @@ func (c *inlineChat) syncState(state tauchat.ChatSessionState) {
 	if state.Model.ID != "" {
 		c.modelName = state.Model.ID
 	}
+	if state.ProviderName != "" {
+		c.provider = state.ProviderName
+	}
 	c.mu.Unlock()
 }
 

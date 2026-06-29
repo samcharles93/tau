@@ -13,6 +13,7 @@ import (
 	"github.com/google/uuid"
 	tauchat "github.com/samcharles93/tau/internal/chat"
 	"github.com/samcharles93/tau/internal/eventbus"
+	"github.com/samcharles93/tau/internal/metrics"
 	"github.com/samcharles93/tau/internal/theme"
 	"github.com/samcharles93/tau/internal/tui/notify"
 	"github.com/samcharles93/tau/pkg/taui"
@@ -41,6 +42,7 @@ type inlineChat struct {
 	ctx     context.Context
 	runtime tauchat.ChatRuntime
 	sub     *eventbus.Subscriber[tauchat.ChatEvent]
+	usage   *metrics.UsageTracker
 	done    chan struct{}
 
 	bold, grey, dim func(string) string
@@ -82,6 +84,7 @@ func newInlineChat(
 	engine *taui.TUI,
 	runtime tauchat.ChatRuntime,
 	sub *eventbus.Subscriber[tauchat.ChatEvent],
+	usage *metrics.UsageTracker,
 	cfg TUIConfig,
 ) *inlineChat {
 	c := &inlineChat{
@@ -90,6 +93,7 @@ func newInlineChat(
 		ctx:               ctx,
 		runtime:           runtime,
 		sub:               sub,
+		usage:             usage,
 		done:              make(chan struct{}),
 		provider:          cfg.Provider,
 		refresh:           cfg.RefreshModels,
@@ -218,10 +222,18 @@ func (c *inlineChat) statusLoop() {
 	}
 }
 
+// computeStatus builds the two-group widget status bar: an identity group pinned
+// left (brand · model · provider · effort) and a live-metrics group right-
+// justified to the box's inner width. c.mu is taken once to snapshot fields, then
+// released before touching the usage tracker or currentModelRef (both take their
+// own locks — never nest).
 func (c *inlineChat) computeStatus() string {
 	c.mu.Lock()
+	sid := c.sessionID
 	model := c.modelName
 	prov := c.provider
+	effort := c.reasoningEffort
+	webURL := c.webURL
 	var note string
 	if c.notifyQueue != nil {
 		if cur := c.notifyQueue.Current(); cur != nil {
@@ -230,34 +242,76 @@ func (c *inlineChat) computeStatus() string {
 	}
 	c.mu.Unlock()
 
-	parts := []string{"τ tau"}
+	// Snapshot tracker totals without holding c.mu (tracker has its own lock).
+	var totals *metrics.SessionTotals
+	if c.usage != nil {
+		totals = c.usage.Snapshot(sid)
+	}
+	// Context window from the selected model's config (takes c.mu internally).
+	ctxWindow := c.currentModelRef().Config.ContextWindow
+
+	// ── LEFT: identity (static during a turn). nil style → grey. ──
+	left := []statusSeg{{text: "τ tau"}}
 	if model != "" {
-		parts = append(parts, model)
+		left = append(left, statusSeg{text: model})
 	}
 	if prov != "" {
-		parts = append(parts, prov)
+		left = append(left, statusSeg{text: prov})
 	}
+	if effort != "" && effort != "off" {
+		left = append(left, statusSeg{text: effort})
+	}
+
+	// ── RIGHT: live metrics (right-justified). Transient items lead so they
+	// are never dropped by width pressure. ──
+	var right []statusSeg
 	if c.steering.Load() {
-		parts = append(parts, c.steerIndicator())
+		right = append(right, statusSeg{text: c.steerLabel(), style: steerStyle, prio: prioTransient})
 	}
-	if c.webURL != "" {
-		parts = append(parts, "web: "+c.webURL)
-	}
-	s := strings.Join(parts, " · ")
 	if note != "" {
-		s += " · " + note
+		right = append(right, statusSeg{text: note, prio: prioTransient})
 	}
-	return c.grey(s)
+	if totals != nil {
+		if totals.PromptTokens > 0 || totals.CompletionTokens > 0 {
+			right = append(right, statusSeg{
+				text: "↑" + humanizeTokens(totals.PromptTokens) + " ↓" + humanizeTokens(totals.CompletionTokens),
+				prio: prioTokens,
+			})
+		}
+		if totals.Cost > 0 {
+			right = append(right, statusSeg{text: formatCost(totals.Cost), prio: prioCost})
+		}
+		if p := contextPct(totals.LastPromptTokens, ctxWindow); p >= 0 {
+			right = append(right, statusSeg{
+				text:  formatContextPct(totals.LastPromptTokens, ctxWindow),
+				style: contextStyle(p),
+				prio:  prioContext,
+			})
+		}
+	}
+	if webURL != "" {
+		right = append(right, statusSeg{text: "web: " + webURL, prio: prioWeb})
+	}
+
+	// Box Padding(1,1) leaves an inner content width of termWidth-2.
+	usable := c.width() - 2
+	if usable < 1 {
+		usable = 1
+	}
+	return renderStatusBar(usable, left, right)
 }
 
-// steerIndicator returns an animated [STEERING...] label in navy blue that
-// cycles the dot count every 300ms (driven by statusLoop's ticker).
-func (c *inlineChat) steerIndicator() string {
-	// Simple static counter; the status loop calls computeStatus at 300ms
-	// so the dots naturally animate without a separate timer.
+// steerLabel returns the plain animated [STEERING...] label, cycling the dot
+// count every 300ms (driven by statusLoop's ticker). Style is applied separately
+// via steerStyle so the navy colour doesn't bleed into following segments.
+func (c *inlineChat) steerLabel() string {
 	const label = "STEERING"
-	return termkit.FgOnly("["+label+"."+strings.Repeat(".", int(time.Now().UnixMilli()/300)%3)+"]", theme.SteeringFG)
+	return "[" + label + "." + strings.Repeat(".", int(time.Now().UnixMilli()/300)%3) + "]"
 }
+
+// steerStyle paints the steering indicator navy blue (no trailing reset; the
+// next separator re-establishes grey).
+func steerStyle(s string) string { return termkit.FgOnly(s, theme.SteeringFG) }
 
 // pushNotice queues a transient info notification shown in the status line.
 func (c *inlineChat) pushNotice(msg string) {

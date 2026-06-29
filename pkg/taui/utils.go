@@ -151,8 +151,28 @@ func truncateANSIToWidth(s string, width int) string {
 	return b.String()
 }
 
+// TruncateANSIToWidth truncates a (possibly ANSI-styled) string to fit within
+// width visible columns, appending ellipsis when truncation occurs. Unlike
+// TruncateToWidth, the width math skips over ANSI/OSC escape sequences, so it
+// never severs an escape or counts its bytes as visible cells. Use this for any
+// string that may carry SGR styling (e.g. status-bar groups).
+func TruncateANSIToWidth(s string, width int, ellipsis string) string {
+	if VisibleWidth(s) <= width {
+		return s
+	}
+	ew := VisibleWidth(ellipsis)
+	if width-ew < 1 {
+		// No room for both content and ellipsis: hard-clip to width.
+		return truncateANSIToWidth(s, width)
+	}
+	return truncateANSIToWidth(s, width-ew) + ellipsis
+}
+
 // TruncateToWidth truncates text to fit within maxWidth visible columns.
 // If text exceeds maxWidth, an ellipsis is appended.
+//
+// NOTE: width math counts every rune, so this is only safe for PLAIN text. For
+// strings that may contain ANSI escape sequences use TruncateANSIToWidth.
 func TruncateToWidth(text string, maxWidth int, ellipsis string) string {
 	if maxWidth <= 0 {
 		return ""

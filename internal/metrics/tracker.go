@@ -1,6 +1,7 @@
 package metrics
 
 import (
+	"strconv"
 	"sync"
 
 	"github.com/samcharles93/tau/internal/chat"
@@ -12,6 +13,9 @@ type SessionTotals struct {
 	PromptTokens     int
 	CompletionTokens int
 	TotalTokens      int
+	// LastPromptTokens is the prompt-token count of the most recent llm.response
+	// turn (overwritten each turn), used to compute context-window utilisation.
+	LastPromptTokens int
 	Cost             float64
 	TurnCount        int
 	ToolCalls        int
@@ -64,6 +68,13 @@ func (t *UsageTracker) handle(e chat.MetricEvent) {
 		case "llm.response":
 			totals.TotalTokens += int(e.Value)
 			totals.TurnCount++
+			if prompt, err := strconv.Atoi(e.Labels["prompt_tokens"]); err == nil {
+				totals.PromptTokens += prompt
+				totals.LastPromptTokens = prompt
+			}
+			if completion, err := strconv.Atoi(e.Labels["completion_tokens"]); err == nil {
+				totals.CompletionTokens += completion
+			}
 			if provider, ok := e.Labels["provider"]; ok {
 				totals.LastProvider = provider
 			}
