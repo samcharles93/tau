@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.5.6](https://git.catlow.cloud/sam/tau/compare/v0.5.5...v0.5.6) (2026-06-29)
+
+
+### Bug Fixes
+
+* re-trigger with label pre-creation fix ([96c753b](https://git.catlow.cloud/sam/tau/commit/96c753bc31906c2870027fdeab68ada9fe8e9003))
+* test goreleaser dirty state fix ([d837027](https://git.catlow.cloud/sam/tau/commit/d837027de97b254f7a9c31e5520c6d91ab84045e))
+
 ## [0.5.5](https://git.catlow.cloud/sam/tau/compare/v0.5.4...v0.5.5) (2026-06-29)
 
 
