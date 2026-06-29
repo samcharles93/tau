@@ -2,8 +2,7 @@ name: Release
 
 on:
   push:
-    branches:
-      - master
+    branches: [master]
 
 permissions:
   contents: write
@@ -16,51 +15,42 @@ jobs:
       release_created: ${{ steps.release.outputs.release_created }}
       tag_name: ${{ steps.release.outputs.tag_name }}
     steps:
-      - id: release
-        uses: https://git.catlow.cloud/sam/release-please-action@v5.1.3
+      - uses: googleapis/release-please-action@v4
+        id: release
         with:
-          gitea-host: git.catlow.cloud
           config-file: release-please-config.json
           manifest-file: .release-please-manifest.json
-          token: ${{ secrets.RELEASE_TOKEN }}
-          repo-url: sam/tau
-          github-api-url: https://git.catlow.cloud/api/v1
-          changelog-host: https://git.catlow.cloud
 
   goreleaser:
     needs: release-please
     if: ${{ needs.release-please.outputs.release_created }}
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
         with:
-          ref: ${{ needs.release-please.outputs.tag_name }}
           fetch-depth: 0
 
-      - name: Setup Go
-        uses: actions/setup-go@v5
+      - uses: actions/setup-go@v5
         with:
           go-version-file: go.mod
 
-      - name: Setup pnpm
-        uses: pnpm/action-setup@v6
+      - uses: pnpm/action-setup@v6
         with:
           version: latest
 
-      - name: Setup Node
-        uses: actions/setup-node@v4
+      - uses: actions/setup-node@v4
         with:
           node-version: latest
           cache: pnpm
           cache-dependency-path: internal/webui/pnpm-lock.yaml
 
-      - name: Run GoReleaser
-        uses: goreleaser/goreleaser-action@v7
+      - name: Run tests
+        run: go test ./...
+
+      - uses: goreleaser/goreleaser-action@v6
         with:
           distribution: goreleaser
           version: "~> v2"
           args: release --clean
         env:
-          GITEA_TOKEN: ${{ secrets.RELEASE_TOKEN }}
-          GITHUB_TOKEN: ${{ secrets.RELEASE_TOKEN }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

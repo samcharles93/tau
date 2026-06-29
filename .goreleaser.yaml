@@ -1,9 +1,5 @@
 version: 2
 
-# Ensure goreleaser uses GITEA_TOKEN, not GITHUB_TOKEN, when
-# publishing to a Gitea instance.
-force_token: gitea
-
 before:
   hooks:
     - sh -c "cd internal/webui && pnpm install --frozen-lockfile"
@@ -49,10 +45,6 @@ changelog:
 
 release:
   prerelease: auto
-  gitea:
-    owner: sam
+  github:
+    owner: samcharles93
     name: tau
-
-gitea_urls:
-  api: https://git.catlow.cloud/api/v1
-  download: https://git.catlow.cloud
