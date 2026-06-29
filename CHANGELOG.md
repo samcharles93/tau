@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.5.4](https://git.catlow.cloud/sam/tau/compare/v0.5.3...v0.5.4) (2026-06-29)
+
+
+### Bug Fixes
+
+* test automated release pipeline after v0.5.3 baseline ([884dfbf](https://git.catlow.cloud/sam/tau/commit/884dfbf27af3df74c7caa805b15cd15af8a9286d))
+
 ## [0.5.3](https://git.catlow.cloud/sam/tau/compare/v0.5.2...v0.5.3) (2026-06-29)
 
 
