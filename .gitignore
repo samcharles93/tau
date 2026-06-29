@@ -7,6 +7,7 @@ dist/
 
 # JavaScript tooling
 node_modules/
+.pnpm-store/
 *.tsbuildinfo
 
 # Project-local Tau config may contain provider secrets
