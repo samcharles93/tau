@@ -8,7 +8,7 @@
         :class="toneClass(notice.level)"
       >
         <component :is="icon(notice.level)" class="mt-0.5 size-3.5 shrink-0" />
-        <span class="flex-1 break-words">{{ notice.message }}</span>
+        <span class="flex-1 break-words max-h-32 overflow-y-auto">{{ notice.message }}</span>
         <button class="shrink-0 opacity-60 hover:opacity-100" @click="session.dismissNotice(notice.id)">
           <XIcon class="size-3.5" />
         </button>

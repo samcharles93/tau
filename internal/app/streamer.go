@@ -2,9 +2,11 @@ package app
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
+	"strings"
 
 	aisdkchat "github.com/samcharles93/ai-sdk/pkg/chat"
 	tauchat "github.com/samcharles93/tau/internal/chat"
@@ -142,10 +144,16 @@ func (s *Streamer) buildRequest(session tauchat.ChatSessionState, fallbackModelI
 		if len(m.ToolCalls) > 0 {
 			msg.ToolCalls = make([]aisdkchat.ToolCall, 0, len(m.ToolCalls))
 			for _, tc := range m.ToolCalls {
+				args := tc.Function.Arguments
+				// Defense in depth: sanitize malformed arguments from
+				// historical messages so they don't cause API 400 errors.
+				if args = strings.TrimSpace(args); args == "" || !json.Valid([]byte(args)) {
+					args = "{}"
+				}
 				msg.ToolCalls = append(msg.ToolCalls, aisdkchat.ToolCall{
 					ID:        tc.ID,
 					Name:      tc.Function.Name,
-					Arguments: tc.Function.Arguments,
+					Arguments: args,
 				})
 			}
 		}

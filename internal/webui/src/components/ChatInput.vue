@@ -230,7 +230,6 @@ function handleSlashCommand(text: string): boolean {
     case 'model': {
       const modelId = args.trim()
       if (!modelId) {
-        // No args: just return false to let user type more
         return false
       }
       const model = session.availableModels.find((m) => m.id === modelId)
@@ -244,6 +243,26 @@ function handleSlashCommand(text: string): boolean {
       }
       session.updateSettings(patch)
       session.apply({ type: 'ChatNotificationEvent', payload: { message: `model: ${model.id}${model.provider ? ` (${model.provider})` : ''}`, level: 'info' } })
+      return true
+    }
+
+    case 'system': {
+      const prompt = args.trim()
+      if (!prompt) {
+        session.apply({ type: 'ChatNotificationEvent', payload: { message: 'usage: /system <prompt>', level: 'error' } })
+        return true
+      }
+      const patch: ChatSessionPatch = { system_prompt: prompt }
+      session.updateSettings(patch)
+      session.apply({ type: 'ChatNotificationEvent', payload: { message: 'system prompt updated', level: 'info' } })
+      return true
+    }
+
+    case 'effort': {
+      const level = args.trim().toLowerCase() || 'off'
+      const patch: ChatSessionPatch = { reasoning_effort: level }
+      session.updateSettings(patch)
+      session.apply({ type: 'ChatNotificationEvent', payload: { message: `effort: ${level}`, level: 'info' } })
       return true
     }
 
@@ -328,7 +347,8 @@ function handleSlashCommand(text: string): boolean {
     case '?': {
       const lines = ['Commands:']
       for (const c of session.commands) {
-        lines.push(`  ${c.name} ${c.accepts_args ? '<args>' : ''} — ${c.description || ''}`)
+        const label = c.label || '/' + c.name
+        lines.push(`  ${label} ${c.accepts_args ? '<args>' : ''} — ${c.description || ''}`)
       }
       session.apply({ type: 'ChatNotificationEvent', payload: { message: lines.join('\n'), level: 'info' } })
       return true

@@ -86,6 +86,9 @@ func (r *Registry) Lookup(name string) (Command, bool) {
 func (r *Registry) Discover() {
 	r.mu.Lock()
 	r.commands = make(map[string]Command)
+	for _, cmd := range builtinCommands() {
+		r.commands[cmd.Name] = cmd
+	}
 	r.mergeCustomCommands()
 	r.mu.Unlock()
 

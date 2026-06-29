@@ -55,6 +55,7 @@ type Coordinator struct {
 	client            *eventbus.Client
 	chatPub           *eventbus.Publisher[chat.ChatEvent]
 	pluginPub         *eventbus.Publisher[chat.PluginLifecycleEvent]
+	metricsPub        *eventbus.Publisher[chat.MetricEvent]
 	tokenSource       TokenSource
 	streamer          Streamer
 	registry          *tools.Registry
@@ -137,6 +138,11 @@ type CoordinatorConfig struct {
 	// a model patch arrives to enrich the bare {id: "..."} with the full
 	// metadata so snapshots carry correct context_window and cost.
 	ModelLookup ModelLookup
+
+	// MetricsConfig controls observability export. Session tracking is
+	// always on; Dir enables file export when non-empty.
+	MetricsConfig tauconfig.MetricsConfig
+
 }
 
 // NewCoordinator creates and starts the agent coordinator.
@@ -163,6 +169,7 @@ func NewCoordinator(ctx context.Context, cfg CoordinatorConfig) (*Coordinator, e
 	client := cfg.Bus.Client("coordinator")
 	chatPub := eventbus.Publish[chat.ChatEvent](client)
 	pluginPub := eventbus.Publish[chat.PluginLifecycleEvent](client)
+	metricsPub := eventbus.Publish[chat.MetricEvent](client)
 
 	c := &Coordinator{
 		ctx:               ctx,
@@ -171,6 +178,7 @@ func NewCoordinator(ctx context.Context, cfg CoordinatorConfig) (*Coordinator, e
 		client:            client,
 		chatPub:           chatPub,
 		pluginPub:         pluginPub,
+		metricsPub:        metricsPub,
 		tokenSource:       cfg.TokenSource,
 		streamer:          cfg.Streamer,
 		registry:          cfg.Registry,
@@ -343,6 +351,18 @@ func (c *Coordinator) handleStart(cmd chat.StartChatSessionCommand) {
 		}},
 	})
 	c.emit(chat.ChatSessionSnapshotEvent{State: snapshot})
+	c.emitMetrics(chat.MetricEvent{
+		Category:  chat.MetricCategorySession,
+		Name:      "session.created",
+		Value:     1,
+		Unit:      "count",
+		Labels: map[string]string{
+			"provider": snapshot.Provider.Name,
+			"model":    snapshot.Model.ID,
+		},
+		SessionID: snapshot.SessionID,
+	})
+
 }
 
 func (c *Coordinator) handleSubmit(cmd chat.SubmitChatPromptCommand) {
@@ -747,6 +767,19 @@ func (c *Coordinator) handleClose(cmd chat.CloseChatSessionCommand) {
 	} else {
 		c.mu.Unlock()
 	}
+	c.emitMetrics(chat.MetricEvent{
+		Category:  chat.MetricCategorySession,
+		Name:      "session.closed",
+		Value:     float64(duration.Milliseconds()),
+		Unit:      "ms",
+		Labels: map[string]string{
+			"provider":      snapshot.ProviderName,
+			"model":         snapshot.Model.ID,
+			"message_count": fmt.Sprintf("%d", len(snapshot.Messages)),
+		},
+		SessionID: snapshot.SessionID,
+	})
+
 	c.persistSession(snapshot, duration)
 	// Clean up shutdown dedup entry now that the session is fully closed.
 	c.mu.Lock()
@@ -1045,8 +1078,24 @@ func (c *Coordinator) runTurn(ctx context.Context, state chat.ChatSessionState) 
 			return
 		}
 
-		// Tool calls detected. Commit the assistant's response (with tool_calls)
-		// and execute them in parallel.
+		// Tool calls detected. Validate arguments before committing —
+		// malformed JSON in tool call arguments poisons the session history
+		// and causes downstream API 400 errors on subsequent turns.
+		sanitized := sanitizeToolCallArguments(result.ToolCalls)
+		if sanitized > 0 {
+			c.emitMetrics(chat.MetricEvent{
+				Category: chat.MetricCategoryTool,
+				Name:     "tool.arguments.malformed",
+				Value:    float64(sanitized),
+				Unit:     "count",
+				Labels: map[string]string{
+					"total_tool_calls": fmt.Sprintf("%d", len(result.ToolCalls)),
+				},
+				SessionID: sessionID,
+			})
+		}
+
+		// Commit the assistant's response with sanitized tool calls.
 		c.commitAssistantMessage(sessionID, c.getPendingContent(sessionID), result.ReasoningContent, result.ToolCalls)
 
 		// Execute tool calls in parallel.
@@ -1299,6 +1348,27 @@ func mergeToolCallDelta(calls []chat.ChatToolCall, delta chat.ChatToolCallDelta)
 	return calls
 }
 
+// sanitizeToolCallArguments checks each tool call's arguments for valid JSON.
+// Malformed arguments are replaced with "{}" so they don't poison the session
+// history and cause downstream API 400 errors on subsequent turns. Returns the
+// number of arguments that were sanitized.
+func sanitizeToolCallArguments(calls []chat.ChatToolCall) int {
+	sanitized := 0
+	for i := range calls {
+		args := strings.TrimSpace(calls[i].Function.Arguments)
+		if args == "" {
+			calls[i].Function.Arguments = "{}"
+			sanitized++
+			continue
+		}
+		if !json.Valid([]byte(args)) {
+			calls[i].Function.Arguments = "{}"
+			sanitized++
+		}
+	}
+	return sanitized
+}
+
 func (c *Coordinator) emitReasoningDelta(sessionID, requestID, delta, snapshot string, at time.Time) {
 	c.emit(chat.ChatReasoningDeltaEvent{
 		SessionID:  sessionID,
@@ -1335,6 +1405,18 @@ func (c *Coordinator) emitToolCompleted(
 		CompletedAt:   completedAt,
 	}
 	c.emit(event)
+	c.emitMetrics(chat.MetricEvent{
+		Category: chat.MetricCategoryTool,
+		Name:     "tool." + tc.Function.Name + ".duration",
+		Value:    float64(event.Duration.Milliseconds()),
+		Unit:     "ms",
+		Labels: map[string]string{
+			"tool":   tc.Function.Name,
+			"status": status,
+		},
+		SessionID: sessionID,
+	})
+
 }
 
 func summarizeForUI(value string) string {
@@ -1349,6 +1431,28 @@ func summarizeForUIWithTruncation(value string) (string, bool) {
 		return value, false
 	}
 	return value[:toolSummaryMaxBytes] + "…", true
+}
+
+// computeCost calculates the USD cost of a completion from model pricing
+// and usage data. Returns 0 when pricing is not configured.
+func computeCost(costCfg tauconfig.CostConfig, usage chat.ChatUsage) float64 {
+	if costCfg.Input == 0 && costCfg.Output == 0 {
+		return 0
+	}
+	inputCost := float64(usage.PromptTokens) * costCfg.Input / chat.CostPerMillionTokens
+	outputCost := float64(usage.CompletionTokens) * costCfg.Output / chat.CostPerMillionTokens
+	return inputCost + outputCost
+}
+
+// emitMetrics publishes a MetricEvent on the bus. It is a no-op when no
+// subscribers are listening for MetricEvent, avoiding allocation on the
+// hot path (tool execution, LLM response).
+func (c *Coordinator) emitMetrics(e chat.MetricEvent) {
+	if c.metricsPub == nil || !c.metricsPub.ShouldPublish() {
+		return
+	}
+	e.Timestamp = time.Now().UTC()
+	c.metricsPub.Publish(e)
 }
 
 // Session state helpers — these operate under the coordinator mutex.
@@ -1442,6 +1546,33 @@ func (c *Coordinator) completeTurn(sessionID, requestID string, result chat.Comp
 	session.cancel = nil
 	snapshot := chat.CloneChatSessionState(session.state)
 	c.mu.Unlock()
+
+	// Emit LLM response metrics with token counts and cost.
+	cost := computeCost(snapshot.Model.Config.Cost, result.Usage)
+	c.emitMetrics(chat.MetricEvent{
+		Category: chat.MetricCategoryLLM,
+		Name:     "llm.response",
+		Value:    float64(result.Usage.TotalTokens),
+		Unit:     "tokens",
+		Labels: map[string]string{
+			"provider":          snapshot.Provider.Name,
+			"model":             snapshot.Model.ID,
+			"prompt_tokens":     fmt.Sprintf("%d", result.Usage.PromptTokens),
+			"completion_tokens": fmt.Sprintf("%d", result.Usage.CompletionTokens),
+			"finish_reason":     result.FinishReason,
+		},
+		SessionID: sessionID,
+	})
+	if cost > 0 {
+		c.emitMetrics(chat.MetricEvent{
+			Category:  chat.MetricCategoryLLM,
+			Name:      "llm.cost",
+			Value:     cost,
+			Unit:      "usd",
+			Labels:    map[string]string{"provider": snapshot.Provider.Name, "model": snapshot.Model.ID},
+			SessionID: sessionID,
+		})
+	}
 
 	c.emit(chat.ChatResponseCompletedEvent{
 		State:        snapshot,

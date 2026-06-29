@@ -17,11 +17,17 @@ func TestDiscover(t *testing.T) {
 	reg := New("/nonexistent", client)
 	reg.Discover()
 
-	// No custom commands exist under /nonexistent, but Discover should
-	// succeed without panicking and return an empty set.
+	// Built-in commands are always present regardless of custom command
+	// directories. Verify the built-in set is non-empty.
 	cmds := reg.All()
-	if len(cmds) != 0 {
-		t.Fatalf("expected 0 commands after Discover (no custom commands), got %d", len(cmds))
+	if len(cmds) == 0 {
+		t.Fatal("expected built-in commands after Discover, got 0")
+	}
+	// Spot-check a well-known built-in.
+	if cmd, ok := reg.Lookup("model"); !ok {
+		t.Error("expected built-in 'model' command")
+	} else if cmd.AcceptsArgs != true {
+		t.Errorf("model AcceptsArgs = %v, want true", cmd.AcceptsArgs)
 	}
 }
 
@@ -35,9 +41,13 @@ func TestLookup(t *testing.T) {
 	reg := New("/nonexistent", client)
 	reg.Discover()
 
-	// No builtins; lookup of a non-existent command returns false.
-	if _, ok := reg.Lookup("model"); ok {
-		t.Error("expected false for command not added via skills or custom dirs")
+	// Built-in commands are present after Discover.
+	if _, ok := reg.Lookup("model"); !ok {
+		t.Error("expected built-in 'model' command to be present")
+	}
+	// A truly non-existent command still returns false.
+	if _, ok := reg.Lookup("nonexistent-cmd"); ok {
+		t.Error("expected false for non-existent command")
 	}
 
 	// Merge a skill and verify it is found.
@@ -113,26 +123,32 @@ func TestSkillPrecedence(t *testing.T) {
 	reg := New("/nonexistent", client)
 	reg.Discover()
 
-	// Merge a skill.
+	// Merge a skill whose name collides with a built-in ("model").
+	// Built-ins take precedence, so the skill description must not
+	// overwrite the built-in.
 	reg.MergeSkills([]*skills.Skill{
 		{Name: "model", Description: "custom model thing", UserInvocable: true, Scope: skills.ScopeUser},
 	})
 
-	cmd, ok := reg.Lookup("user:model")
+	cmd, ok := reg.Lookup("model")
 	if !ok {
-		t.Fatal("user:model command should exist after MergeSkills")
+		t.Fatal("model command should exist after MergeSkills")
 	}
-	if cmd.Description != "custom model thing" {
-		t.Errorf("Description = %q, want 'custom model thing'", cmd.Description)
+	// Built-in takes precedence: description should be the original.
+	if cmd.Description != "switch model" {
+		t.Errorf("Description = %q, want 'switch model' (built-in wins)", cmd.Description)
 	}
 
-	// Merging again should keep the original (first registration wins).
+	// Merging a non-colliding skill should work normally.
 	reg.MergeSkills([]*skills.Skill{
-		{Name: "model", Description: "newer model thing", UserInvocable: true, Scope: skills.ScopeUser},
+		{Name: "pdf", Description: "PDF processing", UserInvocable: true, Scope: skills.ScopeUser},
 	})
-	cmd, _ = reg.Lookup("user:model")
-	if cmd.Description != "custom model thing" {
-		t.Errorf("Description = %q, want 'custom model thing' (first wins)", cmd.Description)
+	cmd, ok = reg.Lookup("user:pdf")
+	if !ok {
+		t.Fatal("expected user:pdf after MergeSkills")
+	}
+	if cmd.Description != "PDF processing" {
+		t.Errorf("Description = %q, want 'PDF processing'", cmd.Description)
 	}
 }
 

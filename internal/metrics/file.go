@@ -1,0 +1,61 @@
+// Package metrics provides subscribers for the chat.MetricEvent stream:
+// a file-based JSONL exporter and a per-session usage tracker.
+package metrics
+
+import (
+	"encoding/json"
+	"fmt"
+	"os"
+	"path/filepath"
+	"sync"
+
+	"github.com/samcharles93/tau/internal/chat"
+	"github.com/samcharles93/tau/internal/eventbus"
+)
+
+// FileSubscriber appends MetricEvents as JSONL to a file. It acquires a
+// per-event mutex to serialize writes, since the bus delivers events
+// sequentially on a single goroutine for the subscribing client.
+type FileSubscriber struct {
+	sub *eventbus.SubscriberFunc[chat.MetricEvent]
+	f   *os.File
+	mu  sync.Mutex
+}
+
+// NewFileSubscriber creates a subscriber that writes metrics to the given
+// directory as a single metrics.jsonl file. The directory is created if
+// it doesn't exist. Returns an error if the directory cannot be created
+// or the file cannot be opened for appending.
+func NewFileSubscriber(client *eventbus.Client, dir string) (*FileSubscriber, error) {
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return nil, fmt.Errorf("metrics dir: %w", err)
+	}
+
+	path := filepath.Join(dir, "metrics.jsonl")
+	f, err := os.OpenFile(path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
+	if err != nil {
+		return nil, fmt.Errorf("metrics file: %w", err)
+	}
+
+	fs := &FileSubscriber{f: f}
+	fs.sub = eventbus.SubscribeFunc(client, fs.handle)
+	return fs, nil
+}
+
+func (fs *FileSubscriber) handle(e chat.MetricEvent) {
+	fs.mu.Lock()
+	defer fs.mu.Unlock()
+
+	b, err := json.Marshal(e)
+	if err != nil {
+		return // skip malformed events
+	}
+	b = append(b, '\n')
+	fs.f.Write(b)
+}
+
+// Close closes the subscriber and the underlying file.
+func (fs *FileSubscriber) Close() error {
+	fs.sub.Close()
+	return fs.f.Close()
+}

@@ -465,6 +465,8 @@ type coordinatorConfig struct {
 	// DeferPluginLoad skips pluginMgr.Load() so the caller can defer it
 	// until after the TUI has subscribed to bus events.
 	DeferPluginLoad bool
+	// MetricsConfig controls observability export.
+	MetricsConfig tauconfig.MetricsConfig
 }
 
 // buildCoordinator creates a coordinator with the full plugin/tool setup.

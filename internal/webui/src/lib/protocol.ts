@@ -255,6 +255,11 @@ export interface SkillsChangedEvent {
   skills: SkillInfo[]
 }
 
+export interface CommandsChangedEvent {
+  commands: CommandRef[]
+  occurred_at: string
+}
+
 // ── Commands (client -> server) ─────────────────────────────────────────────
 
 export interface SubmitChatPromptCommand {

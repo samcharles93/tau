@@ -5,8 +5,25 @@ import (
 	"github.com/samcharles93/tau/internal/skills"
 )
 
-// builtinCommands returns the set of built-in TUI slash commands.
-// These were previously hard-coded in internal/tui/completions.go.
+// builtinCommands returns the set of built-in slash commands shared across
+// TUI and web UI. These are the single source of truth for command registration;
+// the TUI's inline_commands.go hardcodes the same set for dispatch but the
+// registry feed is what drives the web UI completion menu and /help output.
+func builtinCommands() []Command {
+	return []Command{
+		{Name: "model", Label: "/model", Description: "switch model", AcceptsArgs: true},
+		{Name: "system", Label: "/system", Description: "set the system prompt", AcceptsArgs: true},
+		{Name: "effort", Label: "/effort", Description: "set reasoning effort", AcceptsArgs: true},
+		{Name: "session", Label: "/session", Description: "manage saved sessions (list, info, export, delete, load)", AcceptsArgs: true},
+		{Name: "resume", Label: "/resume", Description: "resume a saved session", AcceptsArgs: true},
+		{Name: "refresh", Label: "/refresh", Description: "re-discover available models", AcceptsArgs: false},
+		{Name: "reload", Label: "/reload", Description: "reload extensions", AcceptsArgs: false},
+		{Name: "new", Label: "/new", Description: "start a fresh conversation", AcceptsArgs: false},
+		{Name: "clear", Label: "/clear", Description: "start a fresh conversation (alias for /new)", AcceptsArgs: false},
+		{Name: "reset", Label: "/reset", Description: "start a fresh conversation (alias for /new)", AcceptsArgs: false},
+		{Name: "help", Label: "/help", Description: "show available commands", AcceptsArgs: false},
+	}
+}
 
 // mergeCustomCommands loads custom commands from ~/.tau/commands/ and
 // <project>/.tau/commands/ and adds them to the registry.

@@ -10,6 +10,7 @@ import {
   type ChatSessionState,
   type ChatUsage,
   type CommandRef,
+  type CommandsChangedEvent,
   type ExtensionCommand,
   type ExtensionCommandsChangedEvent,
   type ExtensionsReloadedEvent,
@@ -333,6 +334,11 @@ export const useSessionStore = defineStore('session', () => {
       case 'SkillsChangedEvent': {
         const ev = msg.payload as SkillsChangedEvent
         skills.value = ev.skills ?? []
+        break
+      }
+      case 'CommandsChangedEvent': {
+        const ev = msg.payload as CommandsChangedEvent
+        commands.value = ev.commands ?? []
         break
       }
       case 'ExtensionCommandsChangedEvent': {

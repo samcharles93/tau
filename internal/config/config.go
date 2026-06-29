@@ -29,6 +29,20 @@ type Config struct {
 	DisabledSkills []string `yaml:"disabled_skills,omitempty"`
 	// SkillPaths lists additional directories to scan for skills.
 	SkillPaths []string `yaml:"skill_paths,omitempty"`
+	// Metrics configures observability export and tracking.
+	Metrics MetricsConfig `yaml:"metrics"`
+}
+
+// MetricsConfig controls observability export and session cost tracking.
+type MetricsConfig struct {
+	// Dir is the path where metrics JSONL files are written. Empty disables
+	// file export. Typically ~/.local/share/tau/metrics/.
+	Dir string `yaml:"dir"`
+	// Session enables always-on per-session cost and token aggregation.
+	// When true, session summaries include cost metadata.
+	Session bool `yaml:"session"`
+	// TUI enables the TUI cost status bar widget. Ignored in headless mode.
+	TUI bool `yaml:"tui"`
 }
 
 // RegistryConfig configures the plugin registry connection.
@@ -651,6 +665,21 @@ func firstNonNilAnyMap(values ...map[string]any) map[string]any {
 	return nil
 }
 
+// mergeMetricsConfigs merges local metrics config on top of global.
+func mergeMetricsConfigs(globalCfg, localCfg MetricsConfig) MetricsConfig {
+	merged := globalCfg
+	if strings.TrimSpace(localCfg.Dir) != "" {
+		merged.Dir = localCfg.Dir
+	}
+	if localCfg.Session {
+		merged.Session = true
+	}
+	if localCfg.TUI {
+		merged.TUI = true
+	}
+	return merged
+}
+
 // mergeStringSlices combines two slices, deduplicating entries. Local
 // entries are appended after global entries; duplicates are dropped so the
 // local config can add to the global list without repeating items.
@@ -700,6 +729,7 @@ func mergeConfigs(globalCfg, localCfg Config) Config {
 		merged.DefaultModel = localCfg.DefaultModel
 	}
 	merged.Debug = globalCfg.Debug || localCfg.Debug
+	merged.Metrics = mergeMetricsConfigs(merged.Metrics, localCfg.Metrics)
 
 	// Local registry config overrides global (URL and token).
 	if strings.TrimSpace(localCfg.Registry.URL) != "" {
