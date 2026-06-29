@@ -313,6 +313,15 @@ export interface ExportSessionCommand {
   format: string
 }
 
+export interface ResetChatSessionCommand {
+  session_id: string
+  requested_at: string
+}
+
+export interface ReloadExtensionsCommand {
+  requested_at: string
+}
+
 /** Build a command envelope for the wire. */
 export function command<T>(type: string, payload: T): Envelope<T> {
   return { type, payload }

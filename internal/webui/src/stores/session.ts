@@ -33,6 +33,8 @@ import {
   type SkillsChangedEvent,
   type SubmitChatPromptCommand,
   type UpdateChatSessionCommand,
+  type ResetChatSessionCommand,
+  type ReloadExtensionsCommand,
 } from '@/lib/protocol'
 
 export type ToolStatus = 'running' | 'ok' | 'error'
@@ -545,6 +547,20 @@ export const useSessionStore = defineStore('session', () => {
     return sendEnvelope(command('ExportSessionCommand', { session_id: id, format }))
   }
 
+  /** Reset the current session (clear conversation). */
+  function resetSession(): boolean {
+    if (!sendEnvelope) return false
+    const payload: ResetChatSessionCommand = { session_id: sessionId.value, requested_at: new Date().toISOString() }
+    return sendEnvelope(command('ResetChatSessionCommand', payload))
+  }
+
+  /** Reload extensions. */
+  function reloadExtensions(): boolean {
+    if (!sendEnvelope) return false
+    const payload: ReloadExtensionsCommand = { requested_at: new Date().toISOString() }
+    return sendEnvelope(command('ReloadExtensionsCommand', payload))
+  }
+
   return {
     sessionId,
     model,
@@ -575,5 +591,7 @@ export const useSessionStore = defineStore('session', () => {
     loadSession,
     deleteSession,
     exportSession,
+    resetSession,
+    reloadExtensions,
   }
 })

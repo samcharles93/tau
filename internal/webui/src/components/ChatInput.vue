@@ -78,6 +78,7 @@ import AttachmentChips from '@/components/input/AttachmentChips.vue'
 import { usePromptHistory } from '@/composables/usePromptHistory'
 import { useAttachments } from '@/composables/useAttachments'
 import { useSessionStore } from '@/stores/session'
+import type { ChatSessionPatch } from '@/lib/protocol'
 
 withDefaults(defineProps<{ placeholder?: string; streaming?: boolean }>(), {
   placeholder: 'How can I assist you today?',
@@ -219,11 +220,145 @@ async function onPaste(e: ClipboardEvent) {
   await Promise.all(files.map((f) => attachments.addFile(f)))
 }
 
+/** Parse and dispatch slash commands. Returns true if handled, false if should be sent as prompt. */
+function handleSlashCommand(text: string): boolean {
+  const parts = text.split(/\s+/)
+  const name = parts[0].toLowerCase().replace(/^\//, '')
+  const args = text.slice(parts[0].length).trim()
+
+  switch (name) {
+    case 'model': {
+      const modelId = args.trim()
+      if (!modelId) {
+        // No args: just return false to let user type more
+        return false
+      }
+      const model = session.availableModels.find((m) => m.id === modelId)
+      if (!model) {
+        session.apply({ type: 'ChatNotificationEvent', payload: { message: `model "${modelId}" not found`, level: 'error' } })
+        return true
+      }
+      const patch: ChatSessionPatch = { model: { id: model.id } }
+      if (model.provider) {
+        patch.provider = model.provider
+      }
+      session.updateSettings(patch)
+      session.apply({ type: 'ChatNotificationEvent', payload: { message: `model: ${model.id}${model.provider ? ` (${model.provider})` : ''}`, level: 'info' } })
+      return true
+    }
+
+    case 'new':
+    case 'clear':
+    case 'reset': {
+      session.resetSession()
+      session.apply({ type: 'ChatNotificationEvent', payload: { message: 'conversation cleared', level: 'info' } })
+      return true
+    }
+
+    case 'resume': {
+      const id = args.trim()
+      if (!id) return false
+      session.loadSession(id)
+      return true
+    }
+
+    case 'session': {
+      const subParts = args.split(/\s+/)
+      const subCmd = subParts[0]?.toLowerCase()
+      const subArgs = subParts.slice(1).join(' ')
+
+      if (!subCmd || subCmd === 'list') {
+        session.listSessions(10)
+        return true
+      }
+
+      if (subCmd === 'info') {
+        // Show info from the sessions list
+        const id = subArgs.trim()
+        const found = session.sessions.find((s) => s.id === id)
+        if (found) {
+          session.apply({ type: 'ChatNotificationEvent', payload: { message: `${found.id} — ${found.message_count} messages, ${found.total_tokens} tokens`, level: 'info' } })
+        } else {
+          session.apply({ type: 'ChatNotificationEvent', payload: { message: 'session not found', level: 'error' } })
+        }
+        return true
+      }
+
+      if (subCmd === 'export') {
+        const id = subArgs.split(/\s+/)[0]
+        if (!id) {
+          session.apply({ type: 'ChatNotificationEvent', payload: { message: 'usage: /session export <id>', level: 'error' } })
+          return true
+        }
+        session.exportSession(id, 'jsonl')
+        return true
+      }
+
+      if (subCmd === 'delete') {
+        const id = subArgs.split(/\s+/)[0]
+        if (!id) {
+          session.apply({ type: 'ChatNotificationEvent', payload: { message: 'usage: /session delete <id>', level: 'error' } })
+          return true
+        }
+        session.deleteSession(id)
+        return true
+      }
+
+      // No subcommand: treat as session ID to load
+      if (subCmd) {
+        session.loadSession(subCmd)
+        return true
+      }
+      return false
+    }
+
+    case 'reload': {
+      session.reloadExtensions()
+      session.apply({ type: 'ChatNotificationEvent', payload: { message: 'reloading extensions...', level: 'info' } })
+      return true
+    }
+
+    case 'refresh': {
+      // Model refresh is handled by the backend when we request models
+      session.apply({ type: 'ChatNotificationEvent', payload: { message: 'model refresh not available in web UI', level: 'warn' } })
+      return true
+    }
+
+    case 'help':
+    case '?': {
+      const lines = ['Commands:']
+      for (const c of session.commands) {
+        lines.push(`  ${c.name} ${c.accepts_args ? '<args>' : ''} — ${c.description || ''}`)
+      }
+      session.apply({ type: 'ChatNotificationEvent', payload: { message: lines.join('\n'), level: 'info' } })
+      return true
+    }
+
+    default:
+      // Unknown command: let it through as a prompt (backend will handle or error)
+      return false
+  }
+}
+
 function submit() {
   const text = draft.value.trim()
   const suffix = attachments.buildPromptSuffix()
   const full = `${text}${suffix}`.trim()
   if (!full) return
+  
+  // Check for slash commands first
+  if (text.startsWith('/')) {
+    if (handleSlashCommand(text)) {
+      // Command was handled, clear input and return
+      draft.value = ''
+      attachments.clear()
+      menuDismissed.value = false
+      nextTick(autogrow)
+      return
+    }
+    // If not handled, fall through to send as prompt
+  }
+  
   history.push(text || full)
   history.saveDraft('')
   emit('submit', full)
