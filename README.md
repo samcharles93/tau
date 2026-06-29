@@ -1,5 +1,7 @@
 # Tau
 
+[![Release](https://git.catlow.cloud/sam/tau/actions/workflows/release.yml/badge.svg)](https://git.catlow.cloud/sam/tau/actions/workflows/release.yml)
+
 Provider-agnostic, OpenAI-compatible chat client with an interactive terminal
 UI, a built-in Web UI, agentic tool-calling, and session persistence.
 
