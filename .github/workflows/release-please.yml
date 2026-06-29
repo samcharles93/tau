@@ -14,6 +14,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - id: release
+        env:
+          GITHUB_API_URL: https://git.catlow.cloud/api/v1
         uses: https://git.catlow.cloud/sam/release-please-action@v5
         with:
           gitea-host: git.catlow.cloud
