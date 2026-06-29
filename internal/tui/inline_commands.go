@@ -134,8 +134,8 @@ func (c *inlineChat) handleSlashCommand(text string) {
 
 	// /skill:<name> — user-invoked skill activation. The coordinator activates
 	// the skill, injects its instructions, and emits the lilac "loaded" box.
-	if strings.HasPrefix(name, "skill:") {
-		skillName := strings.TrimSpace(strings.TrimPrefix(name, "skill:"))
+	if after, ok0 := strings.CutPrefix(name, "skill:"); ok0 {
+		skillName := strings.TrimSpace(after)
 		if skillName == "" {
 			c.engine.PrintAbove("%s %s", c.grey("✗"), "missing skill name")
 			return
