@@ -16,9 +16,6 @@ jobs:
   release-please:
     runs-on: ubuntu-latest
     steps:
-      # Checkout sets up Basic git auth (AUTHORIZATION: basic)
-      # with the PAT. We replicate that globally so release-please's
-      # internal git clone (in /tmp) inherits it.
       - uses: actions/checkout@v4
         with:
           token: ${{ secrets.RELEASE_TOKEN }}
@@ -26,16 +23,10 @@ jobs:
         run: |
           git config --global url."https://sam:${{ secrets.RELEASE_TOKEN }}@git.catlow.cloud/".insteadOf "https://git.catlow.cloud/"
       - id: release
-        # Gitea-native fork of release-please-action: same inputs/outputs
-        # as googleapis/release-please-action, but uses the Gitea API
-        # backend instead of api.github.com. Full URL form so Gitea's
-        # act_runner fetches the action from github.com unambiguously.
         uses: https://github.com/joaquinjsb/gitea-release-please-action@v4
         with:
-          # Manifest strategy: per-package config (release-type,
-          # package-name, version-file, tag shape) lives in
-          # release-please-config.json; the current version per path
-          # lives in .release-please-manifest.json.
           config-file: release-please-config.json
           manifest-file: .release-please-manifest.json
           token: ${{ secrets.RELEASE_TOKEN }}
+          repo-url: sam/tau
+          github-api-url: https://git.catlow.cloud/api/v1
