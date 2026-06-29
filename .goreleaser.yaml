@@ -1,5 +1,9 @@
 version: 2
 
+# Ensure goreleaser uses GITEA_TOKEN, not GITHUB_TOKEN, when
+# publishing to a Gitea instance.
+force_token: gitea
+
 before:
   hooks:
     - sh -c "cd internal/webui && pnpm install --frozen-lockfile"
