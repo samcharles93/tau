@@ -690,8 +690,9 @@ func (c *Coordinator) injectSteering(sessionID string) {
 
 	for _, prompt := range steers {
 		session.state.Messages = append(session.state.Messages, chat.ChatMessage{
-			Role:    chat.ChatRoleUser,
-			Content: prompt,
+			Role:      chat.ChatRoleUser,
+			Content:   prompt,
+			CreatedAt: normalizedTime(time.Time{}),
 		})
 	}
 	snapshot := chat.CloneChatSessionState(session.state)

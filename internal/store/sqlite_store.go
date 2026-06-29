@@ -127,9 +127,12 @@ func (s *SQLiteStore) Save(ctx context.Context, state chat.ChatSessionState, dur
 
 	for i, msg := range state.Messages {
 		tcJSON := encodeToolCalls(msg.ToolCalls)
-		createdAt := formatTime(state.CreatedAt.Add(time.Duration(i) * time.Second))
-		// TODO(message-timestamps): ChatMessage needs a CreatedAt field for
-		// accurate per-message times. Currently synthesizing from session start.
+		msgTime := msg.CreatedAt
+		if msgTime.IsZero() {
+			// Fall back to synthesising from the session start for messages
+			// persisted before per-message timestamps were tracked.
+			msgTime = state.CreatedAt.Add(time.Duration(i) * time.Second)
+		}
 
 		if _, err := ins.ExecContext(ctx,
 			state.SessionID, i,
@@ -138,7 +141,7 @@ func (s *SQLiteStore) Save(ctx context.Context, state chat.ChatSessionState, dur
 			msg.ReasoningContent,
 			tcJSON,
 			msg.ToolCallID,
-			createdAt,
+			formatTime(msgTime),
 		); err != nil {
 			return fmt.Errorf("store: insert message %d: %w", i, err)
 		}
@@ -174,7 +177,7 @@ func (s *SQLiteStore) Load(ctx context.Context, id string) (chat.ChatSessionStat
 	updatedAt, _ := time.Parse(time.RFC3339, row.updatedStr)
 
 	msgRows, err := s.db.QueryContext(ctx, `
-		SELECT seq, role, content, reasoning_content, tool_calls, tool_call_id
+		SELECT seq, role, content, reasoning_content, tool_calls, tool_call_id, created_at
 		FROM messages WHERE session_id = ? ORDER BY seq
 	`, id)
 	if err != nil {
@@ -185,19 +188,21 @@ func (s *SQLiteStore) Load(ctx context.Context, id string) (chat.ChatSessionStat
 	var messages []chat.ChatMessage
 	for msgRows.Next() {
 		var (
-			seq                       int
-			role, content, reasoning  string
-			toolCallsJSON, toolCallID string
+			seq                                  int
+			role, content, reasoning             string
+			toolCallsJSON, toolCallID, createdAt string
 		)
-		if err := msgRows.Scan(&seq, &role, &content, &reasoning, &toolCallsJSON, &toolCallID); err != nil {
+		if err := msgRows.Scan(&seq, &role, &content, &reasoning, &toolCallsJSON, &toolCallID, &createdAt); err != nil {
 			return chat.ChatSessionState{}, fmt.Errorf("store: scan message: %w", err)
 		}
+		msgCreatedAt, _ := time.Parse(time.RFC3339, createdAt)
 		msg := chat.ChatMessage{
 			Role:             chat.ChatRole(role),
 			Content:          content,
 			ReasoningContent: reasoning,
 			ToolCalls:        decodeToolCalls(toolCallsJSON),
 			ToolCallID:       toolCallID,
+			CreatedAt:        msgCreatedAt,
 		}
 		messages = append(messages, msg)
 	}

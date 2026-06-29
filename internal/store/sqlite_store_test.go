@@ -53,6 +53,56 @@ func TestSQLiteStore_SaveAndLoad(t *testing.T) {
 	assert.Equal(t, "User said hello, I should greet them.", loaded.Messages[2].ReasoningContent)
 }
 
+func TestSQLiteStore_MessageTimestampsRoundTrip(t *testing.T) {
+	s := newTestStore(t)
+	ctx := context.Background()
+
+	// RFC3339 persistence is second-resolution, so use whole seconds.
+	t0 := time.Date(2026, 6, 29, 10, 0, 0, 0, time.UTC)
+	state := chatSessionFixture("ts-session", "claude-sonnet", "anthropic")
+	state.Messages = []chat.ChatMessage{
+		{Role: chat.ChatRoleUser, Content: "Hello", CreatedAt: t0},
+		{Role: chat.ChatRoleAssistant, Content: "Hi!", CreatedAt: t0.Add(7 * time.Second)},
+	}
+
+	require.NoError(t, s.Save(ctx, state, 5*time.Second))
+
+	loaded, err := s.Load(ctx, "ts-session")
+	require.NoError(t, err)
+	require.Equal(t, 2, len(loaded.Messages))
+
+	// Explicit per-message timestamps survive the round-trip exactly,
+	// rather than being synthesised from the session start.
+	assert.True(t, loaded.Messages[0].CreatedAt.Equal(t0),
+		"user CreatedAt = %s, want %s", loaded.Messages[0].CreatedAt, t0)
+	assert.True(t, loaded.Messages[1].CreatedAt.Equal(t0.Add(7*time.Second)),
+		"assistant CreatedAt = %s, want %s", loaded.Messages[1].CreatedAt, t0.Add(7*time.Second))
+}
+
+func TestSQLiteStore_MessageTimestampFallback(t *testing.T) {
+	s := newTestStore(t)
+	ctx := context.Background()
+
+	// Messages without a CreatedAt (e.g. persisted before per-message
+	// timestamps were tracked) fall back to a synthesised, ascending time
+	// derived from the session start.
+	state := chatSessionFixture("legacy-session", "gpt-4", "openai")
+	state.Messages = []chat.ChatMessage{
+		{Role: chat.ChatRoleUser, Content: "first"},
+		{Role: chat.ChatRoleAssistant, Content: "second"},
+	}
+
+	require.NoError(t, s.Save(ctx, state, 0))
+
+	loaded, err := s.Load(ctx, "legacy-session")
+	require.NoError(t, err)
+	require.Equal(t, 2, len(loaded.Messages))
+
+	assert.False(t, loaded.Messages[0].CreatedAt.IsZero(), "fallback timestamp should be set")
+	assert.True(t, loaded.Messages[1].CreatedAt.After(loaded.Messages[0].CreatedAt),
+		"synthesised timestamps should be strictly ascending")
+}
+
 func TestSQLiteStore_SaveWithToolCalls(t *testing.T) {
 	s := newTestStore(t)
 	ctx := context.Background()

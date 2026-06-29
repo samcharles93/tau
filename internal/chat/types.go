@@ -57,6 +57,11 @@ type ChatMessage struct {
 	ReasoningContent string         `json:"reasoning_content,omitempty"`
 	ToolCalls        []ChatToolCall `json:"tool_calls,omitempty"`
 	ToolCallID       string         `json:"tool_call_id,omitempty"`
+	// CreatedAt records when the message was appended to the conversation.
+	// It is zero for the transient system message synthesised in
+	// RequestMessages and for messages persisted before per-message
+	// timestamps were tracked (the store falls back to a synthesised time).
+	CreatedAt time.Time `json:"created_at,omitzero"`
 }
 
 func (m ChatMessage) Validate() error {
@@ -833,7 +838,7 @@ func (s *ChatSessionState) BeginTurn(requestID, prompt string, at time.Time) err
 	if prompt == "" {
 		return errors.New("prompt is required")
 	}
-	s.Messages = append(s.Messages, ChatMessage{Role: ChatRoleUser, Content: prompt})
+	s.Messages = append(s.Messages, ChatMessage{Role: ChatRoleUser, Content: prompt, CreatedAt: normalizeChatTime(at)})
 	s.Status = ChatSessionStreaming
 	s.ActiveRequestID = requestID
 	s.PendingAssistant = ""
@@ -876,6 +881,7 @@ func (s *ChatSessionState) AppendAssistantToolCallMessageWithReasoning(content, 
 		Content:          content,
 		ReasoningContent: reasoningContent,
 		ToolCalls:        calls,
+		CreatedAt:        normalizeChatTime(at),
 	})
 	s.PendingAssistant = ""
 	s.UpdatedAt = normalizeChatTime(at)
@@ -894,6 +900,7 @@ func (s *ChatSessionState) AppendToolResultMessage(callID, content string, at ti
 		Role:       ChatRoleTool,
 		Content:    content,
 		ToolCallID: callID,
+		CreatedAt:  normalizeChatTime(at),
 	})
 	s.UpdatedAt = normalizeChatTime(at)
 	return nil
@@ -935,6 +942,7 @@ func (s *ChatSessionState) CompleteTurnWithReasoning(finishReason string, usage 
 			Role:             ChatRoleAssistant,
 			Content:          s.PendingAssistant,
 			ReasoningContent: reasoningContent,
+			CreatedAt:        normalizeChatTime(at),
 		})
 	}
 	s.Status = ChatSessionIdle
