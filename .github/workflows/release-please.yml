@@ -18,14 +18,11 @@ jobs:
     steps:
       - uses: googleapis/release-please-action@v4
         with:
-          # Go release type: version is sourced from git tags (v-prefixed);
-          # there is no go.mod version field to bump.
-          release-type: go
-          package-name: tau
-          # Tags are `v0.5.2`, not `tau-v0.5.2`.
-          include-component-in-tag: false
-          # Bump the VERSION file alongside CHANGELOG.md on each release
-          # so the canonical version is visible in the tree.
-          extra-files: |
-            VERSION
+          # Manifest strategy: per-package config (release-type,
+          # package-name, extra-files, tag shape) lives in
+          # release-please-config.json; the current version per path
+          # lives in .release-please-manifest.json. v4 of the action
+          # does not accept package-name/extra-files as direct inputs.
+          config-file: release-please-config.json
+          manifest-file: .release-please-manifest.json
           token: ${{ secrets.GITHUB_TOKEN }}
