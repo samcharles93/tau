@@ -5,9 +5,6 @@ on:
     branches:
       - master
 
-# release-please opens the release PR, bumps VERSION + CHANGELOG, and on
-# merge creates the tag + Gitea release. goreleaser then fires on the
-# tag push (see release.yml) and attaches binaries to that release.
 permissions:
   contents: write
   pull-requests: write
@@ -16,16 +13,8 @@ jobs:
   release-please:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-        with:
-          token: ${{ secrets.RELEASE_TOKEN }}
-      - name: Configure git auth for Gitea
-        run: |
-          git config --global credential.helper 'store --file ~/.git-credentials'
-          echo "https://sam:${{ secrets.RELEASE_TOKEN }}@git.catlow.cloud" > ~/.git-credentials
-          git config --global credential.https://git.catlow.cloud.username sam
       - id: release
-        uses: https://github.com/joaquinjsb/gitea-release-please-action@v4
+        uses: https://github.com/<fork-owner>/gitea-release-please-action@v5
         with:
           config-file: release-please-config.json
           manifest-file: .release-please-manifest.json
