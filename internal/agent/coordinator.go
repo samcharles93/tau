@@ -728,6 +728,7 @@ func (c *Coordinator) handleClose(cmd chat.CloseChatSessionCommand) {
 	}
 	snapshot := chat.CloneChatSessionState(session.state)
 	duration := now.Sub(snapshot.CreatedAt)
+	delete(c.sessions, cmd.SessionID)
 	c.mu.Unlock()
 
 	sessionID := snapshot.SessionID
@@ -746,6 +747,10 @@ func (c *Coordinator) handleClose(cmd chat.CloseChatSessionCommand) {
 		c.mu.Unlock()
 	}
 	c.persistSession(snapshot, duration)
+	// Clean up shutdown dedup entry now that the session is fully closed.
+	c.mu.Lock()
+	delete(c.shutdown, sessionID)
+	c.mu.Unlock()
 	c.emit(chat.ChatSessionSnapshotEvent{State: snapshot})
 }
 
@@ -1494,11 +1499,13 @@ func (c *Coordinator) failTurn(sessionID, requestID string, err error, at time.T
 func (c *Coordinator) cancelAllSessions() {
 	c.mu.Lock()
 	sessions := make([]*coordinatorSession, 0, len(c.sessions))
-	for _, session := range c.sessions {
+	sessionIDs := make([]string, 0, len(c.sessions))
+	for id, session := range c.sessions {
 		if session.cancel != nil {
 			session.cancel()
 		}
 		sessions = append(sessions, session)
+		sessionIDs = append(sessionIDs, id)
 	}
 	c.mu.Unlock()
 
@@ -1523,6 +1530,14 @@ func (c *Coordinator) cancelAllSessions() {
 		})
 		c.persistSession(state, time.Since(state.CreatedAt))
 	}
+
+	// Release session and shutdown map entries after all sessions are persisted.
+	c.mu.Lock()
+	for _, id := range sessionIDs {
+		delete(c.sessions, id)
+	}
+	c.shutdown = make(map[string]struct{})
+	c.mu.Unlock()
 }
 
 // marshalMessages serializes messages for plugin event payloads.
@@ -1706,6 +1721,17 @@ func (c *Coordinator) handleDeleteSession(cmd chat.DeleteSessionCommand) {
 		})
 		return
 	}
+
+	// Remove from in-memory session map to free associated state.
+	c.mu.Lock()
+	if s, exists := c.sessions[cmd.SessionID]; exists {
+		if s.cancel != nil {
+			s.cancel()
+		}
+		delete(c.sessions, cmd.SessionID)
+	}
+	delete(c.shutdown, cmd.SessionID)
+	c.mu.Unlock()
 
 	c.emit(chat.SessionDeletedEvent(cmd))
 }

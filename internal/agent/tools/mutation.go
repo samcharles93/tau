@@ -9,13 +9,19 @@ import (
 // parallel tool execution.
 type MutationQueue struct {
 	mu    sync.Mutex
-	locks map[string]*sync.Mutex
+	locks map[string]*mutexEntry
+}
+
+// mutexEntry tracks a per-file mutex and its active holder count.
+type mutexEntry struct {
+	mu      sync.Mutex
+	holders int
 }
 
 // NewMutationQueue creates a new per-file mutation queue.
 func NewMutationQueue() *MutationQueue {
 	return &MutationQueue{
-		locks: make(map[string]*sync.Mutex),
+		locks: make(map[string]*mutexEntry),
 	}
 }
 
@@ -29,13 +35,23 @@ func NewMutationQueue() *MutationQueue {
 //	// ... perform read-modify-write ...
 func (q *MutationQueue) Acquire(path string) (release func()) {
 	q.mu.Lock()
-	fileLock, ok := q.locks[path]
+	entry, ok := q.locks[path]
 	if !ok {
-		fileLock = &sync.Mutex{}
-		q.locks[path] = fileLock
+		entry = &mutexEntry{}
+		q.locks[path] = entry
 	}
+	entry.holders++
 	q.mu.Unlock()
 
-	fileLock.Lock()
-	return fileLock.Unlock
+	entry.mu.Lock()
+	return func() {
+		entry.mu.Unlock()
+
+		q.mu.Lock()
+		entry.holders--
+		if entry.holders == 0 {
+			delete(q.locks, path)
+		}
+		q.mu.Unlock()
+	}
 }

@@ -488,7 +488,8 @@ func buildCoordinator(ctx context.Context, cfg coordinatorConfig) (*agent.Coordi
 
 	// Notifications pushed by plugins via HostService.Notify surface as chat
 	// notifications in every connected client (TUI + web).
-	notifyPub := eventbus.Publish[tauchat.ChatEvent](cfg.Bus.Client("plugin-host"))
+	pluginHostClient := cfg.Bus.Client("plugin-host")
+	notifyPub := eventbus.Publish[tauchat.ChatEvent](pluginHostClient)
 	pluginNotify := func(level, message string) {
 		lvl := tauchat.ChatNotificationInfo
 		switch level {
@@ -648,6 +649,8 @@ func buildCoordinator(ctx context.Context, cfg coordinatorConfig) (*agent.Coordi
 		},
 		OnClose: func() {
 			pluginMgr.Unload()
+			pluginBusClient.Close()
+			pluginHostClient.Close()
 		},
 		ModelLookup: func(modelID string) *tauchat.ChatModelRef {
 			for i, ref := range cfg.ModelRefs {

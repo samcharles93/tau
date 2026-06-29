@@ -86,6 +86,11 @@ func (q *Queue) IsEmpty() bool {
 func (q *Queue) prune() {
 	now := time.Now()
 	for len(q.items) > 0 && now.After(q.items[0].expiresAt) {
+		q.items[0] = entry{} // zero out to allow GC of notification data
 		q.items = q.items[1:]
+	}
+	// Reclaim backing array when fully drained to prevent unbounded growth.
+	if len(q.items) == 0 {
+		q.items = nil
 	}
 }
