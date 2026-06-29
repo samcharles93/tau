@@ -9,14 +9,14 @@ import (
 	"github.com/samcharles93/tau/internal/skills"
 )
 
-// RegisterSkillTool registers the "Skill" tool into the registry, enabling the
+// RegisterSkillTool registers the "skill" tool into the registry, enabling the
 // LLM to look up and activate a named skill from the catalog. When a skill with
 // non-empty AllowedTools is activated, the setAllowedTools callback is invoked
 // so the coordinator can restrict the available tool set in subsequent turns.
 func RegisterSkillTool(reg *Registry, skillsMgr *skills.Manager, tracker *skills.Tracker, setAllowedTools func([]string)) {
 	tool := Tool{
 		Schema: Schema{
-			Name:        "Skill",
+			Name:        "skill",
 			Description: "Activate a skill to get specialised instructions for a task. Call this when a task matches an available skill's description.",
 			Parameters:  json.RawMessage(`{"type": "object", "properties": {"name": {"type": "string", "description": "The skill name to activate"}}, "required": ["name"]}`),
 		},

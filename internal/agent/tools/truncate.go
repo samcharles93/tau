@@ -3,6 +3,7 @@ package tools
 import (
 	"fmt"
 	"strings"
+	"time"
 )
 
 const (
@@ -11,6 +12,10 @@ const (
 
 	// DefaultMaxLines is the maximum line count for tool output sent to the LLM.
 	DefaultMaxLines = 2000
+
+	// DefaultToolTimeout is the per-tool execution deadline. Tools that exceed
+	// this are cancelled. The shell tool uses its own configurable timeout.
+	DefaultToolTimeout = 60 * time.Second
 )
 
 // TruncationResult holds the potentially truncated content and metadata.

@@ -11,18 +11,18 @@ import (
 	"github.com/samcharles93/tau/docs"
 )
 
-// SearchDocsParams are parameters for search_tau_docs.
+// SearchDocsParams are parameters for search_docs.
 type SearchDocsParams struct {
 	Query string `json:"query"`
 }
 
-// ReadDocParams are parameters for read_tau_doc.
+// ReadDocParams are parameters for read_doc.
 type ReadDocParams struct {
 	Path string `json:"path"`
 }
 
 var searchDocsSchema = Schema{
-	Name:        "search_tau_docs",
+	Name:        "search_docs",
 	Description: "Search Tau's internal documentation (user manuals, developer guides, architectural decisions) for a keyword or phrase.",
 	Parameters: json.RawMessage(`{
 		"type": "object",
@@ -37,7 +37,7 @@ var searchDocsSchema = Schema{
 }
 
 var readDocSchema = Schema{
-	Name:        "read_tau_doc",
+	Name:        "read_doc",
 	Description: "Read the full contents of a specific Tau documentation file.",
 	Parameters: json.RawMessage(`{
 		"type": "object",
@@ -61,6 +61,9 @@ func NewSearchDocsTool() Tool {
 			if err := json.Unmarshal(params, &p); err != nil {
 				return Result{Content: fmt.Sprintf("invalid parameters: %v", err), IsError: true}, nil
 			}
+			ctx, cancel := context.WithTimeout(ctx, DefaultToolTimeout)
+			defer cancel()
+
 			query := strings.ToLower(strings.TrimSpace(p.Query))
 			if query == "" {
 				return Result{Content: "query cannot be empty", IsError: true}, nil
@@ -94,12 +97,8 @@ func NewSearchDocsTool() Tool {
 				return Result{Content: fmt.Sprintf("No matches found for query: %q", p.Query)}, nil
 			}
 
-			// Limit output size to prevent context blowing
-			if len(matches) > 100 {
-				matches = append(matches[:100], fmt.Sprintf("... and %d more matches", len(matches)-100))
-			}
-
-			return Result{Content: strings.Join(matches, "\n")}, nil
+			tr := TruncateHead(strings.Join(matches, "\n"), DefaultMaxLines, DefaultMaxBytes)
+			return Result{Content: tr.Content}, nil
 		},
 	}
 }
@@ -114,6 +113,9 @@ func NewReadDocTool() Tool {
 			if err := json.Unmarshal(params, &p); err != nil {
 				return Result{Content: fmt.Sprintf("invalid parameters: %v", err), IsError: true}, nil
 			}
+
+			ctx, cancel := context.WithTimeout(ctx, DefaultToolTimeout)
+			defer cancel()
 
 			cleanPath := filepath.Clean(p.Path)
 			// Prevent escaping the documentation filesystem

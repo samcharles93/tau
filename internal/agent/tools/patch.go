@@ -48,15 +48,15 @@ var patchSchema = Schema{
 }
 
 // NewPatchTool creates the built-in patch tool.
-func NewPatchTool(cwd string, mq *MutationQueue) Tool {
+func NewPatchTool(cwd string, mq *MutationQueue, rt *ReadTracker) Tool {
 	return Tool{
 		Schema:  patchSchema,
 		Source:  "builtin",
-		Execute: makePatchExecutor(cwd, mq),
+		Execute: makePatchExecutor(cwd, mq, rt),
 	}
 }
 
-func makePatchExecutor(cwd string, mq *MutationQueue) Executor {
+func makePatchExecutor(cwd string, mq *MutationQueue, rt *ReadTracker) Executor {
 	return func(ctx context.Context, params json.RawMessage, _ UIBridge) (Result, error) {
 		var p PatchParams
 		if err := json.Unmarshal(params, &p); err != nil {
@@ -64,6 +64,9 @@ func makePatchExecutor(cwd string, mq *MutationQueue) Executor {
 		}
 
 		p.Path = strings.TrimSpace(p.Path)
+		ctx, cancel := context.WithTimeout(ctx, DefaultToolTimeout)
+		defer cancel()
+
 		p.UnifiedDiff = normaliseDiff(strings.TrimSpace(p.UnifiedDiff))
 
 		if p.Path == "" {
@@ -81,6 +84,12 @@ func makePatchExecutor(cwd string, mq *MutationQueue) Executor {
 			return Result{Content: err.Error(), IsError: true}, nil
 		}
 
+		// Enforce read-before-write check (after confinement, before mutation).
+		if rt != nil {
+			if err := rt.CheckRead(cwd, p.Path); err != nil {
+				return Result{Content: err.Error(), IsError: true}, nil
+			}
+		}
 		release := mq.Acquire(path)
 		defer release()
 
@@ -89,6 +98,11 @@ func makePatchExecutor(cwd string, mq *MutationQueue) Executor {
 			return Result{Content: fmt.Sprintf("error reading file: %v", err), IsError: true}, nil
 		}
 
+		// Detect CRLF line endings before normalisation so we can
+		// restore them after patching. The incoming diff is already
+		// LF-normalised; we normalise the original for matching but
+		// preserve the original line-ending style on write.
+		hadCRLF := strings.Contains(string(data), "\r\n")
 		original := normaliseDiff(string(data))
 		patched, stats, err := applyUnifiedDiff(original, p.UnifiedDiff)
 		if err != nil {
@@ -97,6 +111,10 @@ func makePatchExecutor(cwd string, mq *MutationQueue) Executor {
 
 		if patched == original {
 			return Result{Content: fmt.Sprintf("patch made no changes to %s", path)}, nil
+		}
+
+		if hadCRLF {
+			patched = strings.ReplaceAll(patched, "\n", "\r\n")
 		}
 
 		if err := writeFileAtomic(path, []byte(patched), 0o644); err != nil {

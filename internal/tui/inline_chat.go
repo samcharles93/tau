@@ -436,7 +436,7 @@ func toolBoxBg(p theme.ToolStatus) taui.BgFn {
 // skillToolName is the registry name of the Skill tool. When the executing
 // tool is the Skill tool, the TUI renders its box on a purple background and
 // shows the activated skill name as the row label instead of raw JSON args.
-const skillToolName = "Skill"
+const skillToolName = "skill"
 
 // skillBoxBg returns the purple background style for the Skill tool's box,
 // selected by lifecycle state.

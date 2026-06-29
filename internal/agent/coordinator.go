@@ -609,7 +609,7 @@ func (c *Coordinator) handleRunSkill(cmd chat.RunSkillCommand) {
 		SessionID:        cmd.SessionID,
 		RequestID:        "",
 		CallID:           callID,
-		ToolName:         "Skill",
+		ToolName:         "skill",
 		ArgumentsSummary: `{"name":"` + matched.Name + `"}`,
 		StartedAt:        startedAt,
 	})
@@ -618,7 +618,7 @@ func (c *Coordinator) handleRunSkill(cmd chat.RunSkillCommand) {
 		SessionID:     cmd.SessionID,
 		RequestID:     "",
 		CallID:        callID,
-		ToolName:      "Skill",
+		ToolName:      "skill",
 		Status:        "success",
 		Duration:      completedAt.Sub(startedAt),
 		ResultSummary: "loaded",
@@ -1227,7 +1227,7 @@ func (c *Coordinator) executeToolsParallel(ctx context.Context, sessionID, reque
 
 // SetAllowedTools sets the allowed tool filter for the next LLM call.
 // When non-empty, only tools whose names are in the set are included in
-// the tool schemas sent to the LLM. The "Skill" tool is always allowed so
+// the tool schemas sent to the LLM. The "skill" tool is always allowed so
 // that the model can switch skills mid-conversation.
 func (c *Coordinator) SetAllowedTools(toolNames []string) {
 	c.mu.Lock()
@@ -1242,7 +1242,7 @@ func (c *Coordinator) SetAllowedTools(toolNames []string) {
 		m[name] = true
 	}
 	// Always allow switching skills.
-	m["Skill"] = true
+	m["skill"] = true
 	c.allowedTools = m
 }
 

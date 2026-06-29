@@ -44,11 +44,11 @@ var shellSchema = Schema{
 }
 
 // NewShellTool creates the built-in shell execution tool.
-func NewShellTool(cwd string) Tool {
+func NewShellTool(cwd string, mq *MutationQueue) Tool {
 	return Tool{
 		Schema:  shellSchema,
 		Source:  "builtin",
-		Execute: makeShellExecutor(cwd),
+		Execute: makeShellExecutor(cwd, mq),
 	}
 }
 
@@ -61,7 +61,7 @@ func (w *bridgeWriter) Write(p []byte) (n int, err error) {
 	return len(p), nil
 }
 
-func makeShellExecutor(cwd string) Executor {
+func makeShellExecutor(cwd string, mq *MutationQueue) Executor {
 	return func(ctx context.Context, params json.RawMessage, bridge UIBridge) (Result, error) {
 		var p ShellParams
 		if err := json.Unmarshal(params, &p); err != nil {
@@ -86,6 +86,13 @@ func makeShellExecutor(cwd string) Executor {
 			if err != nil || !info.IsDir() {
 				return Result{Content: fmt.Sprintf("invalid cwd %q", cwd), IsError: true}, nil
 			}
+		}
+
+		// Serialize with file-mutation tools: shell commands may modify
+		// files that write/edit/patch are working on.
+		if mq != nil {
+			mq.GlobalLock()
+			defer mq.GlobalUnlock()
 		}
 
 		ctx, cancel := context.WithTimeout(ctx, timeout)

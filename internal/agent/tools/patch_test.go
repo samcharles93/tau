@@ -159,7 +159,10 @@ func TestPatchExecutor_AppliesPatchAndRejectsEscapedPath(t *testing.T) {
 		t.Fatalf("write fixture: %v", err)
 	}
 
-	exec := makePatchExecutor(root, NewMutationQueue())
+	rt := NewReadTracker()
+	rt.MarkRead(root, "sub/demo.txt")
+
+	exec := makePatchExecutor(root, NewMutationQueue(), rt)
 	payload := PatchParams{
 		Path: "sub/demo.txt",
 		UnifiedDiff: strings.TrimSpace(`

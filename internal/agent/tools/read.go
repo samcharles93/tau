@@ -40,15 +40,15 @@ var readSchema = Schema{
 }
 
 // NewReadTool creates the built-in read tool.
-func NewReadTool(cwd string) Tool {
+func NewReadTool(cwd string, rt *ReadTracker) Tool {
 	return Tool{
 		Schema:  readSchema,
 		Source:  "builtin",
-		Execute: makeReadExecutor(cwd),
+		Execute: makeReadExecutor(cwd, rt),
 	}
 }
 
-func makeReadExecutor(cwd string) Executor {
+func makeReadExecutor(cwd string, rt *ReadTracker) Executor {
 	return func(ctx context.Context, params json.RawMessage, _ UIBridge) (Result, error) {
 		var p ReadParams
 		if err := json.Unmarshal(params, &p); err != nil {
@@ -61,6 +61,9 @@ func makeReadExecutor(cwd string) Executor {
 		if p.Limit < 0 {
 			return Result{Content: "limit must be >= 0", IsError: true}, nil
 		}
+
+		ctx, cancel := context.WithTimeout(ctx, DefaultToolTimeout)
+		defer cancel()
 
 		path := resolvePath(cwd, p.Path)
 
@@ -82,6 +85,13 @@ func makeReadExecutor(cwd string) Executor {
 		data, err := os.ReadFile(path)
 		if err != nil {
 			return Result{Content: fmt.Sprintf("error reading file: %v", err), IsError: true}, nil
+		}
+
+		// Record the read so mutation tools can enforce read-before-write.
+		// Only record after a successful ReadFile so we don't mark files
+		// that couldn't actually be read.
+		if rt != nil {
+			rt.MarkRead(cwd, p.Path)
 		}
 
 		if !utf8.Valid(data) {

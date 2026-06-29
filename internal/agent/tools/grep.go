@@ -17,11 +17,13 @@ type GrepParams struct {
 	Include       string `json:"include,omitempty"` // glob pattern for file names
 	IsRegex       bool   `json:"is_regex,omitempty"`
 	CaseSensitive bool   `json:"case_sensitive,omitempty"`
+	ContextBefore int    `json:"context_before,omitempty"` // lines before each match (-B)
+	ContextAfter  int    `json:"context_after,omitempty"`  // lines after each match (-A)
 }
 
 var grepSchema = Schema{
 	Name:        "grep",
-	Description: "Search for a pattern in files using ripgrep (rg). Respects .gitignore. Returns matching lines with file paths and line numbers.",
+	Description: "Search for a pattern in files using ripgrep (rg). Respects .gitignore. Returns matching lines with file paths and line numbers. Use context_before/context_after to show surrounding lines.",
 	Parameters: json.RawMessage(`{
 		"type": "object",
 		"properties": {
@@ -44,6 +46,14 @@ var grepSchema = Schema{
 			"case_sensitive": {
 				"type": "boolean",
 				"description": "Case-sensitive search. Defaults to false (smart case)."
+			},
+			"context_before": {
+				"type": "integer",
+				"description": "Number of lines to show before each match (-B). Useful for seeing context without a follow-up read."
+			},
+			"context_after": {
+				"type": "integer",
+				"description": "Number of lines to show after each match (-A). Useful for seeing context without a follow-up read."
 			}
 		},
 		"required": ["pattern"]
@@ -69,6 +79,9 @@ func makeGrepExecutor(cwd string) Executor {
 		if strings.TrimSpace(p.Pattern) == "" {
 			return Result{Content: "pattern is required", IsError: true}, nil
 		}
+
+		ctx, cancel := context.WithTimeout(ctx, DefaultToolTimeout)
+		defer cancel()
 
 		args := buildGrepArgs(p)
 		searchPath := cwd
@@ -127,6 +140,13 @@ func buildGrepArgs(p GrepParams) []string {
 
 	if p.Include != "" {
 		args = append(args, "--glob", p.Include)
+	}
+
+	if p.ContextBefore > 0 {
+		args = append(args, fmt.Sprintf("-B%d", p.ContextBefore))
+	}
+	if p.ContextAfter > 0 {
+		args = append(args, fmt.Sprintf("-A%d", p.ContextAfter))
 	}
 
 	args = append(args, "--", p.Pattern)

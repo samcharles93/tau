@@ -13,17 +13,22 @@ import (
 // LsParams are the parameters for the ls tool.
 type LsParams struct {
 	Path string `json:"path,omitempty"` // directory to list, defaults to cwd
+	All  bool   `json:"all,omitempty"`  // include hidden files and directories
 }
 
 var lsSchema = Schema{
 	Name:        "ls",
-	Description: "List directory contents. Shows files and subdirectories with type indicators (/ suffix for directories).",
+	Description: "List directory contents. Shows files and subdirectories with type indicators (/ suffix for directories). Hidden files (dotfiles) are excluded by default; use all:true to include them.",
 	Parameters: json.RawMessage(`{
 		"type": "object",
 		"properties": {
 			"path": {
 				"type": "string",
 				"description": "Directory path to list. Defaults to current directory."
+			},
+			"all": {
+				"type": "boolean",
+				"description": "Include hidden files and directories (names starting with '.'). Defaults to false."
 			}
 		}
 	}`),
@@ -45,6 +50,9 @@ func makeLsExecutor(cwd string) Executor {
 			return Result{Content: fmt.Sprintf("invalid parameters: %v", err), IsError: true}, nil
 		}
 
+		ctx, cancel := context.WithTimeout(ctx, DefaultToolTimeout)
+		defer cancel()
+
 		dirPath := cwd
 		if p.Path != "" {
 			dirPath = resolvePath(cwd, p.Path)
@@ -63,8 +71,8 @@ func makeLsExecutor(cwd string) Executor {
 		var dirs, files []string
 		for _, entry := range entries {
 			name := entry.Name()
-			// Skip hidden files/dirs by default.
-			if strings.HasPrefix(name, ".") {
+			// Skip hidden files/dirs unless All is set.
+			if !p.All && strings.HasPrefix(name, ".") {
 				continue
 			}
 			if entry.IsDir() {

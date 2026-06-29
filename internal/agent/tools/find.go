@@ -13,14 +13,16 @@ import (
 
 // FindParams are the parameters for the find tool.
 type FindParams struct {
-	Path    string `json:"path,omitempty"`    // directory to search in
-	Pattern string `json:"pattern,omitempty"` // glob pattern for file names
-	Type    string `json:"type,omitempty"`    // "file", "directory", or empty for both
+	Path     string `json:"path,omitempty"`      // directory to search in
+	Pattern  string `json:"pattern,omitempty"`   // glob pattern for file names
+	Type     string `json:"type,omitempty"`      // "file", "directory", or empty for both
+	MaxDepth int    `json:"max_depth,omitempty"` // max directory depth (0 = unlimited)
+	Exclude  string `json:"exclude,omitempty"`   // glob pattern to exclude (e.g. 'node_modules', '*.test.*')
 }
 
 var findSchema = Schema{
 	Name:        "find",
-	Description: "Find files and directories by name pattern. Respects .gitignore when using fd. Returns a list of matching paths.",
+	Description: "Find files and directories by name pattern. Respects .gitignore when using fd. Returns a list of matching paths. Use max_depth to limit recursion and exclude to skip unwanted directories.",
 	Parameters: json.RawMessage(`{
 		"type": "object",
 		"properties": {
@@ -36,6 +38,14 @@ var findSchema = Schema{
 				"type": "string",
 				"enum": ["file", "directory"],
 				"description": "Filter by type: 'file' or 'directory'. Omit for both."
+			},
+			"max_depth": {
+				"type": "integer",
+				"description": "Maximum directory depth to descend. 0 means unlimited. Use to limit recursion in large trees."
+			},
+			"exclude": {
+				"type": "string",
+				"description": "Glob pattern for directories or files to exclude (e.g. 'node_modules', '*.test.go', 'vendor')."
 			}
 		}
 	}`),
@@ -56,6 +66,9 @@ func makeFindExecutor(cwd string) Executor {
 		if err := json.Unmarshal(params, &p); err != nil {
 			return Result{Content: fmt.Sprintf("invalid parameters: %v", err), IsError: true}, nil
 		}
+
+		ctx, cancel := context.WithTimeout(ctx, DefaultToolTimeout)
+		defer cancel()
 
 		searchPath := cwd
 		if p.Path != "" {
@@ -118,6 +131,12 @@ func buildFindArgs(binary string, p FindParams, searchPath string) []string {
 		case "directory":
 			args = append(args, "--type", "d")
 		}
+		if p.MaxDepth > 0 {
+			args = append(args, "--max-depth", fmt.Sprintf("%d", p.MaxDepth))
+		}
+		if p.Exclude != "" {
+			args = append(args, "--exclude", p.Exclude)
+		}
 		args = append(args, "--search-path", searchPath)
 		return args
 	}
@@ -129,6 +148,12 @@ func buildFindArgs(binary string, p FindParams, searchPath string) []string {
 		args = append(args, "-type", "f")
 	case "directory":
 		args = append(args, "-type", "d")
+	}
+	if p.MaxDepth > 0 {
+		args = append(args, "-maxdepth", fmt.Sprintf("%d", p.MaxDepth))
+	}
+	if p.Exclude != "" {
+		args = append(args, "-not", "-path", fmt.Sprintf("*/%s/*", p.Exclude))
 	}
 	if p.Pattern != "" {
 		args = append(args, "-name", p.Pattern)
