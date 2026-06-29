@@ -14,8 +14,9 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - id: release
-        uses: https://github.com/<fork-owner>/gitea-release-please-action@v5
+        uses: https://git.catlow.cloud/sam/release-please-action@v5
         with:
+          gitea-host: git.catlow.cloud
           config-file: release-please-config.json
           manifest-file: .release-please-manifest.json
           token: ${{ secrets.RELEASE_TOKEN }}
