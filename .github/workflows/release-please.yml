@@ -1,0 +1,33 @@
+name: Release please
+
+on:
+  push:
+    branches:
+      - master
+
+# release-please needs to open the release PR, push the version bump
+# commit, and create the tag + Gitea release on merge.
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  release-please:
+    runs-on: ubuntu-latest
+    steps:
+      # Gitea Actions can fetch actions directly from GitHub when the
+      # full URL is specified. This bypasses the instance's default
+      # actions endpoint and pins the action source unambiguously.
+      - uses: https://github.com/googleapis/release-please-action@v4
+        with:
+          # Go release type: version is sourced from git tags (v-prefixed),
+          # there is no go.mod version field to bump.
+          release-type: go
+          package-name: tau
+          # Tags are `v0.5.2`, not `tau-v0.5.2`.
+          include-component-in-tag: false
+          # Bump the VERSION file alongside CHANGELOG.md on each release
+          # so the canonical version is visible in the tree.
+          extra-files: |
+            VERSION
+          token: ${{ secrets.GITHUB_TOKEN }}
