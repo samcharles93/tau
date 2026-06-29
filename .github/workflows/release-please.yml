@@ -16,6 +16,14 @@ jobs:
   release-please:
     runs-on: ubuntu-latest
     steps:
+      # On Gitea, git over HTTPS requires explicit auth.
+      # The release-please-action handles API auth via the `token`
+      # input, but its internal git clone needs git credentials.
+      # Using `url.insteadOf` rewrites HTTPS URLs to include the PAT
+      # for our Gitea instance only (doesn't affect github.com fetches).
+      - name: Configure git for Gitea
+        run: |
+          git config --global url."https://x-access-token:${{ secrets.RELEASE_TOKEN }}@git.catlow.cloud/".insteadOf "https://git.catlow.cloud/"
       - id: release
         # Gitea-native fork of release-please-action: same inputs/outputs
         # as googleapis/release-please-action, but uses the Gitea API
