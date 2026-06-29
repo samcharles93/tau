@@ -21,8 +21,9 @@ jobs:
           token: ${{ secrets.RELEASE_TOKEN }}
       - name: Configure git auth for Gitea
         run: |
-          echo "machine git.catlow.cloud login sam password ${{ secrets.RELEASE_TOKEN }}" > ~/.netrc
-          chmod 600 ~/.netrc
+          git config --global credential.helper 'store --file ~/.git-credentials'
+          echo "https://sam:${{ secrets.RELEASE_TOKEN }}@git.catlow.cloud" > ~/.git-credentials
+          git config --global credential.https://git.catlow.cloud.username sam
       - id: release
         uses: https://github.com/joaquinjsb/gitea-release-please-action@v4
         with:
