@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.5.5](https://git.catlow.cloud/sam/tau/compare/v0.5.4...v0.5.5) (2026-06-29)
+
+
+### Bug Fixes
+
+* re-trigger release pipeline with merge detection fix ([4c0dbc1](https://git.catlow.cloud/sam/tau/commit/4c0dbc179f1121a96fdf77e3665a671d87b1aec3))
+
 ## [0.5.4](https://git.catlow.cloud/sam/tau/compare/v0.5.3...v0.5.4) (2026-06-29)
 
 
