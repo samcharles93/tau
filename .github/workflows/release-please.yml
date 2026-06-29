@@ -5,9 +5,14 @@ on:
     branches:
       - master
 
-# release-please opens the release PR, pushes the version bump commit,
-# and creates the tag + GitHub release on merge. goreleaser then fires
-# on the tag (see release.yml) and attaches binaries to that release.
+# release-please opens the release PR, bumps VERSION + CHANGELOG, and on
+# merge creates the tag + GitHub release. Because release-please acts via
+# the built-in GITHUB_TOKEN, the tag-push does NOT trigger a separate
+# workflow run (GitHub prevents GITHUB_TOKEN-triggered events from
+# spawning downstream workflows). We therefore run goreleaser as a
+# downstream job in this same workflow, gated on release-please's
+# release_created output, so binaries are attached to the release.
+# release.yml is kept as a fallback for manually-pushed tags.
 permissions:
   contents: write
   pull-requests: write
@@ -15,14 +20,47 @@ permissions:
 jobs:
   release-please:
     runs-on: ubuntu-latest
+    outputs:
+      release_created: ${{ steps.release.outputs.release_created }}
+      tag_name: ${{ steps.release.outputs.tag_name }}
     steps:
-      - uses: googleapis/release-please-action@v4
+      - id: release
+        uses: googleapis/release-please-action@v4
         with:
           # Manifest strategy: per-package config (release-type,
-          # package-name, extra-files, tag shape) lives in
+          # package-name, version-file, tag shape) lives in
           # release-please-config.json; the current version per path
-          # lives in .release-please-manifest.json. v4 of the action
-          # does not accept package-name/extra-files as direct inputs.
+          # lives in .release-please-manifest.json.
           config-file: release-please-config.json
           manifest-file: .release-please-manifest.json
           token: ${{ secrets.GITHUB_TOKEN }}
+
+  goreleaser:
+    needs: release-please
+    if: ${{ needs.release-please.outputs.release_created == 'true' }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - uses: pnpm/action-setup@v6
+        with:
+          version: latest
+      - uses: actions/setup-node@v4
+        with:
+          node-version: latest
+          cache: pnpm
+          cache-dependency-path: internal/webui/pnpm-lock.yaml
+      - name: Run GoReleaser
+        uses: goreleaser/goreleaser-action@v7
+        with:
+          distribution: goreleaser
+          version: "~> v2"
+          args: release --clean
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
