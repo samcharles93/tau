@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.7.1](https://github.com/samcharles93/tau/compare/v0.7.0...v0.7.1) (2026-06-29)
+
+
+### Bug Fixes
+
+* migrate release workflow from Gitea to GitHub ([f45ebb3](https://github.com/samcharles93/tau/commit/f45ebb32371504413b4b90956c06c4651a975381))
+
 ## [0.7.0](https://git.catlow.cloud/sam/tau/compare/v0.6.0...v0.7.0) (2026-06-29)
 
 
