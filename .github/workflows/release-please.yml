@@ -5,8 +5,9 @@ on:
     branches:
       - master
 
-# release-please needs to open the release PR, push the version bump
-# commit, and create the tag + Gitea release on merge.
+# release-please opens the release PR, pushes the version bump commit,
+# and creates the tag + GitHub release on merge. goreleaser then fires
+# on the tag (see release.yml) and attaches binaries to that release.
 permissions:
   contents: write
   pull-requests: write
@@ -15,12 +16,9 @@ jobs:
   release-please:
     runs-on: ubuntu-latest
     steps:
-      # Gitea Actions can fetch actions directly from GitHub when the
-      # full URL is specified. This bypasses the instance's default
-      # actions endpoint and pins the action source unambiguously.
-      - uses: https://github.com/googleapis/release-please-action@v4
+      - uses: googleapis/release-please-action@v4
         with:
-          # Go release type: version is sourced from git tags (v-prefixed),
+          # Go release type: version is sourced from git tags (v-prefixed);
           # there is no go.mod version field to bump.
           release-type: go
           package-name: tau
