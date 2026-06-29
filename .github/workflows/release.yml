@@ -41,4 +41,5 @@ jobs:
           version: "~> v2"
           args: release --clean
         env:
-          GITEA_TOKEN: ${{ secrets.GITEA_TOKEN }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITEA_TOKEN: ${{ secrets.GITHUB_TOKEN }}
