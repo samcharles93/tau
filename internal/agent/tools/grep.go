@@ -5,8 +5,10 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"os"
 	"os/exec"
-	"runtime"
+	"path/filepath"
+	"regexp"
 	"strings"
 )
 
@@ -83,7 +85,6 @@ func makeGrepExecutor(cwd string) Executor {
 		ctx, cancel := context.WithTimeout(ctx, DefaultToolTimeout)
 		defer cancel()
 
-		args := buildGrepArgs(p)
 		searchPath := cwd
 		if p.Path != "" {
 			searchPath = resolvePath(cwd, p.Path)
@@ -93,12 +94,23 @@ func makeGrepExecutor(cwd string) Executor {
 			return Result{Content: "error: path escapes working directory", IsError: true}, nil
 		}
 
+		args := buildGrepArgs(p)
 		args = append(args, searchPath)
 
 		binary, err := grepBinary()
 		if err != nil {
-			return Result{Content: err.Error(), IsError: true}, nil
+			// No external binary available — use pure-Go fallback.
+			output, err := grepFallback(ctx, p, searchPath, cwd)
+			if err != nil {
+				return Result{Content: fmt.Sprintf("grep error: %v", err), IsError: true}, nil
+			}
+			if output == "" {
+				return Result{Content: "no matches found"}, nil
+			}
+			tr := TruncateHead(output, DefaultMaxLines, DefaultMaxBytes)
+			return Result{Content: tr.Content}, nil
 		}
+
 		cmd := exec.CommandContext(ctx, binary, args...)
 		cmd.Dir = cwd
 
@@ -123,6 +135,199 @@ func makeGrepExecutor(cwd string) Executor {
 		tr := TruncateHead(output, DefaultMaxLines, DefaultMaxBytes)
 		return Result{Content: tr.Content}, nil
 	}
+}
+
+// grepFallback performs a pure-Go file scan for when ripgrep is not available.
+// Works on all platforms including Windows.
+func grepFallback(ctx context.Context, p GrepParams, searchPath, cwd string) (string, error) {
+	info, err := os.Stat(searchPath)
+	if err != nil {
+		return "", err
+	}
+
+	var matcher func(line string) bool
+	if p.IsRegex {
+		var re *regexp.Regexp
+		if p.CaseSensitive || hasUppercase(p.Pattern) {
+			re, err = regexp.Compile(p.Pattern)
+		} else {
+			re, err = regexp.Compile("(?i:" + p.Pattern + ")")
+		}
+		if err != nil {
+			return "", fmt.Errorf("invalid regex: %w", err)
+		}
+		matcher = func(line string) bool {
+			return re.MatchString(line)
+		}
+	} else {
+		if p.CaseSensitive {
+			matcher = func(line string) bool {
+				return strings.Contains(line, p.Pattern)
+			}
+		} else {
+			lowerPattern := strings.ToLower(p.Pattern)
+			matcher = func(line string) bool {
+				return strings.Contains(strings.ToLower(line), lowerPattern)
+			}
+		}
+	}
+
+	var results []grepResult
+
+	if !info.IsDir() {
+		res, err := grepFile(ctx, searchPath, matcher, p.ContextBefore, p.ContextAfter)
+		if err != nil {
+			return "", err
+		}
+		for i := range res {
+			res[i].relPath, _ = filepath.Rel(cwd, searchPath)
+			if res[i].relPath == "" || res[i].relPath == "." {
+				res[i].relPath = filepath.Base(searchPath)
+			}
+		}
+		results = append(results, res...)
+	} else {
+		err = filepath.WalkDir(searchPath, func(walkPath string, d os.DirEntry, err error) error {
+			if err != nil {
+				return nil // skip inaccessible
+			}
+
+			select {
+			case <-ctx.Done():
+				return ctx.Err()
+			default:
+			}
+
+			if d.IsDir() {
+				// Skip hidden directories.
+				if d.Name() != "" && d.Name()[0] == '.' && walkPath != searchPath {
+					return filepath.SkipDir
+				}
+				return nil
+			}
+
+			// Skip hidden files.
+			if d.Name() != "" && d.Name()[0] == '.' {
+				return nil
+			}
+
+			// Include filter.
+			if p.Include != "" {
+				if matched, _ := filepath.Match(p.Include, d.Name()); !matched {
+					return nil
+				}
+			}
+
+			res, err := grepFile(ctx, walkPath, matcher, p.ContextBefore, p.ContextAfter)
+			if err != nil {
+				return nil // skip files we can't read
+			}
+			for i := range res {
+				res[i].relPath, _ = filepath.Rel(cwd, walkPath)
+				if res[i].relPath == "" || res[i].relPath == "." {
+					res[i].relPath = filepath.Base(walkPath)
+				}
+			}
+			results = append(results, res...)
+			return nil
+		})
+		if err != nil && err != ctx.Err() {
+			return "", err
+		}
+	}
+
+	if len(results) == 0 {
+		return "", nil
+	}
+
+	// Format results similarly to ripgrep: path:line:content
+	var lines []string
+	for _, r := range results {
+		if r.isContext {
+			lines = append(lines, fmt.Sprintf("%s:%d:%s", r.relPath, r.lineNum, r.content))
+		} else {
+			lines = append(lines, fmt.Sprintf("%s:%d:%s", r.relPath, r.lineNum, r.content))
+		}
+	}
+	
+	// Remove duplicate lines that can occur from overlapping context.
+	lines = dedupLines(lines)
+
+	return strings.Join(lines, "\n"), nil
+}
+
+type grepResult struct {
+	relPath   string
+	lineNum   int
+	content   string
+	isContext bool
+}
+
+func grepFile(ctx context.Context, path string, matcher func(string) bool, ctxBefore, ctxAfter int) ([]grepResult, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil, err
+	}
+	str := string(data)
+	allLines := strings.Split(str, "\n")
+
+	var results []grepResult
+	for i, line := range allLines {
+		select {
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		default:
+		}
+
+		if matcher(line) {
+			// Add context lines before.
+			start := i - ctxBefore
+			if start < 0 {
+				start = 0
+			}
+			for j := start; j < i; j++ {
+				results = append(results, grepResult{
+					lineNum:   j + 1,
+					content:   allLines[j],
+					isContext: true,
+				})
+			}
+
+			// Add match line.
+			results = append(results, grepResult{
+				lineNum:   i + 1,
+				content:   line,
+				isContext: false,
+			})
+
+			// Add context lines after.
+			end := i + ctxAfter
+			if end >= len(allLines) {
+				end = len(allLines) - 1
+			}
+			for j := i + 1; j <= end; j++ {
+				results = append(results, grepResult{
+					lineNum:   j + 1,
+					content:   allLines[j],
+					isContext: true,
+				})
+			}
+		}
+	}
+
+	return results, nil
+}
+
+func dedupLines(lines []string) []string {
+	seen := make(map[string]bool)
+	var out []string
+	for _, l := range lines {
+		if !seen[l] {
+			seen[l] = true
+			out = append(out, l)
+		}
+	}
+	return out
 }
 
 func buildGrepArgs(p GrepParams) []string {
@@ -154,12 +359,19 @@ func buildGrepArgs(p GrepParams) []string {
 }
 
 func grepBinary() (string, error) {
-	// Prefer ripgrep; fall back to grep on Unix only.
+	// Prefer ripgrep; signal fallback if not found.
 	if path, err := exec.LookPath("rg"); err == nil {
 		return path, nil
 	}
-	if runtime.GOOS == "windows" {
-		return "", fmt.Errorf("ripgrep (rg) is required on Windows but was not found in PATH")
+	return "", fmt.Errorf("ripgrep (rg) not found in PATH")
+}
+
+// hasUppercase reports whether s contains any uppercase ASCII letter.
+func hasUppercase(s string) bool {
+	for i := 0; i < len(s); i++ {
+		if s[i] >= 'A' && s[i] <= 'Z' {
+			return true
+		}
 	}
-	return "grep", nil
+	return false
 }
