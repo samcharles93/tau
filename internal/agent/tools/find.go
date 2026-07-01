@@ -225,7 +225,7 @@ func runFindGoFallback(ctx context.Context, cwd, searchPath string, p FindParams
 		if err != nil {
 			outputPath = walkPath
 		}
-		matches = append(matches, outputPath)
+		matches = append(matches, filepath.ToSlash(outputPath))
 		return nil
 	})
 

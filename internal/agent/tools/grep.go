@@ -224,8 +224,9 @@ func grepFallback(ctx context.Context, p GrepParams, searchPath, cwd string) (st
 			}
 			for i := range res {
 				res[i].relPath, _ = filepath.Rel(cwd, walkPath)
+				res[i].relPath = filepath.ToSlash(res[i].relPath)
 				if res[i].relPath == "" || res[i].relPath == "." {
-					res[i].relPath = filepath.Base(walkPath)
+					res[i].relPath = filepath.ToSlash(filepath.Base(walkPath))
 				}
 			}
 			results = append(results, res...)
