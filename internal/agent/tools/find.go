@@ -5,9 +5,12 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"runtime"
+	"sort"
 	"strings"
 )
 
@@ -79,9 +82,18 @@ func makeFindExecutor(cwd string) Executor {
 			return Result{Content: "error: path escapes working directory", IsError: true}, nil
 		}
 
+		info, err := os.Stat(searchPath)
+		if err != nil {
+			return Result{Content: fmt.Sprintf("error accessing path: %v", err), IsError: true}, nil
+		}
+		if !info.IsDir() {
+			return Result{Content: "path must be a directory", IsError: true}, nil
+		}
+
 		binary, err := findBinary()
 		if err != nil {
-			return Result{Content: err.Error(), IsError: true}, nil
+			// No external binary available — use pure-Go fallback.
+			return runFindGoFallback(ctx, cwd, searchPath, p)
 		}
 		args := buildFindArgs(binary, p, searchPath)
 
@@ -110,6 +122,125 @@ func makeFindExecutor(cwd string) Executor {
 		tr := TruncateHead(output, DefaultMaxLines, DefaultMaxBytes)
 		return Result{Content: tr.Content}, nil
 	}
+}
+
+func runFindGoFallback(ctx context.Context, cwd, searchPath string, p FindParams) (Result, error) {
+	info, err := os.Stat(searchPath)
+	if err != nil {
+		return Result{Content: fmt.Sprintf("error accessing path: %v", err), IsError: true}, nil
+	}
+	if !info.IsDir() {
+		return Result{Content: "path must be a directory", IsError: true}, nil
+	}
+
+	var matches []string
+
+	var patternRe *regexp.Regexp
+	if p.Pattern != "" {
+		reStr := globToRegex(p.Pattern)
+		var err error
+		patternRe, err = regexp.Compile("^(?:" + reStr + ")$")
+		if err != nil {
+			return Result{Content: fmt.Sprintf("invalid pattern: %v", err), IsError: true}, nil
+		}
+	}
+
+	var excludeRe *regexp.Regexp
+	if p.Exclude != "" {
+		reStr := globToRegex(p.Exclude)
+		var err error
+		excludeRe, err = regexp.Compile("(?:" + reStr + ")")
+		if err != nil {
+			return Result{Content: fmt.Sprintf("invalid exclude: %v", err), IsError: true}, nil
+		}
+	}
+
+	err = filepath.WalkDir(searchPath, func(walkPath string, d os.DirEntry, err error) error {
+		if err != nil {
+			return nil // skip inaccessible entries
+		}
+
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		default:
+		}
+
+		// Calculate depth relative to searchPath.
+		if p.MaxDepth > 0 && walkPath != searchPath {
+			relDepth := strings.Count(strings.TrimPrefix(walkPath, searchPath+string(filepath.Separator)), string(filepath.Separator))
+			if relDepth >= p.MaxDepth {
+				if d.IsDir() {
+					return filepath.SkipDir
+				}
+				return nil
+			}
+		}
+
+		base := d.Name()
+		// Skip hidden entries like .git, .env, etc.
+		if strings.HasPrefix(base, ".") && walkPath != searchPath {
+			if d.IsDir() {
+				return filepath.SkipDir
+			}
+			return nil
+		}
+
+		// Apply exclude filter to both files and directories.
+		if excludeRe != nil {
+			if excludeRe.MatchString(base) {
+				if d.IsDir() {
+					return filepath.SkipDir
+				}
+				return nil
+			}
+		}
+
+		// Skip root directory itself.
+		if walkPath == searchPath {
+			return nil
+		}
+
+		// Type filter.
+		switch p.Type {
+		case "file":
+			if d.IsDir() {
+				return nil
+			}
+		case "directory":
+			if !d.IsDir() {
+				return nil
+			}
+		}
+
+		// Pattern filter.
+		if patternRe != nil {
+			if !patternRe.MatchString(base) {
+				return nil
+			}
+		}
+
+		// Use path relative to cwd for output consistency.
+		outputPath, err := filepath.Rel(cwd, walkPath)
+		if err != nil {
+			outputPath = walkPath
+		}
+		matches = append(matches, outputPath)
+		return nil
+	})
+
+	if err != nil && err != ctx.Err() {
+		return Result{Content: fmt.Sprintf("find error: %v", err), IsError: true}, nil
+	}
+
+	if len(matches) == 0 {
+		return Result{Content: "no matches found"}, nil
+	}
+
+	sort.Strings(matches)
+	output := strings.Join(matches, "\n")
+	tr := TruncateHead(output, DefaultMaxLines, DefaultMaxBytes)
+	return Result{Content: tr.Content}, nil
 }
 
 func isFdBinary(binary string) bool {
@@ -172,4 +303,47 @@ func findBinary() (string, error) {
 		return "", fmt.Errorf("fd is required on Windows but was not found in PATH")
 	}
 	return "find", nil
+}
+
+// globToRegex converts a simple glob pattern to a regex string.
+// Supports * (any chars), ? (single char), and character classes [...].
+func globToRegex(pattern string) string {
+	var sb strings.Builder
+	inClass := false
+	for i := 0; i < len(pattern); i++ {
+		c := pattern[i]
+		switch c {
+		case '*':
+			if inClass {
+				sb.WriteByte(c)
+			} else {
+				sb.WriteString(".*")
+			}
+		case '?':
+			if inClass {
+				sb.WriteByte(c)
+			} else {
+				sb.WriteByte('.')
+			}
+		case '[':
+			inClass = true
+			sb.WriteByte(c)
+		case ']':
+			inClass = false
+			sb.WriteByte(c)
+		case '\\':
+			if i+1 < len(pattern) {
+				sb.WriteByte(pattern[i+1])
+				i++
+			} else {
+				sb.WriteByte(c)
+			}
+		case '.', '+', '^', '$', '(', ')', '|':
+			sb.WriteByte('\\')
+			sb.WriteByte(c)
+		default:
+			sb.WriteByte(c)
+		}
+	}
+	return sb.String()
 }
