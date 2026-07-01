@@ -249,7 +249,7 @@ func grepFallback(ctx context.Context, p GrepParams, searchPath, cwd string) (st
 			lines = append(lines, fmt.Sprintf("%s:%d:%s", r.relPath, r.lineNum, r.content))
 		}
 	}
-	
+
 	// Remove duplicate lines that can occur from overlapping context.
 	lines = dedupLines(lines)
 
@@ -281,10 +281,7 @@ func grepFile(ctx context.Context, path string, matcher func(string) bool, ctxBe
 
 		if matcher(line) {
 			// Add context lines before.
-			start := i - ctxBefore
-			if start < 0 {
-				start = 0
-			}
+			start := max(i-ctxBefore, 0)
 			for j := start; j < i; j++ {
 				results = append(results, grepResult{
 					lineNum:   j + 1,
