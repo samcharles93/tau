@@ -24,7 +24,7 @@ import (
 
 // Config configures the plugin manager.
 type Config struct {
-	PluginsDir           string          // directory containing plugin binaries, e.g. ~/.config/tau/plugins
+	PluginsDir           string          // directory containing plugin binaries, e.g. <config dir>/plugins
 	ToolRegistry         *tools.Registry // tool registry for registering plugin tools
 	Logger               *slog.Logger
 	EventDispatchTimeout time.Duration // per-plugin event dispatch timeout (0 = default)

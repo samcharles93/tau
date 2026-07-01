@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"path/filepath"
 	"runtime"
 	"strings"
 	"text/tabwriter"
@@ -243,7 +244,7 @@ func pluginListCmd() *urfavecli.Command {
 			for _, p := range installed {
 				fmt.Printf("  %-30s  %s\n", p.Name, formatSize(p.Size))
 			}
-			fmt.Printf("\n%d plugin(s) in ~/.config/tau/plugins/\n", len(installed))
+			fmt.Printf("\n%d plugin(s) in %s/\n", len(installed), filepath.Join(config.Dir(), "plugins"))
 			return nil
 		},
 	}

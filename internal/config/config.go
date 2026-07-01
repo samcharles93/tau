@@ -469,8 +469,8 @@ func configDir() string {
 	if dir := os.Getenv("TAU_CONFIG_DIR"); dir != "" {
 		return dir
 	}
-	home, _ := os.UserHomeDir()
-	return filepath.Join(home, ".config", "tau")
+	dir, _ := os.UserConfigDir()
+	return filepath.Join(dir, "tau")
 }
 
 // LoadConfig loads and merges global and project-local configuration.
@@ -839,7 +839,7 @@ func ResolveProvider(cfg Config, providerName string) (ProviderConfig, error) {
 }
 
 // SaveDefaultProviderAndModel writes default_provider and/or default_model
-// to the global Tau config file (~/.config/tau/config.yaml) so the selection
+// to the global Tau config file (config dir + config.yaml) so the selection
 // persists across restarts. Other fields are preserved. The file is created
 // if it doesn't already exist. An empty provider or model string is silently
 // skipped.
