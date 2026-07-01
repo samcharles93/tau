@@ -41,7 +41,7 @@ We enforce strict formatting, linting, and language modernization standards for 
 - **Formatting**: Format all Go files using `gofumpt`:
 
   ```bash
-  golangci-lint fmt ./...
+  gofumpt -w .
   ```
 
 - **Modernization**: Use `go fix` to apply and keep modern Go library usages and constructs updated:
