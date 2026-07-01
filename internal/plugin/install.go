@@ -117,8 +117,10 @@ func Install(ctx context.Context, client *registry.Client, id, version string) (
 	if err := os.Rename(tmp.Name(), dest); err != nil {
 		return "", fmt.Errorf("install binary: %w", err)
 	}
-	if err := os.Chmod(dest, 0o755); err != nil {
-		return "", fmt.Errorf("chmod binary: %w", err)
+	if runtime.GOOS != "windows" {
+		if err := os.Chmod(dest, 0o755); err != nil {
+			return "", fmt.Errorf("chmod binary: %w", err)
+		}
 	}
 
 	// Signal running tau to reload.
@@ -259,8 +261,10 @@ func InstallFromGitHub(ctx context.Context, owner, repo, plugin, version string)
 	if err := os.Rename(binaryPath, dest); err != nil {
 		return "", fmt.Errorf("install binary: %w", err)
 	}
-	if err := os.Chmod(dest, 0o755); err != nil {
-		return "", fmt.Errorf("chmod binary: %w", err)
+	if runtime.GOOS != "windows" {
+		if err := os.Chmod(dest, 0o755); err != nil {
+			return "", fmt.Errorf("chmod binary: %w", err)
+		}
 	}
 
 	// Signal running tau to reload.
