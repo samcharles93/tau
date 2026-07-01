@@ -3,6 +3,7 @@ package providers
 import (
 	"os"
 	"path/filepath"
+	"runtime"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -46,7 +47,9 @@ func TestStateRoundTripAtomic(t *testing.T) {
 	// File should be 0600 (not world-readable: credentials live here).
 	info, err := os.Stat(path)
 	require.NoError(t, err)
-	assert.Equal(t, os.FileMode(0o600), info.Mode().Perm())
+	if runtime.GOOS != "windows" {
+		assert.Equal(t, os.FileMode(0o600), info.Mode().Perm())
+	}
 
 	reloaded, err := loadStateFrom(path)
 	require.NoError(t, err)

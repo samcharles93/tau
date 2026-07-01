@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 	"slices"
 	"sort"
 	"strings"
@@ -124,9 +125,11 @@ func (s *State) Save() error {
 	}
 	tmpName := tmp.Name()
 	defer os.Remove(tmpName) // no-op once renamed
-	if err := tmp.Chmod(0o600); err != nil {
-		tmp.Close()
-		return fmt.Errorf("chmod temp state file: %w", err)
+	if runtime.GOOS != "windows" {
+		if err := tmp.Chmod(0o600); err != nil {
+			tmp.Close()
+			return fmt.Errorf("chmod temp state file: %w", err)
+		}
 	}
 	if _, err := tmp.Write(data); err != nil {
 		tmp.Close()
