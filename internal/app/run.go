@@ -3,8 +3,10 @@ package app
 import (
 	"context"
 	"fmt"
+	"io"
 	"log/slog"
 	"os"
+	"path/filepath"
 	"runtime"
 	"strings"
 	"time"
@@ -18,12 +20,35 @@ import (
 	"github.com/samcharles93/tau/internal/tui"
 )
 
+// startupLog is a dedicated file logger for startup diagnostics.
+// slog output goes to stderr which would corrupt the TUI, so we write
+// diagnostics to a separate file under the tau config directory.
+var startupLog *slog.Logger
+
+func initStartupLog() {
+	if startupLog != nil {
+		return
+	}
+	logDir := filepath.Join(tauconfig.Dir(), "logs")
+	_ = os.MkdirAll(logDir, 0o700)
+	f, err := os.OpenFile(filepath.Join(logDir, "startup.log"), os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o600)
+	if err != nil {
+		startupLog = slog.New(slog.NewTextHandler(io.Discard, nil))
+		return
+	}
+	startupLog = slog.New(slog.NewTextHandler(f, &slog.HandlerOptions{Level: slog.LevelDebug}))
+}
+
 // logStartupPhase logs memory stats and elapsed time for a startup phase.
+// Writes to ~/.tau/logs/startup.log so the TUI is not corrupted.
 func logStartupPhase(phase string, t0 time.Time) {
+	if startupLog == nil {
+		initStartupLog()
+	}
 	var m runtime.MemStats
 	runtime.ReadMemStats(&m)
 	elapsed := time.Since(t0)
-	slog.Info(
+	startupLog.Info(
 		"startup phase",
 		"phase", phase,
 		"elapsed_ms", elapsed.Milliseconds(),
