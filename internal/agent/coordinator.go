@@ -20,6 +20,7 @@ import (
 	"github.com/samcharles93/tau/internal/chat"
 	tauconfig "github.com/samcharles93/tau/internal/config"
 	"github.com/samcharles93/tau/internal/eventbus"
+	commandreg "github.com/samcharles93/tau/internal/registry"
 	"github.com/samcharles93/tau/internal/sessions"
 	"github.com/samcharles93/tau/internal/skills"
 	"github.com/samcharles93/tau/pkg/plugin/api"
@@ -74,6 +75,8 @@ type Coordinator struct {
 	projectDir        string
 	skillTracker      *skills.Tracker
 	skillsMgr         *skills.Manager
+	commandRegistry   *commandreg.Registry
+	lastSkillsConfig  skills.DiscoveryConfig
 	allowedTools      map[string]bool
 
 	mu       sync.Mutex
@@ -126,6 +129,14 @@ type CoordinatorConfig struct {
 	// SkillsManager is the catalog used to resolve skill names for user-invoked
 	// skill activation (RunSkillCommand).
 	SkillsManager *skills.Manager
+
+	// CommandRegistry is the command registry used to re-merge skills on
+	// hot-reload (ReloadSkillsCommand). Nil means no registry updates.
+	CommandRegistry *commandreg.Registry
+
+	// SkillsDiscoveryConfig is the last DiscoveryConfig used by the skills
+	// manager, stored so hot-reload can re-use the same sources/paths.
+	SkillsDiscoveryConfig skills.DiscoveryConfig
 
 	// OnPluginEvent dispatches lifecycle events to the plugin manager.
 	// The coordinator fires this at turn boundaries, tool execution boundaries,
@@ -194,6 +205,8 @@ func NewCoordinator(ctx context.Context, cfg CoordinatorConfig) (*Coordinator, e
 		projectDir:        cfg.ProjectDir,
 		skillTracker:      cfg.SkillTracker,
 		skillsMgr:         cfg.SkillsManager,
+		commandRegistry:   cfg.CommandRegistry,
+		lastSkillsConfig:  cfg.SkillsDiscoveryConfig,
 		allowedTools:      nil,
 		sessions:          make(map[string]*coordinatorSession),
 		shutdown:          make(map[string]struct{}),
@@ -305,6 +318,10 @@ func (c *Coordinator) handleCommand(cmd chat.ChatCommand) {
 		c.handleExportSession(command)
 	case chat.RunSkillCommand:
 		c.handleRunSkill(command)
+	case chat.ReloadSkillsCommand:
+		c.handleReloadSkills(command)
+	case chat.ListSkillsCommand:
+		c.handleListSkills(command)
 	default:
 		c.emit(chat.ChatRuntimeErrorEvent{
 			Message:    fmt.Sprintf("unsupported command %T", cmd),
@@ -643,6 +660,69 @@ func (c *Coordinator) handleRunSkill(cmd chat.RunSkillCommand) {
 		ResultSummary: "loaded",
 		IsError:       false,
 		CompletedAt:   completedAt,
+	})
+}
+
+// handleReloadSkills re-discovers skills from disk and merges them into the
+// command registry, enabling hot-reload without restarting tau.
+func (c *Coordinator) handleReloadSkills(cmd chat.ReloadSkillsCommand) {
+	now := time.Now().UTC()
+	if c.skillsMgr == nil {
+		c.emit(chat.ChatNotificationEvent{
+			Message:    "skill manager unavailable",
+			Level:      chat.ChatNotificationWarn,
+			OccurredAt: now,
+		})
+		return
+	}
+	snapshot, err := c.skillsMgr.Refresh(c.lastSkillsConfig)
+	if err != nil {
+		c.emit(chat.ChatNotificationEvent{
+			Message:    fmt.Sprintf("skills reload failed: %v", err),
+			Level:      chat.ChatNotificationWarn,
+			OccurredAt: now,
+		})
+		return
+	}
+	if c.commandRegistry != nil {
+		c.commandRegistry.MergeSkills(snapshot.AllSkills)
+	}
+	c.emit(chat.ChatNotificationEvent{
+		Message:    fmt.Sprintf("skills reloaded: %d active, %d total", len(snapshot.ActiveSkills), len(snapshot.AllSkills)),
+		Level:      chat.ChatNotificationInfo,
+		OccurredAt: now,
+	})
+}
+
+// handleListSkills prints the available skill catalog as a notification.
+func (c *Coordinator) handleListSkills(cmd chat.ListSkillsCommand) {
+	now := time.Now().UTC()
+	if c.skillsMgr == nil {
+		c.emit(chat.ChatNotificationEvent{
+			Message:    "skill manager unavailable",
+			Level:      chat.ChatNotificationWarn,
+			OccurredAt: now,
+		})
+		return
+	}
+	snapshot := c.skillsMgr.Snapshot()
+	if len(snapshot.ActiveSkills) == 0 {
+		c.emit(chat.ChatNotificationEvent{
+			Message:    "no skills available",
+			Level:      chat.ChatNotificationInfo,
+			OccurredAt: now,
+		})
+		return
+	}
+	var b strings.Builder
+	b.WriteString("available skills:\n")
+	for _, s := range snapshot.ActiveSkills {
+		fmt.Fprintf(&b, "  %s — %s\n", s.Name, s.Description)
+	}
+	c.emit(chat.ChatNotificationEvent{
+		Message:    b.String(),
+		Level:      chat.ChatNotificationInfo,
+		OccurredAt: now,
 	})
 }
 

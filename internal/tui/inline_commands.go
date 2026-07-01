@@ -137,6 +137,18 @@ func (c *inlineChat) handleSlashCommand(text string) {
 		return
 	}
 
+	// /skills-reload — hot-reload skills from disk
+	if name == "skills-reload" {
+		c.send(tauchat.ReloadSkillsCommand{RequestedAt: time.Now().UTC()})
+		return
+	}
+
+	// /skills — list available skills
+	if name == "skills" {
+		c.send(tauchat.ListSkillsCommand{RequestedAt: time.Now().UTC()})
+		return
+	}
+
 	// /skill:<name> — user-invoked skill activation. The coordinator activates
 	// the skill, injects its instructions, and emits the lilac "loaded" box.
 	if after, ok0 := strings.CutPrefix(name, "skill:"); ok0 {

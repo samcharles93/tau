@@ -378,6 +378,20 @@ type RunSkillCommand struct {
 
 func (RunSkillCommand) IsChatCommand() {}
 
+// ReloadSkillsCommand triggers a skills catalog refresh from disk.
+type ReloadSkillsCommand struct {
+	RequestedAt time.Time
+}
+
+func (ReloadSkillsCommand) IsChatCommand() {}
+
+// ListSkillsCommand requests a listing of available skills.
+type ListSkillsCommand struct {
+	RequestedAt time.Time
+}
+
+func (ListSkillsCommand) IsChatCommand() {}
+
 // ChatEvent is the output contract from the runtime back to the UI.
 type ChatEvent interface{ IsChatEvent() }
 

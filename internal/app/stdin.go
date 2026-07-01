@@ -55,11 +55,12 @@ func RunStdIn(ctx context.Context, opts ChatOptions, prompt string) error {
 	defer skillsMgr.Close()
 	extraPaths := append([]string{}, opts.Config.SkillPaths...)
 	extraPaths = append(extraPaths, opts.SkillDirs...)
-	if _, err := skillsMgr.Refresh(skills.DiscoveryConfig{
+	skillDiscoveryCfg := skills.DiscoveryConfig{
 		WorkingDir:     cwd,
 		ExtraPaths:     extraPaths,
 		DisabledSkills: opts.Config.DisabledSkills,
-	}); err != nil {
+	}
+	if _, err := skillsMgr.Refresh(skillDiscoveryCfg); err != nil {
 		slog.Warn("skill discovery failed", "err", err)
 	}
 
@@ -74,14 +75,15 @@ func RunStdIn(ctx context.Context, opts ChatOptions, prompt string) error {
 	}
 
 	coordinator, _, _, err := buildCoordinator(ctx, coordinatorConfig{
-		Bus:             bus,
-		ChatOptions:     opts,
-		BearerToken:     "",
-		SessionManager:  sessionManager,
-		InteractiveUI:   false,
-		AutoExportJSONL: false,
-		Streamer:        streamer,
-		SkillsManager:   skillsMgr,
+		Bus:                   bus,
+		ChatOptions:           opts,
+		BearerToken:           "",
+		SessionManager:        sessionManager,
+		InteractiveUI:         false,
+		AutoExportJSONL:       false,
+		Streamer:              streamer,
+		SkillsManager:         skillsMgr,
+		SkillsDiscoveryConfig: skillDiscoveryCfg,
 	})
 	if err != nil {
 		if sessionManager != nil {

@@ -415,24 +415,25 @@ type newCoordinatorResult struct {
 
 // newCoordinator creates and returns an agent coordinator with the standard
 // tool registry, config, and session persistence.
-func newCoordinator(ctx context.Context, opts ChatOptions, bearerToken string, sessionManager *sessions.Manager, startupEvents []tauchat.ChatEvent, bus *eventbus.Bus, streamer agent.Streamer, modelRefs []tauchat.ChatModelRef, skillsMgr *skills.Manager, deferPlugins bool) (*newCoordinatorResult, error) {
+func newCoordinator(ctx context.Context, opts ChatOptions, bearerToken string, sessionManager *sessions.Manager, startupEvents []tauchat.ChatEvent, bus *eventbus.Bus, streamer agent.Streamer, modelRefs []tauchat.ChatModelRef, skillsMgr *skills.Manager, skillsDiscoveryConfig skills.DiscoveryConfig, deferPlugins bool) (*newCoordinatorResult, error) {
 	cwd, _ := os.Getwd()
 	cmdRegClient := bus.Client("command-registry")
 	cmdReg := commandreg.New(cwd, cmdRegClient)
 
 	coordinator, extCmds, pluginMgr, err := buildCoordinator(ctx, coordinatorConfig{
-		Bus:             bus,
-		ChatOptions:     opts,
-		BearerToken:     bearerToken,
-		SessionManager:  sessionManager,
-		InteractiveUI:   true,
-		StartupEvents:   startupEvents,
-		CommandRegistry: cmdReg,
-		AutoExportJSONL: true,
-		Streamer:        streamer,
-		ModelRefs:       modelRefs,
-		SkillsManager:   skillsMgr,
-		DeferPluginLoad: deferPlugins,
+		Bus:                   bus,
+		ChatOptions:           opts,
+		BearerToken:           bearerToken,
+		SessionManager:        sessionManager,
+		InteractiveUI:         true,
+		StartupEvents:         startupEvents,
+		CommandRegistry:       cmdReg,
+		AutoExportJSONL:       true,
+		Streamer:              streamer,
+		ModelRefs:             modelRefs,
+		SkillsManager:         skillsMgr,
+		SkillsDiscoveryConfig: skillsDiscoveryConfig,
+		DeferPluginLoad:       deferPlugins,
 	})
 	if err != nil {
 		cmdReg.Close()
@@ -462,6 +463,9 @@ type coordinatorConfig struct {
 	// SkillsManager provides the skill catalog snapshot. When nil the
 	// coordinator falls back to inline discovery (headless path).
 	SkillsManager *skills.Manager
+	// SkillsDiscoveryConfig is the last-used config for hot-reloading skills
+	// via /skills-reload.
+	SkillsDiscoveryConfig skills.DiscoveryConfig
 	// DeferPluginLoad skips pluginMgr.Load() so the caller can defer it
 	// until after the TUI has subscribed to bus events.
 	DeferPluginLoad bool
@@ -634,18 +638,20 @@ func buildCoordinator(ctx context.Context, cfg coordinatorConfig) (*agent.Coordi
 	}
 
 	coordinator, err := agent.NewCoordinator(ctx, agent.CoordinatorConfig{
-		Bus:               cfg.Bus,
-		TokenSource:       staticTokenSource(cfg.BearerToken),
-		Streamer:          cfg.Streamer,
-		Registry:          registry,
-		InteractiveUI:     cfg.InteractiveUI,
-		SessionManager:    cfg.SessionManager,
-		AutoExportJSONL:   cfg.AutoExportJSONL,
-		StartupEvents:     cfg.StartupEvents,
-		ProjectDir:        cwd,
-		SkillTracker:      skillTracker,
-		SkillsManager:     cfg.SkillsManager,
-		ExtensionReloader: pluginMgr,
+		Bus:                   cfg.Bus,
+		TokenSource:           staticTokenSource(cfg.BearerToken),
+		Streamer:              cfg.Streamer,
+		Registry:              registry,
+		InteractiveUI:         cfg.InteractiveUI,
+		SessionManager:        cfg.SessionManager,
+		AutoExportJSONL:       cfg.AutoExportJSONL,
+		StartupEvents:         cfg.StartupEvents,
+		ProjectDir:            cwd,
+		SkillTracker:          skillTracker,
+		SkillsManager:         cfg.SkillsManager,
+		CommandRegistry:       cfg.CommandRegistry,
+		SkillsDiscoveryConfig: cfg.SkillsDiscoveryConfig,
+		ExtensionReloader:     pluginMgr,
 		OnPluginEvent: func(event string, sessionID string, payload *api.EventPayload) *api.EventResponse {
 			return pluginMgr.DispatchEvent(ctx, event, sessionID, payload)
 		},

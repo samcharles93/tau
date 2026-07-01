@@ -73,11 +73,12 @@ func RunChat(ctx context.Context, opts ChatOptions) error {
 	// are merged with config SkillPaths.
 	extraPaths := append([]string{}, opts.Config.SkillPaths...)
 	extraPaths = append(extraPaths, opts.SkillDirs...)
-	if _, err := skillsMgr.Refresh(skills.DiscoveryConfig{
+	skillDiscoveryCfg := skills.DiscoveryConfig{
 		WorkingDir:     cwd,
 		ExtraPaths:     extraPaths,
 		DisabledSkills: opts.Config.DisabledSkills,
-	}); err != nil {
+	}
+	if _, err := skillsMgr.Refresh(skillDiscoveryCfg); err != nil {
 		slog.Warn("skill discovery failed", "err", err)
 	}
 
@@ -119,7 +120,7 @@ func RunChat(ctx context.Context, opts ChatOptions) error {
 	// Auth is resolved by the runtime when the provider is created.
 	// The coordinator only needs a token source for legacy compatibility;
 	// pass an empty token.
-	result, err := newCoordinator(ctx, opts, "", sessionManager, startupEvents, bus, streamer, available, skillsMgr, true)
+	result, err := newCoordinator(ctx, opts, "", sessionManager, startupEvents, bus, streamer, available, skillsMgr, skillDiscoveryCfg, true)
 	if err != nil {
 		if sessionManager != nil {
 			if err := sessionManager.Close(); err != nil {
