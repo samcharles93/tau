@@ -39,12 +39,16 @@ func (c *inlineChat) clearTurnLocked() {
 }
 
 func (c *inlineChat) handleEvent(ev tauchat.ChatEvent) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
 	switch e := ev.(type) {
+	case tauchat.SkillsChangedEvent:
+		c.handleSkillsChanged(e)
 	case tauchat.ChatSessionSnapshotEvent:
 		c.syncState(e.State)
 
 	case tauchat.ChatReasoningDeltaEvent:
-		c.mu.Lock()
 		show := c.showReasoning
 		c.mu.Unlock()
 		if !show {
@@ -59,8 +63,10 @@ func (c *inlineChat) handleEvent(ev tauchat.ChatEvent) {
 			}
 			c.turnReasoning.Append(e.Delta)
 		})
+		c.mu.Lock()
 
 	case tauchat.ChatResponseDeltaEvent:
+		c.mu.Unlock()
 		c.engine.Update(func() {
 			if c.turnText == nil {
 				c.turnText = taui.NewParagraph("")
@@ -69,8 +75,10 @@ func (c *inlineChat) handleEvent(ev tauchat.ChatEvent) {
 			}
 			c.turnText.Append(e.Delta)
 		})
+		c.mu.Lock()
 
 	case tauchat.ChatToolExecutionStartedEvent:
+		c.mu.Unlock()
 		c.engine.Update(func() {
 			label := e.ArgumentsSummary
 			bgStatus := theme.ToolRunning
@@ -87,8 +95,10 @@ func (c *inlineChat) handleEvent(ev tauchat.ChatEvent) {
 			c.activeTools[e.CallID] = &activeToolBox{row: tr, box: tbox}
 			c.stage.AddChild(tbox)
 		})
+		c.mu.Lock()
 
 	case tauchat.ChatToolExecutionCompletedEvent:
+		c.mu.Unlock()
 		c.engine.Update(func() {
 			tb, ok := c.activeTools[e.CallID]
 			if !ok {
@@ -125,6 +135,7 @@ func (c *inlineChat) handleEvent(ev tauchat.ChatEvent) {
 
 		// Render the resolved tool box, remove it from the live frame, and commit
 		// it to scrollback — all ordered safely by UpdateThenPrint.
+		c.mu.Unlock()
 		c.engine.UpdateThenPrint(func() []string {
 			tb, ok := c.activeTools[e.CallID]
 			if !ok {
@@ -135,9 +146,12 @@ func (c *inlineChat) handleEvent(ev tauchat.ChatEvent) {
 			delete(c.activeTools, e.CallID)
 			return []string{line}
 		})
+		c.mu.Lock()
 
 	case tauchat.ChatToolOutputEvent:
+		c.mu.Unlock()
 		c.engine.PrintAbove("%s", c.grey("  "+e.Chunk))
+		c.mu.Lock()
 
 	case tauchat.ChatResponseCompletedEvent:
 		// Flush the turn's reasoning, body, and any in-flight tool boxes to
@@ -146,6 +160,7 @@ func (c *inlineChat) handleEvent(ev tauchat.ChatEvent) {
 		// deadlock.
 		c.steering.Store(false)
 		c.generating.Store(false)
+		c.mu.Unlock()
 		c.engine.UpdateThenPrint(func() []string {
 			var above []string
 			if c.turnReasoning != nil {
@@ -169,21 +184,25 @@ func (c *inlineChat) handleEvent(ev tauchat.ChatEvent) {
 			c.header.SetText(c.grey(headerIdle))
 			return above
 		})
+		c.mu.Lock()
 
 	case tauchat.ChatResponseCancelledEvent:
 		c.steering.Store(false)
 		c.generating.Store(false)
+		c.mu.Unlock()
 		c.engine.Update(c.clearTurnLocked)
 		c.engine.PrintAbove("%s\n", c.grey("chat request cancelled"))
+		c.mu.Lock()
 
 	case tauchat.ChatRuntimeErrorEvent:
 		c.steering.Store(false)
 		c.generating.Store(false)
+		c.mu.Unlock()
 		c.engine.PrintAbove("%s %s", c.grey("✗"), e.Message)
 		c.engine.Update(c.clearTurnLocked)
+		c.mu.Lock()
 
 	case tauchat.ChatNotificationEvent:
-		c.mu.Lock()
 		if c.notifyQueue != nil {
 			c.notifyQueue.Push(notify.Notification{
 				Message:  e.Message,
@@ -191,44 +210,50 @@ func (c *inlineChat) handleEvent(ev tauchat.ChatEvent) {
 				Duration: notifyDurationFromChat(e.Level),
 			})
 		}
-		c.mu.Unlock()
 		if e.Level == tauchat.ChatNotificationError {
+			c.mu.Unlock()
 			c.engine.PrintAbove("%s %s", c.grey("✗"), e.Message)
+			c.mu.Lock()
 		}
 
 	case tauchat.ExtensionsReloadedEvent:
 		c.setExtensionCommands(e.Result.Commands)
 		msg := fmt.Sprintf("reloaded extensions: %d loaded", e.Result.ExtensionCount)
+		c.mu.Unlock()
 		c.pushNotice(msg)
 		c.engine.PrintAbove("%s", c.grey(msg))
+		c.mu.Lock()
 
 	case tauchat.ExtensionCommandsChangedEvent:
 		c.setExtensionCommands(e.Commands)
 
 	case tauchat.CommandsChangedEvent:
-		c.mu.Lock()
 		c.registryCommands = e.Commands
-		c.mu.Unlock()
 
 	case tauchat.ExtensionCommandResultEvent:
 		if strings.TrimSpace(e.Output) != "" {
+			c.mu.Unlock()
 			c.engine.PrintAbove("%s", e.Output)
+			c.mu.Lock()
 		}
 
 	case tauchat.InteractivePromptRequestedEvent:
 		msg := e.Title + ": " + e.Message
+		c.mu.Unlock()
 		c.pushNotice(msg)
 		c.engine.PrintAbove("%s", c.grey(msg))
+		c.mu.Lock()
 
 	case tauchat.SessionsListedEvent:
-		c.mu.Lock()
 		c.sessionSummaries = e.Sessions
 		c.mu.Unlock()
 		c.printSessionSummaries(e.Sessions, e.NextCursor)
+		c.mu.Lock()
 
 	case tauchat.SessionLoadedEvent:
 		c.syncState(e.State)
 		msg := fmt.Sprintf("Session %s loaded (%d messages)", e.State.SessionID, len(e.State.Messages))
+		c.mu.Unlock()
 		c.pushNotice(msg)
 		c.engine.PrintAbove("%s", c.grey(msg))
 		for _, m := range e.State.Messages {
@@ -236,26 +261,48 @@ func (c *inlineChat) handleEvent(ev tauchat.ChatEvent) {
 		}
 		// Seed the input history from persisted user messages.
 		c.seedHistoryFromMessages(e.State.Messages)
+		c.mu.Lock()
 
 	case tauchat.SessionDeletedEvent:
 		msg := "Session deleted: " + e.SessionID
+		c.mu.Unlock()
 		c.pushNotice(msg)
 		c.engine.PrintAbove("%s", c.grey(msg))
+		c.mu.Lock()
 
 	case tauchat.SessionExportedEvent:
 		msg := "Session exported to stdout"
 		if e.Path != "" {
 			msg = "Session exported to " + e.Path
 		}
+		c.mu.Unlock()
 		c.pushNotice(msg)
 		c.engine.PrintAbove("%s", c.grey(msg))
+		c.mu.Lock()
 	}
+}
+
+// handleSkillsChanged displays the list of available skills in the TUI.
+func (c *inlineChat) handleSkillsChanged(e tauchat.SkillsChangedEvent) {
+	if len(e.Skills) == 0 {
+		c.engine.PrintAbove("%s", c.grey("no skills available"))
+		return
+	}
+
+	var b strings.Builder
+	b.WriteString("Available Skills:")
+	for _, skill := range e.Skills {
+		fmt.Fprintf(&b, "\n  %-20s %s", skill.Name, skill.Description)
+		if skill.Scope != "" {
+			fmt.Fprintf(&b, " (%s)", skill.Scope)
+		}
+	}
+	c.engine.PrintAbove("%s", c.grey(b.String()))
 }
 
 // ── State updates from events ─────────────────────────────────────────────────
 
 func (c *inlineChat) syncState(state tauchat.ChatSessionState) {
-	c.mu.Lock()
 	if state.SessionID != "" {
 		c.sessionID = state.SessionID
 	}
@@ -265,9 +312,9 @@ func (c *inlineChat) syncState(state tauchat.ChatSessionState) {
 	if state.ProviderName != "" {
 		c.provider = state.ProviderName
 	}
-	c.mu.Unlock()
 }
 
+// setExtensionCommands updates the extension command registry.
 func (c *inlineChat) setExtensionCommands(commands []tauchat.ExtensionCommand) {
 	next := make(map[string]tauchat.ExtensionCommand, len(commands))
 	for _, cmd := range commands {

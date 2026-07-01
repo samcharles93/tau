@@ -95,6 +95,10 @@ func init() {
 			run: func(c *inlineChat, _ string) { c.printHelp() },
 		},
 		{
+			name: "skills", usage: "list", description: "list available skills",
+			run: (*inlineChat).handleSkillsCommand,
+		},
+		{
 			name: "exit", aliases: []string{"quit", "q"}, description: "quit",
 			// Stop in a separate goroutine so Terminal.Stop() → wg.Wait()
 			// is not called from the stdin goroutine (tracked by the same
@@ -388,6 +392,16 @@ func (c *inlineChat) refreshModels() {
 		c.pushNotice(fmt.Sprintf("refreshed models: %d available", len(models)))
 		c.engine.RequestRender()
 	}()
+}
+
+// handleSkillsCommand requests and displays the list of available skills.
+func (c *inlineChat) handleSkillsCommand(args string) {
+	args = strings.TrimSpace(args)
+	if args == "" || args == "list" {
+		c.send(tauchat.ListSkillsCommand{RequestedAt: time.Now().UTC()})
+		return
+	}
+	c.engine.PrintAbove("%s %s", c.grey("✗"), "usage: /skills list")
 }
 
 // handleCostCommand prints a tidy breakdown of token usage and cost for the

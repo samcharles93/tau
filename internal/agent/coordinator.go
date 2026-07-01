@@ -712,11 +712,36 @@ func (c *Coordinator) handleListSkills(cmd chat.ListSkillsCommand) {
 			Level:      chat.ChatNotificationInfo,
 			OccurredAt: now,
 		})
+		// Still publish an empty event for consistency
+		c.emit(chat.SkillsChangedEvent{
+			Skills: []chat.SkillInfo{},
+		})
 		return
 	}
+
+	// Publish as a structured event for the TUI
+	var skills []chat.SkillInfo
+	for _, s := range snapshot.ActiveSkills {
+		if s == nil {
+			continue
+		}
+		skills = append(skills, chat.SkillInfo{
+			Name:        s.Name,
+			Description: s.Description,
+			Scope:       string(s.Scope),
+		})
+	}
+	c.emit(chat.SkillsChangedEvent{
+		Skills: skills,
+	})
+
+	// Also show as a notification for backward compatibility
 	var b strings.Builder
 	b.WriteString("available skills:\n")
 	for _, s := range snapshot.ActiveSkills {
+		if s == nil {
+			continue
+		}
 		fmt.Fprintf(&b, "  %s — %s\n", s.Name, s.Description)
 	}
 	c.emit(chat.ChatNotificationEvent{
