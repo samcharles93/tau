@@ -5,6 +5,7 @@ package plugin
 import (
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 )
 
@@ -16,10 +17,5 @@ var windowsExecutableExts = []string{".exe", ".bat", ".cmd", ".com"}
 // isExecutableByPlatform checks whether the file has a Windows-executable extension.
 func isExecutableByPlatform(path string, _ os.FileInfo) bool {
 	ext := strings.ToLower(filepath.Ext(path))
-	for _, e := range windowsExecutableExts {
-		if ext == e {
-			return true
-		}
-	}
-	return false
+	return slices.Contains(windowsExecutableExts, ext)
 }
