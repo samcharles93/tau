@@ -154,7 +154,8 @@ func listSessions(ctx context.Context) error {
 	fmt.Printf("%-38s  %-20s  %4s  %10s  %8s  %s\n",
 		"ID", "MODEL", "MSGS", "TOKENS", "COST", "DATE")
 	for _, s := range summaries {
-		fmt.Printf("%-38s  %-20s  %4d  %10s  $%6s  %s\n",
+		fmt.Printf(
+			"%-38s  %-20s  %4d  %10s  $%6s  %s\n",
 			s.ID,
 			truncateString(s.ModelID, 20),
 			s.MessageCount,
@@ -272,7 +273,8 @@ func skillsListCmd() *urfavecli.Command {
 					userInv = "no"
 				}
 
-				fmt.Printf("%-38s  %-58s  %-8s  %-10s  %s\n",
+				fmt.Printf(
+					"%-38s  %-58s  %-8s  %-10s  %s\n",
 					skill.Name,
 					truncateString(skill.Description, 58),
 					skill.Scope,

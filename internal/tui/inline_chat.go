@@ -294,10 +294,7 @@ func (c *inlineChat) computeStatus() string {
 	}
 
 	// Box Padding(1,1) leaves an inner content width of termWidth-2.
-	usable := c.width() - 2
-	if usable < 1 {
-		usable = 1
-	}
+	usable := max(c.width()-2, 1)
 	return renderStatusBar(usable, left, right)
 }
 

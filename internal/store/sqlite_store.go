@@ -68,7 +68,8 @@ func (s *SQLiteStore) Save(ctx context.Context, state chat.ChatSessionState, dur
 
 	cost := calculateCost(state.Model.Config, state.LastUsage)
 
-	_, err = tx.ExecContext(ctx, `
+	_, err = tx.ExecContext(
+		ctx, `
 		INSERT INTO sessions (
 			id, model_id, provider, created_at, updated_at, status,
 			message_count, input_tokens, output_tokens, cache_read,
@@ -134,7 +135,8 @@ func (s *SQLiteStore) Save(ctx context.Context, state chat.ChatSessionState, dur
 			msgTime = state.CreatedAt.Add(time.Duration(i) * time.Second)
 		}
 
-		if _, err := ins.ExecContext(ctx,
+		if _, err := ins.ExecContext(
+			ctx,
 			state.SessionID, i,
 			string(msg.Role),
 			msg.Content,
@@ -386,7 +388,8 @@ func (s *SQLiteStore) Count(ctx context.Context) (int, error) {
 
 // SessionJSONLPath returns the canonical JSONL export file path for a session.
 func (s *SQLiteStore) SessionJSONLPath(sessionID string, createdAt time.Time) string {
-	filename := fmt.Sprintf("%s_%s.jsonl",
+	filename := fmt.Sprintf(
+		"%s_%s.jsonl",
 		createdAt.UTC().Format("2006-01-02T15-04-05"),
 		sessionID,
 	)

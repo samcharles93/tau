@@ -142,7 +142,6 @@ type CoordinatorConfig struct {
 	// MetricsConfig controls observability export. Session tracking is
 	// always on; Dir enables file export when non-empty.
 	MetricsConfig tauconfig.MetricsConfig
-
 }
 
 // NewCoordinator creates and starts the agent coordinator.
@@ -352,17 +351,16 @@ func (c *Coordinator) handleStart(cmd chat.StartChatSessionCommand) {
 	})
 	c.emit(chat.ChatSessionSnapshotEvent{State: snapshot})
 	c.emitMetrics(chat.MetricEvent{
-		Category:  chat.MetricCategorySession,
-		Name:      "session.created",
-		Value:     1,
-		Unit:      "count",
+		Category: chat.MetricCategorySession,
+		Name:     "session.created",
+		Value:    1,
+		Unit:     "count",
 		Labels: map[string]string{
 			"provider": snapshot.Provider.Name,
 			"model":    snapshot.Model.ID,
 		},
 		SessionID: snapshot.SessionID,
 	})
-
 }
 
 func (c *Coordinator) handleSubmit(cmd chat.SubmitChatPromptCommand) {
@@ -481,7 +479,8 @@ func (c *Coordinator) persistDefaultsOnUpdate(patch chat.ChatSessionPatch, snaps
 		return
 	}
 	if err := tauconfig.SaveDefaultProviderAndModel(c.projectDir, provider, model); err != nil {
-		slog.Error("coordinator: saving default provider/model to local config",
+		slog.Error(
+			"coordinator: saving default provider/model to local config",
 			"err", err,
 		)
 	}
@@ -768,10 +767,10 @@ func (c *Coordinator) handleClose(cmd chat.CloseChatSessionCommand) {
 		c.mu.Unlock()
 	}
 	c.emitMetrics(chat.MetricEvent{
-		Category:  chat.MetricCategorySession,
-		Name:      "session.closed",
-		Value:     float64(duration.Milliseconds()),
-		Unit:      "ms",
+		Category: chat.MetricCategorySession,
+		Name:     "session.closed",
+		Value:    float64(duration.Milliseconds()),
+		Unit:     "ms",
 		Labels: map[string]string{
 			"provider":      snapshot.ProviderName,
 			"model":         snapshot.Model.ID,
@@ -1416,7 +1415,6 @@ func (c *Coordinator) emitToolCompleted(
 		},
 		SessionID: sessionID,
 	})
-
 }
 
 func summarizeForUI(value string) string {
@@ -1941,7 +1939,8 @@ func (c *Coordinator) persistSession(state chat.ChatSessionState, duration time.
 	defer cancel()
 
 	if err := c.sessionManager.Save(ctx, state, duration); err != nil {
-		slog.Error("coordinator: persist session failed",
+		slog.Error(
+			"coordinator: persist session failed",
 			"session_id", state.SessionID,
 			"err", err,
 		)
@@ -1958,7 +1957,8 @@ func (c *Coordinator) persistSession(state chat.ChatSessionState, duration time.
 		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 		defer cancel()
 		if err := c.sessionManager.ExportToJSONL(ctx, state.SessionID, exportPath); err != nil {
-			slog.Warn("coordinator: auto-export jsonl failed",
+			slog.Warn(
+				"coordinator: auto-export jsonl failed",
 				"session_id", state.SessionID,
 				"err", err,
 			)

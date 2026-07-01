@@ -120,10 +120,7 @@ func renderStatusBar(width int, left, right []statusSeg) string {
 
 	// Both groups present and fitting: right-justify the right group.
 	if leftW+gap(rightW)+rightW <= width {
-		pad := width - leftW - rightW
-		if pad < 1 {
-			pad = 1
-		}
+		pad := max(width-leftW-rightW, 1)
 		return leftStyled + strings.Repeat(" ", pad) + rightStyled
 	}
 
@@ -134,10 +131,7 @@ func renderStatusBar(width int, left, right []statusSeg) string {
 		return taui.TruncateANSIToWidth(rightStyled, width, "…")
 	}
 	leftTrunc := taui.TruncateANSIToWidth(leftStyled, avail, "…")
-	pad := width - taui.VisibleWidth(leftTrunc) - rightW
-	if pad < 1 {
-		pad = 1
-	}
+	pad := max(width-taui.VisibleWidth(leftTrunc)-rightW, 1)
 	return leftTrunc + strings.Repeat(" ", pad) + rightStyled
 }
 

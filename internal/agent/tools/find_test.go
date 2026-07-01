@@ -19,7 +19,7 @@ func TestFindFallback(t *testing.T) {
 	createTestFile(t, tmp, "subdir/baz.go", "package baz")
 	createTestFile(t, tmp, "subdir/nested/deep.txt", "deep")
 	createTestFile(t, tmp, "vendor/mod.go", "package mod")
-	os.MkdirAll(filepath.Join(tmp, "hiddendir"), 0755)
+	os.MkdirAll(filepath.Join(tmp, "hiddendir"), 0o755)
 	createTestFile(t, tmp, "hiddendir/visible.txt", "text")
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
@@ -123,7 +123,7 @@ func TestFindFallback_NonExistentPath(t *testing.T) {
 func TestFindFallback_NotADirectory(t *testing.T) {
 	tmp := t.TempDir()
 	f := filepath.Join(tmp, "file.txt")
-	if err := os.WriteFile(f, []byte("hello"), 0644); err != nil {
+	if err := os.WriteFile(f, []byte("hello"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 
@@ -139,10 +139,10 @@ func TestFindFallback_NotADirectory(t *testing.T) {
 func createTestFile(t *testing.T, base, relPath, content string) {
 	t.Helper()
 	full := filepath.Join(base, relPath)
-	if err := os.MkdirAll(filepath.Dir(full), 0755); err != nil {
+	if err := os.MkdirAll(filepath.Dir(full), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(full, []byte(content), 0644); err != nil {
+	if err := os.WriteFile(full, []byte(content), 0o644); err != nil {
 		t.Fatal(err)
 	}
 }

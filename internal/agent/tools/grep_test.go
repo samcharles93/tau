@@ -157,10 +157,10 @@ func TestGrepFallback_NonExistentPath(t *testing.T) {
 func createGrepTestFile(t *testing.T, base, relPath, content string) {
 	t.Helper()
 	full := filepath.Join(base, relPath)
-	if err := os.MkdirAll(filepath.Dir(full), 0755); err != nil {
+	if err := os.MkdirAll(filepath.Dir(full), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(full, []byte(content), 0644); err != nil {
+	if err := os.WriteFile(full, []byte(content), 0o644); err != nil {
 		t.Fatal(err)
 	}
 }

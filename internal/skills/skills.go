@@ -102,7 +102,8 @@ func UserSources() []Source {
 		return sources
 	}
 
-	sources = append(sources,
+	sources = append(
+		sources,
 		Source{Root: filepath.Join(homeDir, ".tau", "skills"), Scope: ScopeUser, Priority: userLegacyPriority},
 		Source{Root: filepath.Join(homeDir, ".agents", "skills"), Scope: ScopeUser, Priority: userInteropPriority},
 	)
@@ -352,7 +353,8 @@ func ToPromptIndex(skillSet []*Skill) string {
 		if skill == nil || skill.DisableModelInvocation {
 			continue
 		}
-		line := fmt.Sprintf("  - %s: %s (%s)",
+		line := fmt.Sprintf(
+			"  - %s: %s (%s)",
 			escapeXML(skill.Name),
 			escapeXML(skill.Description),
 			escapeXML(skill.SkillFilePath),

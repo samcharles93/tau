@@ -54,7 +54,8 @@ func pluginSearchCmd() *urfavecli.Command {
 				tags = []string{t}
 			}
 
-			result, err := client.Search(ctx, query,
+			result, err := client.Search(
+				ctx, query,
 				cmd.String("category"),
 				tags,
 				cmd.String("author"),

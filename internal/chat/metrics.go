@@ -9,10 +9,10 @@ type MetricCategory string
 
 const (
 	MetricCategoryLLM       MetricCategory = "llm"       // token counts, cost, latency
-	MetricCategoryTool      MetricCategory = "tool"       // tool invocations, durations, errors
-	MetricCategorySkill     MetricCategory = "skill"      // skill activations
-	MetricCategoryExtension MetricCategory = "extension"  // extension commands
-	MetricCategorySession   MetricCategory = "session"    // session lifecycle
+	MetricCategoryTool      MetricCategory = "tool"      // tool invocations, durations, errors
+	MetricCategorySkill     MetricCategory = "skill"     // skill activations
+	MetricCategoryExtension MetricCategory = "extension" // extension commands
+	MetricCategorySession   MetricCategory = "session"   // session lifecycle
 )
 
 // MetricEvent is published on the event bus by the coordinator. A single type
@@ -22,13 +22,13 @@ const (
 // MetricEvent is NOT a ChatEvent — it routes on its own bus topic, separate
 // from ChatSessionSnapshotEvent and friends.
 type MetricEvent struct {
-	Category  MetricCategory     `json:"category"`
-	Name      string             `json:"name"`   // e.g. "tool.read.duration", "llm.response"
-	Value     float64            `json:"value"`  // numeric value (tokens, ms, count, usd)
-	Unit      string             `json:"unit"`   // "tokens", "ms", "count", "usd"
-	Labels    map[string]string  `json:"labels"` // provider, model, tool, status, error_kind
-	SessionID string             `json:"session_id"`
-	Timestamp time.Time          `json:"timestamp"`
+	Category  MetricCategory    `json:"category"`
+	Name      string            `json:"name"`   // e.g. "tool.read.duration", "llm.response"
+	Value     float64           `json:"value"`  // numeric value (tokens, ms, count, usd)
+	Unit      string            `json:"unit"`   // "tokens", "ms", "count", "usd"
+	Labels    map[string]string `json:"labels"` // provider, model, tool, status, error_kind
+	SessionID string            `json:"session_id"`
+	Timestamp time.Time         `json:"timestamp"`
 }
 
 // CostPerMillionTokens is the standard pricing unit for LLM APIs.

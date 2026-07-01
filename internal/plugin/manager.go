@@ -168,7 +168,8 @@ func (m *Manager) Load(ctx context.Context) error {
 		if m.hasCapability(name, api.CapabilityTools) {
 			toolCount = m.registerPluginTools(ctx, name, grpcClient)
 		}
-		m.cfg.Logger.Info("plugin manager: loaded plugin",
+		m.cfg.Logger.Info(
+			"plugin manager: loaded plugin",
 			"name", name,
 			"commands", len(grpcClient.ExtensionCommands()),
 			"tools", toolCount,

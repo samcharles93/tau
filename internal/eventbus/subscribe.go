@@ -188,7 +188,8 @@ func (s *Subscriber[T]) dispatchTyped(
 		case ch := <-snapshot:
 			ch <- vals.Snapshot()
 		case <-s.core.slow.C:
-			warn("eventbus: subscriber is slow",
+			warn(
+				"eventbus: subscriber is slow",
 				"type", s.core.typeName,
 				"elapsed", time.Since(start).String(),
 			)
@@ -316,7 +317,8 @@ func dispatchFunc(
 			core.slow.Reset(5 * slowSubscriberTimeout)
 			select {
 			case <-core.slow.C:
-				warn("eventbus: giving up on slow subscriber at close",
+				warn(
+					"eventbus: giving up on slow subscriber at close",
 					"type", core.typeName,
 					"elapsed", time.Since(start).String(),
 				)
@@ -332,7 +334,8 @@ func dispatchFunc(
 		case ch := <-snapshot:
 			ch <- vals.Snapshot()
 		case <-core.slow.C:
-			warn("eventbus: subscriber is slow",
+			warn(
+				"eventbus: subscriber is slow",
 				"type", core.typeName,
 				"elapsed", time.Since(start).String(),
 			)

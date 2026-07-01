@@ -165,7 +165,8 @@ func TestSQLiteStore_SaveUpdatesExisting(t *testing.T) {
 	require.NoError(t, err)
 
 	// Add more messages and save again.
-	state.Messages = append(state.Messages,
+	state.Messages = append(
+		state.Messages,
 		chat.ChatMessage{Role: chat.ChatRoleAssistant, Content: "First reply"},
 		chat.ChatMessage{Role: chat.ChatRoleUser, Content: "Second message"},
 	)

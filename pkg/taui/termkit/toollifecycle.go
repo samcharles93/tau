@@ -93,7 +93,8 @@ func (tl *ToolLifecycle) Tick() {
 
 	if tl.indeterminate {
 		// Spinner-only: no progress bar, just spinner + timer.
-		fmt.Fprintf(tl.writer(), "%s%s %s %s%s %s(%s) %s%.1fs%s",
+		fmt.Fprintf(
+			tl.writer(), "%s%s %s %s%s %s(%s) %s%.1fs%s",
 			ClearLine, frame, label,
 			Bold, tl.toolName,
 			ColorGrey.Fg(), tl.args, ColorGrey.Fg(), elapsed,
@@ -101,7 +102,8 @@ func (tl *ToolLifecycle) Tick() {
 		)
 	} else {
 		bar := Style(ProgressBar(float64(tl.tick%30)/30.0, 20), ColorYellow.Fg())
-		fmt.Fprintf(tl.writer(), "%s%s %s %s %s%s %s(%s) %s%.1fs%s",
+		fmt.Fprintf(
+			tl.writer(), "%s%s %s %s %s%s %s(%s) %s%.1fs%s",
 			ClearLine, frame, label, bar,
 			Bold, tl.toolName,
 			ColorGrey.Fg(), tl.args, ColorGrey.Fg(), elapsed,
