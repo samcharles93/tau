@@ -54,7 +54,7 @@ func RegisterSkillTool(reg *Registry, skillsMgr *skills.Manager, tracker *skills
 			// absence, which clears any previous filter).
 			if setAllowedTools != nil {
 				if matched.AllowedTools != "" {
-					setAllowedTools(parseAllowedTools(matched.AllowedTools))
+					setAllowedTools(ParseAllowedTools(matched.AllowedTools))
 				} else {
 					setAllowedTools(nil)
 				}
@@ -77,8 +77,8 @@ func findSkill(skills []*skills.Skill, name string) *skills.Skill {
 	return nil
 }
 
-// parseAllowedTools splits a comma/space-separated list of tool names.
-func parseAllowedTools(raw string) []string {
+// ParseAllowedTools splits a comma/space-separated list of tool names.
+func ParseAllowedTools(raw string) []string {
 	raw = strings.TrimSpace(raw)
 	if raw == "" {
 		return nil

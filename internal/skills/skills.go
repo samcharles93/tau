@@ -21,6 +21,7 @@ const (
 	MaxNameLength          = 64
 	MaxDescriptionLength   = 1024
 	MaxCompatibilityLength = 500
+	MaxInstructionsLength  = 50000
 	maxDiscoveryDepth      = 6
 
 	userInteropPriority    = 10
@@ -357,7 +358,7 @@ func ToPromptIndex(skillSet []*Skill) string {
 			"  - %s: %s (%s)",
 			escapeXML(skill.Name),
 			escapeXML(skill.Description),
-			escapeXML(skill.SkillFilePath),
+			escapeXML(filepath.ToSlash(skill.SkillFilePath)),
 		)
 		if skill.Compatibility != "" {
 			line += fmt.Sprintf(" [compat: %s]", escapeXML(skill.Compatibility))
@@ -387,7 +388,7 @@ func ToPromptXML(skillSet []*Skill) string {
 		builder.WriteString("  <skill>\n")
 		fmt.Fprintf(&builder, "    <name>%s</name>\n", escapeXML(skill.Name))
 		fmt.Fprintf(&builder, "    <description>%s</description>\n", escapeXML(skill.Description))
-		fmt.Fprintf(&builder, "    <location>%s</location>\n", escapeXML(skill.SkillFilePath))
+		fmt.Fprintf(&builder, "    <location>%s</location>\n", escapeXML(filepath.ToSlash(skill.SkillFilePath)))
 		builder.WriteString("  </skill>\n")
 	}
 	builder.WriteString("</available_skills>")
@@ -434,6 +435,10 @@ func validateSkill(skill *Skill) []Diagnostic {
 	compatibility := strings.TrimSpace(skill.Compatibility)
 	if compatibility != "" && len(compatibility) > MaxCompatibilityLength {
 		diagnostics = append(diagnostics, Diagnostic{Path: skill.SkillFilePath, SkillName: name, Severity: SeverityWarning, Message: fmt.Sprintf("compatibility exceeds %d characters", MaxCompatibilityLength)})
+	}
+
+	if len(skill.Instructions) > MaxInstructionsLength {
+		diagnostics = append(diagnostics, Diagnostic{Path: skill.SkillFilePath, SkillName: name, Severity: SeverityWarning, Message: fmt.Sprintf("instructions exceed %d characters", MaxInstructionsLength)})
 	}
 
 	return diagnostics

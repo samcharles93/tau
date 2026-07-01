@@ -603,7 +603,7 @@ func (c *Coordinator) handleRunSkill(cmd chat.RunSkillCommand) {
 		c.skillTracker.Activate(matched)
 	}
 	if matched.AllowedTools != "" {
-		c.SetAllowedTools(parseAllowedToolsList(matched.AllowedTools))
+		c.SetAllowedTools(tools.ParseAllowedTools(matched.AllowedTools))
 	} else {
 		c.SetAllowedTools(nil)
 	}
@@ -656,17 +656,6 @@ func findSkillInSnapshot(set []*skills.Skill, name string) *skills.Skill {
 		}
 	}
 	return nil
-}
-
-// parseAllowedToolsList splits a comma/space-separated list of tool names.
-func parseAllowedToolsList(raw string) []string {
-	raw = strings.TrimSpace(raw)
-	if raw == "" {
-		return nil
-	}
-	normalised := strings.ReplaceAll(raw, ",", " ")
-	parts := strings.Fields(normalised)
-	return parts
 }
 
 func (c *Coordinator) handleSteer(cmd chat.SteerChatPromptCommand) {
