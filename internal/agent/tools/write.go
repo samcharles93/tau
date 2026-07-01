@@ -58,7 +58,7 @@ func makeWriteExecutor(cwd string, mq *MutationQueue, rt *ReadTracker) Executor 
 			return Result{Content: fmt.Sprintf("content too large (%s > %s)", FormatSize(len(p.Content)), FormatSize(maxWriteBytes)), IsError: true}, nil
 		}
 
-		ctx, cancel := context.WithTimeout(ctx, DefaultToolTimeout)
+		_, cancel := context.WithTimeout(ctx, DefaultToolTimeout)
 		defer cancel()
 
 		path := resolvePath(cwd, p.Path)

@@ -62,7 +62,7 @@ func makeReadExecutor(cwd string, rt *ReadTracker) Executor {
 			return Result{Content: "limit must be >= 0", IsError: true}, nil
 		}
 
-		ctx, cancel := context.WithTimeout(ctx, DefaultToolTimeout)
+		_, cancel := context.WithTimeout(ctx, DefaultToolTimeout)
 		defer cancel()
 
 		path := resolvePath(cwd, p.Path)

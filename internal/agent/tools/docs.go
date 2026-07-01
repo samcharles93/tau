@@ -61,7 +61,7 @@ func NewSearchDocsTool() Tool {
 			if err := json.Unmarshal(params, &p); err != nil {
 				return Result{Content: fmt.Sprintf("invalid parameters: %v", err), IsError: true}, nil
 			}
-			ctx, cancel := context.WithTimeout(ctx, DefaultToolTimeout)
+			_, cancel := context.WithTimeout(ctx, DefaultToolTimeout)
 			defer cancel()
 
 			query := strings.ToLower(strings.TrimSpace(p.Query))
@@ -114,7 +114,7 @@ func NewReadDocTool() Tool {
 				return Result{Content: fmt.Sprintf("invalid parameters: %v", err), IsError: true}, nil
 			}
 
-			ctx, cancel := context.WithTimeout(ctx, DefaultToolTimeout)
+			_, cancel := context.WithTimeout(ctx, DefaultToolTimeout)
 			defer cancel()
 
 			cleanPath := filepath.Clean(p.Path)

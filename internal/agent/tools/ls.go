@@ -50,7 +50,7 @@ func makeLsExecutor(cwd string) Executor {
 			return Result{Content: fmt.Sprintf("invalid parameters: %v", err), IsError: true}, nil
 		}
 
-		ctx, cancel := context.WithTimeout(ctx, DefaultToolTimeout)
+		_, cancel := context.WithTimeout(ctx, DefaultToolTimeout)
 		defer cancel()
 
 		dirPath := cwd

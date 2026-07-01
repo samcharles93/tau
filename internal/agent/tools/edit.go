@@ -78,7 +78,7 @@ func makeEditExecutor(cwd string, mq *MutationQueue, rt *ReadTracker) Executor {
 			return Result{Content: "at least one edit is required", IsError: true}, nil
 		}
 
-		ctx, cancel := context.WithTimeout(ctx, DefaultToolTimeout)
+		_, cancel := context.WithTimeout(ctx, DefaultToolTimeout)
 		defer cancel()
 
 		path := resolvePath(cwd, p.Path)

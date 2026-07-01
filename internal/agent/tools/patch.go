@@ -64,7 +64,7 @@ func makePatchExecutor(cwd string, mq *MutationQueue, rt *ReadTracker) Executor 
 		}
 
 		p.Path = strings.TrimSpace(p.Path)
-		ctx, cancel := context.WithTimeout(ctx, DefaultToolTimeout)
+		_, cancel := context.WithTimeout(ctx, DefaultToolTimeout)
 		defer cancel()
 
 		p.UnifiedDiff = normaliseDiff(strings.TrimSpace(p.UnifiedDiff))
