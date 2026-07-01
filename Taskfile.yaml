@@ -61,8 +61,19 @@ tasks:
     cmds:
       - golangci-lint run --tests=false --enable-only=unused,staticcheck ./...
 
+  check:windows:
+    desc: Run formatting and modernization on Windows-only files
+    env:
+      GOOS: windows
+    cmds:
+      - gofumpt -w .
+      - go fix ./...
+      - gofumpt -w .
+
   check:
-    desc: Run all quality checks (format, lint, vet, fix, test)
+    desc: Run all quality checks (format, lint, vet, fix, test) for all platforms
+    deps:
+      - check:windows
     cmds:
       - gofumpt -w .
       - go vet ./...
