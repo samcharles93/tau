@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
+	"runtime"
 	"strings"
 	"time"
 
@@ -17,9 +18,27 @@ import (
 	"github.com/samcharles93/tau/internal/tui"
 )
 
+// logStartupPhase logs memory stats and elapsed time for a startup phase.
+func logStartupPhase(phase string, t0 time.Time) {
+	var m runtime.MemStats
+	runtime.ReadMemStats(&m)
+	elapsed := time.Since(t0)
+	slog.Info(
+		"startup phase",
+		"phase", phase,
+		"elapsed_ms", elapsed.Milliseconds(),
+		"heap_mb", m.Alloc/1024/1024,
+		"total_mb", m.Sys/1024/1024,
+		"num_gc", m.NumGC,
+	)
+}
+
 // RunChat orchestrates an interactive chat session: resolves tokens and model,
 // creates the coordinator, then launches the TUI.
 func RunChat(ctx context.Context, opts ChatOptions) error {
+	t0 := time.Now()
+	logStartupPhase("start", t0)
+
 	// Build a runtime holding every usable provider so the dynamic streamer
 	// and refresher can resolve any of them by name, enabling cross-provider
 	// model switching within a single session.
@@ -28,6 +47,7 @@ func RunChat(ctx context.Context, opts ChatOptions) error {
 	// Wrap the runtime so it can be rebuilt live when provider state changes
 	// (e.g. after /login), keeping the streamer and refresher in sync.
 	pr := newProviderRuntime(rt, usableProviders, opts.Insecure)
+	logStartupPhase("after-config", t0)
 
 	// Models come from the embedded snapshot loaded in newRuntimeForProviders,
 	// so discovery needs no network.
@@ -55,12 +75,14 @@ func RunChat(ctx context.Context, opts ChatOptions) error {
 	} else {
 		sessionManager = sessions.NewManager(rawStore)
 	}
+	logStartupPhase("after-store", t0)
 
 	// Create the central event bus. All subsystems (coordinator, TUI, skills)
 	// communicate through this bus as named clients. The bus enforces total
 	// ordering of published events and typed routing via Go generics.
 	bus := eventbus.New()
 	defer bus.Close()
+	logStartupPhase("after-bus", t0)
 
 	// Skills manager — centralises discovery and publishes events on the bus
 	// so subscribers (TUI, bridge) stay in sync when the catalog changes.
@@ -81,9 +103,11 @@ func RunChat(ctx context.Context, opts ChatOptions) error {
 	if _, err := skillsMgr.Refresh(skillDiscoveryCfg); err != nil {
 		slog.Warn("skill discovery failed", "err", err)
 	}
+	logStartupPhase("after-skills", t0)
 
 	// Build the full system prompt — project context (AGENTS.md) + skill catalog.
 	systemPrompt := buildAgentSystemPrompt("", cwd, skillsMgr) // Left user prompt there in case we want to expand this later.
+	logStartupPhase("after-prompt", t0)
 
 	// Collect startup notifications for the coordinator event stream so the
 	// TUI receives them on first subscribe. Model discovery failures are
@@ -132,6 +156,7 @@ func RunChat(ctx context.Context, opts ChatOptions) error {
 	coordinator := result.Coordinator
 	defer coordinator.Close()
 	defer result.CommandRegistry.Close()
+	logStartupPhase("after-coordinator", t0)
 
 	// OnReady: after the TUI subscribes to bus events, load plugins so the
 	// initial ExtensionCommandsChangedEvent reaches every client (TUI, web).
@@ -267,6 +292,7 @@ func RunChat(ctx context.Context, opts ChatOptions) error {
 		OnReady:            pluginOnReady,
 	}
 
+	logStartupPhase("after-tui", t0)
 	tuiErr := tui.Run(ctx, coordinator, tuiCfg)
 
 	// Shut down the web UI before closing the coordinator.
