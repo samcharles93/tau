@@ -21,7 +21,7 @@ const (
 	MaxNameLength          = 64
 	MaxDescriptionLength   = 1024
 	MaxCompatibilityLength = 500
-	MaxInstructionsLength  = 50000
+	MaxInstructionsLength  = 10000
 	maxDiscoveryDepth      = 6
 
 	userInteropPriority    = 10
@@ -438,7 +438,7 @@ func validateSkill(skill *Skill) []Diagnostic {
 	}
 
 	if len(skill.Instructions) > MaxInstructionsLength {
-		diagnostics = append(diagnostics, Diagnostic{Path: skill.SkillFilePath, SkillName: name, Severity: SeverityWarning, Message: fmt.Sprintf("instructions exceed %d characters", MaxInstructionsLength)})
+		diagnostics = append(diagnostics, Diagnostic{Path: skill.SkillFilePath, SkillName: name, Severity: SeverityError, Message: fmt.Sprintf("instructions exceed maximum length of %d characters", MaxInstructionsLength)})
 	}
 
 	return diagnostics

@@ -1,12 +1,21 @@
 package skills
 
 import (
+	"os"
 	"path/filepath"
 	"testing"
 
 	"github.com/samcharles93/tau/internal/eventbus"
 	"github.com/stretchr/testify/require"
 )
+
+func writeSkillFile(t *testing.T, baseDir string, name string, content string) {
+	skillDir := filepath.Join(baseDir, name)
+	err := os.MkdirAll(filepath.Join(skillDir, "scripts"), 0o755)
+	require.NoError(t, err)
+	err = os.WriteFile(filepath.Join(skillDir, "SKILL.md"), []byte(content), 0o644)
+	require.NoError(t, err)
+}
 
 func TestManagerRefreshPublishesSnapshot(t *testing.T) {
 	configDir := t.TempDir()

@@ -48,13 +48,13 @@ tasks:
         cmd: cd examples/plugins/{{.ITEM}} && go mod tidy && go build -o tau-plugin-{{.ITEM}} .
 
   plugins:install:
-    desc: Build all example plugins and copy them to ~/.config/tau/plugins
+    desc: Build all example plugins and copy them to the plugins directory
     deps:
       - plugins
     cmds:
-      - mkdir -p ~/.config/tau/plugins
+      - mkdir -p $(go run ./cmd/tau config-dir)/plugins
       - for: [hello]
-        cmd: cp examples/plugins/{{.ITEM}}/tau-plugin-{{.ITEM}} ~/.config/tau/plugins/
+        cmd: cp examples/plugins/{{.ITEM}}/tau-plugin-{{.ITEM}} $(go run ./cmd/tau config-dir)/plugins/
 
   deadcode:
     desc: Detect dead code in production packages (exclude *_test.go)
