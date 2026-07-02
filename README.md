@@ -8,10 +8,6 @@ Tau is a provider-agnostic, coding agent with an interactive terminal UI.
 - Bleve (search backend) uses mmap, which locks index files on Windows. Avoid deleting or renaming opened index files to prevent "sharing violation" errors.
 - Always use forward slashes (`/`) for paths in configuration and code.
 
-### Windows Notes
-- Bleve (search backend) uses mmap, which locks index files on Windows. Avoid deleting or renaming opened index files to prevent "sharing violation" errors.
-- Always use forward slashes (`/`) for paths in configuration and code.
-
 ## Installation
 
 ```bash

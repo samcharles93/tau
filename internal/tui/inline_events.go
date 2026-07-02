@@ -285,7 +285,9 @@ func (c *inlineChat) handleEvent(ev tauchat.ChatEvent) {
 // handleSkillsChanged displays the list of available skills in the TUI.
 func (c *inlineChat) handleSkillsChanged(e tauchat.SkillsChangedEvent) {
 	if len(e.Skills) == 0 {
+		c.mu.Unlock()
 		c.engine.PrintAbove("%s", c.grey("no skills available"))
+		c.mu.Lock()
 		return
 	}
 
@@ -297,7 +299,9 @@ func (c *inlineChat) handleSkillsChanged(e tauchat.SkillsChangedEvent) {
 			fmt.Fprintf(&b, " (%s)", skill.Scope)
 		}
 	}
+	c.mu.Unlock()
 	c.engine.PrintAbove("%s", c.grey(b.String()))
+	c.mu.Lock()
 }
 
 // ── State updates from events ─────────────────────────────────────────────────
