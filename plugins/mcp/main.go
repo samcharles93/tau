@@ -1,7 +1,7 @@
 // Tau MCP Client Plugin — connects to MCP servers and registers their tools
 // with tau's agent coordinator via the go-plugin extension architecture.
 //
-// Build: go build -o tau-plugin-mcp ./cmd/tau-plugin-mcp/
+// Build: cd plugins/mcp && go build -o tau-plugin-mcp .
 // Install: cp tau-plugin-mcp ~/.config/tau/plugins/
 //
 // Config (~/.config/tau/config.yaml):

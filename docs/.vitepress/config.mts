@@ -24,7 +24,20 @@ export default defineConfig({
     nav: [
       { text: "Guide", link: "/cli-reference" },
       { text: "Architecture", link: "/architecture" },
-      { text: "Plugin SDK", link: "/plugins" },
+      {
+        text: "Extensions",
+        items: [
+          { text: "Plugin SDK", link: "/plugins" },
+          {
+            text: "Examples",
+            items: [
+              { text: "Creating an MCP Plugin", link: "/examples/mcp-plugin" },
+              { text: "Advanced Plugins: Lifecycle Hooks & Prompts", link: "/examples/advanced-plugin" },
+              { text: "Building a Custom Tool Plugin", link: "/examples/tool-plugin" },
+            ],
+          },
+        ],
+      },
       {
         text: "Changelog",
         link: "https://github.com/samcharles93/tau/blob/main/CHANGELOG.md",
@@ -72,6 +85,14 @@ export default defineConfig({
             text: "Protocol (AsyncAPI)",
             link: "https://github.com/samcharles93/tau/blob/main/docs/asyncapi/tau.yaml",
           },
+        ],
+      },
+      {
+        text: "Plugin Examples",
+        items: [
+          { text: "Creating an MCP Plugin", link: "/examples/mcp-plugin" },
+          { text: "Advanced Plugins: Lifecycle Hooks & Prompts", link: "/examples/advanced-plugin" },
+          { text: "Building a Custom Tool Plugin", link: "/examples/tool-plugin" },
         ],
       },
     ],
