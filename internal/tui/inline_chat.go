@@ -61,8 +61,6 @@ type inlineChat struct {
 	registryCommands  []tauchat.CommandRef
 	extensionCommands map[string]tauchat.ExtensionCommand
 	sessionSummaries  []tauchat.SessionSummary
-	lastSkillsConfig  skills.DiscoveryConfig
-	skillsMgr         *skills.Manager
 	lastSubmit        time.Time
 
 	// Per-turn streaming state.
@@ -109,8 +107,6 @@ func newInlineChat(
 		availableModels:   slices.Clone(cfg.AvailableModels),
 		registryCommands:  slices.Clone(cfg.InitialCommands),
 		extensionCommands: map[string]tauchat.ExtensionCommand{},
-		lastSkillsConfig:  cfg.SkillDiscoveryConfig,
-		skillsMgr:         cfg.SkillsManager,
 		bold:              func(s string) string { return termkit.Wrap(s, termkit.Bold) },
 		grey:              func(s string) string { return termkit.FgOnly(s, termkit.ColorGrey) },
 		dim:               func(s string) string { return termkit.Wrap(s, termkit.Dim, termkit.Italic) },
@@ -560,35 +556,6 @@ func (c *inlineCtrl) HandleInput(data string) bool {
 		return true
 	}
 	return false
-}
-
-// handleSkillsCommand reloads the skills catalog and displays a notification.
-func (c *inlineChat) handleSkillsCommand(args string) {
-	if args != "reload" {
-		c.notify(notify.Notification{
-			Message: "Usage: /skills reload",
-			Level:   notify.LevelError,
-		})
-		return
-	}
-
-	// Trigger a refresh.
-	c.mu.Lock()
-	if c.skillsMgr != nil {
-		_, err := c.skillsMgr.Refresh(c.lastSkillsConfig, false)
-		if err != nil {
-			c.notify(notify.Notification{
-				Message: fmt.Sprintf("Failed to reload skills: %v", err),
-				Level:   notify.LevelError,
-			})
-		} else {
-			c.notify(notify.Notification{
-				Message: "Skills reloaded",
-				Level:   notify.LevelInfo,
-			})
-		}
-	}
-	c.mu.Unlock()
 }
 
 func (c *inlineCtrl) Render(width int) []string { return nil }
