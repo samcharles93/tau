@@ -137,7 +137,17 @@ func (c *inlineChat) handleSlashCommand(text string) {
 	ext, ok := c.extensionCommands[name]
 	c.mu.Unlock()
 	if ok {
-		c.send(tauchat.RunExtensionCommandCommand{Name: ext.Name, Args: rest, RequestedAt: time.Now().UTC()})
+		// Resolve a sub-action: for a command group (one with subcommands), the
+		// first token of the args is the sub-action, and the host receives the
+		// full space-joined path as the command name, e.g. "mcp list".
+		cmdName := ext.Name
+		args := rest
+		if len(ext.Subcommands) > 0 && rest != "" {
+			sub, remainder, _ := strings.Cut(rest, " ")
+			cmdName = ext.Name + " " + sub
+			args = strings.TrimSpace(remainder)
+		}
+		c.send(tauchat.RunExtensionCommandCommand{Name: cmdName, Args: args, RequestedAt: time.Now().UTC()})
 		return
 	}
 

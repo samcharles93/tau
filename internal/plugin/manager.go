@@ -11,6 +11,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"slices"
+	"strings"
 	"sync"
 	"time"
 
@@ -217,12 +218,31 @@ func (m *Manager) RunExtensionCommand(ctx context.Context, name, args string, ui
 
 	for _, c := range m.grpcClients {
 		for _, cmd := range c.ExtensionCommands() {
-			if cmd.Name == name {
+			if commandHandles(cmd, name) {
 				return c.RunExtensionCommand(ctx, name, args, uiBridge)
 			}
 		}
 	}
 	return "", fmt.Errorf("plugin manager: command %q not found", name)
+}
+
+// commandHandles reports whether cmd owns the given command name. name is either
+// the command itself ("mcp") or a space-joined sub-action path ("mcp list"); in
+// the latter case the sub-action must be one the command declares.
+func commandHandles(cmd chat.ExtensionCommand, name string) bool {
+	if cmd.Name == name {
+		return true
+	}
+	group, sub, ok := strings.Cut(name, " ")
+	if !ok || group != cmd.Name {
+		return false
+	}
+	for _, s := range cmd.Subcommands {
+		if s.Name == sub {
+			return true
+		}
+	}
+	return false
 }
 
 // ExecutePluginTool routes a tool execution to the correct plugin.

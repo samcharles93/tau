@@ -2,11 +2,15 @@ syntax = "proto3";
 package proto;
 option go_package = "github.com/samcharles93/tau/pkg/plugin/api";
 
-// Command represents an extension slash command.
+// Command represents an extension slash command. Commands may declare nested
+// sub-actions (subcommands), e.g. `/mcp list`, so a plugin can group related
+// actions under a single namespace instead of hyphenated top-level commands.
 message Command {
   string name = 1;
   string description = 2;
   string extension_name = 3;
+  repeated Command subcommands = 4; // sub-actions, e.g. list / reconnect / reload
+  string args_hint = 5;             // optional usage hint, e.g. "<server>"
 }
 
 // Diagnostic represents an extension diagnostic message.
