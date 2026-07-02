@@ -980,14 +980,10 @@ func (c *Coordinator) handleRunExtensionCommand(cmd chat.RunExtensionCommandComm
 		output, err := c.extensionReloader.RunExtensionCommand(c.ctx, name, args, c.uiBridge)
 		at := time.Now().UTC()
 		if err != nil {
+			// A single user-facing error notification.
 			c.emit(chat.ChatNotificationEvent{
 				Message:    "Extension command failed: " + err.Error(),
 				Level:      chat.ChatNotificationError,
-				OccurredAt: at,
-			})
-			c.emit(chat.ChatRuntimeErrorEvent{
-				Message:    "Extension command failed: " + err.Error(),
-				Fatal:      false,
 				OccurredAt: at,
 			})
 			return
