@@ -242,10 +242,8 @@ func (c *inlineChat) handleEvent(ev tauchat.ChatEvent) {
 		}
 
 	case tauchat.InteractivePromptRequestedEvent:
-		msg := e.Title + ": " + e.Message
 		c.mu.Unlock()
-		c.pushNotice(msg)
-		c.engine.PrintAbove("%s", c.grey(msg))
+		c.enqueuePrompt(e)
 		c.mu.Lock()
 
 	case tauchat.SessionsListedEvent:

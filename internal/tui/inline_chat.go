@@ -32,9 +32,11 @@ type activeToolBox struct {
 
 type inlineChat struct {
 	engine *taui.TUI
+	ctrl   *inlineCtrl
 
 	header      *taui.Text
 	stage       *taui.Container
+	promptSlot  *taui.Container
 	input       *taui.LineInput
 	completions *taui.Completions
 	status      *taui.Text
@@ -63,6 +65,11 @@ type inlineChat struct {
 	sessionSummaries  []tauchat.SessionSummary
 	lastSubmit        time.Time
 
+	// Interactive prompts raised by plugins/tools via the host Confirm/Input
+	// API. Only one is shown at a time; further requests queue. Guarded by mu.
+	activePrompt *taui.Prompt
+	promptQueue  []tauchat.InteractivePromptRequestedEvent
+
 	// Per-turn streaming state.
 	mu            sync.Mutex
 	turnText      *taui.Paragraph
@@ -90,6 +97,7 @@ func newInlineChat(
 	c := &inlineChat{
 		engine:            engine,
 		stage:             &taui.Container{},
+		promptSlot:        &taui.Container{},
 		ctx:               ctx,
 		runtime:           runtime,
 		sub:               sub,
@@ -138,13 +146,15 @@ func newInlineChat(
 	box := taui.NewBox().Padding(1, 1).ExpandW().Build()
 	box.AddChild(c.header)
 	box.AddChild(c.stage)
+	box.AddChild(c.promptSlot)
 	box.AddChild(taui.NewText(""))
 	box.AddChild(c.input)
 	box.AddChild(c.completions)
 	box.AddChild(c.status)
 
 	engine.AddChild(box)
-	engine.SetFocus(&inlineCtrl{chat: c})
+	c.ctrl = &inlineCtrl{chat: c}
+	engine.SetFocus(c.ctrl)
 
 	go c.spinnerLoop()
 	go c.statusLoop()
@@ -317,6 +327,78 @@ func (c *inlineChat) pushNotice(msg string) {
 		c.notifyQueue.Push(notify.Notification{Message: msg, Level: notify.LevelInfo, Duration: 5 * time.Second})
 	}
 	c.mu.Unlock()
+}
+
+// ── Interactive prompts (plugin/tool Confirm/Input) ─────────────────────────
+
+// enqueuePrompt shows the prompt immediately if none is active, otherwise
+// queues it behind the one currently shown.
+func (c *inlineChat) enqueuePrompt(e tauchat.InteractivePromptRequestedEvent) {
+	c.mu.Lock()
+	if c.activePrompt != nil {
+		c.promptQueue = append(c.promptQueue, e)
+		c.mu.Unlock()
+		return
+	}
+	c.mu.Unlock()
+	c.presentPrompt(e)
+}
+
+// presentPrompt builds a Prompt component for e, wires its callbacks to
+// respond on the runtime, and makes it the focused, visible prompt.
+func (c *inlineChat) presentPrompt(e tauchat.InteractivePromptRequestedEvent) {
+	var p *taui.Prompt
+	switch e.Kind {
+	case tauchat.InteractivePromptConfirm:
+		p = taui.NewConfirmPrompt(e.Title, e.Message)
+		p.SetOnConfirm(func(confirmed bool) {
+			c.resolvePrompt(tauchat.RespondInteractivePromptCommand{
+				RequestID: e.RequestID, Confirmed: confirmed, RespondedAt: time.Now().UTC(),
+			})
+		})
+	default:
+		p = taui.NewQuestionPrompt(e.Title, e.Message)
+		p.SetOnAnswer(func(value string) {
+			c.resolvePrompt(tauchat.RespondInteractivePromptCommand{
+				RequestID: e.RequestID, Response: value, RespondedAt: time.Now().UTC(),
+			})
+		})
+	}
+	p.SetOnCancel(func() {
+		c.resolvePrompt(tauchat.RespondInteractivePromptCommand{
+			RequestID: e.RequestID, Canceled: true, RespondedAt: time.Now().UTC(),
+		})
+	})
+	p.SetStyles(c.bold, c.grey)
+
+	c.mu.Lock()
+	c.activePrompt = p
+	c.mu.Unlock()
+	c.engine.Update(func() {
+		c.promptSlot.Clear()
+		c.promptSlot.AddChild(p)
+	})
+}
+
+// resolvePrompt sends the response to the runtime, clears the active prompt,
+// and shows the next queued prompt (if any).
+func (c *inlineChat) resolvePrompt(resp tauchat.RespondInteractivePromptCommand) {
+	c.send(resp)
+
+	c.mu.Lock()
+	c.activePrompt = nil
+	var next *tauchat.InteractivePromptRequestedEvent
+	if len(c.promptQueue) > 0 {
+		e := c.promptQueue[0]
+		c.promptQueue = c.promptQueue[1:]
+		next = &e
+	}
+	c.mu.Unlock()
+
+	c.engine.Update(func() { c.promptSlot.Clear() })
+	if next != nil {
+		c.presentPrompt(*next)
+	}
 }
 
 // ── Submit / steer / queue ───────────────────────────────────────────────────
@@ -515,6 +597,16 @@ func skillStatusLabel(rawArgs string) string {
 type inlineCtrl struct{ chat *inlineChat }
 
 func (c *inlineCtrl) HandleInput(data string) bool {
+	c.chat.mu.Lock()
+	prompt := c.chat.activePrompt
+	c.chat.mu.Unlock()
+	if prompt != nil {
+		// An interactive prompt has exclusive focus: consume everything so
+		// normal chat input (and the quit guard) can't leak through.
+		prompt.HandleInput(data)
+		return true
+	}
+
 	if c.chat.completions.HandleInput(data) {
 		c.chat.engine.RequestRender()
 		return true
