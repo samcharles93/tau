@@ -52,6 +52,7 @@ func (c *inlineChat) handleEvent(ev tauchat.ChatEvent) {
 		show := c.showReasoning
 		c.mu.Unlock()
 		if !show {
+			c.mu.Lock()
 			return
 		}
 		c.engine.Update(func() {
@@ -132,6 +133,7 @@ func (c *inlineChat) handleEvent(ev tauchat.ChatEvent) {
 		})
 		c.engine.RequestRender()
 		time.Sleep(450 * time.Millisecond)
+		c.mu.Lock()
 
 		// Render the resolved tool box, remove it from the live frame, and commit
 		// it to scrollback — all ordered safely by UpdateThenPrint.
@@ -217,15 +219,17 @@ func (c *inlineChat) handleEvent(ev tauchat.ChatEvent) {
 		}
 
 	case tauchat.ExtensionsReloadedEvent:
+		c.mu.Unlock()
 		c.setExtensionCommands(e.Result.Commands)
 		msg := fmt.Sprintf("reloaded extensions: %d loaded", e.Result.ExtensionCount)
-		c.mu.Unlock()
 		c.pushNotice(msg)
 		c.engine.PrintAbove("%s", c.grey(msg))
 		c.mu.Lock()
 
 	case tauchat.ExtensionCommandsChangedEvent:
+		c.mu.Unlock()
 		c.setExtensionCommands(e.Commands)
+		c.mu.Lock()
 
 	case tauchat.CommandsChangedEvent:
 		c.registryCommands = e.Commands
