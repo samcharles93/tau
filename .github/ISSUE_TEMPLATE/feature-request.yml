@@ -1,0 +1,67 @@
+name: ✨ Feature Request
+description: Propose a new feature, enhancement, or capability
+title: "feat: "
+labels:
+  - enhancement
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for suggesting a feature!
+
+        Tau's philosophy is **extensible**, **playful**, and **constant**.
+        We try to keep the core binary minimal and push functionality to **plugins** or **skills**.
+        Please consider whether your idea can be built as a plugin first before requesting a core change.
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem Statement
+      description: What problem does this solve? What is the pain point?
+      placeholder: e.g. "When I run Tau on a large repo, I want to filter files by glob because..."
+    validations:
+      required: true
+
+  - type: textarea
+    id: solution
+    attributes:
+      label: Proposed Solution
+      description: Describe the desired behaviour or implementation idea.
+    validations:
+      required: true
+
+  - type: dropdown
+    id: scope
+    attributes:
+      label: Affected Area
+      description: Where would this feature live?
+      multiple: false
+      options:
+        - Core / Agent Coordinator (turn loop, prompt building)
+        - Terminal UI (TUI layout, rendering, completions, keybindings)
+        - Web UI & HTTP/WS Bridge (browser UI, WS protocol, server)
+        - Plugins & Tool Registry (gRPC SDK, custom tools)
+        - Skills & Prompt Templates (markdown discovery, custom commands)
+        - Providers, Models & Auth (ai-sdk, /login, api keys)
+        - Session Store & Search Indexing (SQLite, Bleve)
+        - CLI, Config & Installation (flags, .tau.yaml, install.sh)
+        - Documentation
+        - Other
+
+  - type: checkboxes
+    id: plugin_check
+    attributes:
+      label: Extensibility Evaluation
+      options:
+        - label: This requires changes to the core runtime or event bus
+          required: false
+        - label: This could be built as an external plugin or skill
+          required: false
+        - label: I would like help/guidance on building this as a plugin
+          required: false
+
+  - type: textarea
+    id: context
+    attributes:
+      label: Additional Context
+      description: Screenshots, mockups, or reference links.

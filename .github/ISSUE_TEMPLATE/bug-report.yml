@@ -1,0 +1,84 @@
+name: 🐛 Bug Report
+description: Report a bug, crash, or unexpected behaviour
+title: "fix: "
+labels:
+  - bug
+  - triage
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for taking the time to report a bug! Please search [existing issues](https://github.com/samcharles93/tau/issues) before submitting.
+
+  - type: textarea
+    id: description
+    attributes:
+      label: Description
+      description: A clear and concise description of the bug. What happened vs what you expected?
+    validations:
+      required: true
+
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Steps to Reproduce
+      description: Include the exact command run (e.g. `tau -p "..."`) and any configuration details.
+      placeholder: |
+        1. Run `tau` with the following `.tau.yaml` ...
+        2. Enter the prompt "..."
+        3. See error / crash ...
+    validations:
+      required: true
+
+  - type: textarea
+    id: logs
+    attributes:
+      label: Relevant Logs / Stack Traces
+      description: Copy and paste any terminal output, logs, or panic trace.
+      render: shell
+
+  - type: dropdown
+    id: area
+    attributes:
+      label: Affected Area
+      description: Which architectural area does this affect?
+      multiple: false
+      options:
+        - Core / Agent Coordinator (turn loop, prompt building)
+        - Terminal UI (TUI layout, rendering, completions, keybindings)
+        - Web UI & HTTP/WS Bridge (browser UI, WS protocol, server)
+        - Plugins & Tool Registry (gRPC SDK, custom tools)
+        - Skills & Prompt Templates (markdown discovery, custom commands)
+        - Providers, Models & Auth (ai-sdk, /login, api keys)
+        - Session Store & Search Indexing (SQLite, Bleve)
+        - CLI, Config & Installation (flags, .tau.yaml, install.sh)
+        - Documentation
+        - Other
+
+  - type: input
+    id: version
+    attributes:
+      label: Tau Version
+      description: Run `tau --version` or check your git commit hash.
+      placeholder: e.g. v0.7.0
+    validations:
+      required: true
+
+  - type: input
+    id: environment
+    attributes:
+      label: Environment & LLM Provider
+      description: OS version, and the LLM provider/model you were using.
+      placeholder: e.g. Fedora 40 / DeepSeek Chat (deepseek-chat)
+    validations:
+      required: true
+
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Verification
+      options:
+        - label: I've searched existing issues
+          required: true
+        - label: I've verified this happens on the latest main branch or release
+          required: true

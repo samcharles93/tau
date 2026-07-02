@@ -1,0 +1,63 @@
+name: 🔌 Plugin / Extension / Skill
+description: Propose or request tools, gRPC plugins, custom slash commands, or SKILL.md templates
+title: "feat(plugins): "
+labels:
+  - plugins
+  - enhancement
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for contributing to Tau's extensibility!
+
+        Tau supports three ways to extend its behaviour:
+        1. **Skills (`SKILL.md`)** — Markdown instructions discovered project-locally or globally.
+        2. **Custom Slash Commands** — User/project level templates loaded from `.tau/commands/`.
+        3. **gRPC Plugins** — Native external processes that register custom tools and event handlers.
+
+  - type: dropdown
+    id: kind
+    attributes:
+      label: Extension Kind
+      multiple: false
+      options:
+        - New built-in tool (Go-native tool in internal/agent/tools)
+        - External gRPC Plugin (gRPC-based tool/event handler)
+        - Custom Slash Command (Markdown template in .tau/commands)
+        - Skill template (SKILL.md workflow/instruction guide)
+        - Plugin SDK Capability (requests for new hooks or runtime APIs)
+        - Documentation or example request
+
+  - type: textarea
+    id: description
+    attributes:
+      label: Description
+      description: What does this extension/tool do?
+      placeholder: e.g. "A Docker integration tool that lists active containers and runs commands inside them."
+    validations:
+      required: true
+
+  - type: textarea
+    id: specification
+    attributes:
+      label: Proposed Specification / API
+      description: Describe the inputs, outputs, or markdown structure.
+      placeholder: |
+        ```yaml
+        # For a tool:
+        name: docker_exec
+        description: Run a shell command in a container
+        arguments:
+          container: string (required)
+          command: string (required)
+        ```
+    validations:
+      required: false
+
+  - type: checkboxes
+    id: contribution
+    attributes:
+      label: Contribution
+      options:
+        - label: I would be willing to submit a Pull Request to implement this
+          required: false

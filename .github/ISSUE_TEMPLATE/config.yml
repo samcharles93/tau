@@ -1,0 +1,11 @@
+# blank_issues_enabled: false
+# If set to false, users cannot open blank issues and must use a template.
+# We keep it true so users can open custom issues when none of the templates fit.
+blank_issues_enabled: true
+contact_links:
+  - name: 📖 Documentation
+    url: https://docs.tau-ai.dev
+    about: Browse the Tau documentation
+  - name: 💬 Discussions
+    url: https://github.com/samcharles93/tau/discussions
+    about: Ask questions, share tips, and discuss ideas

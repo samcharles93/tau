@@ -1,0 +1,46 @@
+name: 🛠️ Maintenance / Chore
+description: Refactoring, CI/CD, dependency updates, or internal tooling
+title: "chore: "
+labels:
+  - chore
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Use this template for internal developer tasks (refactors, tests, CI/CD, documentation, deps).
+
+        *Note: The title prefix determines the automated release version bump (e.g. `refactor:`, `perf:`, `test:`, `docs:`, `chore:`).*
+
+  - type: textarea
+    id: description
+    attributes:
+      label: Description
+      description: What needs to be done and why?
+      placeholder: e.g. "Refactor eventbus client registration to prevent potential race condition during shutdown."
+    validations:
+      required: true
+
+  - type: dropdown
+    id: category
+    attributes:
+      label: Category
+      multiple: false
+      options:
+        - Refactoring (internal code quality, modernization)
+        - Performance (latency, allocations, throughput)
+        - CI / CD (GitHub Actions, release-please, goreleaser)
+        - Dependencies (go.mod, pnpm-lock.yaml)
+        - Testing (new tests, flaky test fixes, coverage)
+        - Tooling & Scripts (Taskfile, golangci-lint, scripts/)
+        - Documentation (docs/, README, specs)
+        - Other
+
+  - type: textarea
+    id: tasks
+    attributes:
+      label: Task List
+      description: Optional checklist of tasks/acceptance criteria.
+      placeholder: |
+        - [ ] Run `gofumpt -w .` and `go fix ./...`
+        - [ ] Verify `golangci-lint run` passes
+        - [ ] Verify `task test:race` passes
