@@ -34,7 +34,7 @@ Use `/reload` to rediscover plugins without restarting Tau.
 ## Quick Start
 
 The fastest way to understand the API is to read and run the
-[hello plugin](../examples/plugins/hello/main.go).
+[hello plugin](https://github.com/samcharles93/tau/blob/main/examples/plugins/hello/main.go).
 
 ```bash
 # Build the example plugin
@@ -1057,10 +1057,10 @@ func (p *CounterPlugin) DispatchEvent(ctx context.Context, event, sessionID stri
 ### gRPC Contract
 
 The full `.proto` definition is at
-[`pkg/plugin/api/extension.proto`](../pkg/plugin/api/extension.proto). The
+[`pkg/plugin/api/extension.proto`](https://github.com/samcharles93/tau/blob/main/pkg/plugin/api/extension.proto). The
 generated Go code is in
-[`pkg/plugin/api/extension.pb.go`](../pkg/plugin/api/extension.pb.go) and
-[`pkg/plugin/api/extension_grpc.pb.go`](../pkg/plugin/api/extension_grpc.pb.go).
+[`pkg/plugin/api/extension.pb.go`](https://github.com/samcharles93/tau/blob/main/pkg/plugin/api/extension.pb.go) and
+[`pkg/plugin/api/extension_grpc.pb.go`](https://github.com/samcharles93/tau/blob/main/pkg/plugin/api/extension_grpc.pb.go).
 
 ### Core Types
 

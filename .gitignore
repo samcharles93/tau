@@ -9,6 +9,7 @@ dist/
 node_modules/
 .pnpm-store/
 *.tsbuildinfo
+.vitepress/cache/
 
 # Project-local Tau config may contain provider secrets
 .tau.yaml

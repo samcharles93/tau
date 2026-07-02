@@ -101,7 +101,8 @@ Reference examples:
 
 ## Documentation
 
-Deeper reference docs live in [`docs/`](docs):
+Browse the docs at **[docs.tau-ai.dev](https://docs.tau-ai.dev)**, or read the
+source directly in [`docs/`](docs):
 
 | Topic | Doc |
 | ----- | --- |

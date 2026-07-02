@@ -41,6 +41,28 @@ tasks:
     generates:
       - ../spa/dist/index.html
 
+  docs:dev:
+    desc: Serve the docs site locally with live reload
+    dir: docs
+    cmds:
+      - pnpm install --prefer-offline
+      - pnpm dev
+
+  docs:build:
+    desc: Build the docs site (VitePress) into docs/.vitepress/dist
+    dir: docs
+    cmds:
+      - pnpm install --prefer-offline
+      - pnpm build
+    sources:
+      - "*.md"
+      - "*/*.md"
+      - "*/*.yaml"
+      - ".vitepress/config.mts"
+      - package.json
+    generates:
+      - .vitepress/dist/index.html
+
   plugins:
     desc: Build all example plugins into their directories
     cmds:
