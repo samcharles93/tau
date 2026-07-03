@@ -113,6 +113,15 @@ func (p *Prompt) Render(width int) []string {
 	return lines
 }
 
+// HandlePaste delivers a bracketed-paste payload to the question-mode input.
+// Confirm prompts have nowhere to put pasted text, so it's dropped.
+func (p *Prompt) HandlePaste(content string) bool {
+	if p.kind == PromptQuestion {
+		return p.input.HandlePaste(content)
+	}
+	return false
+}
+
 // HandleInput applies one key sequence. Callers should treat the input as
 // consumed while a Prompt is active regardless of the return value.
 func (p *Prompt) HandleInput(data string) bool {
