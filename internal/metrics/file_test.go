@@ -143,7 +143,7 @@ func TestFileSubscriber_ConcurrentWrites(t *testing.T) {
 
 	// Publish 50 events — the bus serialises delivery so no data races
 	// on the file write, but this validates the mutex path.
-	for i := 0; i < 50; i++ {
+	for i := range 50 {
 		pub.Publish(chat.MetricEvent{
 			Category:  chat.MetricCategoryTool,
 			Name:      "tool.read.duration",
