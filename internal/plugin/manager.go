@@ -30,6 +30,7 @@ type Config struct {
 	Logger               *slog.Logger
 	EventDispatchTimeout time.Duration // per-plugin event dispatch timeout (0 = default)
 	ToolExecutionTimeout time.Duration // per-plugin tool execution timeout (0 = default)
+	MaxViewsPerPlugin    int           // max concurrent open views per plugin (0 = default)
 
 	// Plugins holds the `plugins.<name>` config blocks from config.yaml, served
 	// to plugins via HostService.GetConfig.
@@ -51,6 +52,12 @@ const (
 	// DefaultToolExecutionTimeout is the maximum duration a single plugin tool
 	// execution may take. Tools may perform real work (I/O, network calls).
 	DefaultToolExecutionTimeout = 30 * time.Second
+
+	// DefaultMaxViewsPerPlugin bounds how many distinct panels a single plugin
+	// may have open at once, guarding against a misbehaving plugin flooding
+	// the TUI. Updating an already-open view's content never counts against
+	// this limit.
+	DefaultMaxViewsPerPlugin = 5
 )
 
 // Manager discovers, launches, and manages go-plugin extension binaries.
@@ -83,16 +90,21 @@ func NewManager(cfg Config) (*Manager, error) {
 	if cfg.ToolExecutionTimeout <= 0 {
 		cfg.ToolExecutionTimeout = DefaultToolExecutionTimeout
 	}
+	if cfg.MaxViewsPerPlugin <= 0 {
+		cfg.MaxViewsPerPlugin = DefaultMaxViewsPerPlugin
+	}
 	if cfg.StateDir == "" {
 		cfg.StateDir = filepath.Dir(cfg.PluginsDir)
 	}
 	host := &hostService{
-		logger:       cfg.Logger,
-		config:       cfg.Plugins,
-		kv:           newKVStore(filepath.Join(cfg.StateDir, "plugin-state.json")),
-		notify:       cfg.Notify,
-		models:       cfg.Models,
-		sessionState: cfg.SessionState,
+		logger:            cfg.Logger,
+		config:            cfg.Plugins,
+		kv:                newKVStore(filepath.Join(cfg.StateDir, "plugin-state.json")),
+		notify:            cfg.Notify,
+		models:            cfg.Models,
+		sessionState:      cfg.SessionState,
+		views:             make(map[string]map[string]struct{}),
+		maxViewsPerPlugin: cfg.MaxViewsPerPlugin,
 	}
 	return &Manager{
 		cfg:          cfg,
@@ -118,6 +130,12 @@ func (m *Manager) hasCapability(name, capability string) bool {
 // service so plugins can call Confirm/Input via the HostService RPCs.
 func (m *Manager) SetInteractiveHandler(h InteractiveHandler) {
 	m.host.interactivePrompt = h
+}
+
+// SetViewRenderer sets the panel renderer on the shared host service so
+// plugins can call RenderView/CloseView via the HostService RPCs.
+func (m *Manager) SetViewRenderer(r ViewRenderer) {
+	m.host.viewRenderer = r
 }
 
 // Load discovers and starts all plugin binaries in the plugins directory.
@@ -212,7 +230,7 @@ func (m *Manager) ExtensionCommands() []chat.ExtensionCommand {
 }
 
 // RunExtensionCommand implements chat.ExtensionReloader.
-func (m *Manager) RunExtensionCommand(ctx context.Context, name, args string, uiBridge any) (string, error) {
+func (m *Manager) RunExtensionCommand(ctx context.Context, name, args string, uiBridge any) (string, *chat.ExtensionView, error) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 
@@ -223,7 +241,7 @@ func (m *Manager) RunExtensionCommand(ctx context.Context, name, args string, ui
 			}
 		}
 	}
-	return "", fmt.Errorf("plugin manager: command %q not found", name)
+	return "", nil, fmt.Errorf("plugin manager: command %q not found", name)
 }
 
 // commandHandles reports whether cmd owns the given command name. name is either
@@ -376,11 +394,13 @@ func (m *Manager) Unload() {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
-	// Unregister all plugin tools.
-	if m.cfg.ToolRegistry != nil {
-		for name := range m.grpcClients {
+	// Unregister all plugin tools and close any panels the plugin left open,
+	// so a killed process never leaves stale UI state behind.
+	for name := range m.grpcClients {
+		if m.cfg.ToolRegistry != nil {
 			m.cfg.ToolRegistry.UnregisterPluginTools(name)
 		}
+		m.host.closeAllViewsForPlugin(context.Background(), name)
 	}
 
 	for name, client := range m.clients {

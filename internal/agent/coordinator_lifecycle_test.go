@@ -805,11 +805,11 @@ func (r *fakeExtensionReloader) ExtensionCommands() []chat.ExtensionCommand {
 	return r.result.Commands
 }
 
-func (r *fakeExtensionReloader) RunExtensionCommand(_ context.Context, name, args string, ui any) (string, error) {
+func (r *fakeExtensionReloader) RunExtensionCommand(_ context.Context, name, args string, ui any) (string, *chat.ExtensionView, error) {
 	r.commandName = name
 	r.commandArgs = args
 	r.commandUI = ui
-	return r.commandOutput, nil
+	return r.commandOutput, nil, nil
 }
 
 type blockingFullStreamer struct {

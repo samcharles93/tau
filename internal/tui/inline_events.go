@@ -235,11 +235,45 @@ func (c *inlineChat) handleEvent(ev tauchat.ChatEvent) {
 		c.registryCommands = e.Commands
 
 	case tauchat.ExtensionCommandResultEvent:
-		if strings.TrimSpace(e.Output) != "" {
+		// A view, when present, replaces the plain-text output. Sync command
+		// views are one-shot (commands only run while idle - see
+		// handleRunExtensionCommand's isIdle guard) and aren't part of a
+		// streaming turn, so they render straight to scrollback rather than
+		// mounting into c.stage, mirroring the plain-text path exactly.
+		if e.View != nil {
+			c.mu.Unlock()
+			lines := buildViewComponent(*e.View).Render(c.width())
+			if len(lines) > 0 {
+				c.engine.PrintAbove("%s", c.blockString(lines))
+			}
+			c.mu.Lock()
+		} else if strings.TrimSpace(e.Output) != "" {
 			c.mu.Unlock()
 			c.engine.PrintAbove("%s", e.Output)
 			c.mu.Lock()
 		}
+
+	case tauchat.ExtensionViewRenderedEvent:
+		c.mu.Unlock()
+		c.engine.Update(func() {
+			comp := buildViewComponent(e.View)
+			if old, ok := c.panelsByID[e.ViewID]; ok {
+				c.panels.RemoveChild(old)
+			}
+			c.panelsByID[e.ViewID] = comp
+			c.panels.AddChild(comp)
+		})
+		c.mu.Lock()
+
+	case tauchat.ExtensionViewClosedEvent:
+		c.mu.Unlock()
+		c.engine.Update(func() {
+			if comp, ok := c.panelsByID[e.ViewID]; ok {
+				c.panels.RemoveChild(comp)
+				delete(c.panelsByID, e.ViewID)
+			}
+		})
+		c.mu.Lock()
 
 	case tauchat.InteractivePromptRequestedEvent:
 		c.mu.Unlock()

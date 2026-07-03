@@ -62,6 +62,9 @@ func newTestChat(t *testing.T) (*inlineChat, *recordingRuntime) {
 	c := &inlineChat{
 		engine:          engine,
 		stage:           &taui.Container{},
+		panels:          &taui.Container{},
+		promptSlot:      &taui.Container{},
+		panelsByID:      map[string]taui.Component{},
 		ctx:             context.Background(),
 		runtime:         rt,
 		notifyQueue:     notify.NewQueue(),
