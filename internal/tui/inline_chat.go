@@ -65,10 +65,15 @@ type inlineChat struct {
 	sessionSummaries  []tauchat.SessionSummary
 	lastSubmit        time.Time
 
-	// Interactive prompts raised by plugins/tools via the host Confirm/Input
-	// API. Only one is shown at a time; further requests queue. Guarded by mu.
-	activePrompt *taui.Prompt
-	promptQueue  []tauchat.InteractivePromptRequestedEvent
+	// overlays routes input to whichever modal-like widget (interactive
+	// prompt, completions dropdown) is currently active, ahead of the base
+	// chat input. See taui.OverlayStack.
+	overlays *taui.OverlayStack
+
+	// promptQueue holds further interactive prompt requests raised by
+	// plugins/tools via the host Confirm/Input API while one is already
+	// showing. Only one prompt is shown at a time. Guarded by mu.
+	promptQueue []tauchat.InteractivePromptRequestedEvent
 
 	// Per-turn streaming state.
 	mu            sync.Mutex
@@ -143,6 +148,13 @@ func newInlineChat(
 		c.mu.Unlock()
 		return false
 	})
+
+	// The completions dropdown is a permanent soft overlay: it self-gates on
+	// its own visibility, so pushing it once at construction and never
+	// popping it is equivalent to (and replaces) the old hand-written
+	// `if c.chat.completions.HandleInput(data) { ... }` branch.
+	c.overlays = taui.NewOverlayStack(c.input)
+	c.overlays.Push(c.completions, false)
 
 	box := taui.NewBox().Padding(1, 1).ExpandW().Build()
 	box.AddChild(c.header)
@@ -332,62 +344,62 @@ func (c *inlineChat) pushNotice(msg string) {
 
 // ── Interactive prompts (plugin/tool Confirm/Input) ─────────────────────────
 
-// enqueuePrompt shows the prompt immediately if none is active, otherwise
-// queues it behind the one currently shown.
+// enqueuePrompt shows the prompt immediately if no exclusive overlay (i.e.
+// another prompt) is active, otherwise queues it behind the one currently
+// shown.
 func (c *inlineChat) enqueuePrompt(e tauchat.InteractivePromptRequestedEvent) {
-	c.mu.Lock()
-	if c.activePrompt != nil {
+	if c.overlays.HasExclusive() {
+		c.mu.Lock()
 		c.promptQueue = append(c.promptQueue, e)
 		c.mu.Unlock()
 		return
 	}
-	c.mu.Unlock()
 	c.presentPrompt(e)
 }
 
 // presentPrompt builds a Prompt component for e, wires its callbacks to
-// respond on the runtime, and makes it the focused, visible prompt.
+// respond on the runtime, and pushes it as an exclusive overlay so it takes
+// priority over the chat input and completions dropdown until resolved.
 func (c *inlineChat) presentPrompt(e tauchat.InteractivePromptRequestedEvent) {
 	var p *taui.Prompt
 	switch e.Kind {
 	case tauchat.InteractivePromptConfirm:
 		p = taui.NewConfirmPrompt(e.Title, e.Message)
 		p.SetOnConfirm(func(confirmed bool) {
-			c.resolvePrompt(tauchat.RespondInteractivePromptCommand{
+			c.resolvePrompt(p, tauchat.RespondInteractivePromptCommand{
 				RequestID: e.RequestID, Confirmed: confirmed, RespondedAt: time.Now().UTC(),
 			})
 		})
 	default:
 		p = taui.NewQuestionPrompt(e.Title, e.Message)
 		p.SetOnAnswer(func(value string) {
-			c.resolvePrompt(tauchat.RespondInteractivePromptCommand{
+			c.resolvePrompt(p, tauchat.RespondInteractivePromptCommand{
 				RequestID: e.RequestID, Response: value, RespondedAt: time.Now().UTC(),
 			})
 		})
 	}
 	p.SetOnCancel(func() {
-		c.resolvePrompt(tauchat.RespondInteractivePromptCommand{
+		c.resolvePrompt(p, tauchat.RespondInteractivePromptCommand{
 			RequestID: e.RequestID, Canceled: true, RespondedAt: time.Now().UTC(),
 		})
 	})
 	p.SetStyles(c.bold, c.grey)
 
-	c.mu.Lock()
-	c.activePrompt = p
-	c.mu.Unlock()
+	c.overlays.Push(p, true)
 	c.engine.Update(func() {
 		c.promptSlot.Clear()
 		c.promptSlot.AddChild(p)
 	})
 }
 
-// resolvePrompt sends the response to the runtime, clears the active prompt,
-// and shows the next queued prompt (if any).
-func (c *inlineChat) resolvePrompt(resp tauchat.RespondInteractivePromptCommand) {
+// resolvePrompt sends the response to the runtime, pops p from the overlay
+// stack, and shows the next queued prompt (if any).
+func (c *inlineChat) resolvePrompt(p *taui.Prompt, resp tauchat.RespondInteractivePromptCommand) {
 	c.send(resp)
 
+	c.overlays.Pop(p)
+
 	c.mu.Lock()
-	c.activePrompt = nil
 	var next *tauchat.InteractivePromptRequestedEvent
 	if len(c.promptQueue) > 0 {
 		e := c.promptQueue[0]
@@ -598,17 +610,11 @@ func skillStatusLabel(rawArgs string) string {
 type inlineCtrl struct{ chat *inlineChat }
 
 func (c *inlineCtrl) HandleInput(data string) bool {
-	c.chat.mu.Lock()
-	prompt := c.chat.activePrompt
-	c.chat.mu.Unlock()
-	if prompt != nil {
-		// An interactive prompt has exclusive focus: consume everything so
-		// normal chat input (and the quit guard) can't leak through.
-		prompt.HandleInput(data)
-		return true
-	}
-
-	if c.chat.completions.HandleInput(data) {
+	// The overlay stack tries the active prompt (if any — exclusive, so it
+	// consumes everything so normal chat input and the quit guard can't leak
+	// through) and then the completions dropdown (soft — only consumes when
+	// it has something to show).
+	if c.chat.overlays.HandleInput(data) {
 		c.chat.engine.RequestRender()
 		return true
 	}
@@ -649,6 +655,19 @@ func (c *inlineCtrl) HandleInput(data string) bool {
 		return true
 	}
 	return false
+}
+
+// HandlePaste delivers a bracketed-paste payload following the same
+// precedence as HandleInput: the overlay stack gets first refusal (an active
+// prompt claims it exclusively; completions doesn't implement PasteHandler
+// at all, since it has no text buffer of its own — it reads from
+// c.chat.input — so the stack skips it automatically), otherwise the payload
+// lands in the main chat input.
+func (c *inlineCtrl) HandlePaste(content string) bool {
+	if c.chat.overlays.HandlePaste(content) {
+		return true
+	}
+	return c.chat.input.HandlePaste(content)
 }
 
 func (c *inlineCtrl) Render(width int) []string { return nil }
