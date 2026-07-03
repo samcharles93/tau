@@ -26,7 +26,7 @@ type ShellParams struct {
 
 var shellSchema = Schema{
 	Name:        "shell",
-	Description: "Execute a shell command. Uses PowerShell on Windows, bash on Linux/macOS. Returns stdout and stderr. Use for builds, tests, git, and other commands — prefer the dedicated grep, find, and read tools for searching and reading files.",
+	Description: fmt.Sprintf("Execute a shell command. Uses PowerShell on Windows, bash on Linux/macOS. Returns stdout and stderr, truncated to the last %d lines or %s (whichever is hit first); when truncated, the full output is saved to a temp file whose path is included in the notice. Use for builds, tests, git, and other commands — prefer the dedicated grep, find, and read tools for searching and reading files.", DefaultMaxLines, FormatSize(DefaultMaxBytes)),
 	Parameters: json.RawMessage(`{
 		"type": "object",
 		"properties": {

@@ -25,7 +25,7 @@ type FindParams struct {
 
 var findSchema = Schema{
 	Name:        "find",
-	Description: "Find files and directories by name pattern, or list a directory's contents. Respects .gitignore when fd is available. Returns a list of matching paths. Omit pattern and set max_depth:1 to list a single directory. Use exclude to skip unwanted directories.",
+	Description: fmt.Sprintf("Find files and directories by name pattern, or list a directory's contents. Respects .gitignore when fd is available. Returns a list of matching paths, truncated to %d results or %s (whichever is hit first). Omit pattern and set max_depth:1 to list a single directory. Use exclude to skip unwanted directories.", DefaultMaxLines, FormatSize(DefaultMaxBytes)),
 	Parameters: json.RawMessage(`{
 		"type": "object",
 		"properties": {

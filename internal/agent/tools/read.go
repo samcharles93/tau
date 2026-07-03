@@ -18,7 +18,7 @@ type ReadParams struct {
 
 var readSchema = Schema{
 	Name:        "read",
-	Description: "Read file contents. Use offset and limit for large files; truncated output ends with a notice giving the offset to continue from.",
+	Description: fmt.Sprintf("Read file contents. Output is truncated to %d lines or %s (whichever is hit first); truncated output ends with a notice giving the offset to continue from. Use offset and limit to page through large files.", DefaultMaxLines, FormatSize(DefaultMaxBytes)),
 	Parameters: json.RawMessage(`{
 		"type": "object",
 		"properties": {

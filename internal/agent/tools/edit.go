@@ -68,10 +68,52 @@ func NewEditTool(cwd string, mq *MutationQueue, rt *ReadTracker) Tool {
 	}
 }
 
+// parseEditParams unmarshals edit parameters, tolerating two model quirks
+// observed in the wild: sending edits as a JSON-encoded string instead of an
+// array, and sending a single flat old_text/new_text pair at the top level
+// instead of inside edits[].
+func parseEditParams(params json.RawMessage) (EditParams, error) {
+	var wire struct {
+		Path       string          `json:"path"`
+		Edits      json.RawMessage `json:"edits"`
+		OldText    *string         `json:"old_text"`
+		NewText    *string         `json:"new_text"`
+		ReplaceAll bool            `json:"replace_all"`
+	}
+	if err := json.Unmarshal(params, &wire); err != nil {
+		return EditParams{}, err
+	}
+
+	p := EditParams{Path: wire.Path}
+
+	if len(wire.Edits) > 0 {
+		raw := wire.Edits
+		// Some models double-encode the array as a JSON string.
+		var asString string
+		if err := json.Unmarshal(raw, &asString); err == nil {
+			raw = json.RawMessage(asString)
+		}
+		if err := json.Unmarshal(raw, &p.Edits); err != nil {
+			return EditParams{}, fmt.Errorf("invalid edits: %w", err)
+		}
+	}
+
+	// A flat old_text/new_text pair at the top level becomes a single edit.
+	if wire.OldText != nil && wire.NewText != nil {
+		p.Edits = append(p.Edits, EditAction{
+			OldText:    *wire.OldText,
+			NewText:    *wire.NewText,
+			ReplaceAll: wire.ReplaceAll,
+		})
+	}
+
+	return p, nil
+}
+
 func makeEditExecutor(cwd string, mq *MutationQueue, rt *ReadTracker) Executor {
 	return func(ctx context.Context, params json.RawMessage, _ UIBridge) (Result, error) {
-		var p EditParams
-		if err := json.Unmarshal(params, &p); err != nil {
+		p, err := parseEditParams(params)
+		if err != nil {
 			return Result{Content: fmt.Sprintf("invalid parameters: %v", err), IsError: true}, nil
 		}
 

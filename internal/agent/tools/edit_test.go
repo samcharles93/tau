@@ -116,6 +116,48 @@ func TestApplyEdits(t *testing.T) {
 	}
 }
 
+func TestParseEditParams_Quirks(t *testing.T) {
+	t.Run("edits as JSON-encoded string", func(t *testing.T) {
+		params := `{"path": "f.txt", "edits": "[{\"old_text\": \"a\", \"new_text\": \"b\"}]"}`
+		p, err := parseEditParams(json.RawMessage(params))
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if len(p.Edits) != 1 || p.Edits[0].OldText != "a" || p.Edits[0].NewText != "b" {
+			t.Fatalf("unexpected edits: %+v", p.Edits)
+		}
+	})
+
+	t.Run("flat old_text and new_text", func(t *testing.T) {
+		params := `{"path": "f.txt", "old_text": "a", "new_text": "b", "replace_all": true}`
+		p, err := parseEditParams(json.RawMessage(params))
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if len(p.Edits) != 1 || p.Edits[0].OldText != "a" || !p.Edits[0].ReplaceAll {
+			t.Fatalf("unexpected edits: %+v", p.Edits)
+		}
+	})
+
+	t.Run("canonical form unchanged", func(t *testing.T) {
+		params := `{"path": "f.txt", "edits": [{"old_text": "a", "new_text": "b"}, {"old_text": "c", "new_text": "d"}]}`
+		p, err := parseEditParams(json.RawMessage(params))
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if len(p.Edits) != 2 {
+			t.Fatalf("expected 2 edits, got %+v", p.Edits)
+		}
+	})
+
+	t.Run("invalid edits payload errors", func(t *testing.T) {
+		params := `{"path": "f.txt", "edits": "not json"}`
+		if _, err := parseEditParams(json.RawMessage(params)); err == nil {
+			t.Fatal("expected error for undecodable edits")
+		}
+	})
+}
+
 func TestEditTool_PreservesCRLFAndBOM(t *testing.T) {
 	tmp := t.TempDir()
 	path := filepath.Join(tmp, "f.txt")
