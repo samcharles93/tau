@@ -157,6 +157,30 @@ Animated spinner with optional message:
 func Loader(message string, frames []string) Element
 ```
 
+### KeyValue, List, Table, Divider, Stack, StatusRow
+
+Added for plugin-rendered panels (see [the Plugin SDK's Panels and
+Views](./plugins.md#panels-and-views-rendering-structured-ui)), these follow
+the package's actual builder-based constructor style rather than the
+functional-options sketch above:
+
+```go
+func NewKeyValue(entries []KeyValueEntry) *KeyValue        // aligned "key: value" lines
+func NewList(items []string, ordered bool) *List           // bulleted/numbered, word-wrapped
+func NewTable(headers []string, rows [][]string) *Table    // column-aligned, shrinks to fit width
+func NewDivider(label string) *Divider                     // horizontal rule, optional centered label
+func NewStack(direction StackDirection, gap int) *Stack    // vertical (Container) or horizontal (zipped columns) layout
+func NewStatusRow(label, detail string, state StatusRowState) *StatusRow // ToolRow's spinner/✓/✗ language, generalized
+```
+
+`Stack` embeds `Container`; `StackVertical` simply delegates to
+`Container.Render` (which only concatenates lines top-to-bottom — there is no
+other horizontal-layout primitive in the package), while `StackHorizontal`
+renders each child independently and zips their lines side by side with `Gap`
+spaces between columns. `StatusRow` adds a fourth, non-animated `Neutral`
+state to `ToolRow`'s running/success/failed model, for status that isn't an
+in-progress lifecycle.
+
 ## Color System
 
 `pkg/taui/termkit/color.go` provides a layered color system:

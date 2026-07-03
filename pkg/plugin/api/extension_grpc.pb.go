@@ -441,6 +441,8 @@ const (
 	HostService_Log_FullMethodName                = "/proto.HostService/Log"
 	HostService_Confirm_FullMethodName            = "/proto.HostService/Confirm"
 	HostService_Input_FullMethodName              = "/proto.HostService/Input"
+	HostService_RenderView_FullMethodName         = "/proto.HostService/RenderView"
+	HostService_CloseView_FullMethodName          = "/proto.HostService/CloseView"
 )
 
 // HostServiceClient is the client API for HostService service.
@@ -459,6 +461,8 @@ type HostServiceClient interface {
 	Log(ctx context.Context, in *LogRequest, opts ...grpc.CallOption) (*LogResponse, error)
 	Confirm(ctx context.Context, in *ConfirmRequest, opts ...grpc.CallOption) (*ConfirmResponse, error)
 	Input(ctx context.Context, in *InputRequest, opts ...grpc.CallOption) (*InputResponse, error)
+	RenderView(ctx context.Context, in *RenderViewRequest, opts ...grpc.CallOption) (*RenderViewResponse, error)
+	CloseView(ctx context.Context, in *CloseViewRequest, opts ...grpc.CallOption) (*CloseViewResponse, error)
 }
 
 type hostServiceClient struct {
@@ -549,6 +553,26 @@ func (c *hostServiceClient) Input(ctx context.Context, in *InputRequest, opts ..
 	return out, nil
 }
 
+func (c *hostServiceClient) RenderView(ctx context.Context, in *RenderViewRequest, opts ...grpc.CallOption) (*RenderViewResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(RenderViewResponse)
+	err := c.cc.Invoke(ctx, HostService_RenderView_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *hostServiceClient) CloseView(ctx context.Context, in *CloseViewRequest, opts ...grpc.CallOption) (*CloseViewResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(CloseViewResponse)
+	err := c.cc.Invoke(ctx, HostService_CloseView_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // HostServiceServer is the server API for HostService service.
 // All implementations must embed UnimplementedHostServiceServer
 // for forward compatibility.
@@ -565,6 +589,8 @@ type HostServiceServer interface {
 	Log(context.Context, *LogRequest) (*LogResponse, error)
 	Confirm(context.Context, *ConfirmRequest) (*ConfirmResponse, error)
 	Input(context.Context, *InputRequest) (*InputResponse, error)
+	RenderView(context.Context, *RenderViewRequest) (*RenderViewResponse, error)
+	CloseView(context.Context, *CloseViewRequest) (*CloseViewResponse, error)
 	mustEmbedUnimplementedHostServiceServer()
 }
 
@@ -598,6 +624,12 @@ func (UnimplementedHostServiceServer) Confirm(context.Context, *ConfirmRequest) 
 }
 func (UnimplementedHostServiceServer) Input(context.Context, *InputRequest) (*InputResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method Input not implemented")
+}
+func (UnimplementedHostServiceServer) RenderView(context.Context, *RenderViewRequest) (*RenderViewResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method RenderView not implemented")
+}
+func (UnimplementedHostServiceServer) CloseView(context.Context, *CloseViewRequest) (*CloseViewResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method CloseView not implemented")
 }
 func (UnimplementedHostServiceServer) mustEmbedUnimplementedHostServiceServer() {}
 func (UnimplementedHostServiceServer) testEmbeddedByValue()                     {}
@@ -764,6 +796,42 @@ func _HostService_Input_Handler(srv interface{}, ctx context.Context, dec func(i
 	return interceptor(ctx, in, info, handler)
 }
 
+func _HostService_RenderView_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(RenderViewRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(HostServiceServer).RenderView(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: HostService_RenderView_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(HostServiceServer).RenderView(ctx, req.(*RenderViewRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _HostService_CloseView_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(CloseViewRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(HostServiceServer).CloseView(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: HostService_CloseView_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(HostServiceServer).CloseView(ctx, req.(*CloseViewRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 // HostService_ServiceDesc is the grpc.ServiceDesc for HostService service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -802,6 +870,14 @@ var HostService_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "Input",
 			Handler:    _HostService_Input_Handler,
+		},
+		{
+			MethodName: "RenderView",
+			Handler:    _HostService_RenderView_Handler,
+		},
+		{
+			MethodName: "CloseView",
+			Handler:    _HostService_CloseView_Handler,
 		},
 	},
 	Streams:  []grpc.StreamDesc{},

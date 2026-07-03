@@ -46,11 +46,11 @@ func (s *GRPCServer) GetMetadata(ctx context.Context, req *GetMetadataRequest) (
 }
 
 func (s *GRPCServer) RunCommand(ctx context.Context, req *RunCommandRequest) (*RunCommandResponse, error) {
-	output, err := s.Impl.RunCommand(ctx, req.Name, req.Args)
+	output, view, err := s.Impl.RunCommand(ctx, req.Name, req.Args)
 	if err != nil {
 		return nil, err
 	}
-	return &RunCommandResponse{Output: output}, nil
+	return &RunCommandResponse{Output: output, View: view}, nil
 }
 
 func (s *GRPCServer) Reload(ctx context.Context, req *ReloadRequest) (*ReloadResponse, error) {
@@ -135,12 +135,12 @@ func (c *GRPCClient) ExtensionCommands() []chat.ExtensionCommand {
 	return c.cmds
 }
 
-func (c *GRPCClient) RunExtensionCommand(ctx context.Context, name, args string, uiBridge any) (string, error) {
+func (c *GRPCClient) RunExtensionCommand(ctx context.Context, name, args string, uiBridge any) (string, *chat.ExtensionView, error) {
 	resp, err := c.Client.RunCommand(ctx, &RunCommandRequest{Name: name, Args: args})
 	if err != nil {
-		return "", err
+		return "", nil, err
 	}
-	return resp.Output, nil
+	return resp.Output, ProtoViewToChat(resp.View), nil
 }
 
 func protoCommandsToChat(cmds []*Command) []chat.ExtensionCommand {
@@ -168,4 +168,145 @@ func protoDiagnosticsToChat(diags []*Diagnostic) []chat.ExtensionDiagnostic {
 		}
 	}
 	return out
+}
+
+// ProtoViewToChat converts a wire View into the internal/chat domain type.
+// Exported because both this package's own adapters and internal/agent's
+// HostService-facing bridge need it (a plugin pushes a View to HostService,
+// which forwards the raw proto message up to the bridge for conversion).
+func ProtoViewToChat(v *View) *chat.ExtensionView {
+	if v == nil {
+		return nil
+	}
+	widgets := make([]chat.Widget, 0, len(v.Widgets))
+	for _, w := range v.Widgets {
+		widgets = append(widgets, ProtoWidgetToChat(w))
+	}
+	return &chat.ExtensionView{
+		ID:      v.Id,
+		Title:   v.Title,
+		Widgets: widgets,
+		Style:   protoStyleToChat(v.Style),
+	}
+}
+
+// ProtoWidgetToChat converts a wire Widget into the internal/chat domain
+// type. Unrecognized/unset oneof kinds (e.g. from a newer plugin talking to
+// an older host) map to a zero-value chat.Widget, which renders as nothing -
+// the same additive-evolution guarantee as the proto oneof itself.
+func ProtoWidgetToChat(w *Widget) chat.Widget {
+	if w == nil {
+		return chat.Widget{}
+	}
+	switch k := w.Kind.(type) {
+	case *Widget_Text:
+		return chat.Widget{
+			Kind: chat.WidgetKindText,
+			Text: &chat.TextWidget{Text: k.Text.GetText(), Style: protoStyleToChat(k.Text.GetStyle())},
+		}
+	case *Widget_Stack:
+		children := make([]chat.Widget, 0, len(k.Stack.GetChildren()))
+		for _, c := range k.Stack.GetChildren() {
+			children = append(children, ProtoWidgetToChat(c))
+		}
+		direction := chat.StackVertical
+		if k.Stack.GetDirection() == StackWidget_HORIZONTAL {
+			direction = chat.StackHorizontal
+		}
+		return chat.Widget{
+			Kind: chat.WidgetKindStack,
+			Stack: &chat.StackWidget{
+				Direction: direction,
+				Children:  children,
+				Gap:       int(k.Stack.GetGap()),
+			},
+		}
+	case *Widget_KeyValue:
+		entries := make([]chat.KeyValueEntry, 0, len(k.KeyValue.GetEntries()))
+		for _, e := range k.KeyValue.GetEntries() {
+			entries = append(entries, chat.KeyValueEntry{
+				Key:        e.GetKey(),
+				Value:      e.GetValue(),
+				ValueStyle: protoStyleToChat(e.GetValueStyle()),
+			})
+		}
+		return chat.Widget{Kind: chat.WidgetKindKeyValue, KeyValue: &chat.KeyValueWidget{Entries: entries}}
+	case *Widget_List:
+		return chat.Widget{
+			Kind: chat.WidgetKindList,
+			List: &chat.ListWidget{
+				Items:   k.List.GetItems(),
+				Ordered: k.List.GetOrdered(),
+				Style:   protoStyleToChat(k.List.GetStyle()),
+			},
+		}
+	case *Widget_Table:
+		rows := make([]chat.TableRow, 0, len(k.Table.GetRows()))
+		for _, r := range k.Table.GetRows() {
+			rows = append(rows, chat.TableRow{Cells: r.GetCells()})
+		}
+		return chat.Widget{
+			Kind:  chat.WidgetKindTable,
+			Table: &chat.TableWidget{Headers: k.Table.GetHeaders(), Rows: rows},
+		}
+	case *Widget_Progress:
+		return chat.Widget{
+			Kind: chat.WidgetKindProgress,
+			Progress: &chat.ProgressWidget{
+				Label:    k.Progress.GetLabel(),
+				Fraction: k.Progress.GetFraction(),
+				Style:    protoStyleToChat(k.Progress.GetStyle()),
+			},
+		}
+	case *Widget_Divider:
+		return chat.Widget{Kind: chat.WidgetKindDivider, Divider: &chat.DividerWidget{Label: k.Divider.GetLabel()}}
+	case *Widget_Status:
+		state := chat.StatusRunning
+		switch k.Status.GetState() {
+		case StatusWidget_SUCCESS:
+			state = chat.StatusSuccess
+		case StatusWidget_FAILED:
+			state = chat.StatusFailed
+		case StatusWidget_NEUTRAL:
+			state = chat.StatusNeutral
+		}
+		return chat.Widget{
+			Kind: chat.WidgetKindStatus,
+			Status: &chat.StatusWidget{
+				State:  state,
+				Label:  k.Status.GetLabel(),
+				Detail: k.Status.GetDetail(),
+			},
+		}
+	default:
+		return chat.Widget{}
+	}
+}
+
+func protoStyleToChat(s *Style) *chat.Style {
+	if s == nil {
+		return nil
+	}
+	tone := chat.ToneDefault
+	switch s.Tone {
+	case Style_TONE_INFO:
+		tone = chat.ToneInfo
+	case Style_TONE_SUCCESS:
+		tone = chat.ToneSuccess
+	case Style_TONE_WARN:
+		tone = chat.ToneWarn
+	case Style_TONE_ERROR:
+		tone = chat.ToneError
+	case Style_TONE_MUTED:
+		tone = chat.ToneMuted
+	}
+	return &chat.Style{
+		Tone:      tone,
+		FgHex:     s.FgHex,
+		BgHex:     s.BgHex,
+		Bold:      s.Bold,
+		Dim:       s.Dim,
+		Italic:    s.Italic,
+		Underline: s.Underline,
+	}
 }

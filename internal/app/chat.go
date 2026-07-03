@@ -680,6 +680,14 @@ func buildCoordinator(ctx context.Context, cfg coordinatorConfig) (*agent.Coordi
 	// plugin slash commands can call Host.Confirm / Host.Input.
 	pluginMgr.SetInteractiveHandler(coordinator.UIBridge())
 
+	// The same bridge also implements plugin.ViewRenderer (RenderView/
+	// CloseView), but tools.UIBridge - the interface Coordinator.UIBridge()
+	// is statically typed as - doesn't declare those methods, so a type
+	// assertion is needed to recover them.
+	if viewRenderer, ok := coordinator.UIBridge().(plugin.ViewRenderer); ok {
+		pluginMgr.SetViewRenderer(viewRenderer)
+	}
+
 	return coordinator, pluginMgr.ExtensionCommands(), pluginMgr, nil
 }
 

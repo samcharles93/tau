@@ -30,6 +30,11 @@ type Host interface {
 	Input(ctx context.Context, title, placeholder string) (string, error)
 	// Log forwards a structured log line to the host logger.
 	Log(ctx context.Context, level, message string, fields map[string]string) error
+	// RenderView opens or updates a persistent panel in the host UI. Sending a
+	// View with an id that's already open replaces its content in place.
+	RenderView(ctx context.Context, view *View) error
+	// CloseView closes a panel previously opened via RenderView.
+	CloseView(ctx context.Context, viewID string) error
 }
 
 // HostAware is implemented by Extensions that need to call back into the host.
@@ -105,5 +110,15 @@ func (h *hostClient) Input(ctx context.Context, title, placeholder string) (stri
 
 func (h *hostClient) Log(ctx context.Context, level, message string, fields map[string]string) error {
 	_, err := h.client.Log(ctx, &LogRequest{Entry: &LogEntry{Level: level, Message: message, Fields: fields}})
+	return err
+}
+
+func (h *hostClient) RenderView(ctx context.Context, view *View) error {
+	_, err := h.client.RenderView(ctx, &RenderViewRequest{PluginName: h.pluginName, View: view})
+	return err
+}
+
+func (h *hostClient) CloseView(ctx context.Context, viewID string) error {
+	_, err := h.client.CloseView(ctx, &CloseViewRequest{PluginName: h.pluginName, ViewId: viewID})
 	return err
 }

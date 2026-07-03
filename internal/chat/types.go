@@ -418,7 +418,7 @@ type ExtensionReloadResult struct {
 type ExtensionReloader interface {
 	ReloadExtensions(ctx context.Context, idle bool) (ExtensionReloadResult, error)
 	ExtensionCommands() []ExtensionCommand
-	RunExtensionCommand(ctx context.Context, name, args string, uiBridge any) (string, error)
+	RunExtensionCommand(ctx context.Context, name, args string, uiBridge any) (output string, view *ExtensionView, err error)
 }
 
 type ChatSessionSnapshotEvent struct {
@@ -609,13 +609,170 @@ type SkillsChangedEvent struct {
 
 func (SkillsChangedEvent) IsChatEvent() {}
 
+// WidgetKind identifies which field of Widget is populated.
+type WidgetKind string
+
+const (
+	WidgetKindText     WidgetKind = "text"
+	WidgetKindStack    WidgetKind = "stack"
+	WidgetKindKeyValue WidgetKind = "key_value"
+	WidgetKindList     WidgetKind = "list"
+	WidgetKindTable    WidgetKind = "table"
+	WidgetKindProgress WidgetKind = "progress"
+	WidgetKindDivider  WidgetKind = "divider"
+	WidgetKindStatus   WidgetKind = "status"
+)
+
+// StyleTone is a semantic presentation hint resolved to tau's theme palette
+// host-side, so plugin-rendered widgets stay visually consistent across
+// theme changes. FgHex/BgHex are an escape hatch, not the primary mechanism.
+type StyleTone string
+
+const (
+	ToneDefault StyleTone = "default"
+	ToneInfo    StyleTone = "info"
+	ToneSuccess StyleTone = "success"
+	ToneWarn    StyleTone = "warn"
+	ToneError   StyleTone = "error"
+	ToneMuted   StyleTone = "muted"
+)
+
+type Style struct {
+	Tone      StyleTone `json:"tone,omitempty"`
+	FgHex     string    `json:"fg_hex,omitempty"`
+	BgHex     string    `json:"bg_hex,omitempty"`
+	Bold      bool      `json:"bold,omitempty"`
+	Dim       bool      `json:"dim,omitempty"`
+	Italic    bool      `json:"italic,omitempty"`
+	Underline bool      `json:"underline,omitempty"`
+}
+
+type TextWidget struct {
+	Text  string `json:"text"`
+	Style *Style `json:"style,omitempty"`
+}
+
+type StackDirection string
+
+const (
+	StackVertical   StackDirection = "vertical"
+	StackHorizontal StackDirection = "horizontal"
+)
+
+type StackWidget struct {
+	Direction StackDirection `json:"direction,omitempty"`
+	Children  []Widget       `json:"children,omitempty"`
+	Gap       int            `json:"gap,omitempty"`
+}
+
+type KeyValueEntry struct {
+	Key        string `json:"key"`
+	Value      string `json:"value"`
+	ValueStyle *Style `json:"value_style,omitempty"`
+}
+
+type KeyValueWidget struct {
+	Entries []KeyValueEntry `json:"entries,omitempty"`
+}
+
+type ListWidget struct {
+	Items   []string `json:"items,omitempty"`
+	Ordered bool     `json:"ordered,omitempty"`
+	Style   *Style   `json:"style,omitempty"`
+}
+
+type TableRow struct {
+	Cells []string `json:"cells,omitempty"`
+}
+
+type TableWidget struct {
+	Headers []string   `json:"headers,omitempty"`
+	Rows    []TableRow `json:"rows,omitempty"`
+}
+
+type ProgressWidget struct {
+	Label    string  `json:"label,omitempty"`
+	Fraction float64 `json:"fraction"` // negative = indeterminate
+	Style    *Style  `json:"style,omitempty"`
+}
+
+type DividerWidget struct {
+	Label string `json:"label,omitempty"`
+}
+
+type StatusState string
+
+const (
+	StatusRunning StatusState = "running"
+	StatusSuccess StatusState = "success"
+	StatusFailed  StatusState = "failed"
+	StatusNeutral StatusState = "neutral"
+)
+
+type StatusWidget struct {
+	State  StatusState `json:"state,omitempty"`
+	Label  string      `json:"label,omitempty"`
+	Detail string      `json:"detail,omitempty"`
+}
+
+// Widget is one renderable element of an ExtensionView. Exactly one of the
+// kind-specific fields is populated, selected by Kind.
+type Widget struct {
+	Kind     WidgetKind      `json:"kind"`
+	Text     *TextWidget     `json:"text,omitempty"`
+	Stack    *StackWidget    `json:"stack,omitempty"`
+	KeyValue *KeyValueWidget `json:"key_value,omitempty"`
+	List     *ListWidget     `json:"list,omitempty"`
+	Table    *TableWidget    `json:"table,omitempty"`
+	Progress *ProgressWidget `json:"progress,omitempty"`
+	Divider  *DividerWidget  `json:"divider,omitempty"`
+	Status   *StatusWidget   `json:"status,omitempty"`
+}
+
+// ExtensionView is a structured panel a plugin renders into the host UI,
+// either attached to a command result (sync) or pushed independently via
+// ExtensionViewRenderedEvent (async). Re-rendering a View with the same ID
+// replaces its content in place.
+type ExtensionView struct {
+	ID      string   `json:"id"`
+	Title   string   `json:"title,omitempty"`
+	Widgets []Widget `json:"widgets,omitempty"`
+	Style   *Style   `json:"style,omitempty"`
+}
+
 type ExtensionCommandResultEvent struct {
-	Name       string    `json:"name"`
-	Output     string    `json:"output"`
-	OccurredAt time.Time `json:"occurred_at"`
+	Name       string         `json:"name"`
+	Output     string         `json:"output"`
+	View       *ExtensionView `json:"view,omitempty"`
+	OccurredAt time.Time      `json:"occurred_at"`
 }
 
 func (ExtensionCommandResultEvent) IsChatEvent() {}
+
+// ExtensionViewRenderedEvent is published when a plugin opens or updates a
+// persistent panel via Host.RenderView. ViewID is host-qualified
+// (pluginName + ":" + the plugin-local View.ID) to prevent collisions and
+// spoofing between plugins.
+type ExtensionViewRenderedEvent struct {
+	PluginName string        `json:"plugin_name"`
+	ViewID     string        `json:"view_id"`
+	View       ExtensionView `json:"view"`
+	OccurredAt time.Time     `json:"occurred_at"`
+}
+
+func (ExtensionViewRenderedEvent) IsChatEvent() {}
+
+// ExtensionViewClosedEvent is published when a plugin closes a panel via
+// Host.CloseView, or when the host closes it on the plugin's behalf
+// (unload/reload). ViewID is host-qualified, matching
+// ExtensionViewRenderedEvent.ViewID.
+type ExtensionViewClosedEvent struct {
+	PluginName string    `json:"plugin_name"`
+	ViewID     string    `json:"view_id"`
+	OccurredAt time.Time `json:"occurred_at"`
+}
+
+func (ExtensionViewClosedEvent) IsChatEvent() {}
 
 type InteractivePromptKind string
 

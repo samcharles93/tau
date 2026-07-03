@@ -79,3 +79,96 @@ func TestHandleEvent_ReasoningDelta_HiddenDoesNotPanic(t *testing.T) {
 
 	runHandleEvent(t, c, tauchat.ChatReasoningDeltaEvent{Delta: "thinking…"})
 }
+
+func demoView(id string) tauchat.ExtensionView {
+	return tauchat.ExtensionView{
+		ID:    id,
+		Title: "Demo",
+		Widgets: []tauchat.Widget{
+			{Kind: tauchat.WidgetKindKeyValue, KeyValue: &tauchat.KeyValueWidget{
+				Entries: []tauchat.KeyValueEntry{{Key: "k", Value: "v"}},
+			}},
+		},
+	}
+}
+
+// TestHandleEvent_ExtensionViewRendered_MountsPanel verifies a pushed async
+// view is added to c.panels and indexed by its host-qualified id.
+func TestHandleEvent_ExtensionViewRendered_MountsPanel(t *testing.T) {
+	c, _ := newTestChat(t)
+
+	runHandleEvent(t, c, tauchat.ExtensionViewRenderedEvent{
+		PluginName: "hello",
+		ViewID:     "hello:panel-1",
+		View:       demoView("panel-1"),
+	})
+
+	if _, ok := c.panelsByID["hello:panel-1"]; !ok {
+		t.Fatal("expected panel-1 to be indexed after ExtensionViewRenderedEvent")
+	}
+	if len(c.panels.Children) != 1 {
+		t.Fatalf("expected 1 mounted panel, got %d", len(c.panels.Children))
+	}
+}
+
+// TestHandleEvent_ExtensionViewRendered_ReplacesExistingID verifies that
+// re-rendering the same view id replaces the mounted component rather than
+// accumulating duplicates.
+func TestHandleEvent_ExtensionViewRendered_ReplacesExistingID(t *testing.T) {
+	c, _ := newTestChat(t)
+
+	runHandleEvent(t, c, tauchat.ExtensionViewRenderedEvent{
+		PluginName: "hello", ViewID: "hello:panel-1", View: demoView("panel-1"),
+	})
+	runHandleEvent(t, c, tauchat.ExtensionViewRenderedEvent{
+		PluginName: "hello", ViewID: "hello:panel-1", View: demoView("panel-1"),
+	})
+
+	if len(c.panels.Children) != 1 {
+		t.Fatalf("expected re-render to replace, not duplicate: got %d children", len(c.panels.Children))
+	}
+}
+
+// TestHandleEvent_ExtensionViewClosed_RemovesPanel verifies a close event
+// removes the panel and its index entry.
+func TestHandleEvent_ExtensionViewClosed_RemovesPanel(t *testing.T) {
+	c, _ := newTestChat(t)
+
+	runHandleEvent(t, c, tauchat.ExtensionViewRenderedEvent{
+		PluginName: "hello", ViewID: "hello:panel-1", View: demoView("panel-1"),
+	})
+	runHandleEvent(t, c, tauchat.ExtensionViewClosedEvent{
+		PluginName: "hello", ViewID: "hello:panel-1",
+	})
+
+	if _, ok := c.panelsByID["hello:panel-1"]; ok {
+		t.Fatal("expected panel-1 to be removed after ExtensionViewClosedEvent")
+	}
+	if len(c.panels.Children) != 0 {
+		t.Fatalf("expected 0 mounted panels after close, got %d", len(c.panels.Children))
+	}
+}
+
+// TestHandleEvent_ExtensionViewClosed_UnknownIDIsNoOp guards against a panic
+// when a close event arrives for an id that was never mounted (e.g. a
+// duplicate close, or a race with an already-processed close).
+func TestHandleEvent_ExtensionViewClosed_UnknownIDIsNoOp(t *testing.T) {
+	c, _ := newTestChat(t)
+
+	runHandleEvent(t, c, tauchat.ExtensionViewClosedEvent{
+		PluginName: "hello", ViewID: "hello:never-opened",
+	})
+}
+
+// TestHandleEvent_ExtensionCommandResult_WithView_NoDeadlock guards the sync
+// view-rendering path (used when a slash command's response carries a
+// structured View instead of plain text) against a deadlock/panic from a
+// mismatched Lock/Unlock pair.
+func TestHandleEvent_ExtensionCommandResult_WithView_NoDeadlock(t *testing.T) {
+	c, _ := newTestChat(t)
+	v := demoView("cmd-result")
+
+	runHandleEvent(t, c, tauchat.ExtensionCommandResultEvent{
+		Name: "hello", View: &v,
+	})
+}

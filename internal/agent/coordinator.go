@@ -977,7 +977,7 @@ func (c *Coordinator) handleRunExtensionCommand(cmd chat.RunExtensionCommandComm
 	name := strings.TrimSpace(cmd.Name)
 	args := strings.TrimSpace(cmd.Args)
 	c.turnWG.Go(func() {
-		output, err := c.extensionReloader.RunExtensionCommand(c.ctx, name, args, c.uiBridge)
+		output, view, err := c.extensionReloader.RunExtensionCommand(c.ctx, name, args, c.uiBridge)
 		at := time.Now().UTC()
 		if err != nil {
 			// A single user-facing error notification.
@@ -988,7 +988,7 @@ func (c *Coordinator) handleRunExtensionCommand(cmd chat.RunExtensionCommandComm
 			})
 			return
 		}
-		c.emit(chat.ExtensionCommandResultEvent{Name: name, Output: output, OccurredAt: at})
+		c.emit(chat.ExtensionCommandResultEvent{Name: name, Output: output, View: view, OccurredAt: at})
 		if strings.TrimSpace(output) != "" {
 			c.emit(chat.ChatNotificationEvent{
 				Message:    "Extension command completed: /" + name,
@@ -1468,6 +1468,11 @@ func (c *Coordinator) emitReasoningDelta(sessionID, requestID, delta, snapshot s
 	})
 }
 
+// emitToolCompleted always renders tool results as a text summary via
+// summarizeForUI, even for plugin-provided tools - ExecuteToolResponse has
+// no View field. The chat.Widget/ExtensionView schema (see
+// ExtensionCommandResultEvent) is intentionally reusable here later without
+// a breaking wire change, but that's out of scope for this phase.
 func (c *Coordinator) emitToolCompleted(
 	sessionID string,
 	requestID string,

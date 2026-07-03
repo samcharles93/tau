@@ -320,3 +320,41 @@ func TestConfig_CustomTimeoutApplied(t *testing.T) {
 		t.Errorf("expected ToolExecutionTimeout=60s, got %v", m.cfg.ToolExecutionTimeout)
 	}
 }
+
+func TestConfig_MaxViewsPerPluginDefaultApplied(t *testing.T) {
+	m, err := NewManager(Config{
+		Logger: slog.New(slog.NewTextHandler(io.Discard, nil)),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if m.cfg.MaxViewsPerPlugin != DefaultMaxViewsPerPlugin {
+		t.Errorf("expected MaxViewsPerPlugin=%d, got %d", DefaultMaxViewsPerPlugin, m.cfg.MaxViewsPerPlugin)
+	}
+}
+
+// TestUnload_ClosesOpenViewsForEveryPlugin verifies that killing plugins also
+// closes any panels they left open, so a process kill (unload or reload)
+// never leaves stale UI state on screen.
+func TestUnload_ClosesOpenViewsForEveryPlugin(t *testing.T) {
+	m := newTestManager(t)
+	fvr := &fakeViewRenderer{}
+	m.SetViewRenderer(fvr)
+
+	m.setPluginClientForTest("plugin-a", &api.GRPCClient{Client: &mockExtensionServiceClient{}})
+	m.setPluginClientForTest("plugin-b", &api.GRPCClient{Client: &mockExtensionServiceClient{}})
+
+	ctx := context.Background()
+	if _, err := m.host.RenderView(ctx, &api.RenderViewRequest{PluginName: "plugin-a", View: &api.View{Id: "panel-1"}}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := m.host.RenderView(ctx, &api.RenderViewRequest{PluginName: "plugin-b", View: &api.View{Id: "panel-2"}}); err != nil {
+		t.Fatal(err)
+	}
+
+	m.Unload()
+
+	if len(fvr.closed) != 2 {
+		t.Errorf("expected 2 views closed on unload, got %d: %v", len(fvr.closed), fvr.closed)
+	}
+}
