@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.10.0](https://github.com/samcharles93/tau/compare/v0.9.1...v0.10.0) (2026-07-03)
+
+
+### Features
+
+* add plugin-rendered panels and views ([a7bdab4](https://github.com/samcharles93/tau/commit/a7bdab4bf6e47f497de2d841b17da91c0247a482))
+* add plugin-rendered panels and views ([d287fbc](https://github.com/samcharles93/tau/commit/d287fbc9ea90f4a27558fa63f3390c406f89b619))
+
 ## [0.9.1](https://github.com/samcharles93/tau/compare/v0.9.0...v0.9.1) (2026-07-03)
 
 
