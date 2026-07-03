@@ -120,6 +120,10 @@ The bridge implementation (`internal/agent/ui_bridge.go`) translates these calls
 - Directory walking with pattern filtering
 - File existence and permission checks
 
+## Measuring Tool Usage
+
+`task tool-stats` (or `go run ./scripts/tool-stats`) analyses saved session files and reports per-tool call counts, estimated result tokens, size percentiles, and heuristic error rates, plus a breakdown of what shell commands actually run. It prints a summary table and writes a self-contained HTML report. Use it to spot tools that models avoid, bypass via shell, or fail against — the current toolset shape was derived from exactly this analysis.
+
 ## Adding a Custom Tool
 
 Custom tools are typically added via plugins (see [Plugin SDK](plugins.md)). For built-in tools:
