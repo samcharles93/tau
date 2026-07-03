@@ -41,6 +41,21 @@ tasks:
     generates:
       - ../spa/dist/index.html
 
+  test:webui:
+    desc: Run the Web UI unit tests (Vitest)
+    dir: internal/webui
+    cmds:
+      - pnpm install --prefer-offline
+      - pnpm test
+
+  check:webui:
+    desc: Run Web UI quality checks (test and build type-check)
+    dir: internal/webui
+    deps:
+      - test:webui
+    cmds:
+      - pnpm build
+
   docs:dev:
     desc: Serve the docs site locally with live reload
     dir: docs
@@ -96,6 +111,7 @@ tasks:
     desc: Run all quality checks (format, lint, vet, fix, test) for all platforms
     deps:
       - check:windows
+      - check:webui
     cmds:
       - gofumpt -w .
       - go vet ./...
