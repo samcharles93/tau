@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.9.1](https://github.com/samcharles93/tau/compare/v0.9.0...v0.9.1) (2026-07-03)
+
+
+### Bug Fixes
+
+* respect selected index when choosing completion ([f8eab81](https://github.com/samcharles93/tau/commit/f8eab812491ba79aad8503a268ab89d8266b379b))
+
 ## [0.9.0](https://github.com/samcharles93/tau/compare/v0.8.0...v0.9.0) (2026-07-02)
 
 
