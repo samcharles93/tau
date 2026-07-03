@@ -1,5 +1,28 @@
 # Changelog
 
+## [0.11.0](https://github.com/samcharles93/tau/compare/v0.10.1...v0.11.0) (2026-07-03)
+
+
+### Features
+
+* add tool-stats script for analysing session tool usage ([d57b93e](https://github.com/samcharles93/tau/commit/d57b93efb5f80ac538ee5201b787f313e066e527))
+* **agent:** adopt tool-design lessons from Pi session analysis ([1fd6958](https://github.com/samcharles93/tau/commit/1fd69588345fec39a38b10733a01aad2bf120af3))
+* **agent:** self-documenting tool limits and tolerant edit parsing ([e82d2a5](https://github.com/samcharles93/tau/commit/e82d2a5d34cf3ade502ab76ec926bbc6f394cb60))
+* fix reasoning effort defaults, budget fallback, and provider-agnostic mapping ([31ab330](https://github.com/samcharles93/tau/commit/31ab3308919d95b28aaf24876854c458b4f307e4))
+* **metrics:** add LLM latency, skill/extension, model/provider switch, and error metrics ([48d26fa](https://github.com/samcharles93/tau/commit/48d26fa6c1281b2e19a6b340241579076d3add3e))
+* **metrics:** add metric fields to SessionSummary, extend UsageTracker, update store schema ([1e7d4ac](https://github.com/samcharles93/tau/commit/1e7d4ac6cfc79f29808f9ba4ec4b2c401e65f989))
+* **metrics:** comprehensive observability system — metric events, JSONL export, TUI stats ([46cb3cd](https://github.com/samcharles93/tau/commit/46cb3cd1c008f75cf7d05d501da0bb27f4cd4d8d))
+* **web:** add request cancellation support to web UI ([6b6b884](https://github.com/samcharles93/tau/commit/6b6b884222c8658e30ef2c8288a12cf6980ba419))
+* **web:** add subcommand completions and cost tracker, improve TUI separators ([cc63a96](https://github.com/samcharles93/tau/commit/cc63a96851da9bfc521f1aff763a13d58f47ce7c))
+
+
+### Bug Fixes
+
+* **metrics:** address adversarial review findings ([05708b2](https://github.com/samcharles93/tau/commit/05708b2ceb635b0cef594a13805d15018e7785e3))
+* **metrics:** fix headless exit summary race with shared bus client ([aa7fe46](https://github.com/samcharles93/tau/commit/aa7fe46d827343d05c5d624519aea210ac4f4736))
+* **metrics:** fix headless exit summary race, rename turn.duration, and address review gaps ([dabb081](https://github.com/samcharles93/tau/commit/dabb0814c1bca59b9213069be7b69098b928a4c8))
+* **tui:** submit slash commands immediately when a terminal completion is accepted ([f7779d8](https://github.com/samcharles93/tau/commit/f7779d82eeacee9b2374b5f17b2fc0207d51e189))
+
 ## [0.10.1](https://github.com/samcharles93/tau/compare/v0.10.0...v0.10.1) (2026-07-03)
 
 
