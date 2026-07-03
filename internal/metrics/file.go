@@ -17,9 +17,10 @@ import (
 // per-event mutex to serialize writes, since the bus delivers events
 // sequentially on a single goroutine for the subscribing client.
 type FileSubscriber struct {
-	sub *eventbus.SubscriberFunc[chat.MetricEvent]
-	f   *os.File
-	mu  sync.Mutex
+	sub    *eventbus.SubscriberFunc[chat.MetricEvent]
+	f      *os.File
+	mu     sync.Mutex
+	closed bool
 }
 
 // NewFileSubscriber creates a subscriber that writes metrics to the given
@@ -56,7 +57,16 @@ func (fs *FileSubscriber) handle(e chat.MetricEvent) {
 
 // Close closes the subscriber and the underlying file. The file is
 // synced to disk before closing to ensure buffered writes are durable.
+// Close is safe to call multiple times.
 func (fs *FileSubscriber) Close() error {
+	fs.mu.Lock()
+	defer fs.mu.Unlock()
+
+	if fs.closed {
+		return nil
+	}
+	fs.closed = true
+
 	fs.sub.Close()
 	// Sync flushes OS buffers to disk before closing.
 	if err := fs.f.Sync(); err != nil {
