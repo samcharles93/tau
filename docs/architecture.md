@@ -85,7 +85,12 @@ TUI ──Send(ChatCommand)──► Coordinator ──Publish(ChatEvent)──�
 4. **Infrastructure** packages (`config`, `eventbus`) have zero internal imports — they are leaf dependencies.
 5. **`app`** is the only package that may import both domain and infrastructure to wire them together.
 6. **`pkg/taui`** has zero tau-internal imports — it is a standalone TUI framework dependency.
-7. **`pkg/plugin`** has zero tau-internal imports — it is the public plugin API surface.
+7. **`pkg/plugin`** is the public plugin API surface. Its gRPC/proto types
+   (`pkg/plugin/api`) have zero tau-internal imports, but its adapter layer
+   (`adapters.go`) does import `internal/chat` to map proto types (`Command`,
+   `View`, `Widget`, ...) onto `internal/chat`'s domain types — this is
+   intentional and predates the plugin-views feature (see
+   `protoCommandsToChat`), not a violation of this rule's spirit.
 
 ## Core Principles
 

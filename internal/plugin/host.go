@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"log/slog"
 	"os"
 	"path/filepath"
@@ -20,6 +21,14 @@ type Notifier func(level, message string)
 type InteractiveHandler interface {
 	Confirm(ctx context.Context, title, description string) (bool, error)
 	Input(ctx context.Context, title, placeholder string) (string, error)
+}
+
+// ViewRenderer lets plugins open, update, and close persistent panels in the
+// host UI via the HostService RenderView/CloseView RPCs. It is set by the
+// coordinator via Manager.SetViewRenderer.
+type ViewRenderer interface {
+	RenderView(ctx context.Context, pluginName string, view *api.View) error
+	CloseView(ctx context.Context, pluginName, viewID string) error
 }
 
 // hostService implements api.HostServiceServer. A single instance is shared by
@@ -40,6 +49,14 @@ type hostService struct {
 	models            func() []string
 	sessionState      func(sessionID string) (stateJSON string, found bool)
 	interactivePrompt InteractiveHandler
+	viewRenderer      ViewRenderer
+
+	// views tracks per-plugin view ownership (pluginName -> set of raw view
+	// ids) so CloseView can reject requests for views a plugin doesn't own,
+	// and Unload/reload can close every view a plugin left open.
+	viewsMu           sync.Mutex
+	views             map[string]map[string]struct{}
+	maxViewsPerPlugin int
 }
 
 func (h *hostService) GetConfig(_ context.Context, req *api.GetConfigRequest) (*api.GetConfigResponse, error) {
@@ -150,6 +167,101 @@ func (h *hostService) Log(_ context.Context, req *api.LogRequest) (*api.LogRespo
 		h.logger.Info(req.Entry.Message, attrs...)
 	}
 	return &api.LogResponse{}, nil
+}
+
+func (h *hostService) RenderView(ctx context.Context, req *api.RenderViewRequest) (*api.RenderViewResponse, error) {
+	if req.PluginName == "" || req.View == nil || req.View.Id == "" {
+		return nil, fmt.Errorf("plugin host: render view: plugin_name and view.id are required")
+	}
+	if h.viewRenderer == nil {
+		return &api.RenderViewResponse{}, nil
+	}
+
+	h.viewsMu.Lock()
+	if h.views == nil {
+		h.views = make(map[string]map[string]struct{})
+	}
+	owned := h.views[req.PluginName]
+	if owned == nil {
+		owned = make(map[string]struct{})
+		h.views[req.PluginName] = owned
+	}
+	_, isUpdate := owned[req.View.Id]
+	if !isUpdate {
+		max := h.maxViewsPerPlugin
+		if max <= 0 {
+			max = DefaultMaxViewsPerPlugin
+		}
+		if len(owned) >= max {
+			h.viewsMu.Unlock()
+			return nil, fmt.Errorf("plugin host: too many open views for plugin %q (max %d)", req.PluginName, max)
+		}
+		// Reserve the slot atomically with the quota check, before calling
+		// the renderer, so two concurrent RenderView calls for distinct new
+		// ids can't both pass the check and jointly exceed the quota.
+		owned[req.View.Id] = struct{}{}
+	}
+	h.viewsMu.Unlock()
+
+	if err := h.viewRenderer.RenderView(ctx, req.PluginName, req.View); err != nil {
+		if !isUpdate {
+			// Roll back the reservation - the render never actually
+			// succeeded, so this id must not permanently consume a slot in
+			// the plugin's quota for a panel that was never shown.
+			h.viewsMu.Lock()
+			delete(owned, req.View.Id)
+			h.viewsMu.Unlock()
+		}
+		return nil, err
+	}
+	return &api.RenderViewResponse{}, nil
+}
+
+func (h *hostService) CloseView(ctx context.Context, req *api.CloseViewRequest) (*api.CloseViewResponse, error) {
+	if req.PluginName == "" || req.ViewId == "" {
+		return nil, fmt.Errorf("plugin host: close view: plugin_name and view_id are required")
+	}
+
+	h.viewsMu.Lock()
+	owned := h.views[req.PluginName]
+	if owned == nil {
+		h.viewsMu.Unlock()
+		return &api.CloseViewResponse{}, nil
+	}
+	if _, ok := owned[req.ViewId]; !ok {
+		h.viewsMu.Unlock()
+		// Not owned by this plugin - silently no-op rather than letting one
+		// plugin close another plugin's view via a guessed/colliding id.
+		return &api.CloseViewResponse{}, nil
+	}
+	delete(owned, req.ViewId)
+	h.viewsMu.Unlock()
+
+	if h.viewRenderer != nil {
+		if err := h.viewRenderer.CloseView(ctx, req.PluginName, req.ViewId); err != nil {
+			return nil, err
+		}
+	}
+	return &api.CloseViewResponse{}, nil
+}
+
+// closeAllViewsForPlugin closes every view the plugin currently owns and
+// clears its registry entry. Called on unload/reload so a killed plugin
+// process never leaves stale panels behind.
+func (h *hostService) closeAllViewsForPlugin(ctx context.Context, pluginName string) {
+	h.viewsMu.Lock()
+	owned := h.views[pluginName]
+	delete(h.views, pluginName)
+	h.viewsMu.Unlock()
+
+	if h.viewRenderer == nil {
+		return
+	}
+	for viewID := range owned {
+		if err := h.viewRenderer.CloseView(ctx, pluginName, viewID); err != nil && h.logger != nil {
+			h.logger.Warn("plugin host: failed to close view during cleanup", "plugin", pluginName, "view_id", viewID, "err", err)
+		}
+	}
 }
 
 // kvStore is a tiny JSON-file-backed key-value store for plugin SetConfig.

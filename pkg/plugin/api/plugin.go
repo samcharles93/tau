@@ -18,6 +18,12 @@ const (
 	CapabilityTools       = "tools"
 	CapabilityEvents      = "events"
 	CapabilityInteractive = "interactive"
+	// CapabilityViews marks plugins that render structured panels via
+	// RunCommand's view return value and/or Host.RenderView/CloseView. Unlike
+	// the other capabilities, this is never assumed for legacy plugins that
+	// don't implement Capable - it's a net-new UI surface a plugin must
+	// deliberately opt into.
+	CapabilityViews = "views"
 )
 
 // Capable is an optional interface for plugins to declare which capabilities
@@ -30,7 +36,7 @@ type Capable interface {
 // Extension is the interface that plugin binaries must implement.
 type Extension interface {
 	Metadata() (name string, commands []*Command)
-	RunCommand(ctx context.Context, name, args string) (string, error)
+	RunCommand(ctx context.Context, name, args string) (output string, view *View, err error)
 	Reload(ctx context.Context) (diagnostics []*Diagnostic, commands []*Command, err error)
 	Tools(ctx context.Context) ([]*ToolDefinition, error)
 	ExecuteTool(ctx context.Context, toolName, arguments string) (content string, isError bool, err error)

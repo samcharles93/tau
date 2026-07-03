@@ -36,10 +36,18 @@ type inlineChat struct {
 
 	header      *taui.Text
 	stage       *taui.Container
+	panels      *taui.Container
 	promptSlot  *taui.Container
 	input       *taui.LineInput
 	completions *taui.Completions
 	status      *taui.Text
+
+	// panelsByID indexes async, plugin-pushed panels by host-qualified view id
+	// (pluginName + ":" + View.ID) so RenderView/CloseView can replace/remove
+	// them in place. Like activeTools, it's only ever mutated inside an
+	// engine.Update callback, so the engine's render lock is what serializes
+	// access - not mu.
+	panelsByID map[string]taui.Component
 
 	ctx     context.Context
 	runtime tauchat.ChatRuntime
@@ -97,7 +105,9 @@ func newInlineChat(
 	c := &inlineChat{
 		engine:            engine,
 		stage:             &taui.Container{},
+		panels:            &taui.Container{},
 		promptSlot:        &taui.Container{},
+		panelsByID:        map[string]taui.Component{},
 		ctx:               ctx,
 		runtime:           runtime,
 		sub:               sub,
@@ -151,6 +161,12 @@ func newInlineChat(
 	box.AddChild(taui.NewText(""))
 	box.AddChild(c.input)
 	box.AddChild(c.completions)
+	// Panels render between the input area and the status bar — same region
+	// the completions dropdown occupies, so they push the status line down
+	// when present and let it snap back up when closed, exactly like
+	// completions do. When empty, Container.Render returns nil, so there's
+	// no dead space when no panels are open.
+	box.AddChild(c.panels)
 	box.AddChild(c.status)
 
 	engine.AddChild(box)
@@ -198,14 +214,46 @@ func (c *inlineChat) spinnerLoop() {
 		case <-c.done:
 			return
 		case <-ticker.C:
-			if !c.working.Load() {
-				continue
-			}
 			c.engine.Update(func() {
-				for _, tb := range c.activeTools {
-					tb.row.Tick()
+				// Tool-call rows only tick during a turn.
+				if c.working.Load() {
+					for _, tb := range c.activeTools {
+						tb.row.Tick()
+					}
+				}
+				// Async panel StatusRows tick whenever there are panels
+				// mounted — they persist across turns, even while idle.
+				for _, comp := range c.panelsByID {
+					tickPanel(comp)
 				}
 			})
+		}
+	}
+}
+
+// ticker is the subset of taui.Component that can animate — both ToolRow
+// and StatusRow implement it, and Tick is a no-op once resolved.
+type ticker interface{ Tick() }
+
+// tickPanel recursively walks a component tree and calls Tick on every node
+// that implements the ticker interface.
+func tickPanel(comp taui.Component) {
+	if t, ok := comp.(ticker); ok {
+		t.Tick()
+	}
+	if c, ok := comp.(*taui.Container); ok {
+		for _, child := range c.Children {
+			tickPanel(child)
+		}
+	}
+	if s, ok := comp.(*taui.Stack); ok {
+		for _, child := range s.Children {
+			tickPanel(child)
+		}
+	}
+	if b, ok := comp.(*taui.Box); ok {
+		for _, child := range b.Children {
+			tickPanel(child)
 		}
 	}
 }

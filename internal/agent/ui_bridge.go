@@ -8,6 +8,7 @@ import (
 
 	"github.com/samcharles93/tau/internal/agent/tools"
 	"github.com/samcharles93/tau/internal/chat"
+	"github.com/samcharles93/tau/pkg/plugin/api"
 )
 
 type interactivePromptResponse struct {
@@ -108,6 +109,40 @@ func (b *coordinatorUIBridge) Notify(title, level string) {
 		Level:      notificationLevel,
 		OccurredAt: time.Now().UTC(),
 	})
+}
+
+// RenderView implements plugin.ViewRenderer, translating a plugin's pushed
+// panel into an ExtensionViewRenderedEvent on the chat event bus. ViewID is
+// host-qualified (pluginName + ":" + the plugin-local View.ID) so the TUI's
+// panel index can't collide or be spoofed across plugins.
+func (b *coordinatorUIBridge) RenderView(ctx context.Context, pluginName string, view *api.View) error {
+	if b == nil || b.coordinator == nil {
+		return nil
+	}
+	chatView := api.ProtoViewToChat(view)
+	if chatView == nil {
+		return fmt.Errorf("plugin ui bridge: render view: nil view")
+	}
+	b.coordinator.emit(chat.ExtensionViewRenderedEvent{
+		PluginName: pluginName,
+		ViewID:     pluginName + ":" + chatView.ID,
+		View:       *chatView,
+		OccurredAt: time.Now().UTC(),
+	})
+	return nil
+}
+
+// CloseView implements plugin.ViewRenderer.
+func (b *coordinatorUIBridge) CloseView(ctx context.Context, pluginName, viewID string) error {
+	if b == nil || b.coordinator == nil {
+		return nil
+	}
+	b.coordinator.emit(chat.ExtensionViewClosedEvent{
+		PluginName: pluginName,
+		ViewID:     pluginName + ":" + viewID,
+		OccurredAt: time.Now().UTC(),
+	})
+	return nil
 }
 
 func (b *coordinatorUIBridge) Log(chunk string) {

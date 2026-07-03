@@ -42,6 +42,7 @@ message RunCommandRequest {
 }
 message RunCommandResponse {
   string output = 1;
+  View view = 2;
 }
 
 // --- Reload ---
@@ -173,6 +174,130 @@ message ExecuteToolResponse {
   bool is_error = 2;
 }
 
+// --- Views / Panels ---
+
+// View is a structured panel a plugin renders into the host UI, either
+// attached to a command result (sync) or pushed independently via
+// HostService.RenderView (async). Re-sending a View with the same Id
+// replaces its content in place (used for live-updating async panels).
+message View {
+  string id = 1;          // scoped to the plugin; host prefixes with plugin name
+  string title = 2;       // optional panel title/header
+  repeated Widget widgets = 3;
+  Style style = 4;        // optional panel-level style (tone/border)
+}
+
+// Style carries semantic, theme-aware presentation hints. Plugins should
+// prefer `tone` (resolved to tau's theme palette host-side) over raw hex,
+// so panels stay visually consistent across theme changes; hex is an
+// escape hatch, not the primary mechanism.
+message Style {
+  enum Tone {
+    TONE_DEFAULT = 0;
+    TONE_INFO = 1;
+    TONE_SUCCESS = 2;
+    TONE_WARN = 3;
+    TONE_ERROR = 4;
+    TONE_MUTED = 5;
+  }
+  Tone tone = 1;
+  string fg_hex = 2;   // optional override, e.g. "#ffae00"
+  string bg_hex = 3;   // optional override
+  bool bold = 4;
+  bool dim = 5;
+  bool italic = 6;
+  bool underline = 7;
+}
+
+// Widget is one renderable element within a View. Exactly one field of
+// `kind` is set. Unrecognized/unset kinds on older hosts are simply
+// skipped at render time — the same additive-evolution guarantee as
+// EventPayload's oneof.
+message Widget {
+  oneof kind {
+    TextWidget text = 1;
+    StackWidget stack = 2;
+    KeyValueWidget key_value = 3;
+    ListWidget list = 4;
+    TableWidget table = 5;
+    ProgressWidget progress = 6;
+    DividerWidget divider = 7;
+    StatusWidget status = 8;
+  }
+}
+
+message TextWidget {
+  string text = 1;
+  Style style = 2;
+}
+
+message StackWidget {
+  enum Direction {
+    VERTICAL = 0;
+    HORIZONTAL = 1;
+  }
+  Direction direction = 1;
+  repeated Widget children = 2;
+  int32 gap = 3; // spacing between children, in cells (horizontal) or blank lines (vertical)
+}
+
+message KeyValueWidget {
+  message Entry {
+    string key = 1;
+    string value = 2;
+    Style value_style = 3;
+  }
+  repeated Entry entries = 1;
+}
+
+message ListWidget {
+  repeated string items = 1;
+  bool ordered = 2;      // numbered vs bulleted
+  Style style = 3;
+}
+
+message TableWidget {
+  repeated string headers = 1;
+  message Row {
+    repeated string cells = 1;
+  }
+  repeated Row rows = 2;
+}
+
+message ProgressWidget {
+  string label = 1;
+  double fraction = 2;   // 0.0-1.0; negative = indeterminate
+  Style style = 3;
+}
+
+message DividerWidget {
+  string label = 1; // optional centered label
+}
+
+message StatusWidget {
+  enum State {
+    RUNNING = 0;
+    SUCCESS = 1;
+    FAILED = 2;
+    NEUTRAL = 3;
+  }
+  State state = 1;
+  string label = 2;
+  string detail = 3;
+}
+
+message RenderViewRequest {
+  string plugin_name = 1; // populated by hostClient, not the plugin author
+  View view = 2;
+}
+message RenderViewResponse {}
+
+message CloseViewRequest {
+  string plugin_name = 1;
+  string view_id = 2;
+}
+message CloseViewResponse {}
+
 // --- Logging ---
 
 message LogEntry {
@@ -298,4 +423,6 @@ service HostService {
   rpc Log(LogRequest) returns (LogResponse);
   rpc Confirm(ConfirmRequest) returns (ConfirmResponse);
   rpc Input(InputRequest) returns (InputResponse);
+  rpc RenderView(RenderViewRequest) returns (RenderViewResponse);
+  rpc CloseView(CloseViewRequest) returns (CloseViewResponse);
 }

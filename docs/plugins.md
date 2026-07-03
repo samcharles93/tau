@@ -23,11 +23,12 @@ Use `/reload` to rediscover plugins without restarting Tau.
 8. [Lifecycle Events](#lifecycle-events)
 9. [EventResponse — Modifying Runtime Behaviour](#eventresponse--modifying-runtime-behaviour)
 10. [HostService — Calling Back Into Tau](#hostservice--calling-back-into-tau)
-11. [Plugin Configuration](#plugin-configuration)
-12. [Building, Installing, and go.mod](#building-installing-and-gomod)
-13. [Complete Working Example](#complete-working-example)
-14. [API Reference](#api-reference)
-15. [Troubleshooting](#troubleshooting)
+11. [Panels and Views — Rendering Structured UI](#panels-and-views-rendering-structured-ui)
+12. [Plugin Configuration](#plugin-configuration)
+13. [Building, Installing, and go.mod](#building-installing-and-gomod)
+14. [Complete Working Example](#complete-working-example)
+15. [API Reference](#api-reference)
+16. [Troubleshooting](#troubleshooting)
 
 ---
 
@@ -54,6 +55,11 @@ Inside Tau, type `/hello world` or ask the agent to call the `hello_greet` tool:
 ```
 Greet me using the hello plugin
 ```
+
+The hello plugin also demonstrates panels: `/hello panel` renders a one-shot
+view, and `/hello watch` opens a live panel you can re-run to update in place
+(`/hello close` closes it). See
+[Panels and Views](#panels-and-views-rendering-structured-ui).
 
 ---
 
@@ -86,7 +92,7 @@ A plugin implements `github.com/samcharles93/tau/pkg/plugin/api.Extension`:
 ```go
 type Extension interface {
     Metadata() (name string, commands []*Command)
-    RunCommand(ctx context.Context, name, args string) (string, error)
+    RunCommand(ctx context.Context, name, args string) (output string, view *View, err error)
     Reload(ctx context.Context) (diagnostics []*Diagnostic, commands []*Command, err error)
     Tools(ctx context.Context) ([]*ToolDefinition, error)
     ExecuteTool(ctx context.Context, toolName, arguments string) (content string, isError bool, err error)
@@ -95,14 +101,16 @@ type Extension interface {
 ```
 
 All six methods are required. Return empty slices / nil / `""` for
-capabilities your plugin does not support.
+capabilities your plugin does not support. `RunCommand`'s `view` return is
+optional — see [Panels and Views](#panels-and-views-rendering-structured-ui)
+for what it does and when to use it instead of, or alongside, `output`.
 
 ### Method Reference
 
 | Method | Called when | Must return |
 |--------|-------------|-------------|
 | `Metadata()` | On plugin load and after `/reload` | `(pluginName, []*Command)` |
-| `RunCommand(ctx, name, args)` | User invokes a slash command | `(output, error)` |
+| `RunCommand(ctx, name, args)` | User invokes a slash command | `(output, view, error)` |
 | `Reload(ctx)` | On `/reload` | `(diagnostics, updatedCommands, error)` |
 | `Tools(ctx)` | On plugin load (if `CapabilityTools`) | `([]*ToolDefinition, error)` |
 | `ExecuteTool(ctx, toolName, args)` | Agent calls a tool | `(content, isError, error)` |
@@ -181,10 +189,14 @@ Capability constants:
 | `api.CapabilityCommands` | `"commands"` | Plugin provides slash commands |
 | `api.CapabilityTools` | `"tools"` | Plugin provides agent tools |
 | `api.CapabilityEvents` | `"events"` | Plugin handles lifecycle events |
+| `api.CapabilityViews` | `"views"` | Plugin renders panels (see [Panels and Views](#panels-and-views-rendering-structured-ui)) |
 
 Plugins that do NOT implement `Capable` are assumed to support the full legacy
 surface (commands + tools + events). Tau skips unsupported calls at runtime,
-which avoids unnecessary gRPC round-trips.
+which avoids unnecessary gRPC round-trips. `CapabilityViews` is the one
+exception to this default: since rendering UI is a net-new surface, it is
+**never** assumed for plugins that don't implement `Capable` — you must
+declare it explicitly to use panels.
 
 Example:
 
@@ -319,12 +331,12 @@ Web UI's command palette.
 func (p *MyPlugin) Metadata() (string, []*pluginapi.Command) {
     return "my-plugin", []*pluginapi.Command{
         {
-            Name:          "/status",
-            Description:   "Show plugin status and health",
+            Name:          "status",
+            Description:   "Show plugin status and health: /status",
             ExtensionName: "my-plugin",
         },
         {
-            Name:          "/config",
+            Name:          "config",
             Description:   "Show or set plugin configuration: /config [key] [value]",
             ExtensionName: "my-plugin",
         },
@@ -336,30 +348,30 @@ func (p *MyPlugin) Metadata() (string, []*pluginapi.Command) {
 
 | Field | Type | Description |
 |-------|------|-------------|
-| `Name` | `string` | Command name with leading `/`. Convention: `/<verb>`. |
-| `Description` | `string` | Shown in the command palette. Include usage hints. |
+| `Name` | `string` | Command name **without** the leading `/` (the TUI strips it before matching). Convention: `<verb>`, e.g. `status`, not `/status`. |
+| `Description` | `string` | Shown in the command palette. Include usage hints (with the `/`). |
 | `ExtensionName` | `string` | Must match the plugin name returned by `Metadata()`. |
 
 ### Executing Commands
 
 ```go
-func (p *MyPlugin) RunCommand(ctx context.Context, name, args string) (string, error) {
+func (p *MyPlugin) RunCommand(ctx context.Context, name, args string) (string, *pluginapi.View, error) {
     switch name {
-    case "/status":
-        return "✅ MyPlugin is healthy. Tools registered: 3.", nil
-    case "/config":
+    case "status":
+        return "✅ MyPlugin is healthy. Tools registered: 3.", nil, nil
+    case "config":
         if args == "" {
-            return "Current config:\n  endpoint: https://api.example.com\n  retries: 3", nil
+            return "Current config:\n  endpoint: https://api.example.com\n  retries: 3", nil, nil
         }
         parts := strings.SplitN(args, " ", 2)
         key := parts[0]
         if len(parts) > 1 {
             // Set config value.
-            return fmt.Sprintf("Set %s = %s", key, parts[1]), nil
+            return fmt.Sprintf("Set %s = %s", key, parts[1]), nil, nil
         }
-        return fmt.Sprintf("Key %q not found", key), nil
+        return fmt.Sprintf("Key %q not found", key), nil, nil
     default:
-        return "", fmt.Errorf("unknown command: %s", name)
+        return "", nil, fmt.Errorf("unknown command: %s", name)
     }
 }
 ```
@@ -668,6 +680,13 @@ type Host interface {
 
     // Log forwards a structured log line to the host logger.
     Log(ctx context.Context, level, message string, fields map[string]string) error
+
+    // RenderView opens or updates a persistent panel in the host UI. See
+    // Panels and Views below.
+    RenderView(ctx context.Context, view *View) error
+
+    // CloseView closes a panel previously opened via RenderView.
+    CloseView(ctx context.Context, viewID string) error
 }
 ```
 
@@ -684,13 +703,13 @@ func (p *MyPlugin) SetHost(h pluginapi.Host) {
     p.host = h
 }
 
-func (p *MyPlugin) RunCommand(ctx context.Context, name, args string) (string, error) {
-    if name == "/models" && p.host != nil {
+func (p *MyPlugin) RunCommand(ctx context.Context, name, args string) (string, *pluginapi.View, error) {
+    if name == "models" && p.host != nil {
         models, err := p.host.GetAvailableModels(ctx)
         if err != nil {
-            return "", err
+            return "", nil, err
         }
-        return "Available models:\n" + strings.Join(models, "\n"), nil
+        return "Available models:\n" + strings.Join(models, "\n"), nil, nil
     }
     // ... other commands
 }
@@ -723,6 +742,129 @@ func (p *MyPlugin) ExecuteTool(ctx context.Context, toolName, arguments string) 
 - `Log()` forwards to tau's structured logger (`slog`). Use this instead of
   writing to stdout/stderr for log messages that should appear in the host's
   log output.
+- `RenderView()` / `CloseView()` push structured panels to the TUI outside of
+  a command invocation. See [Panels and Views](#panels-and-views-rendering-structured-ui).
+
+---
+
+## Panels and Views — Rendering Structured UI
+
+Beyond plain-text command output, notifications, and tool results, plugins
+can render structured panels — key/value summaries, tables, lists, progress
+bars — directly into the TUI. A panel is a `View`: a tree of `Widget`s
+identified by an `Id` that's scoped to your plugin.
+
+There are two ways to deliver a `View`:
+
+1. **Sync** — return it from `RunCommand`. It renders once, in place of (or
+   alongside) the plain-text `output`, when that command completes.
+2. **Async** — push it any time via `Host.RenderView`, independent of command
+   invocation. Useful for live-updating panels (a dashboard, a log tail).
+   Re-sending a `View` with the same `Id` replaces its content in place; call
+   `Host.CloseView` to remove it. Async panels persist until closed, until
+   your plugin is unloaded/reloaded (Tau closes them for you), or until Tau
+   exits — there's no cross-restart persistence.
+
+Panels are opt-in: declare `api.CapabilityViews` in `Capabilities()` before
+using either path (see [Declaring Capabilities](#declaring-capabilities-optional)).
+
+### The View and Widget Types
+
+```go
+type View struct {
+    Id      string    // scoped to your plugin; Tau prefixes it internally
+    Title   string    // optional panel title
+    Widgets []*Widget
+    Style   *Style    // optional panel-level style
+}
+
+type Widget struct {
+    // Exactly one of these should be set.
+    Text     *TextWidget
+    Stack    *StackWidget
+    KeyValue *KeyValueWidget
+    List     *ListWidget
+    Table    *TableWidget
+    Progress *ProgressWidget
+    Divider  *DividerWidget
+    Status   *StatusWidget
+}
+```
+
+| Widget | Fields | Renders as |
+|--------|--------|------------|
+| `TextWidget` | `Text string`, `Style *Style` | A styled text line |
+| `StackWidget` | `Direction` (`VERTICAL`/`HORIZONTAL`), `Children []*Widget`, `Gap int32` | Nested layout |
+| `KeyValueWidget` | `Entries []*Entry{Key, Value, ValueStyle}` | Aligned `key: value` lines |
+| `ListWidget` | `Items []string`, `Ordered bool`, `Style *Style` | Bulleted or numbered list |
+| `TableWidget` | `Headers []string`, `Rows []*Row{Cells}` | A column-aligned table |
+| `ProgressWidget` | `Label string`, `Fraction float64`, `Style *Style` | A progress bar (negative fraction = indeterminate) |
+| `DividerWidget` | `Label string` | A horizontal rule, optionally labeled |
+| `StatusWidget` | `State` (`RUNNING`/`SUCCESS`/`FAILED`/`NEUTRAL`), `Label`, `Detail` | A status line with glyph |
+
+`Style` (used at the panel, widget, and entry level) carries a semantic
+`Tone` — `TONE_INFO`, `TONE_SUCCESS`, `TONE_WARN`, `TONE_ERROR`, `TONE_MUTED`
+— resolved against Tau's theme palette, so your panel's colors stay
+consistent as the user's theme changes. `FgHex`/`BgHex` are an escape hatch
+for when a specific color matters more than theme consistency. Prefer `Tone`.
+
+### Example: Sync and Async Panels
+
+```go
+func (p *MyPlugin) RunCommand(ctx context.Context, name, args string) (string, *pluginapi.View, error) {
+    switch name {
+    case "status":
+        // Sync: this view renders once, in place of a plain-text reply.
+        return "", &pluginapi.View{
+            Id:    "status-panel",
+            Title: "MyPlugin Status",
+            Widgets: []*pluginapi.Widget{
+                {Kind: &pluginapi.Widget_KeyValue{KeyValue: &pluginapi.KeyValueWidget{
+                    Entries: []*pluginapi.KeyValueWidget_Entry{
+                        {Key: "uptime", Value: "3h12m"},
+                        {Key: "requests", Value: "1,204"},
+                    },
+                }}},
+            },
+        }, nil
+
+    case "watch":
+        // Async: push a panel that stays open and can be updated later.
+        if p.host == nil {
+            return "", nil, fmt.Errorf("host not available")
+        }
+        err := p.host.RenderView(ctx, &pluginapi.View{
+            Id:    "watch-panel",
+            Title: "Live Status",
+            Widgets: []*pluginapi.Widget{
+                {Kind: &pluginapi.Widget_Status{Status: &pluginapi.StatusWidget{
+                    State: pluginapi.StatusWidget_RUNNING,
+                    Label: "watching",
+                }}},
+            },
+        })
+        return "watch panel opened", nil, err
+
+    case "unwatch":
+        if p.host == nil {
+            return "", nil, fmt.Errorf("host not available")
+        }
+        return "watch panel closed", nil, p.host.CloseView(ctx, "watch-panel")
+    }
+    return "", nil, fmt.Errorf("unknown command: %s", name)
+}
+```
+
+### Panel Limits and Cleanup
+
+- Each plugin may have at most `MaxViewsPerPlugin` (default 5) distinct
+  **open** async views at once. Updating an already-open view's content never
+  counts against this limit — only opening a new `Id` does. Exceeding the
+  limit returns an error from `RenderView`.
+- A plugin cannot close another plugin's view, even if it guesses the exact
+  `Id` — Tau namespaces every view internally by plugin name.
+- On unload or `/reload`, Tau closes every view your plugin left open, so a
+  killed or restarted plugin process never leaves a stale panel on screen.
 
 ---
 
@@ -921,16 +1063,16 @@ func (p *CounterPlugin) SetHost(h pluginapi.Host) {
 func (p *CounterPlugin) Metadata() (string, []*pluginapi.Command) {
     return "counter", []*pluginapi.Command{
         {
-            Name:          "/counter",
+            Name:          "counter",
             Description:   "Show turn counter statistics: /counter [reset]",
             ExtensionName: "counter",
         },
     }
 }
 
-func (p *CounterPlugin) RunCommand(ctx context.Context, name, args string) (string, error) {
-    if name != "/counter" {
-        return "", fmt.Errorf("unknown command %q", name)
+func (p *CounterPlugin) RunCommand(ctx context.Context, name, args string) (string, *pluginapi.View, error) {
+    if name != "counter" {
+        return "", nil, fmt.Errorf("unknown command %q", name)
     }
 
     p.mu.Lock()
@@ -939,11 +1081,11 @@ func (p *CounterPlugin) RunCommand(ctx context.Context, name, args string) (stri
     if strings.TrimSpace(args) == "reset" {
         p.turns = 0
         p.started = time.Now()
-        return "✅ Counter reset.", nil
+        return "✅ Counter reset.", nil, nil
     }
 
     elapsed := time.Since(p.started).Round(time.Second)
-    return fmt.Sprintf("📊 Turns: %d | Running: %s", p.turns, elapsed), nil
+    return fmt.Sprintf("📊 Turns: %d | Running: %s", p.turns, elapsed), nil, nil
 }
 
 func (p *CounterPlugin) Reload(ctx context.Context) ([]*pluginapi.Diagnostic, []*pluginapi.Command, error) {
@@ -1050,7 +1192,7 @@ func (p *CounterPlugin) DispatchEvent(ctx context.Context, event, sessionID stri
 
 | Package | Import Path | Contents |
 |---------|------------|----------|
-| Plugin API | `github.com/samcharles93/tau/pkg/plugin/api` | `Extension`, `ExtensionPlugin`, `Command`, `Diagnostic`, `ToolDefinition`, `EventPayload`, `EventResponse`, `Host`, `HostAware`, `Capable` |
+| Plugin API | `github.com/samcharles93/tau/pkg/plugin/api` | `Extension`, `ExtensionPlugin`, `Command`, `Diagnostic`, `ToolDefinition`, `EventPayload`, `EventResponse`, `View`, `Widget`, `Style`, `Host`, `HostAware`, `Capable` |
 | Chat Types | `github.com/samcharles93/tau/internal/chat` | `ChatMessage`, `ChatRole`, `ChatUsage`, `ChatParameters`, `ChatSessionState`, `ChatModelRef` |
 | Config | `github.com/samcharles93/tau/internal/config` | `LoadConfig()`, `Config`, `ProviderConfig` |
 
@@ -1071,6 +1213,8 @@ generated Go code is in
 | `ToolDefinition` | `api` | Tool declaration (`Name`, `Description`, `InputSchema`) |
 | `EventPayload` | `api` | Oneof carrying typed event data |
 | `EventResponse` | `api` | Plugin's modifications to runtime behaviour |
+| `View` | `api` | A structured panel (`Id`, `Title`, `Widgets`, `Style`) |
+| `Widget` | `api` | One renderable element of a `View` (oneof of 8 kinds) |
 | `ExtensionPlugin` | `api` | go-plugin shim wrapping an `Extension` |
 
 ---

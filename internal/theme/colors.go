@@ -58,4 +58,14 @@ var (
 		BG: termkit.Color{90, 40, 70},
 		FG: termkit.Color{255, 190, 210},
 	}
+
+	// ToneInfo, ToneSuccess, ToneWarn, ToneError, and ToneMuted are the
+	// foreground colors for plugin-rendered widgets' semantic Style.Tone,
+	// resolved host-side so panels stay visually consistent with the rest of
+	// the theme regardless of what a plugin author picks.
+	ToneInfo    = termkit.Color{120, 170, 255}
+	ToneSuccess = termkit.Color{140, 220, 140}
+	ToneWarn    = termkit.Color{255, 200, 120}
+	ToneError   = termkit.Color{255, 160, 160}
+	ToneMuted   = termkit.Color{128, 134, 150}
 )

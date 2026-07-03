@@ -21,6 +21,162 @@ const (
 	_ = protoimpl.EnforceVersion(protoimpl.MaxVersion - 20)
 )
 
+type Style_Tone int32
+
+const (
+	Style_TONE_DEFAULT Style_Tone = 0
+	Style_TONE_INFO    Style_Tone = 1
+	Style_TONE_SUCCESS Style_Tone = 2
+	Style_TONE_WARN    Style_Tone = 3
+	Style_TONE_ERROR   Style_Tone = 4
+	Style_TONE_MUTED   Style_Tone = 5
+)
+
+// Enum value maps for Style_Tone.
+var (
+	Style_Tone_name = map[int32]string{
+		0: "TONE_DEFAULT",
+		1: "TONE_INFO",
+		2: "TONE_SUCCESS",
+		3: "TONE_WARN",
+		4: "TONE_ERROR",
+		5: "TONE_MUTED",
+	}
+	Style_Tone_value = map[string]int32{
+		"TONE_DEFAULT": 0,
+		"TONE_INFO":    1,
+		"TONE_SUCCESS": 2,
+		"TONE_WARN":    3,
+		"TONE_ERROR":   4,
+		"TONE_MUTED":   5,
+	}
+)
+
+func (x Style_Tone) Enum() *Style_Tone {
+	p := new(Style_Tone)
+	*p = x
+	return p
+}
+
+func (x Style_Tone) String() string {
+	return protoimpl.X.EnumStringOf(x.Descriptor(), protoreflect.EnumNumber(x))
+}
+
+func (Style_Tone) Descriptor() protoreflect.EnumDescriptor {
+	return file_pkg_plugin_api_extension_proto_enumTypes[0].Descriptor()
+}
+
+func (Style_Tone) Type() protoreflect.EnumType {
+	return &file_pkg_plugin_api_extension_proto_enumTypes[0]
+}
+
+func (x Style_Tone) Number() protoreflect.EnumNumber {
+	return protoreflect.EnumNumber(x)
+}
+
+// Deprecated: Use Style_Tone.Descriptor instead.
+func (Style_Tone) EnumDescriptor() ([]byte, []int) {
+	return file_pkg_plugin_api_extension_proto_rawDescGZIP(), []int{28, 0}
+}
+
+type StackWidget_Direction int32
+
+const (
+	StackWidget_VERTICAL   StackWidget_Direction = 0
+	StackWidget_HORIZONTAL StackWidget_Direction = 1
+)
+
+// Enum value maps for StackWidget_Direction.
+var (
+	StackWidget_Direction_name = map[int32]string{
+		0: "VERTICAL",
+		1: "HORIZONTAL",
+	}
+	StackWidget_Direction_value = map[string]int32{
+		"VERTICAL":   0,
+		"HORIZONTAL": 1,
+	}
+)
+
+func (x StackWidget_Direction) Enum() *StackWidget_Direction {
+	p := new(StackWidget_Direction)
+	*p = x
+	return p
+}
+
+func (x StackWidget_Direction) String() string {
+	return protoimpl.X.EnumStringOf(x.Descriptor(), protoreflect.EnumNumber(x))
+}
+
+func (StackWidget_Direction) Descriptor() protoreflect.EnumDescriptor {
+	return file_pkg_plugin_api_extension_proto_enumTypes[1].Descriptor()
+}
+
+func (StackWidget_Direction) Type() protoreflect.EnumType {
+	return &file_pkg_plugin_api_extension_proto_enumTypes[1]
+}
+
+func (x StackWidget_Direction) Number() protoreflect.EnumNumber {
+	return protoreflect.EnumNumber(x)
+}
+
+// Deprecated: Use StackWidget_Direction.Descriptor instead.
+func (StackWidget_Direction) EnumDescriptor() ([]byte, []int) {
+	return file_pkg_plugin_api_extension_proto_rawDescGZIP(), []int{31, 0}
+}
+
+type StatusWidget_State int32
+
+const (
+	StatusWidget_RUNNING StatusWidget_State = 0
+	StatusWidget_SUCCESS StatusWidget_State = 1
+	StatusWidget_FAILED  StatusWidget_State = 2
+	StatusWidget_NEUTRAL StatusWidget_State = 3
+)
+
+// Enum value maps for StatusWidget_State.
+var (
+	StatusWidget_State_name = map[int32]string{
+		0: "RUNNING",
+		1: "SUCCESS",
+		2: "FAILED",
+		3: "NEUTRAL",
+	}
+	StatusWidget_State_value = map[string]int32{
+		"RUNNING": 0,
+		"SUCCESS": 1,
+		"FAILED":  2,
+		"NEUTRAL": 3,
+	}
+)
+
+func (x StatusWidget_State) Enum() *StatusWidget_State {
+	p := new(StatusWidget_State)
+	*p = x
+	return p
+}
+
+func (x StatusWidget_State) String() string {
+	return protoimpl.X.EnumStringOf(x.Descriptor(), protoreflect.EnumNumber(x))
+}
+
+func (StatusWidget_State) Descriptor() protoreflect.EnumDescriptor {
+	return file_pkg_plugin_api_extension_proto_enumTypes[2].Descriptor()
+}
+
+func (StatusWidget_State) Type() protoreflect.EnumType {
+	return &file_pkg_plugin_api_extension_proto_enumTypes[2]
+}
+
+func (x StatusWidget_State) Number() protoreflect.EnumNumber {
+	return protoreflect.EnumNumber(x)
+}
+
+// Deprecated: Use StatusWidget_State.Descriptor instead.
+func (StatusWidget_State) EnumDescriptor() ([]byte, []int) {
+	return file_pkg_plugin_api_extension_proto_rawDescGZIP(), []int{37, 0}
+}
+
 // Command represents an extension slash command. Commands may declare nested
 // sub-actions (subcommands), e.g. `/mcp list`, so a plugin can group related
 // actions under a single namespace instead of hyphenated top-level commands.
@@ -357,6 +513,7 @@ func (x *RunCommandRequest) GetArgs() string {
 type RunCommandResponse struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	Output        string                 `protobuf:"bytes,1,opt,name=output,proto3" json:"output,omitempty"`
+	View          *View                  `protobuf:"bytes,2,opt,name=view,proto3" json:"view,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -396,6 +553,13 @@ func (x *RunCommandResponse) GetOutput() string {
 		return x.Output
 	}
 	return ""
+}
+
+func (x *RunCommandResponse) GetView() *View {
+	if x != nil {
+		return x.View
+	}
+	return nil
 }
 
 type ReloadRequest struct {
@@ -1702,6 +1866,964 @@ func (x *ExecuteToolResponse) GetIsError() bool {
 	return false
 }
 
+// View is a structured panel a plugin renders into the host UI, either
+// attached to a command result (sync) or pushed independently via
+// HostService.RenderView (async). Re-sending a View with the same Id
+// replaces its content in place (used for live-updating async panels).
+type View struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Id            string                 `protobuf:"bytes,1,opt,name=id,proto3" json:"id,omitempty"`       // scoped to the plugin; host prefixes with plugin name
+	Title         string                 `protobuf:"bytes,2,opt,name=title,proto3" json:"title,omitempty"` // optional panel title/header
+	Widgets       []*Widget              `protobuf:"bytes,3,rep,name=widgets,proto3" json:"widgets,omitempty"`
+	Style         *Style                 `protobuf:"bytes,4,opt,name=style,proto3" json:"style,omitempty"` // optional panel-level style (tone/border)
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *View) Reset() {
+	*x = View{}
+	mi := &file_pkg_plugin_api_extension_proto_msgTypes[27]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *View) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*View) ProtoMessage() {}
+
+func (x *View) ProtoReflect() protoreflect.Message {
+	mi := &file_pkg_plugin_api_extension_proto_msgTypes[27]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use View.ProtoReflect.Descriptor instead.
+func (*View) Descriptor() ([]byte, []int) {
+	return file_pkg_plugin_api_extension_proto_rawDescGZIP(), []int{27}
+}
+
+func (x *View) GetId() string {
+	if x != nil {
+		return x.Id
+	}
+	return ""
+}
+
+func (x *View) GetTitle() string {
+	if x != nil {
+		return x.Title
+	}
+	return ""
+}
+
+func (x *View) GetWidgets() []*Widget {
+	if x != nil {
+		return x.Widgets
+	}
+	return nil
+}
+
+func (x *View) GetStyle() *Style {
+	if x != nil {
+		return x.Style
+	}
+	return nil
+}
+
+// Style carries semantic, theme-aware presentation hints. Plugins should
+// prefer `tone` (resolved to tau's theme palette host-side) over raw hex,
+// so panels stay visually consistent across theme changes; hex is an
+// escape hatch, not the primary mechanism.
+type Style struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Tone          Style_Tone             `protobuf:"varint,1,opt,name=tone,proto3,enum=proto.Style_Tone" json:"tone,omitempty"`
+	FgHex         string                 `protobuf:"bytes,2,opt,name=fg_hex,json=fgHex,proto3" json:"fg_hex,omitempty"` // optional override, e.g. "#ffae00"
+	BgHex         string                 `protobuf:"bytes,3,opt,name=bg_hex,json=bgHex,proto3" json:"bg_hex,omitempty"` // optional override
+	Bold          bool                   `protobuf:"varint,4,opt,name=bold,proto3" json:"bold,omitempty"`
+	Dim           bool                   `protobuf:"varint,5,opt,name=dim,proto3" json:"dim,omitempty"`
+	Italic        bool                   `protobuf:"varint,6,opt,name=italic,proto3" json:"italic,omitempty"`
+	Underline     bool                   `protobuf:"varint,7,opt,name=underline,proto3" json:"underline,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *Style) Reset() {
+	*x = Style{}
+	mi := &file_pkg_plugin_api_extension_proto_msgTypes[28]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *Style) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*Style) ProtoMessage() {}
+
+func (x *Style) ProtoReflect() protoreflect.Message {
+	mi := &file_pkg_plugin_api_extension_proto_msgTypes[28]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use Style.ProtoReflect.Descriptor instead.
+func (*Style) Descriptor() ([]byte, []int) {
+	return file_pkg_plugin_api_extension_proto_rawDescGZIP(), []int{28}
+}
+
+func (x *Style) GetTone() Style_Tone {
+	if x != nil {
+		return x.Tone
+	}
+	return Style_TONE_DEFAULT
+}
+
+func (x *Style) GetFgHex() string {
+	if x != nil {
+		return x.FgHex
+	}
+	return ""
+}
+
+func (x *Style) GetBgHex() string {
+	if x != nil {
+		return x.BgHex
+	}
+	return ""
+}
+
+func (x *Style) GetBold() bool {
+	if x != nil {
+		return x.Bold
+	}
+	return false
+}
+
+func (x *Style) GetDim() bool {
+	if x != nil {
+		return x.Dim
+	}
+	return false
+}
+
+func (x *Style) GetItalic() bool {
+	if x != nil {
+		return x.Italic
+	}
+	return false
+}
+
+func (x *Style) GetUnderline() bool {
+	if x != nil {
+		return x.Underline
+	}
+	return false
+}
+
+// Widget is one renderable element within a View. Exactly one field of
+// `kind` is set. Unrecognized/unset kinds on older hosts are simply
+// skipped at render time — the same additive-evolution guarantee as
+// EventPayload's oneof.
+type Widget struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// Types that are valid to be assigned to Kind:
+	//
+	//	*Widget_Text
+	//	*Widget_Stack
+	//	*Widget_KeyValue
+	//	*Widget_List
+	//	*Widget_Table
+	//	*Widget_Progress
+	//	*Widget_Divider
+	//	*Widget_Status
+	Kind          isWidget_Kind `protobuf_oneof:"kind"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *Widget) Reset() {
+	*x = Widget{}
+	mi := &file_pkg_plugin_api_extension_proto_msgTypes[29]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *Widget) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*Widget) ProtoMessage() {}
+
+func (x *Widget) ProtoReflect() protoreflect.Message {
+	mi := &file_pkg_plugin_api_extension_proto_msgTypes[29]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use Widget.ProtoReflect.Descriptor instead.
+func (*Widget) Descriptor() ([]byte, []int) {
+	return file_pkg_plugin_api_extension_proto_rawDescGZIP(), []int{29}
+}
+
+func (x *Widget) GetKind() isWidget_Kind {
+	if x != nil {
+		return x.Kind
+	}
+	return nil
+}
+
+func (x *Widget) GetText() *TextWidget {
+	if x != nil {
+		if x, ok := x.Kind.(*Widget_Text); ok {
+			return x.Text
+		}
+	}
+	return nil
+}
+
+func (x *Widget) GetStack() *StackWidget {
+	if x != nil {
+		if x, ok := x.Kind.(*Widget_Stack); ok {
+			return x.Stack
+		}
+	}
+	return nil
+}
+
+func (x *Widget) GetKeyValue() *KeyValueWidget {
+	if x != nil {
+		if x, ok := x.Kind.(*Widget_KeyValue); ok {
+			return x.KeyValue
+		}
+	}
+	return nil
+}
+
+func (x *Widget) GetList() *ListWidget {
+	if x != nil {
+		if x, ok := x.Kind.(*Widget_List); ok {
+			return x.List
+		}
+	}
+	return nil
+}
+
+func (x *Widget) GetTable() *TableWidget {
+	if x != nil {
+		if x, ok := x.Kind.(*Widget_Table); ok {
+			return x.Table
+		}
+	}
+	return nil
+}
+
+func (x *Widget) GetProgress() *ProgressWidget {
+	if x != nil {
+		if x, ok := x.Kind.(*Widget_Progress); ok {
+			return x.Progress
+		}
+	}
+	return nil
+}
+
+func (x *Widget) GetDivider() *DividerWidget {
+	if x != nil {
+		if x, ok := x.Kind.(*Widget_Divider); ok {
+			return x.Divider
+		}
+	}
+	return nil
+}
+
+func (x *Widget) GetStatus() *StatusWidget {
+	if x != nil {
+		if x, ok := x.Kind.(*Widget_Status); ok {
+			return x.Status
+		}
+	}
+	return nil
+}
+
+type isWidget_Kind interface {
+	isWidget_Kind()
+}
+
+type Widget_Text struct {
+	Text *TextWidget `protobuf:"bytes,1,opt,name=text,proto3,oneof"`
+}
+
+type Widget_Stack struct {
+	Stack *StackWidget `protobuf:"bytes,2,opt,name=stack,proto3,oneof"`
+}
+
+type Widget_KeyValue struct {
+	KeyValue *KeyValueWidget `protobuf:"bytes,3,opt,name=key_value,json=keyValue,proto3,oneof"`
+}
+
+type Widget_List struct {
+	List *ListWidget `protobuf:"bytes,4,opt,name=list,proto3,oneof"`
+}
+
+type Widget_Table struct {
+	Table *TableWidget `protobuf:"bytes,5,opt,name=table,proto3,oneof"`
+}
+
+type Widget_Progress struct {
+	Progress *ProgressWidget `protobuf:"bytes,6,opt,name=progress,proto3,oneof"`
+}
+
+type Widget_Divider struct {
+	Divider *DividerWidget `protobuf:"bytes,7,opt,name=divider,proto3,oneof"`
+}
+
+type Widget_Status struct {
+	Status *StatusWidget `protobuf:"bytes,8,opt,name=status,proto3,oneof"`
+}
+
+func (*Widget_Text) isWidget_Kind() {}
+
+func (*Widget_Stack) isWidget_Kind() {}
+
+func (*Widget_KeyValue) isWidget_Kind() {}
+
+func (*Widget_List) isWidget_Kind() {}
+
+func (*Widget_Table) isWidget_Kind() {}
+
+func (*Widget_Progress) isWidget_Kind() {}
+
+func (*Widget_Divider) isWidget_Kind() {}
+
+func (*Widget_Status) isWidget_Kind() {}
+
+type TextWidget struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Text          string                 `protobuf:"bytes,1,opt,name=text,proto3" json:"text,omitempty"`
+	Style         *Style                 `protobuf:"bytes,2,opt,name=style,proto3" json:"style,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *TextWidget) Reset() {
+	*x = TextWidget{}
+	mi := &file_pkg_plugin_api_extension_proto_msgTypes[30]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *TextWidget) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*TextWidget) ProtoMessage() {}
+
+func (x *TextWidget) ProtoReflect() protoreflect.Message {
+	mi := &file_pkg_plugin_api_extension_proto_msgTypes[30]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use TextWidget.ProtoReflect.Descriptor instead.
+func (*TextWidget) Descriptor() ([]byte, []int) {
+	return file_pkg_plugin_api_extension_proto_rawDescGZIP(), []int{30}
+}
+
+func (x *TextWidget) GetText() string {
+	if x != nil {
+		return x.Text
+	}
+	return ""
+}
+
+func (x *TextWidget) GetStyle() *Style {
+	if x != nil {
+		return x.Style
+	}
+	return nil
+}
+
+type StackWidget struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Direction     StackWidget_Direction  `protobuf:"varint,1,opt,name=direction,proto3,enum=proto.StackWidget_Direction" json:"direction,omitempty"`
+	Children      []*Widget              `protobuf:"bytes,2,rep,name=children,proto3" json:"children,omitempty"`
+	Gap           int32                  `protobuf:"varint,3,opt,name=gap,proto3" json:"gap,omitempty"` // spacing between children, in cells (horizontal) or blank lines (vertical)
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *StackWidget) Reset() {
+	*x = StackWidget{}
+	mi := &file_pkg_plugin_api_extension_proto_msgTypes[31]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *StackWidget) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*StackWidget) ProtoMessage() {}
+
+func (x *StackWidget) ProtoReflect() protoreflect.Message {
+	mi := &file_pkg_plugin_api_extension_proto_msgTypes[31]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use StackWidget.ProtoReflect.Descriptor instead.
+func (*StackWidget) Descriptor() ([]byte, []int) {
+	return file_pkg_plugin_api_extension_proto_rawDescGZIP(), []int{31}
+}
+
+func (x *StackWidget) GetDirection() StackWidget_Direction {
+	if x != nil {
+		return x.Direction
+	}
+	return StackWidget_VERTICAL
+}
+
+func (x *StackWidget) GetChildren() []*Widget {
+	if x != nil {
+		return x.Children
+	}
+	return nil
+}
+
+func (x *StackWidget) GetGap() int32 {
+	if x != nil {
+		return x.Gap
+	}
+	return 0
+}
+
+type KeyValueWidget struct {
+	state         protoimpl.MessageState  `protogen:"open.v1"`
+	Entries       []*KeyValueWidget_Entry `protobuf:"bytes,1,rep,name=entries,proto3" json:"entries,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *KeyValueWidget) Reset() {
+	*x = KeyValueWidget{}
+	mi := &file_pkg_plugin_api_extension_proto_msgTypes[32]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *KeyValueWidget) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*KeyValueWidget) ProtoMessage() {}
+
+func (x *KeyValueWidget) ProtoReflect() protoreflect.Message {
+	mi := &file_pkg_plugin_api_extension_proto_msgTypes[32]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use KeyValueWidget.ProtoReflect.Descriptor instead.
+func (*KeyValueWidget) Descriptor() ([]byte, []int) {
+	return file_pkg_plugin_api_extension_proto_rawDescGZIP(), []int{32}
+}
+
+func (x *KeyValueWidget) GetEntries() []*KeyValueWidget_Entry {
+	if x != nil {
+		return x.Entries
+	}
+	return nil
+}
+
+type ListWidget struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Items         []string               `protobuf:"bytes,1,rep,name=items,proto3" json:"items,omitempty"`
+	Ordered       bool                   `protobuf:"varint,2,opt,name=ordered,proto3" json:"ordered,omitempty"` // numbered vs bulleted
+	Style         *Style                 `protobuf:"bytes,3,opt,name=style,proto3" json:"style,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *ListWidget) Reset() {
+	*x = ListWidget{}
+	mi := &file_pkg_plugin_api_extension_proto_msgTypes[33]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ListWidget) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ListWidget) ProtoMessage() {}
+
+func (x *ListWidget) ProtoReflect() protoreflect.Message {
+	mi := &file_pkg_plugin_api_extension_proto_msgTypes[33]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ListWidget.ProtoReflect.Descriptor instead.
+func (*ListWidget) Descriptor() ([]byte, []int) {
+	return file_pkg_plugin_api_extension_proto_rawDescGZIP(), []int{33}
+}
+
+func (x *ListWidget) GetItems() []string {
+	if x != nil {
+		return x.Items
+	}
+	return nil
+}
+
+func (x *ListWidget) GetOrdered() bool {
+	if x != nil {
+		return x.Ordered
+	}
+	return false
+}
+
+func (x *ListWidget) GetStyle() *Style {
+	if x != nil {
+		return x.Style
+	}
+	return nil
+}
+
+type TableWidget struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Headers       []string               `protobuf:"bytes,1,rep,name=headers,proto3" json:"headers,omitempty"`
+	Rows          []*TableWidget_Row     `protobuf:"bytes,2,rep,name=rows,proto3" json:"rows,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *TableWidget) Reset() {
+	*x = TableWidget{}
+	mi := &file_pkg_plugin_api_extension_proto_msgTypes[34]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *TableWidget) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*TableWidget) ProtoMessage() {}
+
+func (x *TableWidget) ProtoReflect() protoreflect.Message {
+	mi := &file_pkg_plugin_api_extension_proto_msgTypes[34]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use TableWidget.ProtoReflect.Descriptor instead.
+func (*TableWidget) Descriptor() ([]byte, []int) {
+	return file_pkg_plugin_api_extension_proto_rawDescGZIP(), []int{34}
+}
+
+func (x *TableWidget) GetHeaders() []string {
+	if x != nil {
+		return x.Headers
+	}
+	return nil
+}
+
+func (x *TableWidget) GetRows() []*TableWidget_Row {
+	if x != nil {
+		return x.Rows
+	}
+	return nil
+}
+
+type ProgressWidget struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Label         string                 `protobuf:"bytes,1,opt,name=label,proto3" json:"label,omitempty"`
+	Fraction      float64                `protobuf:"fixed64,2,opt,name=fraction,proto3" json:"fraction,omitempty"` // 0.0-1.0; negative = indeterminate
+	Style         *Style                 `protobuf:"bytes,3,opt,name=style,proto3" json:"style,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *ProgressWidget) Reset() {
+	*x = ProgressWidget{}
+	mi := &file_pkg_plugin_api_extension_proto_msgTypes[35]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ProgressWidget) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ProgressWidget) ProtoMessage() {}
+
+func (x *ProgressWidget) ProtoReflect() protoreflect.Message {
+	mi := &file_pkg_plugin_api_extension_proto_msgTypes[35]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ProgressWidget.ProtoReflect.Descriptor instead.
+func (*ProgressWidget) Descriptor() ([]byte, []int) {
+	return file_pkg_plugin_api_extension_proto_rawDescGZIP(), []int{35}
+}
+
+func (x *ProgressWidget) GetLabel() string {
+	if x != nil {
+		return x.Label
+	}
+	return ""
+}
+
+func (x *ProgressWidget) GetFraction() float64 {
+	if x != nil {
+		return x.Fraction
+	}
+	return 0
+}
+
+func (x *ProgressWidget) GetStyle() *Style {
+	if x != nil {
+		return x.Style
+	}
+	return nil
+}
+
+type DividerWidget struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Label         string                 `protobuf:"bytes,1,opt,name=label,proto3" json:"label,omitempty"` // optional centered label
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *DividerWidget) Reset() {
+	*x = DividerWidget{}
+	mi := &file_pkg_plugin_api_extension_proto_msgTypes[36]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *DividerWidget) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*DividerWidget) ProtoMessage() {}
+
+func (x *DividerWidget) ProtoReflect() protoreflect.Message {
+	mi := &file_pkg_plugin_api_extension_proto_msgTypes[36]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use DividerWidget.ProtoReflect.Descriptor instead.
+func (*DividerWidget) Descriptor() ([]byte, []int) {
+	return file_pkg_plugin_api_extension_proto_rawDescGZIP(), []int{36}
+}
+
+func (x *DividerWidget) GetLabel() string {
+	if x != nil {
+		return x.Label
+	}
+	return ""
+}
+
+type StatusWidget struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	State         StatusWidget_State     `protobuf:"varint,1,opt,name=state,proto3,enum=proto.StatusWidget_State" json:"state,omitempty"`
+	Label         string                 `protobuf:"bytes,2,opt,name=label,proto3" json:"label,omitempty"`
+	Detail        string                 `protobuf:"bytes,3,opt,name=detail,proto3" json:"detail,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *StatusWidget) Reset() {
+	*x = StatusWidget{}
+	mi := &file_pkg_plugin_api_extension_proto_msgTypes[37]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *StatusWidget) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*StatusWidget) ProtoMessage() {}
+
+func (x *StatusWidget) ProtoReflect() protoreflect.Message {
+	mi := &file_pkg_plugin_api_extension_proto_msgTypes[37]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use StatusWidget.ProtoReflect.Descriptor instead.
+func (*StatusWidget) Descriptor() ([]byte, []int) {
+	return file_pkg_plugin_api_extension_proto_rawDescGZIP(), []int{37}
+}
+
+func (x *StatusWidget) GetState() StatusWidget_State {
+	if x != nil {
+		return x.State
+	}
+	return StatusWidget_RUNNING
+}
+
+func (x *StatusWidget) GetLabel() string {
+	if x != nil {
+		return x.Label
+	}
+	return ""
+}
+
+func (x *StatusWidget) GetDetail() string {
+	if x != nil {
+		return x.Detail
+	}
+	return ""
+}
+
+type RenderViewRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	PluginName    string                 `protobuf:"bytes,1,opt,name=plugin_name,json=pluginName,proto3" json:"plugin_name,omitempty"` // populated by hostClient, not the plugin author
+	View          *View                  `protobuf:"bytes,2,opt,name=view,proto3" json:"view,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *RenderViewRequest) Reset() {
+	*x = RenderViewRequest{}
+	mi := &file_pkg_plugin_api_extension_proto_msgTypes[38]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *RenderViewRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*RenderViewRequest) ProtoMessage() {}
+
+func (x *RenderViewRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_pkg_plugin_api_extension_proto_msgTypes[38]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use RenderViewRequest.ProtoReflect.Descriptor instead.
+func (*RenderViewRequest) Descriptor() ([]byte, []int) {
+	return file_pkg_plugin_api_extension_proto_rawDescGZIP(), []int{38}
+}
+
+func (x *RenderViewRequest) GetPluginName() string {
+	if x != nil {
+		return x.PluginName
+	}
+	return ""
+}
+
+func (x *RenderViewRequest) GetView() *View {
+	if x != nil {
+		return x.View
+	}
+	return nil
+}
+
+type RenderViewResponse struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *RenderViewResponse) Reset() {
+	*x = RenderViewResponse{}
+	mi := &file_pkg_plugin_api_extension_proto_msgTypes[39]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *RenderViewResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*RenderViewResponse) ProtoMessage() {}
+
+func (x *RenderViewResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_pkg_plugin_api_extension_proto_msgTypes[39]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use RenderViewResponse.ProtoReflect.Descriptor instead.
+func (*RenderViewResponse) Descriptor() ([]byte, []int) {
+	return file_pkg_plugin_api_extension_proto_rawDescGZIP(), []int{39}
+}
+
+type CloseViewRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	PluginName    string                 `protobuf:"bytes,1,opt,name=plugin_name,json=pluginName,proto3" json:"plugin_name,omitempty"`
+	ViewId        string                 `protobuf:"bytes,2,opt,name=view_id,json=viewId,proto3" json:"view_id,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *CloseViewRequest) Reset() {
+	*x = CloseViewRequest{}
+	mi := &file_pkg_plugin_api_extension_proto_msgTypes[40]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *CloseViewRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*CloseViewRequest) ProtoMessage() {}
+
+func (x *CloseViewRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_pkg_plugin_api_extension_proto_msgTypes[40]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use CloseViewRequest.ProtoReflect.Descriptor instead.
+func (*CloseViewRequest) Descriptor() ([]byte, []int) {
+	return file_pkg_plugin_api_extension_proto_rawDescGZIP(), []int{40}
+}
+
+func (x *CloseViewRequest) GetPluginName() string {
+	if x != nil {
+		return x.PluginName
+	}
+	return ""
+}
+
+func (x *CloseViewRequest) GetViewId() string {
+	if x != nil {
+		return x.ViewId
+	}
+	return ""
+}
+
+type CloseViewResponse struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *CloseViewResponse) Reset() {
+	*x = CloseViewResponse{}
+	mi := &file_pkg_plugin_api_extension_proto_msgTypes[41]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *CloseViewResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*CloseViewResponse) ProtoMessage() {}
+
+func (x *CloseViewResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_pkg_plugin_api_extension_proto_msgTypes[41]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use CloseViewResponse.ProtoReflect.Descriptor instead.
+func (*CloseViewResponse) Descriptor() ([]byte, []int) {
+	return file_pkg_plugin_api_extension_proto_rawDescGZIP(), []int{41}
+}
+
 type LogEntry struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	Level         string                 `protobuf:"bytes,1,opt,name=level,proto3" json:"level,omitempty"` // "debug", "info", "warn", "error"
@@ -1713,7 +2835,7 @@ type LogEntry struct {
 
 func (x *LogEntry) Reset() {
 	*x = LogEntry{}
-	mi := &file_pkg_plugin_api_extension_proto_msgTypes[27]
+	mi := &file_pkg_plugin_api_extension_proto_msgTypes[42]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1725,7 +2847,7 @@ func (x *LogEntry) String() string {
 func (*LogEntry) ProtoMessage() {}
 
 func (x *LogEntry) ProtoReflect() protoreflect.Message {
-	mi := &file_pkg_plugin_api_extension_proto_msgTypes[27]
+	mi := &file_pkg_plugin_api_extension_proto_msgTypes[42]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1738,7 +2860,7 @@ func (x *LogEntry) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use LogEntry.ProtoReflect.Descriptor instead.
 func (*LogEntry) Descriptor() ([]byte, []int) {
-	return file_pkg_plugin_api_extension_proto_rawDescGZIP(), []int{27}
+	return file_pkg_plugin_api_extension_proto_rawDescGZIP(), []int{42}
 }
 
 func (x *LogEntry) GetLevel() string {
@@ -1771,7 +2893,7 @@ type LogRequest struct {
 
 func (x *LogRequest) Reset() {
 	*x = LogRequest{}
-	mi := &file_pkg_plugin_api_extension_proto_msgTypes[28]
+	mi := &file_pkg_plugin_api_extension_proto_msgTypes[43]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1783,7 +2905,7 @@ func (x *LogRequest) String() string {
 func (*LogRequest) ProtoMessage() {}
 
 func (x *LogRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_pkg_plugin_api_extension_proto_msgTypes[28]
+	mi := &file_pkg_plugin_api_extension_proto_msgTypes[43]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1796,7 +2918,7 @@ func (x *LogRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use LogRequest.ProtoReflect.Descriptor instead.
 func (*LogRequest) Descriptor() ([]byte, []int) {
-	return file_pkg_plugin_api_extension_proto_rawDescGZIP(), []int{28}
+	return file_pkg_plugin_api_extension_proto_rawDescGZIP(), []int{43}
 }
 
 func (x *LogRequest) GetEntry() *LogEntry {
@@ -1814,7 +2936,7 @@ type LogResponse struct {
 
 func (x *LogResponse) Reset() {
 	*x = LogResponse{}
-	mi := &file_pkg_plugin_api_extension_proto_msgTypes[29]
+	mi := &file_pkg_plugin_api_extension_proto_msgTypes[44]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1826,7 +2948,7 @@ func (x *LogResponse) String() string {
 func (*LogResponse) ProtoMessage() {}
 
 func (x *LogResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_pkg_plugin_api_extension_proto_msgTypes[29]
+	mi := &file_pkg_plugin_api_extension_proto_msgTypes[44]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1839,7 +2961,7 @@ func (x *LogResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use LogResponse.ProtoReflect.Descriptor instead.
 func (*LogResponse) Descriptor() ([]byte, []int) {
-	return file_pkg_plugin_api_extension_proto_rawDescGZIP(), []int{29}
+	return file_pkg_plugin_api_extension_proto_rawDescGZIP(), []int{44}
 }
 
 type ConfigSchema struct {
@@ -1851,7 +2973,7 @@ type ConfigSchema struct {
 
 func (x *ConfigSchema) Reset() {
 	*x = ConfigSchema{}
-	mi := &file_pkg_plugin_api_extension_proto_msgTypes[30]
+	mi := &file_pkg_plugin_api_extension_proto_msgTypes[45]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1863,7 +2985,7 @@ func (x *ConfigSchema) String() string {
 func (*ConfigSchema) ProtoMessage() {}
 
 func (x *ConfigSchema) ProtoReflect() protoreflect.Message {
-	mi := &file_pkg_plugin_api_extension_proto_msgTypes[30]
+	mi := &file_pkg_plugin_api_extension_proto_msgTypes[45]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1876,7 +2998,7 @@ func (x *ConfigSchema) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ConfigSchema.ProtoReflect.Descriptor instead.
 func (*ConfigSchema) Descriptor() ([]byte, []int) {
-	return file_pkg_plugin_api_extension_proto_rawDescGZIP(), []int{30}
+	return file_pkg_plugin_api_extension_proto_rawDescGZIP(), []int{45}
 }
 
 func (x *ConfigSchema) GetFields() map[string]*ConfigSchema_Field {
@@ -1894,7 +3016,7 @@ type GetCapabilitiesRequest struct {
 
 func (x *GetCapabilitiesRequest) Reset() {
 	*x = GetCapabilitiesRequest{}
-	mi := &file_pkg_plugin_api_extension_proto_msgTypes[31]
+	mi := &file_pkg_plugin_api_extension_proto_msgTypes[46]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1906,7 +3028,7 @@ func (x *GetCapabilitiesRequest) String() string {
 func (*GetCapabilitiesRequest) ProtoMessage() {}
 
 func (x *GetCapabilitiesRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_pkg_plugin_api_extension_proto_msgTypes[31]
+	mi := &file_pkg_plugin_api_extension_proto_msgTypes[46]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1919,7 +3041,7 @@ func (x *GetCapabilitiesRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use GetCapabilitiesRequest.ProtoReflect.Descriptor instead.
 func (*GetCapabilitiesRequest) Descriptor() ([]byte, []int) {
-	return file_pkg_plugin_api_extension_proto_rawDescGZIP(), []int{31}
+	return file_pkg_plugin_api_extension_proto_rawDescGZIP(), []int{46}
 }
 
 type GetCapabilitiesResponse struct {
@@ -1932,7 +3054,7 @@ type GetCapabilitiesResponse struct {
 
 func (x *GetCapabilitiesResponse) Reset() {
 	*x = GetCapabilitiesResponse{}
-	mi := &file_pkg_plugin_api_extension_proto_msgTypes[32]
+	mi := &file_pkg_plugin_api_extension_proto_msgTypes[47]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1944,7 +3066,7 @@ func (x *GetCapabilitiesResponse) String() string {
 func (*GetCapabilitiesResponse) ProtoMessage() {}
 
 func (x *GetCapabilitiesResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_pkg_plugin_api_extension_proto_msgTypes[32]
+	mi := &file_pkg_plugin_api_extension_proto_msgTypes[47]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1957,7 +3079,7 @@ func (x *GetCapabilitiesResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use GetCapabilitiesResponse.ProtoReflect.Descriptor instead.
 func (*GetCapabilitiesResponse) Descriptor() ([]byte, []int) {
-	return file_pkg_plugin_api_extension_proto_rawDescGZIP(), []int{32}
+	return file_pkg_plugin_api_extension_proto_rawDescGZIP(), []int{47}
 }
 
 func (x *GetCapabilitiesResponse) GetCapabilities() []string {
@@ -1977,7 +3099,7 @@ type InitRequest struct {
 
 func (x *InitRequest) Reset() {
 	*x = InitRequest{}
-	mi := &file_pkg_plugin_api_extension_proto_msgTypes[33]
+	mi := &file_pkg_plugin_api_extension_proto_msgTypes[48]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1989,7 +3111,7 @@ func (x *InitRequest) String() string {
 func (*InitRequest) ProtoMessage() {}
 
 func (x *InitRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_pkg_plugin_api_extension_proto_msgTypes[33]
+	mi := &file_pkg_plugin_api_extension_proto_msgTypes[48]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2002,7 +3124,7 @@ func (x *InitRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use InitRequest.ProtoReflect.Descriptor instead.
 func (*InitRequest) Descriptor() ([]byte, []int) {
-	return file_pkg_plugin_api_extension_proto_rawDescGZIP(), []int{33}
+	return file_pkg_plugin_api_extension_proto_rawDescGZIP(), []int{48}
 }
 
 func (x *InitRequest) GetHostBrokerId() uint32 {
@@ -2027,7 +3149,7 @@ type InitResponse struct {
 
 func (x *InitResponse) Reset() {
 	*x = InitResponse{}
-	mi := &file_pkg_plugin_api_extension_proto_msgTypes[34]
+	mi := &file_pkg_plugin_api_extension_proto_msgTypes[49]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2039,7 +3161,7 @@ func (x *InitResponse) String() string {
 func (*InitResponse) ProtoMessage() {}
 
 func (x *InitResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_pkg_plugin_api_extension_proto_msgTypes[34]
+	mi := &file_pkg_plugin_api_extension_proto_msgTypes[49]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2052,7 +3174,7 @@ func (x *InitResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use InitResponse.ProtoReflect.Descriptor instead.
 func (*InitResponse) Descriptor() ([]byte, []int) {
-	return file_pkg_plugin_api_extension_proto_rawDescGZIP(), []int{34}
+	return file_pkg_plugin_api_extension_proto_rawDescGZIP(), []int{49}
 }
 
 type GetConfigRequest struct {
@@ -2065,7 +3187,7 @@ type GetConfigRequest struct {
 
 func (x *GetConfigRequest) Reset() {
 	*x = GetConfigRequest{}
-	mi := &file_pkg_plugin_api_extension_proto_msgTypes[35]
+	mi := &file_pkg_plugin_api_extension_proto_msgTypes[50]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2077,7 +3199,7 @@ func (x *GetConfigRequest) String() string {
 func (*GetConfigRequest) ProtoMessage() {}
 
 func (x *GetConfigRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_pkg_plugin_api_extension_proto_msgTypes[35]
+	mi := &file_pkg_plugin_api_extension_proto_msgTypes[50]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2090,7 +3212,7 @@ func (x *GetConfigRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use GetConfigRequest.ProtoReflect.Descriptor instead.
 func (*GetConfigRequest) Descriptor() ([]byte, []int) {
-	return file_pkg_plugin_api_extension_proto_rawDescGZIP(), []int{35}
+	return file_pkg_plugin_api_extension_proto_rawDescGZIP(), []int{50}
 }
 
 func (x *GetConfigRequest) GetPluginName() string {
@@ -2117,7 +3239,7 @@ type GetConfigResponse struct {
 
 func (x *GetConfigResponse) Reset() {
 	*x = GetConfigResponse{}
-	mi := &file_pkg_plugin_api_extension_proto_msgTypes[36]
+	mi := &file_pkg_plugin_api_extension_proto_msgTypes[51]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2129,7 +3251,7 @@ func (x *GetConfigResponse) String() string {
 func (*GetConfigResponse) ProtoMessage() {}
 
 func (x *GetConfigResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_pkg_plugin_api_extension_proto_msgTypes[36]
+	mi := &file_pkg_plugin_api_extension_proto_msgTypes[51]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2142,7 +3264,7 @@ func (x *GetConfigResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use GetConfigResponse.ProtoReflect.Descriptor instead.
 func (*GetConfigResponse) Descriptor() ([]byte, []int) {
-	return file_pkg_plugin_api_extension_proto_rawDescGZIP(), []int{36}
+	return file_pkg_plugin_api_extension_proto_rawDescGZIP(), []int{51}
 }
 
 func (x *GetConfigResponse) GetValue() string {
@@ -2170,7 +3292,7 @@ type SetConfigRequest struct {
 
 func (x *SetConfigRequest) Reset() {
 	*x = SetConfigRequest{}
-	mi := &file_pkg_plugin_api_extension_proto_msgTypes[37]
+	mi := &file_pkg_plugin_api_extension_proto_msgTypes[52]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2182,7 +3304,7 @@ func (x *SetConfigRequest) String() string {
 func (*SetConfigRequest) ProtoMessage() {}
 
 func (x *SetConfigRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_pkg_plugin_api_extension_proto_msgTypes[37]
+	mi := &file_pkg_plugin_api_extension_proto_msgTypes[52]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2195,7 +3317,7 @@ func (x *SetConfigRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use SetConfigRequest.ProtoReflect.Descriptor instead.
 func (*SetConfigRequest) Descriptor() ([]byte, []int) {
-	return file_pkg_plugin_api_extension_proto_rawDescGZIP(), []int{37}
+	return file_pkg_plugin_api_extension_proto_rawDescGZIP(), []int{52}
 }
 
 func (x *SetConfigRequest) GetPluginName() string {
@@ -2227,7 +3349,7 @@ type SetConfigResponse struct {
 
 func (x *SetConfigResponse) Reset() {
 	*x = SetConfigResponse{}
-	mi := &file_pkg_plugin_api_extension_proto_msgTypes[38]
+	mi := &file_pkg_plugin_api_extension_proto_msgTypes[53]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2239,7 +3361,7 @@ func (x *SetConfigResponse) String() string {
 func (*SetConfigResponse) ProtoMessage() {}
 
 func (x *SetConfigResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_pkg_plugin_api_extension_proto_msgTypes[38]
+	mi := &file_pkg_plugin_api_extension_proto_msgTypes[53]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2252,7 +3374,7 @@ func (x *SetConfigResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use SetConfigResponse.ProtoReflect.Descriptor instead.
 func (*SetConfigResponse) Descriptor() ([]byte, []int) {
-	return file_pkg_plugin_api_extension_proto_rawDescGZIP(), []int{38}
+	return file_pkg_plugin_api_extension_proto_rawDescGZIP(), []int{53}
 }
 
 type GetSessionStateRequest struct {
@@ -2264,7 +3386,7 @@ type GetSessionStateRequest struct {
 
 func (x *GetSessionStateRequest) Reset() {
 	*x = GetSessionStateRequest{}
-	mi := &file_pkg_plugin_api_extension_proto_msgTypes[39]
+	mi := &file_pkg_plugin_api_extension_proto_msgTypes[54]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2276,7 +3398,7 @@ func (x *GetSessionStateRequest) String() string {
 func (*GetSessionStateRequest) ProtoMessage() {}
 
 func (x *GetSessionStateRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_pkg_plugin_api_extension_proto_msgTypes[39]
+	mi := &file_pkg_plugin_api_extension_proto_msgTypes[54]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2289,7 +3411,7 @@ func (x *GetSessionStateRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use GetSessionStateRequest.ProtoReflect.Descriptor instead.
 func (*GetSessionStateRequest) Descriptor() ([]byte, []int) {
-	return file_pkg_plugin_api_extension_proto_rawDescGZIP(), []int{39}
+	return file_pkg_plugin_api_extension_proto_rawDescGZIP(), []int{54}
 }
 
 func (x *GetSessionStateRequest) GetSessionId() string {
@@ -2309,7 +3431,7 @@ type GetSessionStateResponse struct {
 
 func (x *GetSessionStateResponse) Reset() {
 	*x = GetSessionStateResponse{}
-	mi := &file_pkg_plugin_api_extension_proto_msgTypes[40]
+	mi := &file_pkg_plugin_api_extension_proto_msgTypes[55]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2321,7 +3443,7 @@ func (x *GetSessionStateResponse) String() string {
 func (*GetSessionStateResponse) ProtoMessage() {}
 
 func (x *GetSessionStateResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_pkg_plugin_api_extension_proto_msgTypes[40]
+	mi := &file_pkg_plugin_api_extension_proto_msgTypes[55]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2334,7 +3456,7 @@ func (x *GetSessionStateResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use GetSessionStateResponse.ProtoReflect.Descriptor instead.
 func (*GetSessionStateResponse) Descriptor() ([]byte, []int) {
-	return file_pkg_plugin_api_extension_proto_rawDescGZIP(), []int{40}
+	return file_pkg_plugin_api_extension_proto_rawDescGZIP(), []int{55}
 }
 
 func (x *GetSessionStateResponse) GetStateJson() string {
@@ -2359,7 +3481,7 @@ type GetAvailableModelsRequest struct {
 
 func (x *GetAvailableModelsRequest) Reset() {
 	*x = GetAvailableModelsRequest{}
-	mi := &file_pkg_plugin_api_extension_proto_msgTypes[41]
+	mi := &file_pkg_plugin_api_extension_proto_msgTypes[56]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2371,7 +3493,7 @@ func (x *GetAvailableModelsRequest) String() string {
 func (*GetAvailableModelsRequest) ProtoMessage() {}
 
 func (x *GetAvailableModelsRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_pkg_plugin_api_extension_proto_msgTypes[41]
+	mi := &file_pkg_plugin_api_extension_proto_msgTypes[56]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2384,7 +3506,7 @@ func (x *GetAvailableModelsRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use GetAvailableModelsRequest.ProtoReflect.Descriptor instead.
 func (*GetAvailableModelsRequest) Descriptor() ([]byte, []int) {
-	return file_pkg_plugin_api_extension_proto_rawDescGZIP(), []int{41}
+	return file_pkg_plugin_api_extension_proto_rawDescGZIP(), []int{56}
 }
 
 type GetAvailableModelsResponse struct {
@@ -2396,7 +3518,7 @@ type GetAvailableModelsResponse struct {
 
 func (x *GetAvailableModelsResponse) Reset() {
 	*x = GetAvailableModelsResponse{}
-	mi := &file_pkg_plugin_api_extension_proto_msgTypes[42]
+	mi := &file_pkg_plugin_api_extension_proto_msgTypes[57]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2408,7 +3530,7 @@ func (x *GetAvailableModelsResponse) String() string {
 func (*GetAvailableModelsResponse) ProtoMessage() {}
 
 func (x *GetAvailableModelsResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_pkg_plugin_api_extension_proto_msgTypes[42]
+	mi := &file_pkg_plugin_api_extension_proto_msgTypes[57]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2421,7 +3543,7 @@ func (x *GetAvailableModelsResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use GetAvailableModelsResponse.ProtoReflect.Descriptor instead.
 func (*GetAvailableModelsResponse) Descriptor() ([]byte, []int) {
-	return file_pkg_plugin_api_extension_proto_rawDescGZIP(), []int{42}
+	return file_pkg_plugin_api_extension_proto_rawDescGZIP(), []int{57}
 }
 
 func (x *GetAvailableModelsResponse) GetModels() []string {
@@ -2441,7 +3563,7 @@ type NotifyRequest struct {
 
 func (x *NotifyRequest) Reset() {
 	*x = NotifyRequest{}
-	mi := &file_pkg_plugin_api_extension_proto_msgTypes[43]
+	mi := &file_pkg_plugin_api_extension_proto_msgTypes[58]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2453,7 +3575,7 @@ func (x *NotifyRequest) String() string {
 func (*NotifyRequest) ProtoMessage() {}
 
 func (x *NotifyRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_pkg_plugin_api_extension_proto_msgTypes[43]
+	mi := &file_pkg_plugin_api_extension_proto_msgTypes[58]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2466,7 +3588,7 @@ func (x *NotifyRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use NotifyRequest.ProtoReflect.Descriptor instead.
 func (*NotifyRequest) Descriptor() ([]byte, []int) {
-	return file_pkg_plugin_api_extension_proto_rawDescGZIP(), []int{43}
+	return file_pkg_plugin_api_extension_proto_rawDescGZIP(), []int{58}
 }
 
 func (x *NotifyRequest) GetLevel() string {
@@ -2491,7 +3613,7 @@ type NotifyResponse struct {
 
 func (x *NotifyResponse) Reset() {
 	*x = NotifyResponse{}
-	mi := &file_pkg_plugin_api_extension_proto_msgTypes[44]
+	mi := &file_pkg_plugin_api_extension_proto_msgTypes[59]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2503,7 +3625,7 @@ func (x *NotifyResponse) String() string {
 func (*NotifyResponse) ProtoMessage() {}
 
 func (x *NotifyResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_pkg_plugin_api_extension_proto_msgTypes[44]
+	mi := &file_pkg_plugin_api_extension_proto_msgTypes[59]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2516,7 +3638,7 @@ func (x *NotifyResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use NotifyResponse.ProtoReflect.Descriptor instead.
 func (*NotifyResponse) Descriptor() ([]byte, []int) {
-	return file_pkg_plugin_api_extension_proto_rawDescGZIP(), []int{44}
+	return file_pkg_plugin_api_extension_proto_rawDescGZIP(), []int{59}
 }
 
 // Confirm grants plugins the ability to ask the user for confirmation.
@@ -2530,7 +3652,7 @@ type ConfirmRequest struct {
 
 func (x *ConfirmRequest) Reset() {
 	*x = ConfirmRequest{}
-	mi := &file_pkg_plugin_api_extension_proto_msgTypes[45]
+	mi := &file_pkg_plugin_api_extension_proto_msgTypes[60]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2542,7 +3664,7 @@ func (x *ConfirmRequest) String() string {
 func (*ConfirmRequest) ProtoMessage() {}
 
 func (x *ConfirmRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_pkg_plugin_api_extension_proto_msgTypes[45]
+	mi := &file_pkg_plugin_api_extension_proto_msgTypes[60]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2555,7 +3677,7 @@ func (x *ConfirmRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ConfirmRequest.ProtoReflect.Descriptor instead.
 func (*ConfirmRequest) Descriptor() ([]byte, []int) {
-	return file_pkg_plugin_api_extension_proto_rawDescGZIP(), []int{45}
+	return file_pkg_plugin_api_extension_proto_rawDescGZIP(), []int{60}
 }
 
 func (x *ConfirmRequest) GetTitle() string {
@@ -2582,7 +3704,7 @@ type ConfirmResponse struct {
 
 func (x *ConfirmResponse) Reset() {
 	*x = ConfirmResponse{}
-	mi := &file_pkg_plugin_api_extension_proto_msgTypes[46]
+	mi := &file_pkg_plugin_api_extension_proto_msgTypes[61]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2594,7 +3716,7 @@ func (x *ConfirmResponse) String() string {
 func (*ConfirmResponse) ProtoMessage() {}
 
 func (x *ConfirmResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_pkg_plugin_api_extension_proto_msgTypes[46]
+	mi := &file_pkg_plugin_api_extension_proto_msgTypes[61]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2607,7 +3729,7 @@ func (x *ConfirmResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ConfirmResponse.ProtoReflect.Descriptor instead.
 func (*ConfirmResponse) Descriptor() ([]byte, []int) {
-	return file_pkg_plugin_api_extension_proto_rawDescGZIP(), []int{46}
+	return file_pkg_plugin_api_extension_proto_rawDescGZIP(), []int{61}
 }
 
 func (x *ConfirmResponse) GetConfirmed() bool {
@@ -2635,7 +3757,7 @@ type InputRequest struct {
 
 func (x *InputRequest) Reset() {
 	*x = InputRequest{}
-	mi := &file_pkg_plugin_api_extension_proto_msgTypes[47]
+	mi := &file_pkg_plugin_api_extension_proto_msgTypes[62]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2647,7 +3769,7 @@ func (x *InputRequest) String() string {
 func (*InputRequest) ProtoMessage() {}
 
 func (x *InputRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_pkg_plugin_api_extension_proto_msgTypes[47]
+	mi := &file_pkg_plugin_api_extension_proto_msgTypes[62]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2660,7 +3782,7 @@ func (x *InputRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use InputRequest.ProtoReflect.Descriptor instead.
 func (*InputRequest) Descriptor() ([]byte, []int) {
-	return file_pkg_plugin_api_extension_proto_rawDescGZIP(), []int{47}
+	return file_pkg_plugin_api_extension_proto_rawDescGZIP(), []int{62}
 }
 
 func (x *InputRequest) GetTitle() string {
@@ -2687,7 +3809,7 @@ type InputResponse struct {
 
 func (x *InputResponse) Reset() {
 	*x = InputResponse{}
-	mi := &file_pkg_plugin_api_extension_proto_msgTypes[48]
+	mi := &file_pkg_plugin_api_extension_proto_msgTypes[63]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2699,7 +3821,7 @@ func (x *InputResponse) String() string {
 func (*InputResponse) ProtoMessage() {}
 
 func (x *InputResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_pkg_plugin_api_extension_proto_msgTypes[48]
+	mi := &file_pkg_plugin_api_extension_proto_msgTypes[63]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2712,7 +3834,7 @@ func (x *InputResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use InputResponse.ProtoReflect.Descriptor instead.
 func (*InputResponse) Descriptor() ([]byte, []int) {
-	return file_pkg_plugin_api_extension_proto_rawDescGZIP(), []int{48}
+	return file_pkg_plugin_api_extension_proto_rawDescGZIP(), []int{63}
 }
 
 func (x *InputResponse) GetValue() string {
@@ -2729,6 +3851,110 @@ func (x *InputResponse) GetCanceled() bool {
 	return false
 }
 
+type KeyValueWidget_Entry struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Key           string                 `protobuf:"bytes,1,opt,name=key,proto3" json:"key,omitempty"`
+	Value         string                 `protobuf:"bytes,2,opt,name=value,proto3" json:"value,omitempty"`
+	ValueStyle    *Style                 `protobuf:"bytes,3,opt,name=value_style,json=valueStyle,proto3" json:"value_style,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *KeyValueWidget_Entry) Reset() {
+	*x = KeyValueWidget_Entry{}
+	mi := &file_pkg_plugin_api_extension_proto_msgTypes[67]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *KeyValueWidget_Entry) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*KeyValueWidget_Entry) ProtoMessage() {}
+
+func (x *KeyValueWidget_Entry) ProtoReflect() protoreflect.Message {
+	mi := &file_pkg_plugin_api_extension_proto_msgTypes[67]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use KeyValueWidget_Entry.ProtoReflect.Descriptor instead.
+func (*KeyValueWidget_Entry) Descriptor() ([]byte, []int) {
+	return file_pkg_plugin_api_extension_proto_rawDescGZIP(), []int{32, 0}
+}
+
+func (x *KeyValueWidget_Entry) GetKey() string {
+	if x != nil {
+		return x.Key
+	}
+	return ""
+}
+
+func (x *KeyValueWidget_Entry) GetValue() string {
+	if x != nil {
+		return x.Value
+	}
+	return ""
+}
+
+func (x *KeyValueWidget_Entry) GetValueStyle() *Style {
+	if x != nil {
+		return x.ValueStyle
+	}
+	return nil
+}
+
+type TableWidget_Row struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Cells         []string               `protobuf:"bytes,1,rep,name=cells,proto3" json:"cells,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *TableWidget_Row) Reset() {
+	*x = TableWidget_Row{}
+	mi := &file_pkg_plugin_api_extension_proto_msgTypes[68]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *TableWidget_Row) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*TableWidget_Row) ProtoMessage() {}
+
+func (x *TableWidget_Row) ProtoReflect() protoreflect.Message {
+	mi := &file_pkg_plugin_api_extension_proto_msgTypes[68]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use TableWidget_Row.ProtoReflect.Descriptor instead.
+func (*TableWidget_Row) Descriptor() ([]byte, []int) {
+	return file_pkg_plugin_api_extension_proto_rawDescGZIP(), []int{34, 0}
+}
+
+func (x *TableWidget_Row) GetCells() []string {
+	if x != nil {
+		return x.Cells
+	}
+	return nil
+}
+
 type ConfigSchema_Field struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	Type          string                 `protobuf:"bytes,1,opt,name=type,proto3" json:"type,omitempty"`
@@ -2740,7 +3966,7 @@ type ConfigSchema_Field struct {
 
 func (x *ConfigSchema_Field) Reset() {
 	*x = ConfigSchema_Field{}
-	mi := &file_pkg_plugin_api_extension_proto_msgTypes[53]
+	mi := &file_pkg_plugin_api_extension_proto_msgTypes[70]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2752,7 +3978,7 @@ func (x *ConfigSchema_Field) String() string {
 func (*ConfigSchema_Field) ProtoMessage() {}
 
 func (x *ConfigSchema_Field) ProtoReflect() protoreflect.Message {
-	mi := &file_pkg_plugin_api_extension_proto_msgTypes[53]
+	mi := &file_pkg_plugin_api_extension_proto_msgTypes[70]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2765,7 +3991,7 @@ func (x *ConfigSchema_Field) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ConfigSchema_Field.ProtoReflect.Descriptor instead.
 func (*ConfigSchema_Field) Descriptor() ([]byte, []int) {
-	return file_pkg_plugin_api_extension_proto_rawDescGZIP(), []int{30, 0}
+	return file_pkg_plugin_api_extension_proto_rawDescGZIP(), []int{45, 0}
 }
 
 func (x *ConfigSchema_Field) GetType() string {
@@ -2817,9 +4043,10 @@ const file_pkg_plugin_api_extension_proto_rawDesc = "" +
 	"\bcommands\x18\x02 \x03(\v2\x0e.proto.CommandR\bcommands\";\n" +
 	"\x11RunCommandRequest\x12\x12\n" +
 	"\x04name\x18\x01 \x01(\tR\x04name\x12\x12\n" +
-	"\x04args\x18\x02 \x01(\tR\x04args\",\n" +
+	"\x04args\x18\x02 \x01(\tR\x04args\"M\n" +
 	"\x12RunCommandResponse\x12\x16\n" +
-	"\x06output\x18\x01 \x01(\tR\x06output\"\x0f\n" +
+	"\x06output\x18\x01 \x01(\tR\x06output\x12\x1f\n" +
+	"\x04view\x18\x02 \x01(\v2\v.proto.ViewR\x04view\"\x0f\n" +
 	"\rReloadRequest\"q\n" +
 	"\x0eReloadResponse\x123\n" +
 	"\vdiagnostics\x18\x01 \x03(\v2\x11.proto.DiagnosticR\vdiagnostics\x12*\n" +
@@ -2917,7 +4144,94 @@ const file_pkg_plugin_api_extension_proto_rawDesc = "" +
 	"\targuments\x18\x02 \x01(\tR\targuments\"J\n" +
 	"\x13ExecuteToolResponse\x12\x18\n" +
 	"\acontent\x18\x01 \x01(\tR\acontent\x12\x19\n" +
-	"\bis_error\x18\x02 \x01(\bR\aisError\"\xaa\x01\n" +
+	"\bis_error\x18\x02 \x01(\bR\aisError\"y\n" +
+	"\x04View\x12\x0e\n" +
+	"\x02id\x18\x01 \x01(\tR\x02id\x12\x14\n" +
+	"\x05title\x18\x02 \x01(\tR\x05title\x12'\n" +
+	"\awidgets\x18\x03 \x03(\v2\r.proto.WidgetR\awidgets\x12\"\n" +
+	"\x05style\x18\x04 \x01(\v2\f.proto.StyleR\x05style\"\xa2\x02\n" +
+	"\x05Style\x12%\n" +
+	"\x04tone\x18\x01 \x01(\x0e2\x11.proto.Style.ToneR\x04tone\x12\x15\n" +
+	"\x06fg_hex\x18\x02 \x01(\tR\x05fgHex\x12\x15\n" +
+	"\x06bg_hex\x18\x03 \x01(\tR\x05bgHex\x12\x12\n" +
+	"\x04bold\x18\x04 \x01(\bR\x04bold\x12\x10\n" +
+	"\x03dim\x18\x05 \x01(\bR\x03dim\x12\x16\n" +
+	"\x06italic\x18\x06 \x01(\bR\x06italic\x12\x1c\n" +
+	"\tunderline\x18\a \x01(\bR\tunderline\"h\n" +
+	"\x04Tone\x12\x10\n" +
+	"\fTONE_DEFAULT\x10\x00\x12\r\n" +
+	"\tTONE_INFO\x10\x01\x12\x10\n" +
+	"\fTONE_SUCCESS\x10\x02\x12\r\n" +
+	"\tTONE_WARN\x10\x03\x12\x0e\n" +
+	"\n" +
+	"TONE_ERROR\x10\x04\x12\x0e\n" +
+	"\n" +
+	"TONE_MUTED\x10\x05\"\x86\x03\n" +
+	"\x06Widget\x12'\n" +
+	"\x04text\x18\x01 \x01(\v2\x11.proto.TextWidgetH\x00R\x04text\x12*\n" +
+	"\x05stack\x18\x02 \x01(\v2\x12.proto.StackWidgetH\x00R\x05stack\x124\n" +
+	"\tkey_value\x18\x03 \x01(\v2\x15.proto.KeyValueWidgetH\x00R\bkeyValue\x12'\n" +
+	"\x04list\x18\x04 \x01(\v2\x11.proto.ListWidgetH\x00R\x04list\x12*\n" +
+	"\x05table\x18\x05 \x01(\v2\x12.proto.TableWidgetH\x00R\x05table\x123\n" +
+	"\bprogress\x18\x06 \x01(\v2\x15.proto.ProgressWidgetH\x00R\bprogress\x120\n" +
+	"\adivider\x18\a \x01(\v2\x14.proto.DividerWidgetH\x00R\adivider\x12-\n" +
+	"\x06status\x18\b \x01(\v2\x13.proto.StatusWidgetH\x00R\x06statusB\x06\n" +
+	"\x04kind\"D\n" +
+	"\n" +
+	"TextWidget\x12\x12\n" +
+	"\x04text\x18\x01 \x01(\tR\x04text\x12\"\n" +
+	"\x05style\x18\x02 \x01(\v2\f.proto.StyleR\x05style\"\xb1\x01\n" +
+	"\vStackWidget\x12:\n" +
+	"\tdirection\x18\x01 \x01(\x0e2\x1c.proto.StackWidget.DirectionR\tdirection\x12)\n" +
+	"\bchildren\x18\x02 \x03(\v2\r.proto.WidgetR\bchildren\x12\x10\n" +
+	"\x03gap\x18\x03 \x01(\x05R\x03gap\")\n" +
+	"\tDirection\x12\f\n" +
+	"\bVERTICAL\x10\x00\x12\x0e\n" +
+	"\n" +
+	"HORIZONTAL\x10\x01\"\xa7\x01\n" +
+	"\x0eKeyValueWidget\x125\n" +
+	"\aentries\x18\x01 \x03(\v2\x1b.proto.KeyValueWidget.EntryR\aentries\x1a^\n" +
+	"\x05Entry\x12\x10\n" +
+	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
+	"\x05value\x18\x02 \x01(\tR\x05value\x12-\n" +
+	"\vvalue_style\x18\x03 \x01(\v2\f.proto.StyleR\n" +
+	"valueStyle\"`\n" +
+	"\n" +
+	"ListWidget\x12\x14\n" +
+	"\x05items\x18\x01 \x03(\tR\x05items\x12\x18\n" +
+	"\aordered\x18\x02 \x01(\bR\aordered\x12\"\n" +
+	"\x05style\x18\x03 \x01(\v2\f.proto.StyleR\x05style\"p\n" +
+	"\vTableWidget\x12\x18\n" +
+	"\aheaders\x18\x01 \x03(\tR\aheaders\x12*\n" +
+	"\x04rows\x18\x02 \x03(\v2\x16.proto.TableWidget.RowR\x04rows\x1a\x1b\n" +
+	"\x03Row\x12\x14\n" +
+	"\x05cells\x18\x01 \x03(\tR\x05cells\"f\n" +
+	"\x0eProgressWidget\x12\x14\n" +
+	"\x05label\x18\x01 \x01(\tR\x05label\x12\x1a\n" +
+	"\bfraction\x18\x02 \x01(\x01R\bfraction\x12\"\n" +
+	"\x05style\x18\x03 \x01(\v2\f.proto.StyleR\x05style\"%\n" +
+	"\rDividerWidget\x12\x14\n" +
+	"\x05label\x18\x01 \x01(\tR\x05label\"\xa9\x01\n" +
+	"\fStatusWidget\x12/\n" +
+	"\x05state\x18\x01 \x01(\x0e2\x19.proto.StatusWidget.StateR\x05state\x12\x14\n" +
+	"\x05label\x18\x02 \x01(\tR\x05label\x12\x16\n" +
+	"\x06detail\x18\x03 \x01(\tR\x06detail\":\n" +
+	"\x05State\x12\v\n" +
+	"\aRUNNING\x10\x00\x12\v\n" +
+	"\aSUCCESS\x10\x01\x12\n" +
+	"\n" +
+	"\x06FAILED\x10\x02\x12\v\n" +
+	"\aNEUTRAL\x10\x03\"U\n" +
+	"\x11RenderViewRequest\x12\x1f\n" +
+	"\vplugin_name\x18\x01 \x01(\tR\n" +
+	"pluginName\x12\x1f\n" +
+	"\x04view\x18\x02 \x01(\v2\v.proto.ViewR\x04view\"\x14\n" +
+	"\x12RenderViewResponse\"L\n" +
+	"\x10CloseViewRequest\x12\x1f\n" +
+	"\vplugin_name\x18\x01 \x01(\tR\n" +
+	"pluginName\x12\x17\n" +
+	"\aview_id\x18\x02 \x01(\tR\x06viewId\"\x13\n" +
+	"\x11CloseViewResponse\"\xaa\x01\n" +
 	"\bLogEntry\x12\x14\n" +
 	"\x05level\x18\x01 \x01(\tR\x05level\x12\x18\n" +
 	"\amessage\x18\x02 \x01(\tR\amessage\x123\n" +
@@ -2995,7 +4309,7 @@ const file_pkg_plugin_api_extension_proto_rawDesc = "" +
 	"\vExecuteTool\x12\x19.proto.ExecuteToolRequest\x1a\x1a.proto.ExecuteToolResponse\x12,\n" +
 	"\x03Log\x12\x11.proto.LogRequest\x1a\x12.proto.LogResponse\x12/\n" +
 	"\x04Init\x12\x12.proto.InitRequest\x1a\x13.proto.InitResponse\x12P\n" +
-	"\x0fGetCapabilities\x12\x1d.proto.GetCapabilitiesRequest\x1a\x1e.proto.GetCapabilitiesResponse2\x8d\x04\n" +
+	"\x0fGetCapabilities\x12\x1d.proto.GetCapabilitiesRequest\x1a\x1e.proto.GetCapabilitiesResponse2\x90\x05\n" +
 	"\vHostService\x12>\n" +
 	"\tGetConfig\x12\x17.proto.GetConfigRequest\x1a\x18.proto.GetConfigResponse\x12>\n" +
 	"\tSetConfig\x12\x17.proto.SetConfigRequest\x1a\x18.proto.SetConfigResponse\x12P\n" +
@@ -3004,7 +4318,10 @@ const file_pkg_plugin_api_extension_proto_rawDesc = "" +
 	"\x06Notify\x12\x14.proto.NotifyRequest\x1a\x15.proto.NotifyResponse\x12,\n" +
 	"\x03Log\x12\x11.proto.LogRequest\x1a\x12.proto.LogResponse\x128\n" +
 	"\aConfirm\x12\x15.proto.ConfirmRequest\x1a\x16.proto.ConfirmResponse\x122\n" +
-	"\x05Input\x12\x13.proto.InputRequest\x1a\x14.proto.InputResponseB,Z*github.com/samcharles93/tau/pkg/plugin/apib\x06proto3"
+	"\x05Input\x12\x13.proto.InputRequest\x1a\x14.proto.InputResponse\x12A\n" +
+	"\n" +
+	"RenderView\x12\x18.proto.RenderViewRequest\x1a\x19.proto.RenderViewResponse\x12>\n" +
+	"\tCloseView\x12\x17.proto.CloseViewRequest\x1a\x18.proto.CloseViewResponseB,Z*github.com/samcharles93/tau/pkg/plugin/apib\x06proto3"
 
 var (
 	file_pkg_plugin_api_extension_proto_rawDescOnce sync.Once
@@ -3018,128 +4335,175 @@ func file_pkg_plugin_api_extension_proto_rawDescGZIP() []byte {
 	return file_pkg_plugin_api_extension_proto_rawDescData
 }
 
-var file_pkg_plugin_api_extension_proto_msgTypes = make([]protoimpl.MessageInfo, 55)
+var file_pkg_plugin_api_extension_proto_enumTypes = make([]protoimpl.EnumInfo, 3)
+var file_pkg_plugin_api_extension_proto_msgTypes = make([]protoimpl.MessageInfo, 72)
 var file_pkg_plugin_api_extension_proto_goTypes = []any{
-	(*Command)(nil),                    // 0: proto.Command
-	(*Diagnostic)(nil),                 // 1: proto.Diagnostic
-	(*EventContext)(nil),               // 2: proto.EventContext
-	(*GetMetadataRequest)(nil),         // 3: proto.GetMetadataRequest
-	(*GetMetadataResponse)(nil),        // 4: proto.GetMetadataResponse
-	(*RunCommandRequest)(nil),          // 5: proto.RunCommandRequest
-	(*RunCommandResponse)(nil),         // 6: proto.RunCommandResponse
-	(*ReloadRequest)(nil),              // 7: proto.ReloadRequest
-	(*ReloadResponse)(nil),             // 8: proto.ReloadResponse
-	(*DispatchEventRequest)(nil),       // 9: proto.DispatchEventRequest
-	(*DispatchEventResponse)(nil),      // 10: proto.DispatchEventResponse
-	(*EventPayload)(nil),               // 11: proto.EventPayload
-	(*EventResponse)(nil),              // 12: proto.EventResponse
-	(*SessionEventPayload)(nil),        // 13: proto.SessionEventPayload
-	(*ContextPayload)(nil),             // 14: proto.ContextPayload
-	(*BeforeLLMCallPayload)(nil),       // 15: proto.BeforeLLMCallPayload
-	(*AfterLLMCallPayload)(nil),        // 16: proto.AfterLLMCallPayload
-	(*ToolCallPayload)(nil),            // 17: proto.ToolCallPayload
-	(*ToolResultPayload)(nil),          // 18: proto.ToolResultPayload
-	(*MessageDeltaPayload)(nil),        // 19: proto.MessageDeltaPayload
-	(*TurnPayload)(nil),                // 20: proto.TurnPayload
-	(*CompactionPayload)(nil),          // 21: proto.CompactionPayload
-	(*ToolDefinition)(nil),             // 22: proto.ToolDefinition
-	(*GetToolsRequest)(nil),            // 23: proto.GetToolsRequest
-	(*GetToolsResponse)(nil),           // 24: proto.GetToolsResponse
-	(*ExecuteToolRequest)(nil),         // 25: proto.ExecuteToolRequest
-	(*ExecuteToolResponse)(nil),        // 26: proto.ExecuteToolResponse
-	(*LogEntry)(nil),                   // 27: proto.LogEntry
-	(*LogRequest)(nil),                 // 28: proto.LogRequest
-	(*LogResponse)(nil),                // 29: proto.LogResponse
-	(*ConfigSchema)(nil),               // 30: proto.ConfigSchema
-	(*GetCapabilitiesRequest)(nil),     // 31: proto.GetCapabilitiesRequest
-	(*GetCapabilitiesResponse)(nil),    // 32: proto.GetCapabilitiesResponse
-	(*InitRequest)(nil),                // 33: proto.InitRequest
-	(*InitResponse)(nil),               // 34: proto.InitResponse
-	(*GetConfigRequest)(nil),           // 35: proto.GetConfigRequest
-	(*GetConfigResponse)(nil),          // 36: proto.GetConfigResponse
-	(*SetConfigRequest)(nil),           // 37: proto.SetConfigRequest
-	(*SetConfigResponse)(nil),          // 38: proto.SetConfigResponse
-	(*GetSessionStateRequest)(nil),     // 39: proto.GetSessionStateRequest
-	(*GetSessionStateResponse)(nil),    // 40: proto.GetSessionStateResponse
-	(*GetAvailableModelsRequest)(nil),  // 41: proto.GetAvailableModelsRequest
-	(*GetAvailableModelsResponse)(nil), // 42: proto.GetAvailableModelsResponse
-	(*NotifyRequest)(nil),              // 43: proto.NotifyRequest
-	(*NotifyResponse)(nil),             // 44: proto.NotifyResponse
-	(*ConfirmRequest)(nil),             // 45: proto.ConfirmRequest
-	(*ConfirmResponse)(nil),            // 46: proto.ConfirmResponse
-	(*InputRequest)(nil),               // 47: proto.InputRequest
-	(*InputResponse)(nil),              // 48: proto.InputResponse
-	nil,                                // 49: proto.EventContext.FieldsEntry
-	nil,                                // 50: proto.EventResponse.AddHeadersEntry
-	nil,                                // 51: proto.BeforeLLMCallPayload.HeadersEntry
-	nil,                                // 52: proto.LogEntry.FieldsEntry
-	(*ConfigSchema_Field)(nil),         // 53: proto.ConfigSchema.Field
-	nil,                                // 54: proto.ConfigSchema.FieldsEntry
+	(Style_Tone)(0),                    // 0: proto.Style.Tone
+	(StackWidget_Direction)(0),         // 1: proto.StackWidget.Direction
+	(StatusWidget_State)(0),            // 2: proto.StatusWidget.State
+	(*Command)(nil),                    // 3: proto.Command
+	(*Diagnostic)(nil),                 // 4: proto.Diagnostic
+	(*EventContext)(nil),               // 5: proto.EventContext
+	(*GetMetadataRequest)(nil),         // 6: proto.GetMetadataRequest
+	(*GetMetadataResponse)(nil),        // 7: proto.GetMetadataResponse
+	(*RunCommandRequest)(nil),          // 8: proto.RunCommandRequest
+	(*RunCommandResponse)(nil),         // 9: proto.RunCommandResponse
+	(*ReloadRequest)(nil),              // 10: proto.ReloadRequest
+	(*ReloadResponse)(nil),             // 11: proto.ReloadResponse
+	(*DispatchEventRequest)(nil),       // 12: proto.DispatchEventRequest
+	(*DispatchEventResponse)(nil),      // 13: proto.DispatchEventResponse
+	(*EventPayload)(nil),               // 14: proto.EventPayload
+	(*EventResponse)(nil),              // 15: proto.EventResponse
+	(*SessionEventPayload)(nil),        // 16: proto.SessionEventPayload
+	(*ContextPayload)(nil),             // 17: proto.ContextPayload
+	(*BeforeLLMCallPayload)(nil),       // 18: proto.BeforeLLMCallPayload
+	(*AfterLLMCallPayload)(nil),        // 19: proto.AfterLLMCallPayload
+	(*ToolCallPayload)(nil),            // 20: proto.ToolCallPayload
+	(*ToolResultPayload)(nil),          // 21: proto.ToolResultPayload
+	(*MessageDeltaPayload)(nil),        // 22: proto.MessageDeltaPayload
+	(*TurnPayload)(nil),                // 23: proto.TurnPayload
+	(*CompactionPayload)(nil),          // 24: proto.CompactionPayload
+	(*ToolDefinition)(nil),             // 25: proto.ToolDefinition
+	(*GetToolsRequest)(nil),            // 26: proto.GetToolsRequest
+	(*GetToolsResponse)(nil),           // 27: proto.GetToolsResponse
+	(*ExecuteToolRequest)(nil),         // 28: proto.ExecuteToolRequest
+	(*ExecuteToolResponse)(nil),        // 29: proto.ExecuteToolResponse
+	(*View)(nil),                       // 30: proto.View
+	(*Style)(nil),                      // 31: proto.Style
+	(*Widget)(nil),                     // 32: proto.Widget
+	(*TextWidget)(nil),                 // 33: proto.TextWidget
+	(*StackWidget)(nil),                // 34: proto.StackWidget
+	(*KeyValueWidget)(nil),             // 35: proto.KeyValueWidget
+	(*ListWidget)(nil),                 // 36: proto.ListWidget
+	(*TableWidget)(nil),                // 37: proto.TableWidget
+	(*ProgressWidget)(nil),             // 38: proto.ProgressWidget
+	(*DividerWidget)(nil),              // 39: proto.DividerWidget
+	(*StatusWidget)(nil),               // 40: proto.StatusWidget
+	(*RenderViewRequest)(nil),          // 41: proto.RenderViewRequest
+	(*RenderViewResponse)(nil),         // 42: proto.RenderViewResponse
+	(*CloseViewRequest)(nil),           // 43: proto.CloseViewRequest
+	(*CloseViewResponse)(nil),          // 44: proto.CloseViewResponse
+	(*LogEntry)(nil),                   // 45: proto.LogEntry
+	(*LogRequest)(nil),                 // 46: proto.LogRequest
+	(*LogResponse)(nil),                // 47: proto.LogResponse
+	(*ConfigSchema)(nil),               // 48: proto.ConfigSchema
+	(*GetCapabilitiesRequest)(nil),     // 49: proto.GetCapabilitiesRequest
+	(*GetCapabilitiesResponse)(nil),    // 50: proto.GetCapabilitiesResponse
+	(*InitRequest)(nil),                // 51: proto.InitRequest
+	(*InitResponse)(nil),               // 52: proto.InitResponse
+	(*GetConfigRequest)(nil),           // 53: proto.GetConfigRequest
+	(*GetConfigResponse)(nil),          // 54: proto.GetConfigResponse
+	(*SetConfigRequest)(nil),           // 55: proto.SetConfigRequest
+	(*SetConfigResponse)(nil),          // 56: proto.SetConfigResponse
+	(*GetSessionStateRequest)(nil),     // 57: proto.GetSessionStateRequest
+	(*GetSessionStateResponse)(nil),    // 58: proto.GetSessionStateResponse
+	(*GetAvailableModelsRequest)(nil),  // 59: proto.GetAvailableModelsRequest
+	(*GetAvailableModelsResponse)(nil), // 60: proto.GetAvailableModelsResponse
+	(*NotifyRequest)(nil),              // 61: proto.NotifyRequest
+	(*NotifyResponse)(nil),             // 62: proto.NotifyResponse
+	(*ConfirmRequest)(nil),             // 63: proto.ConfirmRequest
+	(*ConfirmResponse)(nil),            // 64: proto.ConfirmResponse
+	(*InputRequest)(nil),               // 65: proto.InputRequest
+	(*InputResponse)(nil),              // 66: proto.InputResponse
+	nil,                                // 67: proto.EventContext.FieldsEntry
+	nil,                                // 68: proto.EventResponse.AddHeadersEntry
+	nil,                                // 69: proto.BeforeLLMCallPayload.HeadersEntry
+	(*KeyValueWidget_Entry)(nil),       // 70: proto.KeyValueWidget.Entry
+	(*TableWidget_Row)(nil),            // 71: proto.TableWidget.Row
+	nil,                                // 72: proto.LogEntry.FieldsEntry
+	(*ConfigSchema_Field)(nil),         // 73: proto.ConfigSchema.Field
+	nil,                                // 74: proto.ConfigSchema.FieldsEntry
 }
 var file_pkg_plugin_api_extension_proto_depIdxs = []int32{
-	0,  // 0: proto.Command.subcommands:type_name -> proto.Command
-	49, // 1: proto.EventContext.fields:type_name -> proto.EventContext.FieldsEntry
-	0,  // 2: proto.GetMetadataResponse.commands:type_name -> proto.Command
-	1,  // 3: proto.ReloadResponse.diagnostics:type_name -> proto.Diagnostic
-	0,  // 4: proto.ReloadResponse.commands:type_name -> proto.Command
-	11, // 5: proto.DispatchEventRequest.payload:type_name -> proto.EventPayload
-	12, // 6: proto.DispatchEventResponse.response:type_name -> proto.EventResponse
-	13, // 7: proto.EventPayload.session:type_name -> proto.SessionEventPayload
-	14, // 8: proto.EventPayload.context:type_name -> proto.ContextPayload
-	15, // 9: proto.EventPayload.before_llm_call:type_name -> proto.BeforeLLMCallPayload
-	16, // 10: proto.EventPayload.after_llm_call:type_name -> proto.AfterLLMCallPayload
-	17, // 11: proto.EventPayload.before_tool_exec:type_name -> proto.ToolCallPayload
-	18, // 12: proto.EventPayload.after_tool_exec:type_name -> proto.ToolResultPayload
-	19, // 13: proto.EventPayload.message_delta:type_name -> proto.MessageDeltaPayload
-	20, // 14: proto.EventPayload.turn:type_name -> proto.TurnPayload
-	21, // 15: proto.EventPayload.compaction:type_name -> proto.CompactionPayload
-	50, // 16: proto.EventResponse.add_headers:type_name -> proto.EventResponse.AddHeadersEntry
-	1,  // 17: proto.EventResponse.diagnostics:type_name -> proto.Diagnostic
-	51, // 18: proto.BeforeLLMCallPayload.headers:type_name -> proto.BeforeLLMCallPayload.HeadersEntry
-	22, // 19: proto.GetToolsResponse.tools:type_name -> proto.ToolDefinition
-	52, // 20: proto.LogEntry.fields:type_name -> proto.LogEntry.FieldsEntry
-	27, // 21: proto.LogRequest.entry:type_name -> proto.LogEntry
-	54, // 22: proto.ConfigSchema.fields:type_name -> proto.ConfigSchema.FieldsEntry
-	53, // 23: proto.ConfigSchema.FieldsEntry.value:type_name -> proto.ConfigSchema.Field
-	3,  // 24: proto.ExtensionService.GetMetadata:input_type -> proto.GetMetadataRequest
-	5,  // 25: proto.ExtensionService.RunCommand:input_type -> proto.RunCommandRequest
-	7,  // 26: proto.ExtensionService.Reload:input_type -> proto.ReloadRequest
-	9,  // 27: proto.ExtensionService.DispatchEvent:input_type -> proto.DispatchEventRequest
-	23, // 28: proto.ExtensionService.GetTools:input_type -> proto.GetToolsRequest
-	25, // 29: proto.ExtensionService.ExecuteTool:input_type -> proto.ExecuteToolRequest
-	28, // 30: proto.ExtensionService.Log:input_type -> proto.LogRequest
-	33, // 31: proto.ExtensionService.Init:input_type -> proto.InitRequest
-	31, // 32: proto.ExtensionService.GetCapabilities:input_type -> proto.GetCapabilitiesRequest
-	35, // 33: proto.HostService.GetConfig:input_type -> proto.GetConfigRequest
-	37, // 34: proto.HostService.SetConfig:input_type -> proto.SetConfigRequest
-	39, // 35: proto.HostService.GetSessionState:input_type -> proto.GetSessionStateRequest
-	41, // 36: proto.HostService.GetAvailableModels:input_type -> proto.GetAvailableModelsRequest
-	43, // 37: proto.HostService.Notify:input_type -> proto.NotifyRequest
-	28, // 38: proto.HostService.Log:input_type -> proto.LogRequest
-	45, // 39: proto.HostService.Confirm:input_type -> proto.ConfirmRequest
-	47, // 40: proto.HostService.Input:input_type -> proto.InputRequest
-	4,  // 41: proto.ExtensionService.GetMetadata:output_type -> proto.GetMetadataResponse
-	6,  // 42: proto.ExtensionService.RunCommand:output_type -> proto.RunCommandResponse
-	8,  // 43: proto.ExtensionService.Reload:output_type -> proto.ReloadResponse
-	10, // 44: proto.ExtensionService.DispatchEvent:output_type -> proto.DispatchEventResponse
-	24, // 45: proto.ExtensionService.GetTools:output_type -> proto.GetToolsResponse
-	26, // 46: proto.ExtensionService.ExecuteTool:output_type -> proto.ExecuteToolResponse
-	29, // 47: proto.ExtensionService.Log:output_type -> proto.LogResponse
-	34, // 48: proto.ExtensionService.Init:output_type -> proto.InitResponse
-	32, // 49: proto.ExtensionService.GetCapabilities:output_type -> proto.GetCapabilitiesResponse
-	36, // 50: proto.HostService.GetConfig:output_type -> proto.GetConfigResponse
-	38, // 51: proto.HostService.SetConfig:output_type -> proto.SetConfigResponse
-	40, // 52: proto.HostService.GetSessionState:output_type -> proto.GetSessionStateResponse
-	42, // 53: proto.HostService.GetAvailableModels:output_type -> proto.GetAvailableModelsResponse
-	44, // 54: proto.HostService.Notify:output_type -> proto.NotifyResponse
-	29, // 55: proto.HostService.Log:output_type -> proto.LogResponse
-	46, // 56: proto.HostService.Confirm:output_type -> proto.ConfirmResponse
-	48, // 57: proto.HostService.Input:output_type -> proto.InputResponse
-	41, // [41:58] is the sub-list for method output_type
-	24, // [24:41] is the sub-list for method input_type
-	24, // [24:24] is the sub-list for extension type_name
-	24, // [24:24] is the sub-list for extension extendee
-	0,  // [0:24] is the sub-list for field type_name
+	3,  // 0: proto.Command.subcommands:type_name -> proto.Command
+	67, // 1: proto.EventContext.fields:type_name -> proto.EventContext.FieldsEntry
+	3,  // 2: proto.GetMetadataResponse.commands:type_name -> proto.Command
+	30, // 3: proto.RunCommandResponse.view:type_name -> proto.View
+	4,  // 4: proto.ReloadResponse.diagnostics:type_name -> proto.Diagnostic
+	3,  // 5: proto.ReloadResponse.commands:type_name -> proto.Command
+	14, // 6: proto.DispatchEventRequest.payload:type_name -> proto.EventPayload
+	15, // 7: proto.DispatchEventResponse.response:type_name -> proto.EventResponse
+	16, // 8: proto.EventPayload.session:type_name -> proto.SessionEventPayload
+	17, // 9: proto.EventPayload.context:type_name -> proto.ContextPayload
+	18, // 10: proto.EventPayload.before_llm_call:type_name -> proto.BeforeLLMCallPayload
+	19, // 11: proto.EventPayload.after_llm_call:type_name -> proto.AfterLLMCallPayload
+	20, // 12: proto.EventPayload.before_tool_exec:type_name -> proto.ToolCallPayload
+	21, // 13: proto.EventPayload.after_tool_exec:type_name -> proto.ToolResultPayload
+	22, // 14: proto.EventPayload.message_delta:type_name -> proto.MessageDeltaPayload
+	23, // 15: proto.EventPayload.turn:type_name -> proto.TurnPayload
+	24, // 16: proto.EventPayload.compaction:type_name -> proto.CompactionPayload
+	68, // 17: proto.EventResponse.add_headers:type_name -> proto.EventResponse.AddHeadersEntry
+	4,  // 18: proto.EventResponse.diagnostics:type_name -> proto.Diagnostic
+	69, // 19: proto.BeforeLLMCallPayload.headers:type_name -> proto.BeforeLLMCallPayload.HeadersEntry
+	25, // 20: proto.GetToolsResponse.tools:type_name -> proto.ToolDefinition
+	32, // 21: proto.View.widgets:type_name -> proto.Widget
+	31, // 22: proto.View.style:type_name -> proto.Style
+	0,  // 23: proto.Style.tone:type_name -> proto.Style.Tone
+	33, // 24: proto.Widget.text:type_name -> proto.TextWidget
+	34, // 25: proto.Widget.stack:type_name -> proto.StackWidget
+	35, // 26: proto.Widget.key_value:type_name -> proto.KeyValueWidget
+	36, // 27: proto.Widget.list:type_name -> proto.ListWidget
+	37, // 28: proto.Widget.table:type_name -> proto.TableWidget
+	38, // 29: proto.Widget.progress:type_name -> proto.ProgressWidget
+	39, // 30: proto.Widget.divider:type_name -> proto.DividerWidget
+	40, // 31: proto.Widget.status:type_name -> proto.StatusWidget
+	31, // 32: proto.TextWidget.style:type_name -> proto.Style
+	1,  // 33: proto.StackWidget.direction:type_name -> proto.StackWidget.Direction
+	32, // 34: proto.StackWidget.children:type_name -> proto.Widget
+	70, // 35: proto.KeyValueWidget.entries:type_name -> proto.KeyValueWidget.Entry
+	31, // 36: proto.ListWidget.style:type_name -> proto.Style
+	71, // 37: proto.TableWidget.rows:type_name -> proto.TableWidget.Row
+	31, // 38: proto.ProgressWidget.style:type_name -> proto.Style
+	2,  // 39: proto.StatusWidget.state:type_name -> proto.StatusWidget.State
+	30, // 40: proto.RenderViewRequest.view:type_name -> proto.View
+	72, // 41: proto.LogEntry.fields:type_name -> proto.LogEntry.FieldsEntry
+	45, // 42: proto.LogRequest.entry:type_name -> proto.LogEntry
+	74, // 43: proto.ConfigSchema.fields:type_name -> proto.ConfigSchema.FieldsEntry
+	31, // 44: proto.KeyValueWidget.Entry.value_style:type_name -> proto.Style
+	73, // 45: proto.ConfigSchema.FieldsEntry.value:type_name -> proto.ConfigSchema.Field
+	6,  // 46: proto.ExtensionService.GetMetadata:input_type -> proto.GetMetadataRequest
+	8,  // 47: proto.ExtensionService.RunCommand:input_type -> proto.RunCommandRequest
+	10, // 48: proto.ExtensionService.Reload:input_type -> proto.ReloadRequest
+	12, // 49: proto.ExtensionService.DispatchEvent:input_type -> proto.DispatchEventRequest
+	26, // 50: proto.ExtensionService.GetTools:input_type -> proto.GetToolsRequest
+	28, // 51: proto.ExtensionService.ExecuteTool:input_type -> proto.ExecuteToolRequest
+	46, // 52: proto.ExtensionService.Log:input_type -> proto.LogRequest
+	51, // 53: proto.ExtensionService.Init:input_type -> proto.InitRequest
+	49, // 54: proto.ExtensionService.GetCapabilities:input_type -> proto.GetCapabilitiesRequest
+	53, // 55: proto.HostService.GetConfig:input_type -> proto.GetConfigRequest
+	55, // 56: proto.HostService.SetConfig:input_type -> proto.SetConfigRequest
+	57, // 57: proto.HostService.GetSessionState:input_type -> proto.GetSessionStateRequest
+	59, // 58: proto.HostService.GetAvailableModels:input_type -> proto.GetAvailableModelsRequest
+	61, // 59: proto.HostService.Notify:input_type -> proto.NotifyRequest
+	46, // 60: proto.HostService.Log:input_type -> proto.LogRequest
+	63, // 61: proto.HostService.Confirm:input_type -> proto.ConfirmRequest
+	65, // 62: proto.HostService.Input:input_type -> proto.InputRequest
+	41, // 63: proto.HostService.RenderView:input_type -> proto.RenderViewRequest
+	43, // 64: proto.HostService.CloseView:input_type -> proto.CloseViewRequest
+	7,  // 65: proto.ExtensionService.GetMetadata:output_type -> proto.GetMetadataResponse
+	9,  // 66: proto.ExtensionService.RunCommand:output_type -> proto.RunCommandResponse
+	11, // 67: proto.ExtensionService.Reload:output_type -> proto.ReloadResponse
+	13, // 68: proto.ExtensionService.DispatchEvent:output_type -> proto.DispatchEventResponse
+	27, // 69: proto.ExtensionService.GetTools:output_type -> proto.GetToolsResponse
+	29, // 70: proto.ExtensionService.ExecuteTool:output_type -> proto.ExecuteToolResponse
+	47, // 71: proto.ExtensionService.Log:output_type -> proto.LogResponse
+	52, // 72: proto.ExtensionService.Init:output_type -> proto.InitResponse
+	50, // 73: proto.ExtensionService.GetCapabilities:output_type -> proto.GetCapabilitiesResponse
+	54, // 74: proto.HostService.GetConfig:output_type -> proto.GetConfigResponse
+	56, // 75: proto.HostService.SetConfig:output_type -> proto.SetConfigResponse
+	58, // 76: proto.HostService.GetSessionState:output_type -> proto.GetSessionStateResponse
+	60, // 77: proto.HostService.GetAvailableModels:output_type -> proto.GetAvailableModelsResponse
+	62, // 78: proto.HostService.Notify:output_type -> proto.NotifyResponse
+	47, // 79: proto.HostService.Log:output_type -> proto.LogResponse
+	64, // 80: proto.HostService.Confirm:output_type -> proto.ConfirmResponse
+	66, // 81: proto.HostService.Input:output_type -> proto.InputResponse
+	42, // 82: proto.HostService.RenderView:output_type -> proto.RenderViewResponse
+	44, // 83: proto.HostService.CloseView:output_type -> proto.CloseViewResponse
+	65, // [65:84] is the sub-list for method output_type
+	46, // [46:65] is the sub-list for method input_type
+	46, // [46:46] is the sub-list for extension type_name
+	46, // [46:46] is the sub-list for extension extendee
+	0,  // [0:46] is the sub-list for field type_name
 }
 
 func init() { file_pkg_plugin_api_extension_proto_init() }
@@ -3158,18 +4522,29 @@ func file_pkg_plugin_api_extension_proto_init() {
 		(*EventPayload_Turn)(nil),
 		(*EventPayload_Compaction)(nil),
 	}
+	file_pkg_plugin_api_extension_proto_msgTypes[29].OneofWrappers = []any{
+		(*Widget_Text)(nil),
+		(*Widget_Stack)(nil),
+		(*Widget_KeyValue)(nil),
+		(*Widget_List)(nil),
+		(*Widget_Table)(nil),
+		(*Widget_Progress)(nil),
+		(*Widget_Divider)(nil),
+		(*Widget_Status)(nil),
+	}
 	type x struct{}
 	out := protoimpl.TypeBuilder{
 		File: protoimpl.DescBuilder{
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_pkg_plugin_api_extension_proto_rawDesc), len(file_pkg_plugin_api_extension_proto_rawDesc)),
-			NumEnums:      0,
-			NumMessages:   55,
+			NumEnums:      3,
+			NumMessages:   72,
 			NumExtensions: 0,
 			NumServices:   2,
 		},
 		GoTypes:           file_pkg_plugin_api_extension_proto_goTypes,
 		DependencyIndexes: file_pkg_plugin_api_extension_proto_depIdxs,
+		EnumInfos:         file_pkg_plugin_api_extension_proto_enumTypes,
 		MessageInfos:      file_pkg_plugin_api_extension_proto_msgTypes,
 	}.Build()
 	File_pkg_plugin_api_extension_proto = out.File
