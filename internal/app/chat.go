@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strings"
 	"time"
@@ -153,6 +154,14 @@ func buildSessionConfig(opts ChatOptions, model tauchat.ChatModelRef, systemProm
 	if reasoningEffort == "" && model.Config.ReasoningEffort != "" {
 		reasoningEffort = model.Config.ReasoningEffort
 	}
+	// Default to "medium" for models that support reasoning effort.
+	if reasoningEffort == "" && len(model.Config.ReasoningEfforts) > 0 {
+		if slices.Contains(model.Config.ReasoningEfforts, "medium") {
+			reasoningEffort = "medium"
+		} else {
+			reasoningEffort = model.Config.ReasoningEfforts[0]
+		}
+	}
 	return tauchat.ChatSessionConfig{
 		Provider:     opts.Provider,
 		Model:        model,
@@ -266,6 +275,17 @@ func modelInfoToModelConfig(m runtime.ModelInfo) tauconfig.ModelConfig {
 		if strings.EqualFold(opt.Type, "effort") && len(opt.Values) > 0 {
 			cfg.ReasoningEfforts = append(cfg.ReasoningEfforts, opt.Values...)
 		}
+	}
+	// For reasoning models that don't advertise explicit effort-type
+	// options, compute synthetic effort levels from the model's output
+	// budget so the TUI still offers low/medium/high.
+	if m.Reasoning && len(cfg.ReasoningEfforts) == 0 {
+		maxBudget := m.MaxOutputTokens
+		if maxBudget <= 0 {
+			maxBudget = 8192 // sensible floor
+		}
+		cfg.ReasoningEfforts = []string{"low", "medium", "high"}
+		cfg.ReasoningBudgetMax = maxBudget
 	}
 	return cfg
 }

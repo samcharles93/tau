@@ -225,7 +225,7 @@ const completionItems = computed<CompletionItem[]>(() => {
     } else if (cmdName === 'effort') {
       if (argsBefore === 0) {
         const activeModel = session.availableModels.find(m => m.id === session.model)
-        const efforts = ['off', ...(activeModel?.reasoning_efforts ?? [])]
+        const efforts = [...(activeModel?.reasoning_efforts ?? []), 'auto']
         for (const e of efforts) {
           if (e.startsWith(tokenLower)) {
             matches.push({
@@ -457,7 +457,7 @@ function handleSlashCommand(text: string): boolean {
     }
 
     case 'effort': {
-      const level = args.trim().toLowerCase() || 'off'
+      const level = args.trim().toLowerCase() || 'auto'
       const patch: ChatSessionPatch = { reasoning_effort: level }
       session.updateSettings(patch)
       session.apply({ type: 'ChatNotificationEvent', payload: { message: `effort: ${level}`, level: 'info' } })

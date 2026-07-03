@@ -219,8 +219,12 @@ type ModelConfig struct {
 	// ReasoningEfforts are the effort levels the model accepts (from models.dev
 	// reasoning_options), e.g. [low medium high]. Empty when the model exposes
 	// no selectable effort (reasoning is fixed) or isn't a reasoning model.
-	ReasoningEfforts []string       `yaml:"reasoning_efforts,omitempty" json:"reasoning_efforts,omitempty"`
-	Thinking         ThinkingConfig `yaml:"thinking,omitempty" json:"thinking"`
+	ReasoningEfforts []string `yaml:"reasoning_efforts,omitempty" json:"reasoning_efforts,omitempty"`
+	// ReasoningBudgetMax is the ceiling (in tokens) used to compute
+	// budget-based effort levels for reasoning models that don't
+	// advertise explicit effort-type options. Zero means not applicable.
+	ReasoningBudgetMax int            `json:"reasoning_budget_max,omitempty"`
+	Thinking           ThinkingConfig `yaml:"thinking,omitempty" json:"thinking"`
 	Cost             CostConfig     `yaml:"cost,omitempty" json:"cost"`
 	Compat           CompatConfig   `yaml:"compat,omitempty" json:"compat"`
 }

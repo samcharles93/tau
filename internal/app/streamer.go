@@ -62,7 +62,7 @@ func (s *Streamer) StreamChatCompletionFull(
 		return tauchat.CompletionResult{}, errors.New("ai: provider is nil")
 	}
 
-	req := s.buildRequest(session, modelID)
+	req := s.buildRequest(session, modelID, provider)
 	streamCtx := aisdkchat.WithContextHeaders(ctx, extraHeaders)
 	stream, err := provider.ChatStream(streamCtx, req)
 	if err != nil {
@@ -117,22 +117,22 @@ func (s *Streamer) StreamChatCompletionFull(
 	return result, nil
 }
 
-func (s *Streamer) buildRequest(session tauchat.ChatSessionState, fallbackModelID string) aisdkchat.Request {
+func (s *Streamer) buildRequest(session tauchat.ChatSessionState, modelID string, provider aisdkchat.Provider) aisdkchat.Request {
 	req := aisdkchat.Request{
 		Model:       session.Model.ID,
 		MaxTokens:   session.Parameters.MaxTokens,
 		Temperature: float32(session.Parameters.Temperature),
 		Stream:      true,
 	}
-	if session.Parameters.ReasoningEffort != "" && session.Parameters.ReasoningEffort != "off" {
+	if session.Parameters.ReasoningEffort != "" && session.Parameters.ReasoningEffort != "auto" {
 		req.ProviderOptions = map[string]any{
-			"openai": map[string]any{
-				"reasoning_effort": effortToOpenAI(session.Parameters.ReasoningEffort),
+			provider.Name(): map[string]any{
+				"reasoning_effort": session.Parameters.ReasoningEffort,
 			},
 		}
 	}
 	if req.Model == "" {
-		req.Model = fallbackModelID
+		req.Model = modelID
 	}
 
 	for _, m := range session.RequestMessages() {
@@ -250,13 +250,3 @@ func buildToolCalls(calls map[int]*assembledToolCall) []tauchat.ChatToolCall {
 	return out
 }
 
-// effortToOpenAI maps tau's reasoning effort levels to OpenAI API values.
-// Tau stores the exact wire value (from models.dev ReasoningEfforts or the
-// fallback ladder) as the internal level. The only translation needed is
-// tau's soft-off sentinel "off" → API "none".
-func effortToOpenAI(tauLevel string) string {
-	if tauLevel == "off" {
-		return "none"
-	}
-	return tauLevel
-}

@@ -349,7 +349,7 @@ func (c *inlineChat) computeStatus() string {
 	if prov != "" {
 		left = append(left, statusSeg{text: prov})
 	}
-	if effort != "" && effort != "off" {
+	if effort != "" && effort != "auto" {
 		left = append(left, statusSeg{text: effort})
 	}
 
