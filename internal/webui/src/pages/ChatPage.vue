@@ -41,7 +41,7 @@
 </template>
 
 <script setup lang="ts">
-import { watch } from 'vue'
+import { onBeforeUnmount, onMounted, watch } from 'vue'
 import ChatLayout from '@/layouts/ChatLayout.vue'
 import ChatMessage from '@/components/ChatMessage.vue'
 import ChatInput from '@/components/ChatInput.vue'
@@ -79,6 +79,37 @@ function onSubmit(text: string) {
   session.submitPrompt(text)
   scrollToBottom()
 }
+
+// Esc anywhere on the page stops a running request — mirrors Ctrl+C in the
+// TUI. We avoid intercepting Esc when a modal dialog (interactive prompt,
+// settings drawer) is open because those have their own Esc semantics; the
+// browser's default Esc behaviour on the input element still works, and our
+// ChatInput handler runs first when the textarea is focused.
+function onGlobalKeydown(e: KeyboardEvent) {
+  if (e.key !== 'Escape' || !session.streaming) return
+  // Don't hijack Esc when a modal dialog is open or focus is in an input
+  // element (textarea, settings fields, prompt answer box) — those have
+  // their own native or component-level Esc handling.
+  if (session.activePrompt) return
+  // Prevent hijacking Esc when any overlay sheet or modal (like Settings or
+  // Sessions switcher) is open — they use Radix dialog under the hood.
+  if (document.querySelector('[role="dialog"]') || document.querySelector('[role="alertdialog"]')) {
+    return
+  }
+  const target = e.target as HTMLElement | null
+  if (target && (target.isContentEditable || ['INPUT', 'TEXTAREA'].includes(target.tagName))) {
+    return
+  }
+  e.preventDefault()
+  session.cancel()
+}
+
+onMounted(() => {
+  window.addEventListener('keydown', onGlobalKeydown)
+})
+onBeforeUnmount(() => {
+  window.removeEventListener('keydown', onGlobalKeydown)
+})
 
 // container is bound via the template ref; expose it so vue-tsc counts the use.
 defineExpose({ container })

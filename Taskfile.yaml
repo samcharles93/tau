@@ -41,6 +41,21 @@ tasks:
     generates:
       - ../spa/dist/index.html
 
+  test:webui:
+    desc: Run the Web UI unit tests (Vitest)
+    dir: internal/webui
+    cmds:
+      - pnpm install --prefer-offline
+      - pnpm test
+
+  check:webui:
+    desc: Run Web UI quality checks (test and build type-check)
+    dir: internal/webui
+    deps:
+      - test:webui
+    cmds:
+      - pnpm build
+
   docs:dev:
     desc: Serve the docs site locally with live reload
     dir: docs
@@ -83,6 +98,11 @@ tasks:
     cmds:
       - golangci-lint run --tests=false --enable-only=unused,staticcheck ./...
 
+  tool-stats:
+    desc: Analyse tau sessions and report per-tool usage, tokens, and error rates
+    cmds:
+      - go run ./scripts/tool-stats {{.CLI_ARGS}}
+
   check:windows:
     desc: Run formatting and modernization on Windows-only files
     env:
@@ -97,7 +117,6 @@ tasks:
     deps:
       - check:windows
     cmds:
-      - gofumpt -w .
       - go vet ./...
       - go fix ./...
       - gofumpt -w .

@@ -17,6 +17,7 @@ import {
   type ChatNotificationEvent,
   type ChatResponseCompletedEvent,
   type ChatResponseDeltaEvent,
+  type ChatResponseStartedEvent,
   type ChatRuntimeErrorEvent,
   type ChatSessionSnapshotEvent,
   type ChatToolCallDeltaEvent,
@@ -240,6 +241,18 @@ export const useSessionStore = defineStore('session', () => {
         absorbState((msg.payload as { state: ChatSessionState }).state)
         break
       }
+      case 'ChatResponseStartedEvent': {
+        // The backend has begun processing the request and confirmed the
+        // authoritative request_id. Adopt it (it normally matches what we
+        // generated client-side, but the snapshot is the source of truth
+        // for any future re-attach) and flip streaming on so the Stop button
+        // appears immediately — without waiting for the first delta, which
+        // can take several seconds for slow prompts.
+        const ev = msg.payload as ChatResponseStartedEvent
+        if (ev.request_id) activeRequestId.value = ev.request_id
+        streaming.value = true
+        break
+      }
       case 'ChatResponseDeltaEvent': {
         const ev = msg.payload as ChatResponseDeltaEvent
         writeText(activeAssistant(), ev.snapshot, ev.delta)
@@ -378,6 +391,15 @@ export const useSessionStore = defineStore('session', () => {
     if (state.status) status.value = state.status
     if (state.parameters) parameters.value = { ...state.parameters }
     if (state.last_usage) usage.value = state.last_usage
+    // The backend's active_request_id is the source of truth for cancel
+    // commands. When the snapshot carries a non-empty value, adopt it;
+    // when it goes empty (turn finished), clear our local mirror.
+    if (state.active_request_id !== undefined) {
+      activeRequestId.value = state.active_request_id ?? ''
+      // Streaming is true whenever the session has an active request, even
+      // before the first delta arrives (e.g. during a long model warm-up).
+      streaming.value = !!state.active_request_id
+    }
 
     // On a fresh connection the local stream is empty; hydrate it from the
     // replayed snapshot so a browser joining mid-session sees the history. A
@@ -486,7 +508,12 @@ export const useSessionStore = defineStore('session', () => {
   }
 
   function cancel(): boolean {
-    if (!sendEnvelope || !activeRequestId.value) return false
+    if (!sendEnvelope) return false
+    // Prefer the locally tracked request_id (it matches what we sent on
+    // submit). If that's empty — e.g. because the user clicked Stop during
+    // a reconnect window before the new submit's snapshot arrived — still
+    // send a cancel with an empty id; the backend treats that as "cancel
+    // whatever is active" so the user's intent is honoured.
     return sendEnvelope(
       command('CancelChatRequestCommand', {
         session_id: sessionId.value,
@@ -582,6 +609,7 @@ export const useSessionStore = defineStore('session', () => {
     status,
     parameters,
     activePrompt,
+    activeRequestId,
     sessions,
     usage,
     contextWindow,

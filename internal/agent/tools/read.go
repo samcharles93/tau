@@ -18,7 +18,7 @@ type ReadParams struct {
 
 var readSchema = Schema{
 	Name:        "read",
-	Description: "Read file contents. Returns the file content with line numbers. Use offset and limit for large files.",
+	Description: fmt.Sprintf("Read file contents. Output is truncated to %d lines or %s (whichever is hit first); truncated output ends with a notice giving the offset to continue from. Use offset and limit to page through large files.", DefaultMaxLines, FormatSize(DefaultMaxBytes)),
 	Parameters: json.RawMessage(`{
 		"type": "object",
 		"properties": {
@@ -100,31 +100,50 @@ func makeReadExecutor(cwd string, rt *ReadTracker) Executor {
 
 		content := string(data)
 		lines := strings.Split(content, "\n")
+		totalLines := len(lines)
 
 		// Apply offset (1-based).
 		startLine := 1
 		if p.Offset > 0 {
 			startLine = p.Offset
 		}
-		if startLine > len(lines) {
-			return Result{Content: fmt.Sprintf("offset %d exceeds file length (%d lines)", startLine, len(lines)), IsError: true}, nil
+		if startLine > totalLines {
+			return Result{Content: fmt.Sprintf("offset %d exceeds file length (%d lines)", startLine, totalLines), IsError: true}, nil
 		}
 
 		// Apply limit.
-		endLine := len(lines)
+		endLine := totalLines
 		if p.Limit > 0 && startLine+p.Limit-1 < endLine {
 			endLine = startLine + p.Limit - 1
 		}
 
-		// Build numbered output.
-		var b strings.Builder
-		for i := startLine - 1; i < endLine && i < len(lines); i++ {
-			fmt.Fprintf(&b, "%4d │ %s\n", i+1, lines[i])
+		selected := strings.Join(lines[startLine-1:endLine], "\n")
+		tr := TruncateHeadRaw(selected, DefaultMaxLines, DefaultMaxBytes)
+		output := tr.Content
+
+		switch {
+		case tr.Truncated && tr.OutputLines == 0:
+			// The first requested line alone exceeds the byte limit. Point the
+			// model at a shell fallback that can slice within the line.
+			lineSize := FormatSize(len(lines[startLine-1]))
+			output = fmt.Sprintf(
+				"[line %d is %s, exceeding the %s output limit. Use shell: sed -n '%dp' %s | head -c %d]",
+				startLine, lineSize, FormatSize(DefaultMaxBytes), startLine, p.Path, DefaultMaxBytes,
+			)
+		case tr.Truncated:
+			shownEnd := startLine + tr.OutputLines - 1
+			output += fmt.Sprintf(
+				"\n\n[showing lines %d-%d of %d. Use offset=%d to continue.]",
+				startLine, shownEnd, totalLines, shownEnd+1,
+			)
+		case endLine < totalLines:
+			// A user-specified limit stopped early, but the file has more content.
+			output += fmt.Sprintf(
+				"\n\n[%d more lines in file. Use offset=%d to continue.]",
+				totalLines-endLine, endLine+1,
+			)
 		}
 
-		output := b.String()
-		tr := TruncateHead(output, DefaultMaxLines, DefaultMaxBytes)
-
-		return Result{Content: tr.Content}, nil
+		return Result{Content: output}, nil
 	}
 }

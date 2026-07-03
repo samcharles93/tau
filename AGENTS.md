@@ -147,7 +147,7 @@ The project follows a **layered architecture** with a command/event boundary bet
 | Orchestration | `internal/app/` | Wires subsystems together for each use case (chat, token, models) |
 | Domain | `internal/chat/`, `internal/skills/`, `internal/agent/` | Core business logic, commands, events |
 | Presentation | `internal/tui/` | taui-based interactive terminal UI |
-| Infrastructure | `internal/config/`, `internal/eventbus/`, `internal/store/`, `internal/sessions/`, `internal/indexing/` | Config, event bus, persistence, search |
+| Infrastructure | `internal/config/`, `internal/eventbus/`, `internal/store/`, `internal/sessions/` | Config, event bus, persistence |
 
 ### Package Responsibilities
 
@@ -165,7 +165,6 @@ The project follows a **layered architecture** with a command/event boundary bet
 - **`sessions`** — Session lifecycle management (create, update, close, branch). Wraps the coordinator and store for session orchestration.
 - **`plugin`** — gRPC-based plugin/extension system using HashiCorp go-plugin.
 - **`registry`** — Command registry: discovers built-in, custom (markdown-based), skill-based, and extension commands. Publishes `CommandsChangedEvent` on the event bus so the TUI can update completions.
-- **`indexing`** — Full-text search over sessions using Bleve.
 - **`chat/commands`** — User-defined custom command loading from markdown files (user-level `~/.config/tau/commands/` and project-level `.tau/commands/`).
 
 ### Dependency Rules
@@ -229,6 +228,7 @@ Use this section to quickly find the right files for a given change.
   - **Config**: `CoordinatorConfig` — TokenSource, Streamer, Registry, MaxToolIterations, ParallelToolCalls, ShowReasoning, ExtensionReloader, SessionStore, OnPluginEvent, ScheduleInterval
   - **Lifecycle**: `NewCoordinator()`, `Send()`, `Close()`, `loop()`, `runTurn()`
   - **Command handlers**: `handleStart()`, `handleSubmit()`, `handleSteer()`, `handleUpdate()`, `handleCancel()`, `handleReset()`, `handleClose()`, `handleReloadExtensions()`, `handleRunExtensionCommand()`, `handleListSessions()`, `handleLoadSession()`, `handleDeleteSession()`, `handleExportSession()`, `handleInteractiveResponse()`
+  - **Cancel semantics** (`handleCancel`): the coordinator is permissive about request_id mismatches because the Web UI's client-side `activeRequestId` can briefly diverge from the server's `state.ActiveRequestID` (reconnect, double-submit, missed `ChatResponseStartedEvent`). A cancel with a non-matching id cancels the currently active turn and emits a `ChatNotificationEvent` warning. A cancel arriving with no active request succeeds silently (the user's intent is already satisfied) and re-emits a snapshot.
   - **Tool execution**: `executeToolsParallel()`, `mergeToolCallDelta()`
   - **Event emission**: `emit()` (non-blocking), `emitMustDeliver()` (bounded-blocking for terminal events)
   - **Plugin dispatch**: `dispatchPluginEvent()`, `broadcastTurnLifecycle()`, `applyPluginMessageModifications()`
@@ -409,10 +409,6 @@ LLM provider integration is handled through the external `github.com/samcharles9
 - `internal/app/chat.go:newRuntimeForProviders()` — builds `runtime.Runtime` from provider configs + embedded snapshot; `resolveProviderClass()` maps tau provider → ai-sdk class (default `"openai-compatible"`, `"anthropic"` for Anthropic native API)
 - ai-sdk URL rule: base URLs with `/v1` in the path are left as-is; host-only URLs get `/v1` appended. Endpoint paths do NOT include `/v1` (e.g., `/chat/completions` not `/v1/chat/completions`). Violating this causes 404s.
 - `internal/providers/snapshot/models.json` is the single authoritative model catalogue at runtime. `~/.config/tau/models.json` is no longer used.
-
-### Changing Search / Indexing
-
-- `internal/indexing/indexing.go` — Full-text search index backed by Bleve. `SearchIndex` wraps bleve with document serialization, indexing, and search operations.
 
 ---
 
@@ -805,10 +801,15 @@ Every message is a JSON object `{ "type": "<discriminator>", "payload": { ... } 
 **Client → server commands** (same envelope format, e.g. `{ "type": "SubmitChatPromptCommand", "payload": { … } }`):
 - `SubmitChatPromptCommand` — send a user prompt
 - `UpdateChatSessionCommand` — patch session (model, provider, temperature, etc.)
-- `CancelChatRequestCommand` — cancel in-flight request
+- `CancelChatRequestCommand` — cancel in-flight request; an empty or stale `request_id` is tolerated by the coordinator (see [Cancel semantics](#cancel-semantics) above)
 - `ResetChatSessionCommand` — clear conversation
 - `ListSessionsCommand` / `LoadSessionCommand` / `DeleteSessionCommand` / `ExportSessionCommand`
 - `RespondInteractivePromptCommand` — answer a tool dialog
+
+**Stopping a running response** in the web UI:
+- The Stop button in `ChatInput.vue` calls `session.cancel()`, which sends a `CancelChatRequestCommand` with the locally tracked `activeRequestId`.
+- Esc anywhere on the page (mounted by `ChatPage.vue`) also calls `session.cancel()` while a request is in flight, mirroring Ctrl+C in the TUI. The handler is suppressed when an interactive prompt is open or focus is in an `<input>`/`<textarea>`.
+- The store sets `streaming = true` from `ChatResponseStartedEvent` (not just the first delta) so the Stop button appears immediately after submit, even during long model warm-ups. `activeRequestId` is kept in sync from both `ChatResponseStartedEvent` and `ChatSessionSnapshotEvent.state.active_request_id` (snapshot is source of truth).
 
 ### Session Store (`stores/session.ts`)
 

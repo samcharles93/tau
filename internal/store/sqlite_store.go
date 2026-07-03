@@ -73,9 +73,9 @@ func (s *SQLiteStore) Save(ctx context.Context, state chat.ChatSessionState, dur
 		INSERT INTO sessions (
 			id, model_id, provider, created_at, updated_at, status,
 			message_count, input_tokens, output_tokens, cache_read,
-			cache_write, total_tokens, cost, duration_ms, system_prompt,
-			parent_session_id
-		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+			cache_write, total_tokens, cost, duration_ms, tool_calls,
+			tool_errors, system_prompt, parent_session_id
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		ON CONFLICT(id) DO UPDATE SET
 			updated_at        = excluded.updated_at,
 			status            = excluded.status,
@@ -104,6 +104,8 @@ func (s *SQLiteStore) Save(ctx context.Context, state chat.ChatSessionState, dur
 		state.LastUsage.TotalTokens,
 		cost,
 		duration.Milliseconds(),
+		0, // tool_calls — populated from tracker snapshot on close
+		0, // tool_errors
 		state.SystemPrompt,
 		nullString(state.ParentSessionID),
 	)
@@ -237,7 +239,8 @@ func (s *SQLiteStore) List(ctx context.Context, limit int, cursor string) ([]Ses
 	query := `
 		SELECT id, model_id, provider, created_at, updated_at, status,
 		       message_count, input_tokens, output_tokens, total_tokens,
-		       cost, duration_ms, system_prompt, parent_session_id
+		       cost, duration_ms, tool_calls, tool_errors,
+		       system_prompt, parent_session_id
 		FROM sessions
 	`
 	var args []any
@@ -264,8 +267,9 @@ func (s *SQLiteStore) List(ctx context.Context, limit int, cursor string) ([]Ses
 			&sum.ID, &sum.ModelID, &sum.Provider,
 			&createdStr, &updatedStr, &sum.Status,
 			&sum.MessageCount, &sum.InputTokens, &sum.OutputTokens,
-			&sum.TotalTokens, &sum.Cost, &sum.DurationMs, &sum.SystemPrompt,
-			&parentID,
+			&sum.TotalTokens, &sum.Cost, &sum.DurationMs,
+			&sum.ToolCalls, &sum.ToolErrors,
+			&sum.SystemPrompt, &parentID,
 		); err != nil {
 			return nil, "", fmt.Errorf("store: scan session row: %w", err)
 		}

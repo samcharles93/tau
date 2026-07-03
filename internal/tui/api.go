@@ -4,6 +4,7 @@ import (
 	"context"
 
 	tauchat "github.com/samcharles93/tau/internal/chat"
+	tauconfig "github.com/samcharles93/tau/internal/config"
 	"github.com/samcharles93/tau/internal/eventbus"
 )
 
@@ -34,4 +35,7 @@ type TUIConfig struct {
 	// blocks on the render loop. Used to defer plugin loading so the TUI
 	// receives the initial ExtensionCommandsChangedEvent on the bus.
 	OnReady func()
+	// MetricsConfig controls observability export (file path for JSONL,
+	// session persistence, TUI widget toggles).
+	MetricsConfig tauconfig.MetricsConfig
 }

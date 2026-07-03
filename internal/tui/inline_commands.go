@@ -247,16 +247,15 @@ func (c *inlineChat) currentModelRef() tauchat.ChatModelRef {
 }
 
 // effortLevels returns the cycle of reasoning-effort levels for a model:
-// "off" plus the model's advertised reasoning_options. When the model
-// advertises none (or we have no metadata for it), only "off" is offered
-// — tau doesn't guess wire values for unlisted models.
+// the model's advertised reasoning_options followed by "auto" (provider
+// default). When the model advertises none, only "auto" is offered.
 func effortLevels(model tauchat.ChatModelRef) []string {
 	if len(model.Config.ReasoningEfforts) > 0 {
 		out := make([]string, 0, len(model.Config.ReasoningEfforts)+1)
-		out = append(out, "off")
-		return append(out, model.Config.ReasoningEfforts...)
+		out = append(out, model.Config.ReasoningEfforts...)
+		return append(out, "auto")
 	}
-	return []string{"off"}
+	return []string{"auto"}
 }
 
 func nextEffort(current string, levels []string) string {
@@ -266,9 +265,21 @@ func nextEffort(current string, levels []string) string {
 		}
 	}
 	if len(levels) > 1 {
-		return levels[1] // skip "off", default to the lowest real effort
+		return levels[0] // first real level ("auto" is always at the back)
 	}
 	return levels[0]
+}
+
+// defaultEffortForModel returns the default effort level for a model.
+// "medium" for models that support effort selection, "" otherwise.
+func defaultEffortForModel(model tauchat.ChatModelRef) string {
+	if len(model.Config.ReasoningEfforts) > 0 {
+		if slices.Contains(model.Config.ReasoningEfforts, "medium") {
+			return "medium"
+		}
+		return model.Config.ReasoningEfforts[0]
+	}
+	return ""
 }
 
 func (c *inlineChat) handleEffortCommand(args string) {
@@ -288,10 +299,7 @@ func (c *inlineChat) handleEffortCommand(args string) {
 	levels := effortLevels(model)
 
 	arg := strings.ToLower(strings.TrimSpace(args))
-	switch arg {
-	case "none":
-		arg = "off"
-	case "med":
+	if arg == "med" {
 		arg = "medium"
 	}
 
@@ -347,7 +355,8 @@ func (c *inlineChat) handleModelCommand(modelID string) {
 		c.engine.PrintAbove("%s %s", c.grey("✗"), fmt.Sprintf("model %q is not in the available model list", modelID))
 		return
 	}
-	patch := tauchat.ChatSessionPatch{Model: &model}
+	effort := defaultEffortForModel(model)
+	patch := tauchat.ChatSessionPatch{Model: &model, ReasoningEffort: &effort}
 	// When the model carries a provider tag (aggregated cross-provider list),
 	// switch the session's provider too so the dynamic streamer routes to it.
 	if model.Provider != "" {
@@ -360,6 +369,7 @@ func (c *inlineChat) handleModelCommand(modelID string) {
 	})
 	c.mu.Lock()
 	c.modelName = model.ID
+	c.reasoningEffort = effort
 	if model.Provider != "" {
 		c.provider = model.Provider
 	}

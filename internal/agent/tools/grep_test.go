@@ -2,6 +2,7 @@ package tools
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -33,8 +34,20 @@ func TestGrepFallback(t *testing.T) {
 			want:   []string{"alpha.go:2:func Hello() {}"},
 		},
 		{
-			name:   "literal match in directory",
+			// Smart case: an uppercase letter in the pattern makes the
+			// search case-sensitive, matching ripgrep's --smart-case.
+			name:   "match in directory (smart case)",
 			params: GrepParams{Pattern: "Hello", Path: tmp},
+			want: []string{
+				"alpha.go:2:func Hello() {}",
+				"gamma.txt:1:Hello world",
+				"subdir/nested.go:2:func HelloThere() {}",
+				"vendor/mod.go:2:func Hello() {}",
+			},
+		},
+		{
+			name:   "lowercase pattern matches both cases",
+			params: GrepParams{Pattern: "hello", Path: tmp},
 			want: []string{
 				"alpha.go:2:func Hello() {}",
 				"beta.go:3:func hello() {}",
@@ -54,8 +67,8 @@ func TestGrepFallback(t *testing.T) {
 			},
 		},
 		{
-			name:   "regex match",
-			params: GrepParams{Pattern: "Hello.*", Path: tmp, IsRegex: true},
+			name:   "regex match by default",
+			params: GrepParams{Pattern: "Hello.*", Path: tmp},
 			want: []string{
 				"alpha.go:2:func Hello() {}",
 				"gamma.txt:1:Hello world",
@@ -64,8 +77,24 @@ func TestGrepFallback(t *testing.T) {
 			},
 		},
 		{
+			name:   "regex alternation",
+			params: GrepParams{Pattern: "World|world", Path: tmp},
+			want: []string{
+				"beta.go:2:func World() {}",
+				"gamma.txt:1:Hello world",
+			},
+		},
+		{
+			name:   "literal match with regex metacharacters",
+			params: GrepParams{Pattern: "Hello() {}", Path: tmp, Literal: true, CaseSensitive: true},
+			want: []string{
+				"alpha.go:2:func Hello() {}",
+				"vendor/mod.go:2:func Hello() {}",
+			},
+		},
+		{
 			name:   "include filter",
-			params: GrepParams{Pattern: "Hello", Path: tmp, Include: "*.go"},
+			params: GrepParams{Pattern: "hello", Path: tmp, Include: "*.go"},
 			want: []string{
 				"alpha.go:2:func Hello() {}",
 				"beta.go:3:func hello() {}",
@@ -77,9 +106,9 @@ func TestGrepFallback(t *testing.T) {
 			name:   "context lines",
 			params: GrepParams{Pattern: "Hello", Path: filepath.Join(tmp, "alpha.go"), ContextBefore: 1, ContextAfter: 1},
 			want: []string{
-				"alpha.go:1:package alpha",
+				"alpha.go-1-package alpha",
 				"alpha.go:2:func Hello() {}",
-				"alpha.go:3:", // trailing newline yields empty third line
+				"alpha.go-3-", // trailing newline yields empty third line
 			},
 		},
 		{
@@ -141,6 +170,58 @@ func TestGrepFallback_ContextDedup(t *testing.T) {
 	// Total unique lines: 5
 	if len(lines) != 5 {
 		t.Fatalf("expected 5 lines, got %d:\n%s", len(lines), got)
+	}
+}
+
+func TestCapGrepOutput_MatchLimit(t *testing.T) {
+	var lines []string
+	for i := 1; i <= 20; i++ {
+		lines = append(lines, fmt.Sprintf("file.go:%d:match line", i))
+	}
+	output := strings.Join(lines, "\n")
+
+	got := capGrepOutput(output, 5)
+
+	if !strings.Contains(got, "[showing first 5 matches") {
+		t.Fatalf("expected match-limit notice, got:\n%s", got)
+	}
+	matchCount := strings.Count(got, "match line")
+	if matchCount != 5 {
+		t.Fatalf("expected 5 match lines, got %d", matchCount)
+	}
+}
+
+func TestCapGrepOutput_LongLines(t *testing.T) {
+	long := "file.js:1:" + strings.Repeat("x", 2000)
+	got := capGrepOutput(long, 100)
+
+	if !strings.Contains(got, "... [truncated]") {
+		t.Fatalf("expected per-line truncation marker, got:\n%s", got)
+	}
+	if !strings.Contains(got, "[some lines truncated to 500 chars]") {
+		t.Fatalf("expected long-line notice, got:\n%s", got)
+	}
+	if len(strings.Split(got, "\n")[0]) > 600 {
+		t.Fatalf("first line not capped: %d chars", len(strings.Split(got, "\n")[0]))
+	}
+}
+
+func TestCapGrepOutput_ContextLinesNotCounted(t *testing.T) {
+	// Context lines (dash separators) must not count towards the match limit.
+	output := strings.Join([]string{
+		"file.go-1-context before",
+		"file.go:2:match one",
+		"file.go-3-context after",
+		"file.go:4:match two",
+	}, "\n")
+
+	got := capGrepOutput(output, 2)
+
+	if strings.Contains(got, "[showing first") {
+		t.Fatalf("limit notice should not fire for 2 matches with limit 2, got:\n%s", got)
+	}
+	if !strings.Contains(got, "match two") {
+		t.Fatalf("expected both matches present, got:\n%s", got)
 	}
 }
 

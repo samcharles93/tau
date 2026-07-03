@@ -190,3 +190,214 @@ func TestUsageTracker_MultiSessionIsolation(t *testing.T) {
 	s.PromptTokens = 9999
 	require.Equal(t, 10, tracker.Snapshot("s1").PromptTokens)
 }
+
+// ── New metric event type tests (added for metrics system coverage) ─────────
+
+func TestUsageTracker_TurnDurationAccumulates(t *testing.T) {
+	tracker, pub := newHarness(t)
+
+	pub.Publish(chat.MetricEvent{
+		Category:  chat.MetricCategoryLLM,
+		Name:      "turn.duration",
+		Value:     420.0,
+		Unit:      "ms",
+		Labels:    map[string]string{"provider": "openai", "model": "gpt-x"},
+		SessionID: "s1",
+	})
+	pub.Publish(chat.MetricEvent{
+		Category:  chat.MetricCategoryLLM,
+		Name:      "turn.duration",
+		Value:     150.0,
+		Unit:      "ms",
+		Labels:    map[string]string{"provider": "openai", "model": "gpt-x"},
+		SessionID: "s1",
+	})
+
+	require.Eventually(t, func() bool {
+		s := tracker.Snapshot("s1")
+		return s != nil && s.TurnDurationMs == 570
+	}, time.Second, time.Millisecond)
+}
+
+func TestUsageTracker_LLMErrorIncrements(t *testing.T) {
+	tracker, pub := newHarness(t)
+
+	pub.Publish(chat.MetricEvent{
+		Category:  chat.MetricCategoryLLM,
+		Name:      "llm.error",
+		Value:     1,
+		Unit:      "count",
+		Labels:    map[string]string{"finish_reason": "length", "error_kind": "length"},
+		SessionID: "s1",
+	})
+	pub.Publish(chat.MetricEvent{
+		Category:  chat.MetricCategoryLLM,
+		Name:      "llm.error",
+		Value:     1,
+		Unit:      "count",
+		Labels:    map[string]string{"finish_reason": "content_filter", "error_kind": "content_filter"},
+		SessionID: "s1",
+	})
+
+	require.Eventually(t, func() bool {
+		s := tracker.Snapshot("s1")
+		return s != nil && s.TurnErrors == 2
+	}, time.Second, time.Millisecond)
+}
+
+func TestUsageTracker_SkillActivationIncrements(t *testing.T) {
+	tracker, pub := newHarness(t)
+
+	pub.Publish(chat.MetricEvent{
+		Category:  chat.MetricCategorySkill,
+		Name:      "skill.activated",
+		Value:     1,
+		Unit:      "count",
+		Labels:    map[string]string{"skill_name": "go-development"},
+		SessionID: "s1",
+	})
+	pub.Publish(chat.MetricEvent{
+		Category:  chat.MetricCategorySkill,
+		Name:      "skill.activated",
+		Value:     1,
+		Unit:      "count",
+		Labels:    map[string]string{"skill_name": "code-edit"},
+		SessionID: "s1",
+	})
+
+	require.Eventually(t, func() bool {
+		s := tracker.Snapshot("s1")
+		return s != nil && s.SkillActivations == 2
+	}, time.Second, time.Millisecond)
+}
+
+func TestUsageTracker_ExtensionCommandIncrements(t *testing.T) {
+	tracker, pub := newHarness(t)
+
+	pub.Publish(chat.MetricEvent{
+		Category: chat.MetricCategoryExtension,
+		Name:     "extension.command",
+		Value:    1,
+		Unit:     "count",
+		Labels:   map[string]string{"command": "mcp list", "status": "success"},
+	})
+	pub.Publish(chat.MetricEvent{
+		Category: chat.MetricCategoryExtension,
+		Name:     "extension.command",
+		Value:    1,
+		Unit:     "count",
+		Labels:   map[string]string{"command": "mcp reconnect", "status": "error"},
+	})
+
+	// Extension commands are session-agnostic (empty SessionID).
+	require.Eventually(t, func() bool {
+		s := tracker.Snapshot("")
+		return s != nil && s.ExtensionCommands == 2
+	}, time.Second, time.Millisecond)
+}
+
+func TestUsageTracker_ModelAndProviderSwitches(t *testing.T) {
+	tracker, pub := newHarness(t)
+
+	// When publishing session events use dotted names consistently.
+	pub.Publish(chat.MetricEvent{
+		Category:  chat.MetricCategorySession,
+		Name:      "session.model.changed",
+		Value:     1,
+		Unit:      "count",
+		Labels:    map[string]string{"from": "gpt-4", "to": "gpt-5"},
+		SessionID: "s1",
+	})
+	pub.Publish(chat.MetricEvent{
+		Category:  chat.MetricCategorySession,
+		Name:      "session.provider.changed",
+		Value:     1,
+		Unit:      "count",
+		Labels:    map[string]string{"from": "openai", "to": "anthropic"},
+		SessionID: "s1",
+	})
+
+	require.Eventually(t, func() bool {
+		s := tracker.Snapshot("s1")
+		return s != nil && s.ModelSwitches == 1 && s.ProviderSwitches == 1
+	}, time.Second, time.Millisecond)
+}
+
+func TestUsageTracker_SessionCreatedClosedAreNoops(t *testing.T) {
+	tracker, pub := newHarness(t)
+
+	// session.created and session.closed must not increment any aggregate.
+	pub.Publish(chat.MetricEvent{
+		Category:  chat.MetricCategorySession,
+		Name:      "session.created",
+		Value:     1,
+		Unit:      "count",
+		SessionID: "s1",
+	})
+	pub.Publish(chat.MetricEvent{
+		Category:  chat.MetricCategorySession,
+		Name:      "session.closed",
+		Value:     5000,
+		Unit:      "ms",
+		SessionID: "s1",
+	})
+
+	// Give the bus a moment to deliver.
+	time.Sleep(50 * time.Millisecond)
+
+	s := tracker.Snapshot("s1")
+	if s != nil {
+		require.Equal(t, 0, s.ModelSwitches)
+		require.Equal(t, 0, s.ProviderSwitches)
+		require.Equal(t, 0, s.TurnCount)
+		require.Equal(t, 0, s.TotalTokens)
+	}
+}
+
+func TestUsageTracker_EmptySessionIDIsolation(t *testing.T) {
+	tracker, pub := newHarness(t)
+
+	// Events without a SessionID land in the empty-string bucket and
+	// must not pollute a named session's aggregates.
+	pub.Publish(chat.MetricEvent{
+		Category:  chat.MetricCategoryTool,
+		Name:      "tool.empty-session",
+		SessionID: "",
+	})
+	pub.Publish(llmResponse("s1", 5, "3", "2", "openai", "gpt-x"))
+
+	require.Eventually(t, func() bool {
+		s := tracker.Snapshot("s1")
+		return s != nil && s.TotalTokens == 5 && s.ToolCalls == 0
+	}, time.Second, time.Millisecond)
+
+	// The empty-session bucket must exist independently.
+	empty := tracker.Snapshot("")
+	require.NotNil(t, empty)
+	require.Equal(t, 1, empty.ToolCalls)
+}
+
+func TestUsageTracker_ConcurrentSnapshotSafety(t *testing.T) {
+	tracker, pub := newHarness(t)
+
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		for i := 0; i < 100; i++ {
+			pub.Publish(llmResponse("s1", 1, "1", "0", "openai", "gpt-x"))
+		}
+	}()
+
+	// Read snapshots concurrently with writes.
+	for i := 0; i < 100; i++ {
+		s := tracker.Snapshot("s1")
+		_ = s // may be nil before first event arrives — that's fine
+	}
+
+	<-done
+
+	require.Eventually(t, func() bool {
+		s := tracker.Snapshot("s1")
+		return s != nil && s.TotalTokens == 100
+	}, time.Second, time.Millisecond)
+}

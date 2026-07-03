@@ -24,11 +24,14 @@ type TruncationResult struct {
 	Truncated    bool
 	OriginalSize int
 	OriginalLine int
+	OutputLines  int // number of complete lines kept in Content
 }
 
-// TruncateHead keeps the first N lines/bytes, dropping the tail.
-// Good for file reads, search results.
-func TruncateHead(content string, maxLines, maxBytes int) TruncationResult {
+// TruncateHeadRaw keeps the first N lines/bytes, dropping the tail, without
+// appending a truncation notice. Callers append their own context-specific
+// notice (e.g. read's "Use offset=N to continue"). Never returns partial lines:
+// if the first line alone exceeds maxBytes, Content is empty with OutputLines 0.
+func TruncateHeadRaw(content string, maxLines, maxBytes int) TruncationResult {
 	originalSize := len(content)
 	originalLines := 0
 	if content != "" {
@@ -39,6 +42,7 @@ func TruncateHead(content string, maxLines, maxBytes int) TruncationResult {
 		Content:      content,
 		OriginalSize: originalSize,
 		OriginalLine: originalLines,
+		OutputLines:  originalLines,
 	}
 
 	if originalSize <= maxBytes && originalLines <= maxLines {
@@ -58,17 +62,22 @@ func TruncateHead(content string, maxLines, maxBytes int) TruncationResult {
 		lineCount++
 	}
 
+	result.Content = strings.TrimSuffix(b.String(), "\n")
+	result.OutputLines = lineCount
+	return result
+}
+
+// TruncateHead keeps the first N lines/bytes, dropping the tail, and appends
+// a generic truncation notice. Good for search results and listings.
+func TruncateHead(content string, maxLines, maxBytes int) TruncationResult {
+	result := TruncateHeadRaw(content, maxLines, maxBytes)
 	if result.Truncated {
-		kept := b.String()
-		fmt.Fprintf(
-			&b,
+		result.Content += fmt.Sprintf(
 			"\n\n[truncated: showing %d/%d lines, %s/%s]",
-			lineCount, originalLines,
-			FormatSize(len(kept)), FormatSize(originalSize),
+			result.OutputLines, result.OriginalLine,
+			FormatSize(len(result.Content)), FormatSize(result.OriginalSize),
 		)
 	}
-
-	result.Content = b.String()
 	return result
 }
 

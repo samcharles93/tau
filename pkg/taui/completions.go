@@ -59,6 +59,10 @@ type Completions struct {
 	provider CompletionProvider
 	input    *LineInput
 	onSelect func(string)
+	// onAccept is invoked when the user confirms a selected item with Enter.
+	// It is separate from onSelect so callers can distinguish a terminal
+	// accept (submit) from a preview/fill (Tab / arrow + Enter fallback).
+	onAccept func(string)
 	// onDetail is invoked when the user presses space on a selected item. It
 	// returns whether it handled the item; if it returns false the space is not
 	// consumed, so it falls through and is inserted as ordinary text.
@@ -92,6 +96,7 @@ func NewCompletions(input *LineInput, provider CompletionProvider) *Completions 
 }
 
 func (c *Completions) SetOnSelect(fn func(string))      { c.onSelect = fn }
+func (c *Completions) SetOnAccept(fn func(string))      { c.onAccept = fn }
 func (c *Completions) SetOnDetail(fn func(string) bool) { c.onDetail = fn }
 func (c *Completions) Invalidate()                      {}
 
@@ -146,7 +151,11 @@ func (c *Completions) HandleInput(data string) bool {
 	case "\r":
 		if c.selected >= 0 && c.selected < n {
 			chosen = c.fullReplace(c.filtered[c.selected])
-			choose = true
+			if c.onAccept != nil {
+				c.onAccept(chosen)
+			} else if c.onSelect != nil {
+				c.onSelect(chosen)
+			}
 		}
 	case "\x1b":
 		c.hideLocked()

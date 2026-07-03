@@ -10,14 +10,10 @@ func RegisterBuiltins(reg *Registry, cwd string) error {
 		NewReadTool(cwd, rt),
 		NewWriteTool(cwd, mq, rt),
 		NewEditTool(cwd, mq, rt),
-		NewPatchTool(cwd, mq, rt),
 		NewShellTool(cwd, mq),
 		NewGrepTool(cwd),
 		NewFindTool(cwd),
-		NewLsTool(cwd),
-		NewGlobTool(cwd),
-		NewSearchDocsTool(),
-		NewReadDocTool(),
+		NewDocsTool(),
 	}
 
 	for _, tool := range builtins {

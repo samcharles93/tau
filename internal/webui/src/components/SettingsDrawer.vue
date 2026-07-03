@@ -129,20 +129,20 @@ import {
 import { useSessionStore } from '@/stores/session'
 import type { ChatSessionPatch } from '@/lib/protocol'
 
-const NONE = 'none'
+const NONE = 'auto'
 
 const session = useSessionStore()
 const open = ref(false)
 const hasMultipleProviders = computed(() => (session.providers?.length ?? 0) > 1)
 
 // reasoningOptions builds the selectable effort levels from the current
-// model's advertised reasoning_efforts. Only "None" is offered when the
-// model doesn't advertise its levels — tau doesn't guess wire values.
+// model's advertised reasoning_efforts. "Auto" is always offered as the
+// provider-default option.
 const reasoningOptions = computed(() => {
   const modelRef = session.availableModels.find((m) => m.id === session.model)
   const efforts = modelRef?.reasoning_efforts ?? []
   return [
-    { value: NONE, label: 'None' },
+    { value: NONE, label: 'Auto' },
     ...efforts.map((e) => ({ value: e, label: e.charAt(0).toUpperCase() + e.slice(1) })),
   ]
 })

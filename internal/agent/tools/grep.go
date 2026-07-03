@@ -10,28 +10,43 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
+	"unicode/utf8"
 )
+
+const (
+	// grepMaxLineChars caps each output line so a single long line (e.g. in
+	// minified or generated files) cannot blow out the context window.
+	grepMaxLineChars = 500
+
+	// grepDefaultLimit is the default maximum number of matches returned.
+	grepDefaultLimit = 100
+)
+
+// grepMatchLineRe recognises a match line in ripgrep-style output
+// (path:line:content). Context lines use '-' separators instead.
+var grepMatchLineRe = regexp.MustCompile(`^.+?:\d+:`)
 
 // GrepParams are the parameters for the grep tool.
 type GrepParams struct {
 	Pattern       string `json:"pattern"`
 	Path          string `json:"path,omitempty"`    // file or directory
 	Include       string `json:"include,omitempty"` // glob pattern for file names
-	IsRegex       bool   `json:"is_regex,omitempty"`
+	Literal       bool   `json:"literal,omitempty"`
 	CaseSensitive bool   `json:"case_sensitive,omitempty"`
 	ContextBefore int    `json:"context_before,omitempty"` // lines before each match (-B)
 	ContextAfter  int    `json:"context_after,omitempty"`  // lines after each match (-A)
+	Limit         int    `json:"limit,omitempty"`          // max matches to return
 }
 
 var grepSchema = Schema{
 	Name:        "grep",
-	Description: "Search for a pattern in files using ripgrep (rg). Respects .gitignore. Returns matching lines with file paths and line numbers. Use context_before/context_after to show surrounding lines.",
+	Description: fmt.Sprintf("Search file contents for a regex pattern using ripgrep (rg). Respects .gitignore. Returns matching lines with file paths and line numbers. Supports alternation (e.g. 'foo|bar') and full regex syntax. Use context_before/context_after to show surrounding lines. Output is capped at %d matches (adjustable via limit) and long lines are truncated to %d chars.", grepDefaultLimit, grepMaxLineChars),
 	Parameters: json.RawMessage(`{
 		"type": "object",
 		"properties": {
 			"pattern": {
 				"type": "string",
-				"description": "Search pattern (literal text or regex)"
+				"description": "Regex pattern to search for (e.g. 'handleCancel|CancelChat'). Set literal:true to match the pattern as plain text instead."
 			},
 			"path": {
 				"type": "string",
@@ -41,9 +56,13 @@ var grepSchema = Schema{
 				"type": "string",
 				"description": "Glob pattern for file inclusion (e.g. '*.go', '*.ts')"
 			},
-			"is_regex": {
+			"literal": {
 				"type": "boolean",
-				"description": "Treat pattern as a regex. Defaults to false (literal)."
+				"description": "Treat pattern as literal text instead of a regex. Defaults to false."
+			},
+			"limit": {
+				"type": "integer",
+				"description": "Maximum number of matches to return. Defaults to 100."
 			},
 			"case_sensitive": {
 				"type": "boolean",
@@ -97,6 +116,11 @@ func makeGrepExecutor(cwd string) Executor {
 		args := buildGrepArgs(p)
 		args = append(args, searchPath)
 
+		limit := p.Limit
+		if limit <= 0 {
+			limit = grepDefaultLimit
+		}
+
 		binary, err := grepBinary()
 		if err != nil {
 			// No external binary available — use pure-Go fallback.
@@ -107,8 +131,7 @@ func makeGrepExecutor(cwd string) Executor {
 			if output == "" {
 				return Result{Content: "no matches found"}, nil
 			}
-			tr := TruncateHead(output, DefaultMaxLines, DefaultMaxBytes)
-			return Result{Content: tr.Content}, nil
+			return Result{Content: capGrepOutput(output, limit)}, nil
 		}
 
 		cmd := exec.CommandContext(ctx, binary, args...)
@@ -132,9 +155,54 @@ func makeGrepExecutor(cwd string) Executor {
 			return Result{Content: fmt.Sprintf("grep error: %s", errMsg), IsError: true}, nil
 		}
 
-		tr := TruncateHead(output, DefaultMaxLines, DefaultMaxBytes)
-		return Result{Content: tr.Content}, nil
+		return Result{Content: capGrepOutput(output, limit)}, nil
 	}
+}
+
+// capGrepOutput enforces the match limit and per-line length cap on
+// ripgrep-style output, then applies the global size truncation. Notices for
+// each cap that fired are appended so the model knows how to narrow the search.
+func capGrepOutput(output string, limit int) string {
+	lines := strings.Split(strings.TrimSuffix(output, "\n"), "\n")
+	kept := make([]string, 0, len(lines))
+	matches := 0
+	limitHit := false
+	linesTruncated := false
+
+	for _, line := range lines {
+		if grepMatchLineRe.MatchString(line) {
+			if matches >= limit {
+				limitHit = true
+				break
+			}
+			matches++
+		}
+		if len(line) > grepMaxLineChars {
+			line = line[:truncationBoundary(line, grepMaxLineChars)] + "... [truncated]"
+			linesTruncated = true
+		}
+		kept = append(kept, line)
+	}
+
+	tr := TruncateHead(strings.Join(kept, "\n"), DefaultMaxLines, DefaultMaxBytes)
+	content := tr.Content
+	if limitHit {
+		content += fmt.Sprintf("\n\n[showing first %d matches; refine the pattern or raise limit]", limit)
+	}
+	if linesTruncated {
+		content += fmt.Sprintf("\n[some lines truncated to %d chars]", grepMaxLineChars)
+	}
+	return content
+}
+
+// truncationBoundary returns the largest cut point <= max that does not split
+// a UTF-8 rune.
+func truncationBoundary(s string, max int) int {
+	cut := max
+	for cut > 0 && !utf8.RuneStart(s[cut]) {
+		cut--
+	}
+	return cut
 }
 
 // grepFallback performs a pure-Go file scan for when ripgrep is not available.
@@ -146,7 +214,7 @@ func grepFallback(ctx context.Context, p GrepParams, searchPath, cwd string) (st
 	}
 
 	var matcher func(line string) bool
-	if p.IsRegex {
+	if !p.Literal {
 		var re *regexp.Regexp
 		if p.CaseSensitive || hasUppercase(p.Pattern) {
 			re, err = regexp.Compile(p.Pattern)
@@ -160,7 +228,7 @@ func grepFallback(ctx context.Context, p GrepParams, searchPath, cwd string) (st
 			return re.MatchString(line)
 		}
 	} else {
-		if p.CaseSensitive {
+		if p.CaseSensitive || hasUppercase(p.Pattern) {
 			matcher = func(line string) bool {
 				return strings.Contains(line, p.Pattern)
 			}
@@ -241,18 +309,33 @@ func grepFallback(ctx context.Context, p GrepParams, searchPath, cwd string) (st
 		return "", nil
 	}
 
-	// Format results similarly to ripgrep: path:line:content
-	var lines []string
+	// Overlapping context windows can emit the same line twice, and a line
+	// can be both a match and a neighbour's context. Dedup by file+line,
+	// preferring the match form.
+	seen := make(map[string]int)
+	deduped := results[:0]
 	for _, r := range results {
+		key := fmt.Sprintf("%s:%d", r.relPath, r.lineNum)
+		if idx, ok := seen[key]; ok {
+			if !r.isContext {
+				deduped[idx].isContext = false
+			}
+			continue
+		}
+		seen[key] = len(deduped)
+		deduped = append(deduped, r)
+	}
+
+	// Format results like ripgrep: path:line:content for matches,
+	// path-line-content for context lines.
+	var lines []string
+	for _, r := range deduped {
 		if r.isContext {
-			lines = append(lines, fmt.Sprintf("%s:%d:%s", r.relPath, r.lineNum, r.content))
+			lines = append(lines, fmt.Sprintf("%s-%d-%s", r.relPath, r.lineNum, r.content))
 		} else {
 			lines = append(lines, fmt.Sprintf("%s:%d:%s", r.relPath, r.lineNum, r.content))
 		}
 	}
-
-	// Remove duplicate lines that can occur from overlapping context.
-	lines = dedupLines(lines)
 
 	return strings.Join(lines, "\n"), nil
 }
@@ -316,22 +399,10 @@ func grepFile(ctx context.Context, path string, matcher func(string) bool, ctxBe
 	return results, nil
 }
 
-func dedupLines(lines []string) []string {
-	seen := make(map[string]bool)
-	var out []string
-	for _, l := range lines {
-		if !seen[l] {
-			seen[l] = true
-			out = append(out, l)
-		}
-	}
-	return out
-}
-
 func buildGrepArgs(p GrepParams) []string {
 	args := []string{"--line-number", "--no-heading", "--color=never"}
 
-	if !p.IsRegex {
+	if p.Literal {
 		args = append(args, "--fixed-strings")
 	}
 

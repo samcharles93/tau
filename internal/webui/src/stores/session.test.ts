@@ -312,4 +312,86 @@ describe('session store — enhancements', () => {
     expect(s.messages).toHaveLength(2)
     expect(messageText(s.messages[1])).toBe('hello there')
   })
+
+  it('flips streaming on and adopts the request_id from ChatResponseStartedEvent', () => {
+    // Before the first delta, the only signal that the backend has accepted
+    // the prompt is ChatResponseStartedEvent. The Stop button relies on
+    // streaming being true during that window, otherwise users have no way
+    // to cancel a slow model warm-up.
+    const s = useSessionStore()
+    s.apply(event('ChatResponseStartedEvent', { session_id: 's', request_id: 'server-123', started_at: '2026-01-01T00:00:00Z' }))
+    expect(s.streaming).toBe(true)
+    expect(s.activeRequestId).toBe('server-123')
+  })
+
+  it('synchronises the active request_id from authoritative snapshot state', () => {
+    // A snapshot from the backend is the source of truth for what request
+    // is actually in flight. The client should adopt that id so cancel
+    // commands always target the real in-flight turn, even after a
+    // reconnect or a race between two submits.
+    const s = useSessionStore()
+    s.apply({ type: 'init', session_id: 's', model: 'm', provider: 'p' })
+    s.bindSender(() => true)
+    s.submitPrompt('hi')
+    const local = s.activeRequestId
+    expect(local).toBeTruthy()
+
+    // Backend has promoted a *different* request (e.g. on reconnect after a
+    // dropped submit): the snapshot's id is what the server has stored.
+    s.apply(
+      event('ChatSessionSnapshotEvent', {
+        state: {
+          session_id: 's',
+          status: 'streaming',
+          active_request_id: 'server-xyz',
+          model: { id: 'm' },
+          parameters: { max_tokens: 0, temperature: 0 },
+          messages: [],
+        },
+      }),
+    )
+    expect(s.activeRequestId).toBe('server-xyz')
+    expect(s.streaming).toBe(true)
+  })
+
+  it('clears the active request_id when the snapshot shows no active request', () => {
+    const s = useSessionStore()
+    s.apply({ type: 'init', session_id: 's', model: 'm', provider: 'p' })
+    s.apply(
+      event('ChatSessionSnapshotEvent', {
+        state: {
+          session_id: 's',
+          status: 'idle',
+          active_request_id: '',
+          model: { id: 'm' },
+          parameters: { max_tokens: 0, temperature: 0 },
+          messages: [],
+        },
+      }),
+    )
+    expect(s.activeRequestId).toBe('')
+    expect(s.streaming).toBe(false)
+  })
+
+  it('sends a cancel even when the local request_id is empty', () => {
+    // After reconnect or a missed event the client may have lost its
+    // request_id. The backend treats an empty id as "cancel whatever is
+    // active", so the cancel should still be sent so the user can stop
+    // a running response.
+    const s = useSessionStore()
+    s.apply({ type: 'init', session_id: 'sess-1', model: 'm', provider: 'p' })
+    s.activeRequestId = ''
+
+    const sent: Envelope[] = []
+    s.bindSender((e) => {
+      sent.push(e)
+      return true
+    })
+    expect(s.cancel()).toBe(true)
+    expect(sent).toHaveLength(1)
+    expect(sent[0].type).toBe('CancelChatRequestCommand')
+    const payload = sent[0].payload as { session_id: string; request_id: string }
+    expect(payload.session_id).toBe('sess-1')
+    expect(payload.request_id).toBe('')
+  })
 })

@@ -67,20 +67,19 @@ Registered via `RegisterBuiltins()` in `internal/agent/tools/builtin.go`:
 | `read` | `read.go` | Read file contents with line-range support |
 | `write` | `write.go` | Create or overwrite files (queued in MutationQueue) |
 | `edit` | `edit.go` | Precise text replacements in files (queued) |
-| `patch` | `patch.go` | Apply unified diffs to files (queued) |
 | `shell` | `shell.go` | Execute shell commands with timeout |
-| `grep` | `grep.go` | Search file contents with regex |
-| `find` | `find.go` | Find files by glob pattern |
-| `ls` | `ls.go` | List directory contents |
-| `search_tau_docs` | `docs.go` | Search tau's embedded documentation |
-| `read_tau_doc` | `docs.go` | Read a specific tau documentation file |
+| `grep` | `grep.go` | Search file contents with regex (regex by default; `literal: true` for plain text) |
+| `find` | `find.go` | Find files by glob pattern or list a directory |
+| `docs` | `docs.go` | Search, read, or list tau's embedded documentation |
+
+The set is deliberately small: each tool has one clear job and no two tools overlap, so models pick the right one without deliberating. Session analysis showed that redundant tools (`patch`, `glob`, `ls`, split doc tools) went unused or pushed models to shell out instead.
 
 ## MutationQueue
 
-Write, edit, and patch operations share a `MutationQueue` (`internal/agent/tools/mutation.go`). This enforces sequential execution of file mutations to prevent race conditions when tools run in parallel.
+Write and edit operations share a `MutationQueue` (`internal/agent/tools/mutation.go`). This enforces sequential execution of file mutations to prevent race conditions when tools run in parallel.
 
 The queue:
-- Serializes all write/edit/patch operations
+- Serializes all write/edit operations
 - Returns results in order
 - Prevents interleaved writes to the same file
 
@@ -109,9 +108,10 @@ The bridge implementation (`internal/agent/ui_bridge.go`) translates these calls
 ## Content Truncation
 
 `internal/agent/tools/truncate.go` provides content size management:
-- Large file reads are truncated to prevent context window blowout
-- Truncation adds a notice: "... [content truncated from X to Y bytes]"
-- Configurable truncation limit (default: 100KB)
+- Tool output is truncated to 2000 lines or 50KB, whichever is hit first
+- `read` truncation appends an actionable continuation notice ("Use offset=N to continue") so the model can page through large files
+- `shell` saves the full untruncated output to a temp file and includes the path in the notice, letting the model grep/tail it instead of re-running the command
+- `grep` additionally caps output at 100 matches (adjustable via `limit`) and truncates individual lines to 500 chars so minified/generated files cannot blow out the context window
 
 ## Filesystem Utilities
 
@@ -119,6 +119,10 @@ The bridge implementation (`internal/agent/ui_bridge.go`) translates these calls
 - Safe file reading with size limits
 - Directory walking with pattern filtering
 - File existence and permission checks
+
+## Measuring Tool Usage
+
+`task tool-stats` (or `go run ./scripts/tool-stats`) analyses saved session files and reports per-tool call counts, estimated result tokens, size percentiles, and heuristic error rates, plus a breakdown of what shell commands actually run. It prints a summary table and writes a self-contained HTML report. Use it to spot tools that models avoid, bypass via shell, or fail against — the current toolset shape was derived from exactly this analysis.
 
 ## Adding a Custom Tool
 

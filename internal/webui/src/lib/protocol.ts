@@ -46,6 +46,8 @@ export interface ExtensionCommand {
   name: string
   description?: string
   extension_name: string
+  args_hint?: string
+  subcommands?: ExtensionCommand[]
 }
 
 export interface ExtensionCommandsChangedEvent {

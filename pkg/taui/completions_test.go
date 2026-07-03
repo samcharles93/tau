@@ -233,3 +233,83 @@ func TestCompletionsClampsToMaxItems(t *testing.T) {
 		t.Errorf("rendered %d lines, should be <= 10", len(lines))
 	}
 }
+
+// TestCompletionsEnterUsesOnAccept verifies that Enter invokes the dedicated
+// onAccept callback rather than the generic onSelect callback.
+func TestCompletionsEnterUsesOnAccept(t *testing.T) {
+	input := NewLineInput("")
+	for _, r := range "a" {
+		input.HandleInput(string(r))
+	}
+	selectCalls := 0
+	acceptCalls := 0
+	var accepted string
+	c := NewCompletions(input, func(ctx CompletionContext) *CompletionSet {
+		return &CompletionSet{
+			ReplaceStart: 0, ReplaceEnd: 1,
+			Groups: []MatchGroup{{Matches: []Match{{Word: "alpha"}, {Word: "beta"}}}},
+		}
+	})
+	c.SetOnSelect(func(string) { selectCalls++ })
+	c.SetOnAccept(func(s string) { acceptCalls++; accepted = s })
+	c.Render(20)
+	c.HandleInput("\r")
+	if selectCalls != 0 {
+		t.Errorf("onSelect called %d times, want 0 when onAccept is set", selectCalls)
+	}
+	if acceptCalls != 1 {
+		t.Errorf("onAccept called %d times, want 1", acceptCalls)
+	}
+	if accepted != "alpha " {
+		t.Errorf("accepted %q, want %q", accepted, "alpha ")
+	}
+}
+
+// TestCompletionsEnterFallsBackToOnSelect verifies that Enter still works
+// when only onSelect is registered, preserving backward compatibility.
+func TestCompletionsEnterFallsBackToOnSelect(t *testing.T) {
+	input := NewLineInput("")
+	for _, r := range "a" {
+		input.HandleInput(string(r))
+	}
+	var selected string
+	c := NewCompletions(input, func(ctx CompletionContext) *CompletionSet {
+		return &CompletionSet{
+			ReplaceStart: 0, ReplaceEnd: 1,
+			Groups: []MatchGroup{{Matches: []Match{{Word: "alpha"}}}},
+		}
+	})
+	c.SetOnSelect(func(s string) { selected = s })
+	c.Render(20)
+	c.HandleInput("\r")
+	if selected != "alpha " {
+		t.Errorf("selected %q, want %q", selected, "alpha ")
+	}
+}
+
+// TestCompletionsTabUsesOnSelect verifies that Tab still uses onSelect, not
+// onAccept, so Tab can cycle/preview without submitting.
+func TestCompletionsTabUsesOnSelect(t *testing.T) {
+	input := NewLineInput("")
+	for _, r := range "a" {
+		input.HandleInput(string(r))
+	}
+	selectCalls := 0
+	acceptCalls := 0
+	c := NewCompletions(input, func(ctx CompletionContext) *CompletionSet {
+		return &CompletionSet{
+			ReplaceStart: 0, ReplaceEnd: 1,
+			Groups: []MatchGroup{{Matches: []Match{{Word: "alpha"}, {Word: "beta"}}}},
+		}
+	})
+	c.SetOnSelect(func(string) { selectCalls++ })
+	c.SetOnAccept(func(string) { acceptCalls++ })
+	c.Render(20)
+	c.HandleInput("\t")
+	if selectCalls != 1 {
+		t.Errorf("onSelect called %d times after Tab, want 1", selectCalls)
+	}
+	if acceptCalls != 0 {
+		t.Errorf("onAccept called %d times after Tab, want 0", acceptCalls)
+	}
+}

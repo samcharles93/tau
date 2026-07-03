@@ -22,6 +22,20 @@ type SessionTotals struct {
 	ToolErrors       int
 	LastProvider     string
 	LastModel        string
+	// TurnDurationMs accumulates turn.duration metric values (ms).
+	// This is wall-clock time for the entire agentic turn including
+	// all LLM calls and tool executions in the loop.
+	TurnDurationMs int64
+	// SkillActivations counts unique skill activation events.
+	SkillActivations int
+	// ExtensionCommands counts extension command invocations.
+	ExtensionCommands int
+	// ModelSwitches counts model change events during the session.
+	ModelSwitches int
+	// ProviderSwitches counts provider change events during the session.
+	ProviderSwitches int
+	// TurnErrors counts failed or cancelled LLM turns.
+	TurnErrors int
 }
 
 // UsageTracker aggregates MetricEvents per session. It subscribes to the
@@ -47,11 +61,9 @@ func NewUsageTracker(client *eventbus.Client) *UsageTracker {
 }
 
 func (t *UsageTracker) handle(e chat.MetricEvent) {
-	// Session lifecycle events don't carry numeric data to aggregate;
-	// they signal that a session exists.
-	if e.Category == chat.MetricCategorySession {
-		return
-	}
+	// Session lifecycle events (created, closed) carry no numeric
+	// aggregates. State-change events (model.changed, provider.changed)
+	// increment their respective counters below.
 
 	t.mu.Lock()
 	defer t.mu.Unlock()
@@ -83,12 +95,38 @@ func (t *UsageTracker) handle(e chat.MetricEvent) {
 			}
 		case "llm.cost":
 			totals.Cost += e.Value
+		case "turn.duration":
+			totals.TurnDurationMs += int64(e.Value)
+		case "llm.error":
+			totals.TurnErrors++
 		}
 
 	case chat.MetricCategoryTool:
 		totals.ToolCalls++
 		if status, ok := e.Labels["status"]; ok && status == "error" {
 			totals.ToolErrors++
+		}
+
+	case chat.MetricCategorySkill:
+		switch e.Name {
+		case "skill.activated":
+			totals.SkillActivations++
+		}
+
+	case chat.MetricCategoryExtension:
+		switch e.Name {
+		case "extension.command":
+			totals.ExtensionCommands++
+		}
+
+	case chat.MetricCategorySession:
+		switch e.Name {
+		case "session.model.changed":
+			totals.ModelSwitches++
+		case "session.provider.changed":
+			totals.ProviderSwitches++
+		default:
+			// session.created, session.closed — no numeric aggregate.
 		}
 	}
 }
