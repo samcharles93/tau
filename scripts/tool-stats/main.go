@@ -4,13 +4,17 @@
 //
 // Usage:
 //
-//	go run ./scripts/tool-stats [--sessions-dir <dir>] [--output <file.html>] [--json]
+//	go run ./scripts/tool-stats [--sessions-dir <dir>] [--metrics-dir <dir>] [--output <file.html>] [--json]
 //
 // It reads every *.jsonl and *.jsonl.tmp session file, prints a summary table
 // to stdout, and writes a self-contained HTML report.
 //
-// Error detection is heuristic: sessions persist tool result text but not the
-// is_error flag, so results are matched against known tau error shapes.
+// Error detection from sessions is heuristic: they persist tool result text
+// but not the is_error flag, so results are matched against known tau error
+// shapes. When a metrics.jsonl file exists (metrics.dir in the tau config, or
+// --metrics-dir), tool.<name>.duration events are joined in for ground-truth
+// error status and call durations — restricted to the sessions present in the
+// sessions dir so both sources describe the same population.
 package main
 
 import (
@@ -25,6 +29,9 @@ import (
 	"sort"
 	"strings"
 	"time"
+
+	"github.com/samcharles93/tau/internal/chat"
+	tauconfig "github.com/samcharles93/tau/internal/config"
 )
 
 // bucketLabels are histogram buckets over estimated result tokens.
@@ -65,18 +72,34 @@ type toolStat struct {
 	Max       int     `json:"max"`
 	// ErrorSamples holds up to three distinct error messages for the report.
 	ErrorSamples []string `json:"errorSamples,omitempty"`
+
+	// Metrics-derived fields, populated when a metrics.jsonl join is
+	// available. MetricCalls can differ from Calls: metrics only cover
+	// sessions run with metrics.dir configured.
+	MetricCalls    int     `json:"metricCalls,omitempty"`
+	MetricErrors   int     `json:"metricErrors,omitempty"`
+	MetricErrRate  float64 `json:"metricErrorRate,omitempty"`
+	DurationMedian int     `json:"durationMedianMs,omitempty"`
+	DurationP90    int     `json:"durationP90Ms,omitempty"`
+	DurationMax    int     `json:"durationMaxMs,omitempty"`
+
+	durations []int
 }
 
 type reportData struct {
-	GeneratedAt string      `json:"generatedAt"`
-	SessionsDir string      `json:"sessionsDir"`
-	Files       int         `json:"files"`
-	ParseErrors int         `json:"parseErrors"`
-	TotalCalls  int         `json:"totalCalls"`
-	TotalTokens int         `json:"totalTokens"`
-	Buckets     []string    `json:"bucketLabels"`
-	Tools       []*toolStat `json:"tools"`
-	Shell       []*toolStat `json:"shellCommands"`
+	GeneratedAt string `json:"generatedAt"`
+	SessionsDir string `json:"sessionsDir"`
+	MetricsPath string `json:"metricsPath,omitempty"`
+	Files       int    `json:"files"`
+	ParseErrors int    `json:"parseErrors"`
+	TotalCalls  int    `json:"totalCalls"`
+	TotalTokens int    `json:"totalTokens"`
+	// MetricsSkipped counts metric events for sessions not present in the
+	// sessions dir (excluded so both sources describe the same population).
+	MetricsSkipped int         `json:"metricsSkipped,omitempty"`
+	Buckets        []string    `json:"bucketLabels"`
+	Tools          []*toolStat `json:"tools"`
+	Shell          []*toolStat `json:"shellCommands"`
 }
 
 // sessionMessage is the subset of a persisted chat message the script needs.
@@ -96,11 +119,18 @@ type sessionMessage struct {
 func main() {
 	defaultDir := filepath.Join(os.Getenv("HOME"), ".config", "tau", "sessions")
 	sessionsDir := flag.String("sessions-dir", defaultDir, "directory containing tau session .jsonl files")
+	metricsDir := flag.String("metrics-dir", "", "directory containing metrics.jsonl (default: metrics.dir from the tau config)")
 	output := flag.String("output", filepath.Join(os.TempDir(), "tau-tool-stats.html"), "path for the HTML report")
 	asJSON := flag.Bool("json", false, "print the aggregated data as JSON to stdout instead of a table")
 	flag.Parse()
 
-	data, err := analyse(*sessionsDir)
+	if *metricsDir == "" {
+		if cfg, err := tauconfig.LoadConfigAllowEmpty(); err == nil {
+			*metricsDir = cfg.Metrics.Dir
+		}
+	}
+
+	data, err := analyse(*sessionsDir, *metricsDir)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "error:", err)
 		os.Exit(1)
@@ -121,7 +151,7 @@ func main() {
 	fmt.Fprintf(os.Stderr, "\nHTML report: %s\n", *output)
 }
 
-func analyse(dir string) (*reportData, error) {
+func analyse(dir, metricsDir string) (*reportData, error) {
 	entries, err := os.ReadDir(dir)
 	if err != nil {
 		return nil, fmt.Errorf("reading sessions dir: %w", err)
@@ -134,6 +164,7 @@ func analyse(dir string) (*reportData, error) {
 		SessionsDir: dir,
 		Buckets:     bucketLabels,
 	}
+	sessionIDs := map[string]bool{}
 
 	for _, entry := range entries {
 		name := entry.Name()
@@ -141,9 +172,14 @@ func analyse(dir string) (*reportData, error) {
 			continue
 		}
 		data.Files++
+		sessionIDs[sessionIDFromFilename(name)] = true
 		if err := analyseFile(filepath.Join(dir, name), tools, shell, data); err != nil {
 			data.ParseErrors++
 		}
+	}
+
+	if metricsDir != "" {
+		joinMetrics(filepath.Join(metricsDir, "metrics.jsonl"), sessionIDs, tools, data)
 	}
 
 	finalize := func(m map[string]*toolStat) []*toolStat {
@@ -159,6 +195,15 @@ func analyse(dir string) (*reportData, error) {
 			if t.Calls > 0 {
 				t.ErrRate = float64(t.Errors) / float64(t.Calls)
 			}
+			if n := len(t.durations); n > 0 {
+				sort.Ints(t.durations)
+				t.DurationMedian = t.durations[n/2]
+				t.DurationP90 = t.durations[min(n*9/10, n-1)]
+				t.DurationMax = t.durations[n-1]
+			}
+			if t.MetricCalls > 0 {
+				t.MetricErrRate = float64(t.MetricErrors) / float64(t.MetricCalls)
+			}
 			out = append(out, t)
 		}
 		sort.Slice(out, func(i, j int) bool { return out[i].Calls > out[j].Calls })
@@ -172,6 +217,69 @@ func analyse(dir string) (*reportData, error) {
 		data.TotalTokens += t.Tokens
 	}
 	return data, nil
+}
+
+// sessionIDFromFilename extracts the session ID from a session filename of
+// the form <timestamp>_<session-id>.jsonl[.tmp].
+func sessionIDFromFilename(name string) string {
+	name = strings.TrimSuffix(strings.TrimSuffix(name, ".tmp"), ".jsonl")
+	if _, id, ok := strings.Cut(name, "_"); ok {
+		return id
+	}
+	return name
+}
+
+// joinMetrics reads tool.<name>.duration events from metrics.jsonl and folds
+// ground-truth error status and durations into the per-tool stats. Events
+// from sessions not present in the sessions dir are skipped so the metrics
+// columns describe the same population as the session-derived columns.
+// Missing or unreadable files are fine — the join is best-effort.
+func joinMetrics(path string, sessionIDs map[string]bool, tools map[string]*toolStat, data *reportData) {
+	f, err := os.Open(path)
+	if err != nil {
+		return
+	}
+	defer f.Close()
+	data.MetricsPath = path
+
+	sc := bufio.NewScanner(f)
+	sc.Buffer(make([]byte, 0, 64*1024), 16*1024*1024)
+	for sc.Scan() {
+		line := sc.Bytes()
+		if len(line) == 0 {
+			continue
+		}
+		var e chat.MetricEvent
+		if err := json.Unmarshal(line, &e); err != nil {
+			data.ParseErrors++
+			continue
+		}
+		if e.Category != chat.MetricCategoryTool || !strings.HasSuffix(e.Name, ".duration") {
+			continue
+		}
+		toolName := e.Labels["tool"]
+		if toolName == "" {
+			continue
+		}
+		if !sessionIDs[e.SessionID] {
+			data.MetricsSkipped++
+			continue
+		}
+
+		t, ok := tools[toolName]
+		if !ok {
+			t = &toolStat{Name: toolName}
+			tools[toolName] = t
+		}
+		t.MetricCalls++
+		if e.Labels["status"] == "error" {
+			t.MetricErrors++
+		}
+		t.durations = append(t.durations, int(e.Value))
+	}
+	if sc.Err() != nil {
+		data.ParseErrors++
+	}
 }
 
 func analyseFile(path string, tools, shell map[string]*toolStat, data *reportData) error {
@@ -342,15 +450,31 @@ func printSummary(data *reportData) {
 	if data.ParseErrors > 0 {
 		fmt.Printf("(%d unparseable lines skipped)\n", data.ParseErrors)
 	}
+	withMetrics := data.MetricsPath != ""
+	if withMetrics {
+		fmt.Printf("metrics join: %s (%d events outside sessions dir skipped)\n", data.MetricsPath, data.MetricsSkipped)
+	}
 
-	fmt.Printf("\n%-24s %7s %6s %6s %10s %6s %8s %8s %9s\n",
+	fmt.Printf("\n%-24s %7s %6s %6s %10s %6s %8s %8s %9s",
 		"tool", "calls", "call%", "err%", "tokens", "tok%", "median", "p90", "max")
+	if withMetrics {
+		fmt.Printf(" %8s %7s %8s %8s", "m.calls", "m.err%", "dur p50", "dur p90")
+	}
+	fmt.Println()
 	for _, t := range data.Tools {
-		fmt.Printf("%-24s %7d %5.1f%% %5.1f%% %10s %5.1f%% %8d %8d %9d\n",
+		fmt.Printf("%-24s %7d %5.1f%% %5.1f%% %10s %5.1f%% %8d %8d %9d",
 			t.Name, t.Calls,
 			pct(t.Calls, data.TotalCalls), t.ErrRate*100,
 			formatCount(t.Tokens), pct(t.Tokens, data.TotalTokens),
 			t.Median, t.P90, t.Max)
+		if withMetrics {
+			if t.MetricCalls > 0 {
+				fmt.Printf(" %8d %6.1f%% %7dms %7dms", t.MetricCalls, t.MetricErrRate*100, t.DurationMedian, t.DurationP90)
+			} else {
+				fmt.Printf(" %8s %7s %8s %8s", "-", "-", "-", "-")
+			}
+		}
+		fmt.Println()
 	}
 
 	fmt.Printf("\ntop shell commands:\n")
@@ -404,7 +528,7 @@ var htmlTemplate = template.Must(template.New("report").Parse(`<!doctype html>
 <body>
 <main>
   <h1>Tau Tool Stats</h1>
-  <p class="meta">Generated {{.GeneratedAt}} · {{.SessionsDir}} · {{.Files}} session files · {{.ParseErrors}} parse errors · error detection is heuristic (is_error is not persisted in sessions)</p>
+  <p class="meta" id="meta">Generated {{.GeneratedAt}} · {{.SessionsDir}} · {{.Files}} session files · {{.ParseErrors}} parse errors</p>
 
   <div class="charts">
     <div class="card"><canvas id="calls"></canvas></div>
@@ -413,7 +537,7 @@ var htmlTemplate = template.Must(template.New("report").Parse(`<!doctype html>
 
   <h2>Tools</h2>
   <table id="tools-table">
-    <tr><th>Tool</th><th>Calls</th><th>Call %</th><th>Errors</th><th>Err %</th><th>Est. tokens</th><th>Tok %</th><th>Median</th><th>P90</th><th>Max</th></tr>
+    <tr id="tools-head"><th>Tool</th><th>Calls</th><th>Call %</th><th>Errors</th><th>Err %</th><th>Est. tokens</th><th>Tok %</th><th>Median</th><th>P90</th><th>Max</th></tr>
   </table>
 
   <h2>Error samples</h2>
@@ -432,7 +556,17 @@ const fmtPct = (x) => (100 * x).toFixed(1) + "%";
 const fmtN = (n) => n >= 1e6 ? (n / 1e6).toFixed(1) + "M" : n >= 1e3 ? (n / 1e3).toFixed(1) + "k" : String(n);
 const totalCalls = data.totalCalls, totalTokens = data.totalTokens;
 
+const withMetrics = Boolean(data.metricsPath);
+const meta = document.getElementById("meta");
+meta.textContent += withMetrics
+  ? " · metrics join: " + data.metricsPath + " (m.* columns are ground truth; " + (data.metricsSkipped || 0) + " events outside sessions dir skipped)"
+  : " · error detection is heuristic (no metrics.jsonl found; set metrics.dir in the tau config for ground truth)";
+
 const toolsTable = document.getElementById("tools-table");
+if (withMetrics) {
+  document.getElementById("tools-head").innerHTML +=
+    "<th>M. calls</th><th>M. err %</th><th>Dur p50</th><th>Dur p90</th><th>Dur max</th>";
+}
 for (const t of data.tools) {
   const tr = document.createElement("tr");
   const errClass = t.errorRate >= 0.15 ? "err" : t.errorRate >= 0.05 ? "warn" : "";
@@ -440,6 +574,15 @@ for (const t of data.tools) {
     "</td><td>" + t.errors + '</td><td class="' + errClass + '">' + fmtPct(t.errorRate) +
     "</td><td>" + fmtN(t.estimatedTokens) + "</td><td>" + fmtPct(t.estimatedTokens / Math.max(totalTokens, 1)) +
     "</td><td>" + t.median + "</td><td>" + t.p90 + "</td><td>" + t.max + "</td>";
+  if (withMetrics) {
+    if (t.metricCalls > 0) {
+      const mErrClass = t.metricErrorRate >= 0.15 ? "err" : t.metricErrorRate >= 0.05 ? "warn" : "";
+      tr.innerHTML += "<td>" + t.metricCalls + '</td><td class="' + mErrClass + '">' + fmtPct(t.metricErrorRate || 0) +
+        "</td><td>" + (t.durationMedianMs || 0) + "ms</td><td>" + (t.durationP90Ms || 0) + "ms</td><td>" + (t.durationMaxMs || 0) + "ms</td>";
+    } else {
+      tr.innerHTML += "<td>-</td><td>-</td><td>-</td><td>-</td><td>-</td>";
+    }
+  }
   toolsTable.appendChild(tr);
 }
 

@@ -122,7 +122,7 @@ The bridge implementation (`internal/agent/ui_bridge.go`) translates these calls
 
 ## Measuring Tool Usage
 
-`task tool-stats` (or `go run ./scripts/tool-stats`) analyses saved session files and reports per-tool call counts, estimated result tokens, size percentiles, and heuristic error rates, plus a breakdown of what shell commands actually run. It prints a summary table and writes a self-contained HTML report. Use it to spot tools that models avoid, bypass via shell, or fail against — the current toolset shape was derived from exactly this analysis.
+`task tool-stats` (or `go run ./scripts/tool-stats`) analyses saved session files and reports per-tool call counts, estimated result tokens, size percentiles, and heuristic error rates, plus a breakdown of what shell commands actually run. When `metrics.dir` is configured (or `--metrics-dir` is passed), the script joins `metrics.jsonl` in for ground-truth per-call error status and duration percentiles, restricted to the sessions being analysed. It prints a summary table and writes a self-contained HTML report. Use it to spot tools that models avoid, bypass via shell, or fail against — the current toolset shape was derived from exactly this analysis.
 
 ## Adding a Custom Tool
 

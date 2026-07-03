@@ -23,5 +23,5 @@ examples/plugins/*/tau-plugin-*
 
 /.claude/
 .playwright-mcp/
-tool-stats
+/tool-stats
 .pi-subagents/
