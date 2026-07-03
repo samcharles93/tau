@@ -135,8 +135,7 @@ func (c *Completions) HandleInput(data string) bool {
 			c.mu.Unlock()
 			return true
 		}
-		c.selected = 0
-		chosen = c.fullReplace(c.filtered[0])
+		chosen = c.fullReplace(c.filtered[c.selected])
 		choose = true
 	case "\x1b[Z": // Shift+Tab — insert the last match (bottom of list)
 		if n > 0 {
