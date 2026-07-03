@@ -205,6 +205,7 @@ To prevent orphaned logic, duplicate systems, and disconnected code, **all agent
 4. **Follow the Command/Event Boundary**:
    - All input from the user/TUI goes through `tauchat.ChatCommand` interfaces.
    - All output to the TUI comes back through `tauchat.ChatEvent` interfaces on the event bus. Do not circumvent this architecture.
+5. **Keep AGENTS.md Current**: If your change adds or alters the API surface — new/changed types, commands, events, interfaces — adds a new package or subsystem, or changes an architectural pattern described in this file, update the relevant section of `AGENTS.md` in the same change. Treat stale documentation as a bug: a feature isn't done until the next agent can discover it from this file, not just from the diff. Pure bug fixes and refactors that don't change a documented contract or pattern don't need a doc update.
 
 ---
 
