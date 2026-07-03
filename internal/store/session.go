@@ -22,6 +22,8 @@ type SessionSummary struct {
 	TotalTokens     int       `json:"total_tokens"`
 	Cost            float64   `json:"cost"`
 	DurationMs      int64     `json:"duration_ms"`
+	ToolCalls       int       `json:"tool_calls"`
+	ToolErrors      int       `json:"tool_errors"`
 	SystemPrompt    string    `json:"system_prompt,omitempty"`
 	ParentSessionID string    `json:"parent_session_id,omitempty"`
 }

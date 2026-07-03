@@ -22,6 +22,18 @@ type SessionTotals struct {
 	ToolErrors       int
 	LastProvider     string
 	LastModel        string
+	// LLMTotalLatencyMs accumulates llm.latency metric values (ms).
+	LLMTotalLatencyMs int64
+	// SkillActivations counts unique skill activation events.
+	SkillActivations int
+	// ExtensionCommands counts extension command invocations.
+	ExtensionCommands int
+	// ModelSwitches counts model change events during the session.
+	ModelSwitches int
+	// ProviderSwitches counts provider change events during the session.
+	ProviderSwitches int
+	// TurnErrors counts failed or cancelled LLM turns.
+	TurnErrors int
 }
 
 // UsageTracker aggregates MetricEvents per session. It subscribes to the
@@ -47,11 +59,9 @@ func NewUsageTracker(client *eventbus.Client) *UsageTracker {
 }
 
 func (t *UsageTracker) handle(e chat.MetricEvent) {
-	// Session lifecycle events don't carry numeric data to aggregate;
-	// they signal that a session exists.
-	if e.Category == chat.MetricCategorySession {
-		return
-	}
+	// Session lifecycle events with a signalling purpose (session.created,
+	// session.closed) don't carry numeric aggregates. Specific session
+	// state-change events (model_changed, provider_changed) are handled below.
 
 	t.mu.Lock()
 	defer t.mu.Unlock()
@@ -83,12 +93,32 @@ func (t *UsageTracker) handle(e chat.MetricEvent) {
 			}
 		case "llm.cost":
 			totals.Cost += e.Value
+		case "llm.latency":
+			totals.LLMTotalLatencyMs += int64(e.Value)
+		case "llm.error":
+			totals.TurnErrors++
 		}
 
 	case chat.MetricCategoryTool:
 		totals.ToolCalls++
 		if status, ok := e.Labels["status"]; ok && status == "error" {
 			totals.ToolErrors++
+		}
+
+	case chat.MetricCategorySkill:
+		totals.SkillActivations++
+
+	case chat.MetricCategoryExtension:
+		totals.ExtensionCommands++
+
+	case chat.MetricCategorySession:
+		switch e.Name {
+		case "session.model_changed":
+			totals.ModelSwitches++
+		case "session.provider_changed":
+			totals.ProviderSwitches++
+		default:
+			// session.created, session.closed — no numeric aggregate.
 		}
 	}
 }

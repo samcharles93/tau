@@ -9,7 +9,7 @@ import (
 
 // currentSchemaVersion is the latest migration number. Bump this when adding
 // new migrations and append the SQL to the migrations map below.
-const currentSchemaVersion = 2
+const currentSchemaVersion = 3
 
 // Migrate runs all pending schema migrations in order. It is idempotent —
 // already-applied migrations are skipped.
@@ -28,6 +28,7 @@ func Migrate(db *sql.DB) error {
 	migrations := map[int]string{
 		1: migrationV1,
 		2: migrationV2,
+		3: migrationV3,
 	}
 
 	for v := current + 1; v <= currentSchemaVersion; v++ {
@@ -107,4 +108,9 @@ CREATE INDEX IF NOT EXISTS idx_messages_session ON messages(session_id, seq);
 var migrationV2 = strings.TrimSpace(`
 ALTER TABLE sessions ADD COLUMN parent_session_id TEXT REFERENCES sessions(id) ON DELETE SET NULL;
 CREATE INDEX IF NOT EXISTS idx_sessions_parent ON sessions(parent_session_id);
+`)
+
+var migrationV3 = strings.TrimSpace(`
+ALTER TABLE sessions ADD COLUMN tool_calls INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE sessions ADD COLUMN tool_errors INTEGER NOT NULL DEFAULT 0;
 `)
