@@ -59,7 +59,10 @@ type Completions struct {
 	provider CompletionProvider
 	input    *LineInput
 	onSelect func(string)
-	onDetail func(string)
+	// onDetail is invoked when the user presses space on a selected item. It
+	// returns whether it handled the item; if it returns false the space is not
+	// consumed, so it falls through and is inserted as ordinary text.
+	onDetail func(string) bool
 
 	mu       sync.Mutex
 	rawSet   *CompletionSet
@@ -88,9 +91,9 @@ func NewCompletions(input *LineInput, provider CompletionProvider) *Completions 
 	return &Completions{input: input, provider: provider}
 }
 
-func (c *Completions) SetOnSelect(fn func(string)) { c.onSelect = fn }
-func (c *Completions) SetOnDetail(fn func(string)) { c.onDetail = fn }
-func (c *Completions) Invalidate()                 {}
+func (c *Completions) SetOnSelect(fn func(string))      { c.onSelect = fn }
+func (c *Completions) SetOnDetail(fn func(string) bool) { c.onDetail = fn }
+func (c *Completions) Invalidate()                      {}
 
 func (c *Completions) HandleInput(data string) bool {
 	c.mu.Lock()
@@ -99,7 +102,9 @@ func (c *Completions) HandleInput(data string) bool {
 		return false
 	}
 	var chosen string
+	detail := ""
 	choose := false
+	wantDetail := false
 	consumed := true
 	n := len(c.filtered)
 
@@ -148,11 +153,13 @@ func (c *Completions) HandleInput(data string) bool {
 		c.hideLocked()
 
 	case " ":
-		// Space on a selected completion item triggers the detail callback
-		// (used to show session info). Only consumed when onDetail is set.
+		// Space on a selected completion item defers to the detail callback
+		// (used to show session info). The callback runs after the lock is
+		// released; whether the space is consumed depends on its result.
 		if c.onDetail != nil && c.selected >= 0 && c.selected < n {
-			c.onDetail(c.filtered[c.selected].match.Word)
-			return true
+			detail = c.filtered[c.selected].match.Word
+			wantDetail = true
+			break
 		}
 		consumed = false
 
@@ -161,6 +168,12 @@ func (c *Completions) HandleInput(data string) bool {
 	}
 	c.mu.Unlock()
 
+	if wantDetail {
+		// If the callback handled the item, consume the space; otherwise let it
+		// fall through so it is inserted as text (e.g. "/mcp " to reveal
+		// sub-actions).
+		return c.onDetail(detail)
+	}
 	if choose && c.onSelect != nil {
 		c.onSelect(chosen)
 	}

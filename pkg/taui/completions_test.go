@@ -154,6 +154,67 @@ func TestCompletionsEscDismiss(t *testing.T) {
 	}
 }
 
+// TestCompletionsSpaceNoDetailFallsThrough guards a regression where pressing
+// space on a visible completion with no onDetail handler leaked the widget lock
+// (an early return that skipped Unlock), freezing every subsequent Render. Here
+// the space must not be consumed, and a following Render must not block.
+func TestCompletionsSpaceNoDetailFallsThrough(t *testing.T) {
+	input := NewLineInput("/mcp")
+	c := NewCompletions(input, func(ctx CompletionContext) *CompletionSet {
+		return &CompletionSet{
+			ReplaceStart: 0, ReplaceEnd: 4,
+			Groups: []MatchGroup{{Matches: []Match{{Word: "/mcp"}}}},
+		}
+	})
+	c.Render(40)
+	if c.HandleInput(" ") {
+		t.Fatal("space should not be consumed when no onDetail is set")
+	}
+	// Would block forever if the lock had leaked.
+	c.Render(40)
+}
+
+// TestCompletionsSpaceDetailUnhandledFallsThrough verifies that when onDetail
+// declines the item (returns false), the space falls through so it can be
+// inserted as text (e.g. "/mcp " to reveal sub-actions).
+func TestCompletionsSpaceDetailUnhandledFallsThrough(t *testing.T) {
+	input := NewLineInput("/mcp")
+	c := NewCompletions(input, func(ctx CompletionContext) *CompletionSet {
+		return &CompletionSet{
+			ReplaceStart: 0, ReplaceEnd: 4,
+			Groups: []MatchGroup{{Matches: []Match{{Word: "/mcp"}}}},
+		}
+	})
+	c.SetOnDetail(func(string) bool { return false })
+	c.Render(40)
+	if c.HandleInput(" ") {
+		t.Fatal("space should fall through when onDetail returns false")
+	}
+	c.Render(40) // must not block
+}
+
+// TestCompletionsSpaceDetailHandledConsumes verifies that when onDetail handles
+// the item (returns true), the space is consumed and not inserted as text.
+func TestCompletionsSpaceDetailHandledConsumes(t *testing.T) {
+	input := NewLineInput("abc")
+	called := false
+	c := NewCompletions(input, func(ctx CompletionContext) *CompletionSet {
+		return &CompletionSet{
+			ReplaceStart: 0, ReplaceEnd: 3,
+			Groups: []MatchGroup{{Matches: []Match{{Word: "abc"}}}},
+		}
+	})
+	c.SetOnDetail(func(string) bool { called = true; return true })
+	c.Render(40)
+	if !c.HandleInput(" ") {
+		t.Fatal("space should be consumed when onDetail returns true")
+	}
+	if !called {
+		t.Fatal("onDetail was not invoked")
+	}
+	c.Render(40) // must not block
+}
+
 func TestCompletionsClampsToMaxItems(t *testing.T) {
 	var items []Match
 	for range 20 {

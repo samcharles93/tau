@@ -9,12 +9,11 @@
 //	plugins:
 //	  mcp-plugin:
 //	    servers:
-//	      - name: filesystem
+//	      - name: filesystem            # stdio transport
 //	        command: npx
 //	        args: ["-y", "@modelcontextprotocol/server-filesystem", "/tmp"]
-//	      - name: postgres
-//	        command: npx
-//	        args: ["-y", "@modelcontextprotocol/server-postgres", "$DATABASE_URL"]
+//	      - name: spawn                 # Streamable HTTP transport
+//	        url: http://localhost:9343/mcp
 package main
 
 import (
@@ -89,27 +88,46 @@ func main() {
 	})
 }
 
-// Metadata returns the plugin name and slash commands.
+// Metadata returns the plugin name and slash commands. The MCP actions are
+// grouped as sub-actions of a single `/mcp` command, e.g. `/mcp list`.
 func (p *MCPPlugin) Metadata() (string, []*pluginapi.Command) {
 	return "mcp-plugin", []*pluginapi.Command{
-		{Name: "mcp-list", Description: "list connected MCP servers", ExtensionName: "mcp-plugin"},
-		{Name: "mcp-reconnect", Description: "reconnect to an MCP server by name", ExtensionName: "mcp-plugin"},
-		{Name: "mcp-reload", Description: "reload all MCP servers from config", ExtensionName: "mcp-plugin"},
+		{
+			Name:          "mcp",
+			Description:   "manage MCP servers",
+			ExtensionName: "mcp-plugin",
+			Subcommands: []*pluginapi.Command{
+				{Name: "list", Description: "list connected MCP servers"},
+				{Name: "reconnect", Description: "reconnect to an MCP server by name", ArgsHint: "<server>"},
+				{Name: "reload", Description: "reload all MCP servers from config"},
+			},
+		},
 	}
 }
 
-// RunCommand executes a slash command.
+// RunCommand executes a slash command. The host passes the full space-joined
+// action path as name, e.g. "mcp list"; a bare "mcp" prints the sub-action help.
 func (p *MCPPlugin) RunCommand(ctx context.Context, name, args string) (string, error) {
 	switch name {
-	case "mcp-list":
+	case "mcp", "mcp help":
+		return p.cmdHelp(), nil
+	case "mcp list":
 		return p.cmdList()
-	case "mcp-reconnect":
+	case "mcp reconnect":
 		return p.cmdReconnect(ctx, strings.TrimSpace(args))
-	case "mcp-reload":
+	case "mcp reload":
 		return p.cmdReload(ctx)
 	default:
-		return "", fmt.Errorf("tau-plugin-mcp: unknown command %q", name)
+		return "", fmt.Errorf("tau-plugin-mcp: unknown command %q (try /mcp help)", name)
 	}
+}
+
+// cmdHelp lists the available /mcp sub-actions.
+func (p *MCPPlugin) cmdHelp() string {
+	return "MCP commands:\n" +
+		"  /mcp list                list connected MCP servers\n" +
+		"  /mcp reconnect <server>  reconnect to an MCP server by name\n" +
+		"  /mcp reload              reload all MCP servers from config"
 }
 
 // Reload reconnects to MCP servers.
@@ -167,7 +185,10 @@ func (p *MCPPlugin) Tools(ctx context.Context) ([]*pluginapi.ToolDefinition, err
 	return tools, nil
 }
 
-// ExecuteTool executes an MCP tool and returns the result.
+// ExecuteTool executes an MCP tool and returns the result. toolName is the
+// plugin's own "<server>.<tool>" name; the host passes it back verbatim (it
+// only sanitises the separate LLM-facing name), so a simple split recovers the
+// server and the tool's exact MCP name.
 func (p *MCPPlugin) ExecuteTool(ctx context.Context, toolName, arguments string) (content string, isError bool, err error) {
 	serverName, shortName, ok := strings.Cut(toolName, ".")
 	if !ok {
@@ -217,7 +238,7 @@ func (p *MCPPlugin) cmdList() (string, error) {
 
 func (p *MCPPlugin) cmdReconnect(ctx context.Context, serverName string) (string, error) {
 	if serverName == "" {
-		return "", fmt.Errorf("usage: /mcp-reconnect <server>")
+		return "", fmt.Errorf("usage: /mcp reconnect <server>")
 	}
 
 	// Confirm before disconnecting.
@@ -237,7 +258,7 @@ func (p *MCPPlugin) cmdReconnect(ctx context.Context, serverName string) (string
 	s, ok := p.sessions[serverName]
 	if !ok {
 		p.mu.Unlock()
-		return "", fmt.Errorf("server %q not found — use /mcp-list to see connected servers", serverName)
+		return "", fmt.Errorf("server %q not found — use /mcp list to see connected servers", serverName)
 	}
 	s.session.Close()
 	if s.cmd != nil && s.cmd.Process != nil {
@@ -252,7 +273,7 @@ func (p *MCPPlugin) cmdReconnect(ctx context.Context, serverName string) (string
 	}
 
 	for _, cfg := range servers {
-		if cfg.Name == serverName && cfg.Command != "" {
+		if cfg.Name == serverName && cfg.configured() {
 			if err := p.connectServer(context.Background(), cfg); err != nil {
 				return "", fmt.Errorf("reconnect failed: %w", err)
 			}
@@ -291,15 +312,32 @@ func (p *MCPPlugin) cmdReload(ctx context.Context) (string, error) {
 	return fmt.Sprintf("✓ reloaded %d MCP server(s)", count), nil
 }
 
-// connectServer connects to a single configured server.
+// connectServer connects to a single configured server. The transport is chosen
+// per the MCP specification: a URL selects Streamable HTTP, otherwise a
+// command/args pair selects stdio. Both transports are the official
+// implementations from modelcontextprotocol/go-sdk, so the plugin conforms to
+// the spec rather than defining its own wire protocol.
 func (p *MCPPlugin) connectServer(ctx context.Context, cfg serverConfig) error {
-	cmd := exec.CommandContext(ctx, cfg.Command, cfg.Args...)
 	client := mcp.NewClient(&mcp.Implementation{
 		Name:    "tau-plugin-mcp",
 		Version: "0.1.0",
 	}, nil)
 
-	session, err := client.Connect(ctx, &mcp.CommandTransport{Command: cmd}, nil)
+	var (
+		transport mcp.Transport
+		cmd       *exec.Cmd // stdio only; nil for HTTP
+	)
+	switch {
+	case cfg.URL != "":
+		transport = &mcp.StreamableClientTransport{Endpoint: cfg.URL}
+	case cfg.Command != "":
+		cmd = exec.CommandContext(ctx, cfg.Command, cfg.Args...)
+		transport = &mcp.CommandTransport{Command: cmd}
+	default:
+		return fmt.Errorf("server %q has neither command nor url", cfg.Name)
+	}
+
+	session, err := client.Connect(ctx, transport, nil)
 	if err != nil {
 		return fmt.Errorf("connect to %s: %w", cfg.Name, err)
 	}
@@ -313,8 +351,16 @@ func (p *MCPPlugin) connectServer(ctx context.Context, cfg serverConfig) error {
 	}
 	p.mu.Unlock()
 
-	p.logger.Info("tau-plugin-mcp: connected to server", "name", cfg.Name)
+	p.logger.Info("tau-plugin-mcp: connected to server", "name", cfg.Name, "transport", transportKind(cfg))
 	return nil
+}
+
+// transportKind labels the transport for logging.
+func transportKind(cfg serverConfig) string {
+	if cfg.URL != "" {
+		return "streamable-http"
+	}
+	return "stdio"
 }
 
 // loadServers connects to all configured MCP servers.
@@ -325,12 +371,12 @@ func (p *MCPPlugin) loadServers(ctx context.Context) error {
 	}
 
 	for _, cfg := range servers {
-		if cfg.Command == "" {
+		if !cfg.configured() {
 			continue
 		}
 		if err := p.connectServer(ctx, cfg); err != nil {
 			p.logger.Warn("tau-plugin-mcp: failed to connect to server",
-				"name", cfg.Name, "command", cfg.Command, "err", err)
+				"name", cfg.Name, "transport", transportKind(cfg), "err", err)
 			continue
 		}
 	}
@@ -341,10 +387,17 @@ func (p *MCPPlugin) loadServers(ctx context.Context) error {
 // --- MCP server config ---
 
 type serverConfig struct {
-	Name    string   `json:"name"`
+	Name string `json:"name"`
+	// Command/Args describe a stdio server (a subprocess speaking JSON-RPC over
+	// stdio). URL describes a Streamable HTTP server. Exactly one of Command or
+	// URL should be set per server.
 	Command string   `json:"command"`
 	Args    []string `json:"args"`
+	URL     string   `json:"url"`
 }
+
+// configured reports whether the server has enough config to connect.
+func (c serverConfig) configured() bool { return c.Command != "" || c.URL != "" }
 
 // These are loaded from the plugin's config. In a real implementation,
 // this would come from the HostService.GetConfig() RPC. For now,
@@ -390,6 +443,9 @@ func (s *mcpSession) listTools(ctx context.Context) ([]*pluginapi.ToolDefinition
 			schema = string(schemaBytes)
 		}
 		tools[i] = &pluginapi.ToolDefinition{
+			// "<server>.<tool>" namespaces the tool across the plugin's servers.
+			// The host sanitises the LLM-facing name; this name is what the host
+			// hands back to ExecuteTool, so keep it stable and splittable.
 			Name:        s.name + "." + t.Name,
 			Description: t.Description,
 			InputSchema: schema,

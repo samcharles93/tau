@@ -21,12 +21,16 @@ const (
 	_ = protoimpl.EnforceVersion(protoimpl.MaxVersion - 20)
 )
 
-// Command represents an extension slash command.
+// Command represents an extension slash command. Commands may declare nested
+// sub-actions (subcommands), e.g. `/mcp list`, so a plugin can group related
+// actions under a single namespace instead of hyphenated top-level commands.
 type Command struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	Name          string                 `protobuf:"bytes,1,opt,name=name,proto3" json:"name,omitempty"`
 	Description   string                 `protobuf:"bytes,2,opt,name=description,proto3" json:"description,omitempty"`
 	ExtensionName string                 `protobuf:"bytes,3,opt,name=extension_name,json=extensionName,proto3" json:"extension_name,omitempty"`
+	Subcommands   []*Command             `protobuf:"bytes,4,rep,name=subcommands,proto3" json:"subcommands,omitempty"`           // sub-actions, e.g. list / reconnect / reload
+	ArgsHint      string                 `protobuf:"bytes,5,opt,name=args_hint,json=argsHint,proto3" json:"args_hint,omitempty"` // optional usage hint, e.g. "<server>"
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -78,6 +82,20 @@ func (x *Command) GetDescription() string {
 func (x *Command) GetExtensionName() string {
 	if x != nil {
 		return x.ExtensionName
+	}
+	return ""
+}
+
+func (x *Command) GetSubcommands() []*Command {
+	if x != nil {
+		return x.Subcommands
+	}
+	return nil
+}
+
+func (x *Command) GetArgsHint() string {
+	if x != nil {
+		return x.ArgsHint
 	}
 	return ""
 }
@@ -2775,11 +2793,13 @@ var File_pkg_plugin_api_extension_proto protoreflect.FileDescriptor
 
 const file_pkg_plugin_api_extension_proto_rawDesc = "" +
 	"\n" +
-	"\x1epkg/plugin/api/extension.proto\x12\x05proto\"f\n" +
+	"\x1epkg/plugin/api/extension.proto\x12\x05proto\"\xb5\x01\n" +
 	"\aCommand\x12\x12\n" +
 	"\x04name\x18\x01 \x01(\tR\x04name\x12 \n" +
 	"\vdescription\x18\x02 \x01(\tR\vdescription\x12%\n" +
-	"\x0eextension_name\x18\x03 \x01(\tR\rextensionName\"}\n" +
+	"\x0eextension_name\x18\x03 \x01(\tR\rextensionName\x120\n" +
+	"\vsubcommands\x18\x04 \x03(\v2\x0e.proto.CommandR\vsubcommands\x12\x1b\n" +
+	"\targs_hint\x18\x05 \x01(\tR\bargsHint\"}\n" +
 	"\n" +
 	"Diagnostic\x12\x12\n" +
 	"\x04path\x18\x01 \x01(\tR\x04path\x12%\n" +
@@ -3057,68 +3077,69 @@ var file_pkg_plugin_api_extension_proto_goTypes = []any{
 	nil,                                // 54: proto.ConfigSchema.FieldsEntry
 }
 var file_pkg_plugin_api_extension_proto_depIdxs = []int32{
-	49, // 0: proto.EventContext.fields:type_name -> proto.EventContext.FieldsEntry
-	0,  // 1: proto.GetMetadataResponse.commands:type_name -> proto.Command
-	1,  // 2: proto.ReloadResponse.diagnostics:type_name -> proto.Diagnostic
-	0,  // 3: proto.ReloadResponse.commands:type_name -> proto.Command
-	11, // 4: proto.DispatchEventRequest.payload:type_name -> proto.EventPayload
-	12, // 5: proto.DispatchEventResponse.response:type_name -> proto.EventResponse
-	13, // 6: proto.EventPayload.session:type_name -> proto.SessionEventPayload
-	14, // 7: proto.EventPayload.context:type_name -> proto.ContextPayload
-	15, // 8: proto.EventPayload.before_llm_call:type_name -> proto.BeforeLLMCallPayload
-	16, // 9: proto.EventPayload.after_llm_call:type_name -> proto.AfterLLMCallPayload
-	17, // 10: proto.EventPayload.before_tool_exec:type_name -> proto.ToolCallPayload
-	18, // 11: proto.EventPayload.after_tool_exec:type_name -> proto.ToolResultPayload
-	19, // 12: proto.EventPayload.message_delta:type_name -> proto.MessageDeltaPayload
-	20, // 13: proto.EventPayload.turn:type_name -> proto.TurnPayload
-	21, // 14: proto.EventPayload.compaction:type_name -> proto.CompactionPayload
-	50, // 15: proto.EventResponse.add_headers:type_name -> proto.EventResponse.AddHeadersEntry
-	1,  // 16: proto.EventResponse.diagnostics:type_name -> proto.Diagnostic
-	51, // 17: proto.BeforeLLMCallPayload.headers:type_name -> proto.BeforeLLMCallPayload.HeadersEntry
-	22, // 18: proto.GetToolsResponse.tools:type_name -> proto.ToolDefinition
-	52, // 19: proto.LogEntry.fields:type_name -> proto.LogEntry.FieldsEntry
-	27, // 20: proto.LogRequest.entry:type_name -> proto.LogEntry
-	54, // 21: proto.ConfigSchema.fields:type_name -> proto.ConfigSchema.FieldsEntry
-	53, // 22: proto.ConfigSchema.FieldsEntry.value:type_name -> proto.ConfigSchema.Field
-	3,  // 23: proto.ExtensionService.GetMetadata:input_type -> proto.GetMetadataRequest
-	5,  // 24: proto.ExtensionService.RunCommand:input_type -> proto.RunCommandRequest
-	7,  // 25: proto.ExtensionService.Reload:input_type -> proto.ReloadRequest
-	9,  // 26: proto.ExtensionService.DispatchEvent:input_type -> proto.DispatchEventRequest
-	23, // 27: proto.ExtensionService.GetTools:input_type -> proto.GetToolsRequest
-	25, // 28: proto.ExtensionService.ExecuteTool:input_type -> proto.ExecuteToolRequest
-	28, // 29: proto.ExtensionService.Log:input_type -> proto.LogRequest
-	33, // 30: proto.ExtensionService.Init:input_type -> proto.InitRequest
-	31, // 31: proto.ExtensionService.GetCapabilities:input_type -> proto.GetCapabilitiesRequest
-	35, // 32: proto.HostService.GetConfig:input_type -> proto.GetConfigRequest
-	37, // 33: proto.HostService.SetConfig:input_type -> proto.SetConfigRequest
-	39, // 34: proto.HostService.GetSessionState:input_type -> proto.GetSessionStateRequest
-	41, // 35: proto.HostService.GetAvailableModels:input_type -> proto.GetAvailableModelsRequest
-	43, // 36: proto.HostService.Notify:input_type -> proto.NotifyRequest
-	28, // 37: proto.HostService.Log:input_type -> proto.LogRequest
-	45, // 38: proto.HostService.Confirm:input_type -> proto.ConfirmRequest
-	47, // 39: proto.HostService.Input:input_type -> proto.InputRequest
-	4,  // 40: proto.ExtensionService.GetMetadata:output_type -> proto.GetMetadataResponse
-	6,  // 41: proto.ExtensionService.RunCommand:output_type -> proto.RunCommandResponse
-	8,  // 42: proto.ExtensionService.Reload:output_type -> proto.ReloadResponse
-	10, // 43: proto.ExtensionService.DispatchEvent:output_type -> proto.DispatchEventResponse
-	24, // 44: proto.ExtensionService.GetTools:output_type -> proto.GetToolsResponse
-	26, // 45: proto.ExtensionService.ExecuteTool:output_type -> proto.ExecuteToolResponse
-	29, // 46: proto.ExtensionService.Log:output_type -> proto.LogResponse
-	34, // 47: proto.ExtensionService.Init:output_type -> proto.InitResponse
-	32, // 48: proto.ExtensionService.GetCapabilities:output_type -> proto.GetCapabilitiesResponse
-	36, // 49: proto.HostService.GetConfig:output_type -> proto.GetConfigResponse
-	38, // 50: proto.HostService.SetConfig:output_type -> proto.SetConfigResponse
-	40, // 51: proto.HostService.GetSessionState:output_type -> proto.GetSessionStateResponse
-	42, // 52: proto.HostService.GetAvailableModels:output_type -> proto.GetAvailableModelsResponse
-	44, // 53: proto.HostService.Notify:output_type -> proto.NotifyResponse
-	29, // 54: proto.HostService.Log:output_type -> proto.LogResponse
-	46, // 55: proto.HostService.Confirm:output_type -> proto.ConfirmResponse
-	48, // 56: proto.HostService.Input:output_type -> proto.InputResponse
-	40, // [40:57] is the sub-list for method output_type
-	23, // [23:40] is the sub-list for method input_type
-	23, // [23:23] is the sub-list for extension type_name
-	23, // [23:23] is the sub-list for extension extendee
-	0,  // [0:23] is the sub-list for field type_name
+	0,  // 0: proto.Command.subcommands:type_name -> proto.Command
+	49, // 1: proto.EventContext.fields:type_name -> proto.EventContext.FieldsEntry
+	0,  // 2: proto.GetMetadataResponse.commands:type_name -> proto.Command
+	1,  // 3: proto.ReloadResponse.diagnostics:type_name -> proto.Diagnostic
+	0,  // 4: proto.ReloadResponse.commands:type_name -> proto.Command
+	11, // 5: proto.DispatchEventRequest.payload:type_name -> proto.EventPayload
+	12, // 6: proto.DispatchEventResponse.response:type_name -> proto.EventResponse
+	13, // 7: proto.EventPayload.session:type_name -> proto.SessionEventPayload
+	14, // 8: proto.EventPayload.context:type_name -> proto.ContextPayload
+	15, // 9: proto.EventPayload.before_llm_call:type_name -> proto.BeforeLLMCallPayload
+	16, // 10: proto.EventPayload.after_llm_call:type_name -> proto.AfterLLMCallPayload
+	17, // 11: proto.EventPayload.before_tool_exec:type_name -> proto.ToolCallPayload
+	18, // 12: proto.EventPayload.after_tool_exec:type_name -> proto.ToolResultPayload
+	19, // 13: proto.EventPayload.message_delta:type_name -> proto.MessageDeltaPayload
+	20, // 14: proto.EventPayload.turn:type_name -> proto.TurnPayload
+	21, // 15: proto.EventPayload.compaction:type_name -> proto.CompactionPayload
+	50, // 16: proto.EventResponse.add_headers:type_name -> proto.EventResponse.AddHeadersEntry
+	1,  // 17: proto.EventResponse.diagnostics:type_name -> proto.Diagnostic
+	51, // 18: proto.BeforeLLMCallPayload.headers:type_name -> proto.BeforeLLMCallPayload.HeadersEntry
+	22, // 19: proto.GetToolsResponse.tools:type_name -> proto.ToolDefinition
+	52, // 20: proto.LogEntry.fields:type_name -> proto.LogEntry.FieldsEntry
+	27, // 21: proto.LogRequest.entry:type_name -> proto.LogEntry
+	54, // 22: proto.ConfigSchema.fields:type_name -> proto.ConfigSchema.FieldsEntry
+	53, // 23: proto.ConfigSchema.FieldsEntry.value:type_name -> proto.ConfigSchema.Field
+	3,  // 24: proto.ExtensionService.GetMetadata:input_type -> proto.GetMetadataRequest
+	5,  // 25: proto.ExtensionService.RunCommand:input_type -> proto.RunCommandRequest
+	7,  // 26: proto.ExtensionService.Reload:input_type -> proto.ReloadRequest
+	9,  // 27: proto.ExtensionService.DispatchEvent:input_type -> proto.DispatchEventRequest
+	23, // 28: proto.ExtensionService.GetTools:input_type -> proto.GetToolsRequest
+	25, // 29: proto.ExtensionService.ExecuteTool:input_type -> proto.ExecuteToolRequest
+	28, // 30: proto.ExtensionService.Log:input_type -> proto.LogRequest
+	33, // 31: proto.ExtensionService.Init:input_type -> proto.InitRequest
+	31, // 32: proto.ExtensionService.GetCapabilities:input_type -> proto.GetCapabilitiesRequest
+	35, // 33: proto.HostService.GetConfig:input_type -> proto.GetConfigRequest
+	37, // 34: proto.HostService.SetConfig:input_type -> proto.SetConfigRequest
+	39, // 35: proto.HostService.GetSessionState:input_type -> proto.GetSessionStateRequest
+	41, // 36: proto.HostService.GetAvailableModels:input_type -> proto.GetAvailableModelsRequest
+	43, // 37: proto.HostService.Notify:input_type -> proto.NotifyRequest
+	28, // 38: proto.HostService.Log:input_type -> proto.LogRequest
+	45, // 39: proto.HostService.Confirm:input_type -> proto.ConfirmRequest
+	47, // 40: proto.HostService.Input:input_type -> proto.InputRequest
+	4,  // 41: proto.ExtensionService.GetMetadata:output_type -> proto.GetMetadataResponse
+	6,  // 42: proto.ExtensionService.RunCommand:output_type -> proto.RunCommandResponse
+	8,  // 43: proto.ExtensionService.Reload:output_type -> proto.ReloadResponse
+	10, // 44: proto.ExtensionService.DispatchEvent:output_type -> proto.DispatchEventResponse
+	24, // 45: proto.ExtensionService.GetTools:output_type -> proto.GetToolsResponse
+	26, // 46: proto.ExtensionService.ExecuteTool:output_type -> proto.ExecuteToolResponse
+	29, // 47: proto.ExtensionService.Log:output_type -> proto.LogResponse
+	34, // 48: proto.ExtensionService.Init:output_type -> proto.InitResponse
+	32, // 49: proto.ExtensionService.GetCapabilities:output_type -> proto.GetCapabilitiesResponse
+	36, // 50: proto.HostService.GetConfig:output_type -> proto.GetConfigResponse
+	38, // 51: proto.HostService.SetConfig:output_type -> proto.SetConfigResponse
+	40, // 52: proto.HostService.GetSessionState:output_type -> proto.GetSessionStateResponse
+	42, // 53: proto.HostService.GetAvailableModels:output_type -> proto.GetAvailableModelsResponse
+	44, // 54: proto.HostService.Notify:output_type -> proto.NotifyResponse
+	29, // 55: proto.HostService.Log:output_type -> proto.LogResponse
+	46, // 56: proto.HostService.Confirm:output_type -> proto.ConfirmResponse
+	48, // 57: proto.HostService.Input:output_type -> proto.InputResponse
+	41, // [41:58] is the sub-list for method output_type
+	24, // [24:41] is the sub-list for method input_type
+	24, // [24:24] is the sub-list for extension type_name
+	24, // [24:24] is the sub-list for extension extendee
+	0,  // [0:24] is the sub-list for field type_name
 }
 
 func init() { file_pkg_plugin_api_extension_proto_init() }

@@ -559,6 +559,11 @@ type ExtensionCommand struct {
 	Name          string `json:"name"`
 	Description   string `json:"description,omitempty"`
 	ExtensionName string `json:"extension_name,omitempty"`
+	// ArgsHint is an optional usage hint shown in completions, e.g. "<server>".
+	ArgsHint string `json:"args_hint,omitempty"`
+	// Subcommands are nested sub-actions of this command, e.g. list / reconnect
+	// / reload under an `mcp` group. Empty for flat commands.
+	Subcommands []ExtensionCommand `json:"subcommands,omitempty"`
 }
 
 type ExtensionCommandsChangedEvent struct {

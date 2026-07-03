@@ -187,6 +187,56 @@ func TestHandleSlashCommand_Extension(t *testing.T) {
 	}
 }
 
+func TestHandleSlashCommand_ExtensionSubcommand(t *testing.T) {
+	c, rt := newTestChat(t)
+	c.extensionCommands = map[string]tauchat.ExtensionCommand{
+		"mcp": {Name: "mcp", Subcommands: []tauchat.ExtensionCommand{
+			{Name: "reconnect", ArgsHint: "<server>"},
+		}},
+	}
+	c.handleSlashCommand("/mcp reconnect filesystem")
+	cmd, ok := rt.last().(tauchat.RunExtensionCommandCommand)
+	if !ok {
+		t.Fatalf("expected RunExtensionCommandCommand, got %T", rt.last())
+	}
+	if cmd.Name != "mcp reconnect" || cmd.Args != "filesystem" {
+		t.Fatalf("expected %q/%q, got %q/%q", "mcp reconnect", "filesystem", cmd.Name, cmd.Args)
+	}
+}
+
+func TestHandleSlashCommand_ExtensionGroupNoSubAction(t *testing.T) {
+	c, rt := newTestChat(t)
+	c.extensionCommands = map[string]tauchat.ExtensionCommand{
+		"mcp": {Name: "mcp", Subcommands: []tauchat.ExtensionCommand{{Name: "list"}}},
+	}
+	c.handleSlashCommand("/mcp")
+	cmd, ok := rt.last().(tauchat.RunExtensionCommandCommand)
+	if !ok {
+		t.Fatalf("expected RunExtensionCommandCommand, got %T", rt.last())
+	}
+	if cmd.Name != "mcp" || cmd.Args != "" {
+		t.Fatalf("expected bare group dispatch mcp/\"\", got %q/%q", cmd.Name, cmd.Args)
+	}
+}
+
+func TestCompletionSet_ExtensionSubcommands(t *testing.T) {
+	c, _ := newTestChat(t)
+	c.extensionCommands = map[string]tauchat.ExtensionCommand{
+		"mcp": {Name: "mcp", Subcommands: []tauchat.ExtensionCommand{
+			{Name: "list"}, {Name: "reconnect", ArgsHint: "<server>"}, {Name: "reload"},
+		}},
+	}
+	set := c.completionSet(taui.CompletionContext{Text: "/mcp ", Cursor: 5})
+	if set == nil || len(set.Groups) == 0 {
+		t.Fatal("expected extension subcommand completions")
+	}
+	for _, want := range []string{"list", "reconnect", "reload"} {
+		if !hasWord(set.Groups[0].Matches, want) {
+			t.Fatalf("expected subcommand %q, got %+v", want, set.Groups[0].Matches)
+		}
+	}
+}
+
 func TestCompletionSet_Commands(t *testing.T) {
 	c, _ := newTestChat(t)
 	set := c.completionSet(taui.CompletionContext{Text: "/mod", Cursor: 4})

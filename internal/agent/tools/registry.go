@@ -179,11 +179,46 @@ func (r *Registry) SetPluginToolExecutor(executor PluginToolExecutor) {
 	r.pluginToolExecutor = executor
 }
 
+// pluginToolSep joins a plugin name and its tool name into the registry's
+// public tool identifier. It must satisfy the function-name pattern that
+// OpenAI-compatible providers enforce (^[a-zA-Z0-9_-]+$), so it cannot be ".".
+const pluginToolSep = "__"
+
+// sanitizePluginToolName maps an arbitrary name to the ^[a-zA-Z0-9_-]+$
+// character set that OpenAI-compatible providers require for function names,
+// replacing any other character with '_'. This is applied centrally to every
+// plugin tool so plugin authors can return natural names (the MCP spec, for
+// one, places no character constraints on tool names) without each plugin
+// re-implementing provider name rules.
+func sanitizePluginToolName(s string) string {
+	var b strings.Builder
+	b.Grow(len(s))
+	for _, r := range s {
+		switch {
+		case r >= 'a' && r <= 'z', r >= 'A' && r <= 'Z', r >= '0' && r <= '9', r == '_', r == '-':
+			b.WriteRune(r)
+		default:
+			b.WriteByte('_')
+		}
+	}
+	if b.Len() == 0 {
+		return "tool"
+	}
+	return b.String()
+}
+
 // RegisterPluginTool registers a tool from a plugin in the registry.
-// The tool name is prefixed with the plugin name to avoid collisions.
-// Returns an error if the tool name is already registered.
+//
+// The public, LLM-facing name is the plugin name and tool name, sanitised to the
+// provider-safe character set and joined with pluginToolSep. Sanitising here —
+// once, for every plugin — means plugin authors can return whatever names their
+// upstream uses. Execution routes back to the plugin with its ORIGINAL, unmodified
+// tool name (captured in the closure below), so the plugin never sees the
+// sanitised form and needs no name translation of its own.
+//
+// Returns an error if the resulting name is already registered.
 func (r *Registry) RegisterPluginTool(pluginName string, def PluginToolDef) error {
-	toolName := pluginName + "." + def.Name
+	toolName := sanitizePluginToolName(pluginName) + pluginToolSep + sanitizePluginToolName(def.Name)
 	reg := r // capture for closure
 	tool := Tool{
 		Schema: Schema{
@@ -208,9 +243,10 @@ func (r *Registry) RegisterPluginTool(pluginName string, def PluginToolDef) erro
 }
 
 // UnregisterPluginTools removes all tools belonging to a plugin.
-// Plugin tools are identified by the "pluginName." prefix in their names.
+// Plugin tools are identified by the sanitised "pluginName__" prefix in their
+// names (see RegisterPluginTool).
 func (r *Registry) UnregisterPluginTools(pluginName string) {
-	prefix := pluginName + "."
+	prefix := sanitizePluginToolName(pluginName) + pluginToolSep
 	r.mu.Lock()
 	defer r.mu.Unlock()
 

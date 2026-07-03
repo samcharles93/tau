@@ -131,16 +131,17 @@ func newInlineChat(
 		c.input.SetValueAndCursor(s, len([]rune(s)))
 		c.engine.RequestRender()
 	})
-	c.completions.SetOnDetail(func(word string) {
+	c.completions.SetOnDetail(func(word string) bool {
 		c.mu.Lock()
 		for _, s := range c.sessionSummaries {
 			if s.ID == word {
 				c.mu.Unlock()
 				c.printSessionInfo(s)
-				return
+				return true
 			}
 		}
 		c.mu.Unlock()
+		return false
 	})
 
 	box := taui.NewBox().Padding(1, 1).ExpandW().Build()

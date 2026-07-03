@@ -64,11 +64,13 @@ func (c *inlineChat) completionSet(ctx taui.CompletionContext) *taui.CompletionS
 			argsBefore--
 		}
 		name := strings.TrimPrefix(strings.ToLower(fields[0]), "/")
-		cmd, ok := slashByName[name]
-		if !ok || cmd.complete == nil {
-			return nil
+		if cmd, ok := slashByName[name]; ok && cmd.complete != nil {
+			title, matches = cmd.complete(c, fields, argsBefore)
+		} else if argsBefore == 0 {
+			// Completing the first argument slot of an extension command group:
+			// offer its sub-actions (e.g. /mcp <list|reconnect|reload>).
+			title, matches = c.extensionSubcommandMatches(name)
 		}
-		title, matches = cmd.complete(c, fields, argsBefore)
 	}
 
 	if len(matches) == 0 {
@@ -129,6 +131,30 @@ func (c *inlineChat) commandMatches() []taui.Match {
 		add(taui.Match{Word: "/" + ext.Name, Description: ext.Description})
 	}
 	return out
+}
+
+// extensionSubcommandMatches lists the sub-actions of an extension command
+// group (e.g. `list`, `reconnect`, `reload` for `/mcp`), used when completing
+// the first argument slot after a group name. Returns no matches when the named
+// command has no sub-actions.
+func (c *inlineChat) extensionSubcommandMatches(name string) (string, []taui.Match) {
+	c.mu.Lock()
+	ext, ok := c.extensionCommands[name]
+	c.mu.Unlock()
+	if !ok || len(ext.Subcommands) == 0 {
+		return "", nil
+	}
+	subs := slices.Clone(ext.Subcommands)
+	slices.SortFunc(subs, func(a, b tauchat.ExtensionCommand) int { return strings.Compare(a.Name, b.Name) })
+	matches := make([]taui.Match, 0, len(subs))
+	for _, sub := range subs {
+		desc := sub.Description
+		if sub.ArgsHint != "" {
+			desc = strings.TrimSpace(sub.ArgsHint + "  " + desc)
+		}
+		matches = append(matches, taui.Match{Word: sub.Name, Description: desc})
+	}
+	return "/" + ext.Name, matches
 }
 
 func (c *inlineChat) modelMatches() []taui.Match {

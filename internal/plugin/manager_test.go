@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/samcharles93/tau/internal/chat"
 	"github.com/samcharles93/tau/pkg/plugin/api"
 	"google.golang.org/grpc"
 )
@@ -255,6 +256,36 @@ func TestExecutePluginTool_Success(t *testing.T) {
 	}
 	if result.Content != "tool result" {
 		t.Errorf("expected Content %q, got %q", "tool result", result.Content)
+	}
+}
+
+func TestCommandHandles(t *testing.T) {
+	cmd := chat.ExtensionCommand{
+		Name: "mcp",
+		Subcommands: []chat.ExtensionCommand{
+			{Name: "list"}, {Name: "reconnect"}, {Name: "reload"},
+		},
+	}
+	flat := chat.ExtensionCommand{Name: "deploy"}
+
+	cases := []struct {
+		cmd  chat.ExtensionCommand
+		name string
+		want bool
+	}{
+		{cmd, "mcp", true},           // bare group
+		{cmd, "mcp list", true},      // declared sub-action
+		{cmd, "mcp reconnect", true}, // declared sub-action
+		{cmd, "mcp bogus", false},    // unknown sub-action
+		{cmd, "other", false},        // different command
+		{cmd, "mcplist", false},      // no space boundary
+		{flat, "deploy", true},       // flat command still matches
+		{flat, "deploy now", false},  // flat command has no sub-actions
+	}
+	for _, tc := range cases {
+		if got := commandHandles(tc.cmd, tc.name); got != tc.want {
+			t.Errorf("commandHandles(%q, %q) = %v, want %v", tc.cmd.Name, tc.name, got, tc.want)
+		}
 	}
 }
 

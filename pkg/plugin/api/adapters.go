@@ -150,6 +150,8 @@ func protoCommandsToChat(cmds []*Command) []chat.ExtensionCommand {
 			Name:          c.Name,
 			Description:   c.Description,
 			ExtensionName: c.ExtensionName,
+			ArgsHint:      c.ArgsHint,
+			Subcommands:   protoCommandsToChat(c.Subcommands),
 		}
 	}
 	return out
