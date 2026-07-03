@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.13.0](https://github.com/samcharles93/tau/compare/v0.12.0...v0.13.0) (2026-07-03)
+
+
+### Features
+
+* default reasoning effort to auto ([7898de8](https://github.com/samcharles93/tau/commit/7898de8d6002433054ffd8121fcbdf82a9ecd998))
+
 ## [0.12.0](https://github.com/samcharles93/tau/compare/v0.11.0...v0.12.0) (2026-07-03)
 
 
