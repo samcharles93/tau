@@ -34,6 +34,19 @@ git commit -m "refactor(tui): extract completion logic into dedicated component"
 git commit -m "chore: update go dependencies"
 ```
 
+## GitHub Issues
+
+When filing a GitHub issue (`gh issue create`), use one of the structured templates in `.github/ISSUE_TEMPLATE/` rather than a blank issue — pick by what the issue actually is:
+
+| Template | File | Use for |
+| -------- | ---- | ------- |
+| 🐛 Bug Report | `bug-report.yml` | A bug, crash, or unexpected behaviour |
+| ✨ Feature Request | `feature-request.yml` | A new feature, enhancement, or capability |
+| 🔌 Plugin / Extension / Skill | `extension.yml` | gRPC plugins, custom slash commands, or SKILL.md templates |
+| 🛠️ Maintenance / Chore | `chore.yml` | Refactoring, CI/CD, dependency updates, internal tooling |
+
+Each template pre-fills a conventional-commit-style title prefix (`fix: `, `feat: `, `feat(plugins): `, `chore: `) matching the commit format above. Select a template with `gh issue create --template <file>` (e.g. `gh issue create --template bug-report.yml`); only fall back to a blank issue (`gh issue create`) when none of the templates fit.
+
 ## Code Style & Linting
 
 We enforce strict formatting, linting, and language modernization standards for all Go files:
@@ -250,7 +263,8 @@ Use this section to quickly find the right files for a given change.
   - **Lifecycle**: `newInlineChat()`, `close()`, `eventLoop()`, `spinnerLoop()`, `statusLoop()`
   - **Event handling**: `onRuntimeEvent()` — routes all `ChatEvent` types to state updates and rendering
   - **Notification handling**: queue-based notification system
-  - **Rendering**: taui `Completions`, `LineInput`, `Paragraph`, `Container`, `Text`, `ToolRow`, `Box` widgets
+  - **Rendering**: taui `Completions`, `LineInput`, `Paragraph`, `Container`, `Text`, `ToolRow`, `Box`, `Prompt` widgets
+  - **Interactive prompts**: `activePrompt *taui.Prompt` (`pkg/taui/prompt.go`) — a modal-style confirm/question dialog raised by plugins/tools via the `UIBridge` Confirm/Input API (`InteractivePromptRequestedEvent` in, `RespondInteractivePromptCommand` out). Only one shows at a time; further requests queue in `promptQueue` and are presented in order as each is resolved.
 - `internal/tui/run.go` — `Run()` entry point, delegates to `RunInline()`
 - `internal/tui/run_taui.go` — `RunInline()` entry point for taui-based inline rendering
 - `internal/tui/api.go` — `TUIConfig` struct, `ModelRefresher` type
@@ -366,12 +380,14 @@ Use this section to quickly find the right files for a given change.
 
 ### Changing the Plugin/Extension System
 
-- `internal/plugin/manager.go` — `Manager` struct, `Load()`, `Unload()`, `ReloadExtensions()`, `ExtensionCommands()`, `RunExtensionCommand()`, `DispatchEvent()`, `ExecutePluginTool()`
+- `internal/plugin/manager.go` — `Manager` struct, `Load()`, `Unload()`, `ReloadExtensions()`, `ExtensionCommands()`, `RunExtensionCommand()`, `DispatchEvent()`, `ExecutePluginTool()`. `RunExtensionCommand` resolves a `"<group> <sub>"` path to the owning nested sub-action (see below) before dispatch.
 - `internal/plugin/exec_unix.go` / `exec_windows.go` — Platform-specific execution helpers
 - `pkg/plugin/api/plugin.go` — `EventPayload`, `EventResponse`, plugin lifecycle events
 - `pkg/plugin/api/adapters.go` — Adapters for plugin integration
 - `pkg/plugin/api/extension.pb.go` / `extension_grpc.pb.go` — gRPC protocol definitions (generated)
-- `plugins/mcp/main.go` — MCP plugin
+- `plugins/mcp/main.go` — MCP plugin; example of a grouped command with sub-actions (`/mcp list`, `/mcp reconnect <server>`, `/mcp reload`) and the MCP-spec Streamable HTTP transport (`url` server config, alongside `command`/`args`)
+
+**Extension command sub-actions**: `chat.ExtensionCommand` (`internal/chat/types.go`) carries `ArgsHint` (usage hint shown in completions, e.g. `"<server>"`) and `Subcommands []ExtensionCommand` (nested sub-actions, e.g. `list`/`reconnect`/`reload` under an `mcp` group; empty for flat commands). Prefer a single grouped command with sub-actions over multiple hyphenated top-level commands when a plugin exposes related actions — it's more intuitive and completions surface the group first, then its sub-actions with descriptions. `internal/tui/inline_completions.go`'s `extensionSubcommandMatches()` resolves completions for the sub-action slot.
 
 ### Changing Provider/API Integration
 
@@ -550,7 +566,7 @@ type ExtensionReloader interface {
 - **Non-generic Core + Typed Facade**: Internal plumbing (`publisherCore`, `subscriberCore`) is non-generic to avoid per-T itab/dictionary/stencil costs; user-facing types (`Publisher[T]`, `Subscriber[T]`) are thin generic wrappers
 - **Client Lifecycle**: Each subsystem gets a named `Client`. `Client.Close()` cascades to all publishers and subscribers created through it. `Bus.Close()` closes all clients
 - **Inline Rendering**: The TUI renders inline (scrolls into terminal scrollback) rather than using an alternate screen for the main chat. Alternate screen is not used.
-- **taui Widget Tree**: The UI is built as a tree of taui widgets (`TUI` → `Box` → `Text`/`LineInput`/`Completions`/`Paragraph`/`ToolRow`). Widgets implement `taui.Element` and the tree is re-rendered on each frame.
+- **taui Widget Tree**: The UI is built as a tree of taui widgets (`TUI` → `Box` → `Text`/`LineInput`/`Completions`/`Paragraph`/`ToolRow`/`Prompt`). Widgets implement `taui.Element` and the tree is re-rendered on each frame.
 - **Reactive State via closure**: State changes trigger `c.engine.RequestRender()` to schedule the next frame. No reactive state framework — rendering pulls state from the `inlineChat` struct on each frame.
 - **Channel Watchers**: `eventbus.Subscriber.Events()` channels are received in the event loop goroutine (`eventLoop()`), which dispatches to state mutations and requests re-renders.
 - **Completions as a taui Widget**: Tab-completions are a `taui.Completions` widget that takes a `CompletionSet` function and fuzzy-filters against the current token under the cursor.
