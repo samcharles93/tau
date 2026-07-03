@@ -46,6 +46,7 @@
         v-if="streaming"
         type="button"
         class="h-10 rounded-md bg-destructive/15 px-4 text-sm font-medium text-destructive hover:bg-destructive/25"
+        title="Stop the running response (Esc)"
         @click="emit('stop')"
       >
         Stop
@@ -80,7 +81,7 @@ import { useAttachments } from '@/composables/useAttachments'
 import { useSessionStore } from '@/stores/session'
 import type { ChatSessionPatch } from '@/lib/protocol'
 
-withDefaults(defineProps<{ placeholder?: string; streaming?: boolean }>(), {
+const props = withDefaults(defineProps<{ placeholder?: string; streaming?: boolean }>(), {
   placeholder: 'How can I assist you today?',
   streaming: false,
 })
@@ -193,6 +194,16 @@ function onKeydown(e: KeyboardEvent) {
   if (e.key === 'Enter' && !e.shiftKey) {
     e.preventDefault()
     submit()
+    return
+  }
+
+  // Esc while a response is streaming cancels the in-flight request — mirrors
+  // Ctrl+C in the TUI. We only intercept when the textarea is empty-ish so
+  // users can still press Esc to clear the menu / browser-default actions
+  // while typing. The completion menu (above) takes precedence.
+  if (e.key === 'Escape' && props.streaming && !draft.value) {
+    e.preventDefault()
+    emit('stop')
   }
 }
 

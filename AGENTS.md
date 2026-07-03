@@ -229,6 +229,7 @@ Use this section to quickly find the right files for a given change.
   - **Config**: `CoordinatorConfig` — TokenSource, Streamer, Registry, MaxToolIterations, ParallelToolCalls, ShowReasoning, ExtensionReloader, SessionStore, OnPluginEvent, ScheduleInterval
   - **Lifecycle**: `NewCoordinator()`, `Send()`, `Close()`, `loop()`, `runTurn()`
   - **Command handlers**: `handleStart()`, `handleSubmit()`, `handleSteer()`, `handleUpdate()`, `handleCancel()`, `handleReset()`, `handleClose()`, `handleReloadExtensions()`, `handleRunExtensionCommand()`, `handleListSessions()`, `handleLoadSession()`, `handleDeleteSession()`, `handleExportSession()`, `handleInteractiveResponse()`
+  - **Cancel semantics** (`handleCancel`): the coordinator is permissive about request_id mismatches because the Web UI's client-side `activeRequestId` can briefly diverge from the server's `state.ActiveRequestID` (reconnect, double-submit, missed `ChatResponseStartedEvent`). A cancel with a non-matching id cancels the currently active turn and emits a `ChatNotificationEvent` warning. A cancel arriving with no active request succeeds silently (the user's intent is already satisfied) and re-emits a snapshot.
   - **Tool execution**: `executeToolsParallel()`, `mergeToolCallDelta()`
   - **Event emission**: `emit()` (non-blocking), `emitMustDeliver()` (bounded-blocking for terminal events)
   - **Plugin dispatch**: `dispatchPluginEvent()`, `broadcastTurnLifecycle()`, `applyPluginMessageModifications()`
@@ -805,10 +806,15 @@ Every message is a JSON object `{ "type": "<discriminator>", "payload": { ... } 
 **Client → server commands** (same envelope format, e.g. `{ "type": "SubmitChatPromptCommand", "payload": { … } }`):
 - `SubmitChatPromptCommand` — send a user prompt
 - `UpdateChatSessionCommand` — patch session (model, provider, temperature, etc.)
-- `CancelChatRequestCommand` — cancel in-flight request
+- `CancelChatRequestCommand` — cancel in-flight request; an empty or stale `request_id` is tolerated by the coordinator (see [Cancel semantics](#cancel-semantics) above)
 - `ResetChatSessionCommand` — clear conversation
 - `ListSessionsCommand` / `LoadSessionCommand` / `DeleteSessionCommand` / `ExportSessionCommand`
 - `RespondInteractivePromptCommand` — answer a tool dialog
+
+**Stopping a running response** in the web UI:
+- The Stop button in `ChatInput.vue` calls `session.cancel()`, which sends a `CancelChatRequestCommand` with the locally tracked `activeRequestId`.
+- Esc anywhere on the page (mounted by `ChatPage.vue`) also calls `session.cancel()` while a request is in flight, mirroring Ctrl+C in the TUI. The handler is suppressed when an interactive prompt is open or focus is in an `<input>`/`<textarea>`.
+- The store sets `streaming = true` from `ChatResponseStartedEvent` (not just the first delta) so the Stop button appears immediately after submit, even during long model warm-ups. `activeRequestId` is kept in sync from both `ChatResponseStartedEvent` and `ChatSessionSnapshotEvent.state.active_request_id` (snapshot is source of truth).
 
 ### Session Store (`stores/session.ts`)
 

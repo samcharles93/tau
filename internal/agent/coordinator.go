@@ -519,16 +519,30 @@ func (c *Coordinator) handleCancel(cmd chat.CancelChatRequestCommand) {
 		})
 		return
 	}
-	if cmd.RequestID != "" && session.state.ActiveRequestID != cmd.RequestID {
+	// Cancel semantics:
+	//   * If a non-empty request_id is supplied and it matches the active
+	//     request, proceed normally.
+	//   * If a non-empty request_id is supplied and it does NOT match the
+	//     active request, but a different request is in flight, cancel the
+	//     in-flight one. This handles reconnect/double-submit races on the
+	//     web transport where the client and server request_id can briefly
+	//     diverge.
+	//   * If no request is in flight at all, succeed silently — the user's
+	//     intent (stop waiting) is already satisfied.
+	if !session.state.HasActiveRequest() {
 		c.mu.Unlock()
-		c.emit(chat.ChatRuntimeErrorEvent{
-			SessionID:  cmd.SessionID,
-			RequestID:  cmd.RequestID,
-			Message:    "requested turn is not active",
-			Fatal:      false,
+		c.emit(chat.ChatSessionSnapshotEvent{State: chat.CloneChatSessionState(session.state)})
+		return
+	}
+	if cmd.RequestID != "" && session.state.ActiveRequestID != cmd.RequestID {
+		// Stale request_id with a different in-flight request: cancel the
+		// in-flight one and report the mismatch as a non-fatal notice so the
+		// client can refresh its view of the active id.
+		c.emit(chat.ChatNotificationEvent{
+			Message:    "cancel targeted a different request; cancelling the active one",
+			Level:      chat.ChatNotificationWarn,
 			OccurredAt: now,
 		})
-		return
 	}
 	if err := session.state.MarkCancelling(now); err != nil {
 		c.mu.Unlock()
