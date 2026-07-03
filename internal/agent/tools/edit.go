@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"sort"
 	"strings"
 )
 
@@ -23,7 +24,7 @@ type EditAction struct {
 
 var editSchema = Schema{
 	Name:        "edit",
-	Description: "Edit an existing file using exact text replacement. Each edit specifies old_text (must match exactly including whitespace) and new_text. By default only the first occurrence is replaced; set replace_all to true to replace every occurrence. Edits are applied sequentially — if an edit fails, previous edits in the batch are not rolled back.",
+	Description: "Edit an existing file using exact text replacement. Each edit specifies old_text (must match exactly including whitespace) and new_text. Every old_text is matched against the original file and must be unique in it; set replace_all to true to replace every occurrence instead. Edits must not overlap — merge nearby changes into one edit. All edits are validated first and applied atomically: on any failure the file is left unchanged.",
 	Parameters: json.RawMessage(`{
 		"type": "object",
 		"properties": {
@@ -33,13 +34,13 @@ var editSchema = Schema{
 			},
 			"edits": {
 				"type": "array",
-				"description": "List of search-and-replace operations. Applied sequentially — if one fails, the file is left with prior edits applied.",
+				"description": "One or more search-and-replace operations, each matched against the original file. Keep old_text as small as possible while still unique.",
 				"items": {
 					"type": "object",
 					"properties": {
 						"old_text": {
 							"type": "string",
-							"description": "Exact text to find (must match exactly including whitespace)"
+							"description": "Exact text to find (must match exactly including whitespace and be unique in the file unless replace_all is set)"
 						},
 						"new_text": {
 							"type": "string",
@@ -47,7 +48,7 @@ var editSchema = Schema{
 						},
 						"replace_all": {
 							"type": "boolean",
-							"description": "Replace all occurrences of old_text. Defaults to false (first occurrence only)."
+							"description": "Replace all occurrences of old_text. Defaults to false (old_text must be unique)."
 						}
 					},
 					"required": ["old_text", "new_text"]
@@ -111,28 +112,196 @@ func makeEditExecutor(cwd string, mq *MutationQueue, rt *ReadTracker) Executor {
 			return Result{Content: fmt.Sprintf("error reading file: %v", err), IsError: true}, nil
 		}
 
-		content := string(data)
-		applied := 0
+		// Strip a UTF-8 BOM and normalise CRLF to LF before matching — the
+		// model never includes an invisible BOM or carriage returns in
+		// old_text. Both are restored on write.
+		raw := string(data)
+		bom := ""
+		if strings.HasPrefix(raw, utf8BOM) {
+			bom = utf8BOM
+			raw = strings.TrimPrefix(raw, utf8BOM)
+		}
+		hadCRLF := strings.Contains(raw, "\r\n")
+		content := strings.ReplaceAll(raw, "\r\n", "\n")
 
-		for i, edit := range p.Edits {
-			if !strings.Contains(content, edit.OldText) {
-				return Result{
-					Content: fmt.Sprintf("edit %d: old_text not found in file (applied %d/%d edits before failure)", i+1, applied, len(p.Edits)),
-					IsError: true,
-				}, nil
-			}
-			if edit.ReplaceAll {
-				content = strings.ReplaceAll(content, edit.OldText, edit.NewText)
-			} else {
-				content = strings.Replace(content, edit.OldText, edit.NewText, 1)
-			}
-			applied++
+		newContent, err := applyEdits(content, p.Edits)
+		if err != nil {
+			return Result{Content: err.Error(), IsError: true}, nil
+		}
+		if newContent == content {
+			return Result{Content: fmt.Sprintf("no changes made to %s: the edits produced identical content", path), IsError: true}, nil
 		}
 
-		if err := writeFileAtomic(path, []byte(content), 0o644); err != nil {
+		if hadCRLF {
+			newContent = strings.ReplaceAll(newContent, "\n", "\r\n")
+		}
+
+		if err := writeFileAtomic(path, []byte(bom+newContent), 0o644); err != nil {
 			return Result{Content: fmt.Sprintf("error writing file: %v", err), IsError: true}, nil
 		}
 
-		return Result{Content: fmt.Sprintf("applied %d edit(s) to %s", applied, path)}, nil
+		return Result{Content: fmt.Sprintf("applied %d edit(s) to %s", len(p.Edits), path)}, nil
 	}
+}
+
+const utf8BOM = "\ufeff"
+
+// editSpan is a resolved replacement range in the original content.
+type editSpan struct {
+	start, end int    // byte offsets in the original content
+	repl       string // replacement text
+	editIdx    int    // index of the edit that produced this span (for errors)
+}
+
+// applyEdits resolves every edit against the ORIGINAL content, validates that
+// the resulting replacement spans do not overlap, and applies them in one
+// pass. It never partially applies: any error leaves the content untouched.
+//
+// Matching is exact first; if old_text is not found, a fuzzy pass retries the
+// match with trailing whitespace stripped from every line of both the content
+// and old_text, which recovers the most common exact-match failure.
+func applyEdits(content string, edits []EditAction) (string, error) {
+	var spans []editSpan
+
+	for i, edit := range edits {
+		if edit.OldText == "" {
+			return "", fmt.Errorf("edit %d: old_text must not be empty", i+1)
+		}
+		if edit.OldText == edit.NewText {
+			return "", fmt.Errorf("edit %d: old_text and new_text are identical", i+1)
+		}
+
+		matches := indexAll(content, edit.OldText)
+
+		if edit.ReplaceAll {
+			if len(matches) == 0 {
+				matches = fuzzyIndexAll(content, edit.OldText)
+			}
+			if len(matches) == 0 {
+				return "", editNotFoundError(i)
+			}
+			for _, m := range matches {
+				spans = append(spans, editSpan{start: m[0], end: m[1], repl: edit.NewText, editIdx: i})
+			}
+			continue
+		}
+
+		switch len(matches) {
+		case 1:
+			spans = append(spans, editSpan{start: matches[0][0], end: matches[0][1], repl: edit.NewText, editIdx: i})
+		case 0:
+			fuzzy := fuzzyIndexAll(content, edit.OldText)
+			switch len(fuzzy) {
+			case 1:
+				spans = append(spans, editSpan{start: fuzzy[0][0], end: fuzzy[0][1], repl: edit.NewText, editIdx: i})
+			case 0:
+				return "", editNotFoundError(i)
+			default:
+				return "", editAmbiguousError(i, len(fuzzy))
+			}
+		default:
+			return "", editAmbiguousError(i, len(matches))
+		}
+	}
+
+	sort.Slice(spans, func(a, b int) bool { return spans[a].start < spans[b].start })
+
+	for i := 1; i < len(spans); i++ {
+		if spans[i].start < spans[i-1].end {
+			return "", fmt.Errorf(
+				"edits %d and %d overlap in the file; merge them into a single edit",
+				spans[i-1].editIdx+1, spans[i].editIdx+1,
+			)
+		}
+	}
+
+	var b strings.Builder
+	cursor := 0
+	for _, s := range spans {
+		b.WriteString(content[cursor:s.start])
+		b.WriteString(s.repl)
+		cursor = s.end
+	}
+	b.WriteString(content[cursor:])
+	return b.String(), nil
+}
+
+func editNotFoundError(idx int) error {
+	return fmt.Errorf("edit %d: old_text not found in file; it must match exactly, including whitespace and indentation", idx+1)
+}
+
+func editAmbiguousError(idx, occurrences int) error {
+	return fmt.Errorf("edit %d: old_text appears %d times in file; add surrounding context to make it unique, or set replace_all", idx+1, occurrences)
+}
+
+// indexAll returns the [start, end) offsets of every non-overlapping
+// occurrence of needle in content.
+func indexAll(content, needle string) [][2]int {
+	var out [][2]int
+	for from := 0; ; {
+		i := strings.Index(content[from:], needle)
+		if i < 0 {
+			return out
+		}
+		start := from + i
+		out = append(out, [2]int{start, start + len(needle)})
+		from = start + len(needle)
+	}
+}
+
+// fuzzyIndexAll matches needle against content with trailing whitespace
+// stripped from every line of both, returning spans in the ORIGINAL content.
+// Only trailing-whitespace differences are forgiven; everything else must
+// still match exactly.
+func fuzzyIndexAll(content, needle string) [][2]int {
+	strippedNeedle := stripTrailingWhitespace(needle)
+	if strippedNeedle == "" {
+		return nil
+	}
+
+	strippedContent, offsets := buildStrippedIndex(content)
+
+	var out [][2]int
+	for _, m := range indexAll(strippedContent, strippedNeedle) {
+		start := offsets[m[0]]
+		end := len(content)
+		if m[1] < len(offsets) {
+			end = offsets[m[1]]
+		}
+		out = append(out, [2]int{start, end})
+	}
+	return out
+}
+
+func stripTrailingWhitespace(s string) string {
+	lines := strings.Split(s, "\n")
+	for i, line := range lines {
+		lines[i] = strings.TrimRight(line, " \t")
+	}
+	return strings.Join(lines, "\n")
+}
+
+// buildStrippedIndex returns content with trailing whitespace stripped from
+// every line, plus a per-character map from stripped offsets back to offsets
+// in the original content.
+func buildStrippedIndex(content string) (string, []int) {
+	var b strings.Builder
+	b.Grow(len(content))
+	offsets := make([]int, 0, len(content))
+
+	lines := strings.Split(content, "\n")
+	pos := 0
+	for i, line := range lines {
+		stripped := strings.TrimRight(line, " \t")
+		for j := range len(stripped) {
+			offsets = append(offsets, pos+j)
+		}
+		b.WriteString(stripped)
+		if i < len(lines)-1 {
+			offsets = append(offsets, pos+len(line)) // the newline
+			b.WriteByte('\n')
+		}
+		pos += len(line) + 1
+	}
+	return b.String(), offsets
 }

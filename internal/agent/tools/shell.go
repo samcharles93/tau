@@ -129,6 +129,14 @@ func makeShellExecutor(cwd string, mq *MutationQueue) Executor {
 		}
 
 		tr := TruncateTail(output, DefaultMaxLines, DefaultMaxBytes)
+		content := tr.Content
+		if tr.Truncated {
+			// Save the full output so the model can grep/tail it instead of
+			// re-running an expensive command.
+			if path, saveErr := saveFullOutput(output); saveErr == nil {
+				content += "\n[full output saved to: " + path + "]"
+			}
+		}
 
 		if err != nil {
 			// Check context cancellation first — a process may exit with
@@ -136,14 +144,14 @@ func makeShellExecutor(cwd string, mq *MutationQueue) Executor {
 			// timeout rather than a misleading exit code.
 			if ctx.Err() != nil {
 				return Result{
-					Content: fmt.Sprintf("[timeout after: %s]\n%s", timeout, tr.Content),
+					Content: fmt.Sprintf("[timeout after: %s]\n%s", timeout, content),
 					IsError: true,
 				}, nil
 			}
 
 			if exitErr, ok := err.(*exec.ExitError); ok {
 				return Result{
-					Content: fmt.Sprintf("[exit code: %d]\n%s", exitErr.ExitCode(), tr.Content),
+					Content: fmt.Sprintf("[exit code: %d]\n%s", exitErr.ExitCode(), content),
 					IsError: true,
 				}, nil
 			}
@@ -151,8 +159,23 @@ func makeShellExecutor(cwd string, mq *MutationQueue) Executor {
 			return Result{Content: fmt.Sprintf("error executing command: %v", err), IsError: true}, nil
 		}
 
-		return Result{Content: tr.Content}, nil
+		return Result{Content: content}, nil
 	}
+}
+
+// saveFullOutput writes the complete, untruncated command output to a temp
+// file and returns its path.
+func saveFullOutput(output string) (string, error) {
+	f, err := os.CreateTemp("", "tau-shell-*.log")
+	if err != nil {
+		return "", err
+	}
+	defer f.Close()
+	if _, err := f.WriteString(output); err != nil {
+		_ = os.Remove(f.Name())
+		return "", err
+	}
+	return f.Name(), nil
 }
 
 // shellCommand returns the shell binary and arguments for the current platform.

@@ -2,6 +2,7 @@ package tools
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -105,9 +106,9 @@ func TestGrepFallback(t *testing.T) {
 			name:   "context lines",
 			params: GrepParams{Pattern: "Hello", Path: filepath.Join(tmp, "alpha.go"), ContextBefore: 1, ContextAfter: 1},
 			want: []string{
-				"alpha.go:1:package alpha",
+				"alpha.go-1-package alpha",
 				"alpha.go:2:func Hello() {}",
-				"alpha.go:3:", // trailing newline yields empty third line
+				"alpha.go-3-", // trailing newline yields empty third line
 			},
 		},
 		{
@@ -169,6 +170,58 @@ func TestGrepFallback_ContextDedup(t *testing.T) {
 	// Total unique lines: 5
 	if len(lines) != 5 {
 		t.Fatalf("expected 5 lines, got %d:\n%s", len(lines), got)
+	}
+}
+
+func TestCapGrepOutput_MatchLimit(t *testing.T) {
+	var lines []string
+	for i := 1; i <= 20; i++ {
+		lines = append(lines, fmt.Sprintf("file.go:%d:match line", i))
+	}
+	output := strings.Join(lines, "\n")
+
+	got := capGrepOutput(output, 5)
+
+	if !strings.Contains(got, "[showing first 5 matches") {
+		t.Fatalf("expected match-limit notice, got:\n%s", got)
+	}
+	matchCount := strings.Count(got, "match line")
+	if matchCount != 5 {
+		t.Fatalf("expected 5 match lines, got %d", matchCount)
+	}
+}
+
+func TestCapGrepOutput_LongLines(t *testing.T) {
+	long := "file.js:1:" + strings.Repeat("x", 2000)
+	got := capGrepOutput(long, 100)
+
+	if !strings.Contains(got, "... [truncated]") {
+		t.Fatalf("expected per-line truncation marker, got:\n%s", got)
+	}
+	if !strings.Contains(got, "[some lines truncated to 500 chars]") {
+		t.Fatalf("expected long-line notice, got:\n%s", got)
+	}
+	if len(strings.Split(got, "\n")[0]) > 600 {
+		t.Fatalf("first line not capped: %d chars", len(strings.Split(got, "\n")[0]))
+	}
+}
+
+func TestCapGrepOutput_ContextLinesNotCounted(t *testing.T) {
+	// Context lines (dash separators) must not count towards the match limit.
+	output := strings.Join([]string{
+		"file.go-1-context before",
+		"file.go:2:match one",
+		"file.go-3-context after",
+		"file.go:4:match two",
+	}, "\n")
+
+	got := capGrepOutput(output, 2)
+
+	if strings.Contains(got, "[showing first") {
+		t.Fatalf("limit notice should not fire for 2 matches with limit 2, got:\n%s", got)
+	}
+	if !strings.Contains(got, "match two") {
+		t.Fatalf("expected both matches present, got:\n%s", got)
 	}
 }
 

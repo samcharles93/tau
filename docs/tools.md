@@ -108,9 +108,10 @@ The bridge implementation (`internal/agent/ui_bridge.go`) translates these calls
 ## Content Truncation
 
 `internal/agent/tools/truncate.go` provides content size management:
-- Large file reads are truncated to prevent context window blowout
-- Truncation adds a notice: "... [content truncated from X to Y bytes]"
-- Configurable truncation limit (default: 100KB)
+- Tool output is truncated to 2000 lines or 50KB, whichever is hit first
+- `read` truncation appends an actionable continuation notice ("Use offset=N to continue") so the model can page through large files
+- `shell` saves the full untruncated output to a temp file and includes the path in the notice, letting the model grep/tail it instead of re-running the command
+- `grep` additionally caps output at 100 matches (adjustable via `limit`) and truncates individual lines to 500 chars so minified/generated files cannot blow out the context window
 
 ## Filesystem Utilities
 
