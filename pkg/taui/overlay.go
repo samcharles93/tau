@@ -45,10 +45,11 @@ type OverlayStack struct {
 }
 
 // NewOverlayStack creates an empty stack. base, if non-nil, has SetFocused
-// kept in sync with the stack's emptiness (focused when nothing is pushed,
-// unfocused while any overlay is active) — this is what makes the
-// Focusable/SetFocused mechanism meaningful for a component (like LineInput)
-// that never otherwise passes through TUI.SetFocus.
+// kept in sync with whether an exclusive overlay is active (focused unless
+// an exclusive overlay, e.g. a Prompt, is pushed — soft overlays like a
+// completions dropdown don't take focus away from base) — this is what makes
+// the Focusable/SetFocused mechanism meaningful for a component (like
+// LineInput) that never otherwise passes through TUI.SetFocus.
 func NewOverlayStack(base Focusable) *OverlayStack {
 	s := &OverlayStack{base: base}
 	if base != nil {
@@ -87,6 +88,10 @@ func (s *OverlayStack) Pop(o Overlay) {
 func (s *OverlayStack) HasExclusive() bool {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	return s.hasExclusiveLocked()
+}
+
+func (s *OverlayStack) hasExclusiveLocked() bool {
 	for _, e := range s.stack {
 		if e.exclusive {
 			return true
@@ -97,7 +102,7 @@ func (s *OverlayStack) HasExclusive() bool {
 
 func (s *OverlayStack) syncBaseFocusLocked() {
 	if s.base != nil {
-		s.base.SetFocused(len(s.stack) == 0)
+		s.base.SetFocused(!s.hasExclusiveLocked())
 	}
 }
 
