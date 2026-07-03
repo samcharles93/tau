@@ -61,20 +61,20 @@ type hostService struct {
 
 func (h *hostService) GetConfig(_ context.Context, req *api.GetConfigRequest) (*api.GetConfigResponse, error) {
 	// Runtime overrides set via SetConfig take precedence over static config.
-	if req.Key != "" && h.kv != nil {
-		if v, ok := h.kv.get(req.PluginName, req.Key); ok {
+	if req.GetKey() != "" && h.kv != nil {
+		if v, ok := h.kv.get(req.GetPluginName(), req.GetKey()); ok {
 			return &api.GetConfigResponse{Value: v, Found: true}, nil
 		}
 	}
 
-	block := h.config[req.PluginName]
+	block := h.config[req.GetPluginName()]
 	if block == nil {
 		return &api.GetConfigResponse{Found: false}, nil
 	}
 
 	var target any = block
-	if req.Key != "" {
-		v, ok := block[req.Key]
+	if req.GetKey() != "" {
+		v, ok := block[req.GetKey()]
 		if !ok {
 			return &api.GetConfigResponse{Found: false}, nil
 		}
@@ -92,7 +92,7 @@ func (h *hostService) SetConfig(_ context.Context, req *api.SetConfigRequest) (*
 	if h.kv == nil {
 		return &api.SetConfigResponse{}, nil
 	}
-	if err := h.kv.set(req.PluginName, req.Key, req.Value); err != nil {
+	if err := h.kv.set(req.GetPluginName(), req.GetKey(), req.GetValue()); err != nil {
 		return nil, err
 	}
 	return &api.SetConfigResponse{}, nil
@@ -102,7 +102,7 @@ func (h *hostService) GetSessionState(_ context.Context, req *api.GetSessionStat
 	if h.sessionState == nil {
 		return &api.GetSessionStateResponse{Found: false}, nil
 	}
-	state, found := h.sessionState(req.SessionId)
+	state, found := h.sessionState(req.GetSessionId())
 	return &api.GetSessionStateResponse{StateJson: state, Found: found}, nil
 }
 
@@ -115,7 +115,7 @@ func (h *hostService) GetAvailableModels(_ context.Context, _ *api.GetAvailableM
 
 func (h *hostService) Notify(_ context.Context, req *api.NotifyRequest) (*api.NotifyResponse, error) {
 	if h.notify != nil {
-		h.notify(req.Level, req.Message)
+		h.notify(req.GetLevel(), req.GetMessage())
 	}
 	return &api.NotifyResponse{}, nil
 }
@@ -124,7 +124,7 @@ func (h *hostService) Confirm(ctx context.Context, req *api.ConfirmRequest) (*ap
 	if h.interactivePrompt == nil {
 		return &api.ConfirmResponse{Canceled: true}, nil
 	}
-	confirmed, err := h.interactivePrompt.Confirm(ctx, req.Title, req.Description)
+	confirmed, err := h.interactivePrompt.Confirm(ctx, req.GetTitle(), req.GetDescription())
 	if err != nil {
 		if errors.Is(err, context.Canceled) {
 			return &api.ConfirmResponse{Canceled: true}, nil
@@ -138,7 +138,7 @@ func (h *hostService) Input(ctx context.Context, req *api.InputRequest) (*api.In
 	if h.interactivePrompt == nil {
 		return &api.InputResponse{Canceled: true}, nil
 	}
-	value, err := h.interactivePrompt.Input(ctx, req.Title, req.Placeholder)
+	value, err := h.interactivePrompt.Input(ctx, req.GetTitle(), req.GetPlaceholder())
 	if err != nil {
 		if errors.Is(err, context.Canceled) {
 			return &api.InputResponse{Canceled: true}, nil
@@ -149,28 +149,28 @@ func (h *hostService) Input(ctx context.Context, req *api.InputRequest) (*api.In
 }
 
 func (h *hostService) Log(_ context.Context, req *api.LogRequest) (*api.LogResponse, error) {
-	if h.logger == nil || req.Entry == nil {
+	if h.logger == nil || req.GetEntry() == nil {
 		return &api.LogResponse{}, nil
 	}
-	attrs := make([]any, 0, len(req.Entry.Fields)*2)
-	for k, v := range req.Entry.Fields {
+	attrs := make([]any, 0, len(req.GetEntry().GetFields())*2)
+	for k, v := range req.GetEntry().GetFields() {
 		attrs = append(attrs, k, v)
 	}
-	switch req.Entry.Level {
+	switch req.GetEntry().GetLevel() {
 	case "error":
-		h.logger.Error(req.Entry.Message, attrs...)
+		h.logger.Error(req.GetEntry().GetMessage(), attrs...)
 	case "warn":
-		h.logger.Warn(req.Entry.Message, attrs...)
+		h.logger.Warn(req.GetEntry().GetMessage(), attrs...)
 	case "debug":
-		h.logger.Debug(req.Entry.Message, attrs...)
+		h.logger.Debug(req.GetEntry().GetMessage(), attrs...)
 	default:
-		h.logger.Info(req.Entry.Message, attrs...)
+		h.logger.Info(req.GetEntry().GetMessage(), attrs...)
 	}
 	return &api.LogResponse{}, nil
 }
 
 func (h *hostService) RenderView(ctx context.Context, req *api.RenderViewRequest) (*api.RenderViewResponse, error) {
-	if req.PluginName == "" || req.View == nil || req.View.Id == "" {
+	if req.GetPluginName() == "" || req.GetView() == nil || req.GetView().GetId() == "" {
 		return nil, fmt.Errorf("plugin host: render view: plugin_name and view.id are required")
 	}
 	if h.viewRenderer == nil {
@@ -181,12 +181,12 @@ func (h *hostService) RenderView(ctx context.Context, req *api.RenderViewRequest
 	if h.views == nil {
 		h.views = make(map[string]map[string]struct{})
 	}
-	owned := h.views[req.PluginName]
+	owned := h.views[req.GetPluginName()]
 	if owned == nil {
 		owned = make(map[string]struct{})
-		h.views[req.PluginName] = owned
+		h.views[req.GetPluginName()] = owned
 	}
-	_, isUpdate := owned[req.View.Id]
+	_, isUpdate := owned[req.GetView().GetId()]
 	if !isUpdate {
 		max := h.maxViewsPerPlugin
 		if max <= 0 {
@@ -194,22 +194,22 @@ func (h *hostService) RenderView(ctx context.Context, req *api.RenderViewRequest
 		}
 		if len(owned) >= max {
 			h.viewsMu.Unlock()
-			return nil, fmt.Errorf("plugin host: too many open views for plugin %q (max %d)", req.PluginName, max)
+			return nil, fmt.Errorf("plugin host: too many open views for plugin %q (max %d)", req.GetPluginName(), max)
 		}
 		// Reserve the slot atomically with the quota check, before calling
 		// the renderer, so two concurrent RenderView calls for distinct new
 		// ids can't both pass the check and jointly exceed the quota.
-		owned[req.View.Id] = struct{}{}
+		owned[req.GetView().GetId()] = struct{}{}
 	}
 	h.viewsMu.Unlock()
 
-	if err := h.viewRenderer.RenderView(ctx, req.PluginName, req.View); err != nil {
+	if err := h.viewRenderer.RenderView(ctx, req.GetPluginName(), req.GetView()); err != nil {
 		if !isUpdate {
 			// Roll back the reservation - the render never actually
 			// succeeded, so this id must not permanently consume a slot in
 			// the plugin's quota for a panel that was never shown.
 			h.viewsMu.Lock()
-			delete(owned, req.View.Id)
+			delete(owned, req.GetView().GetId())
 			h.viewsMu.Unlock()
 		}
 		return nil, err
@@ -218,27 +218,27 @@ func (h *hostService) RenderView(ctx context.Context, req *api.RenderViewRequest
 }
 
 func (h *hostService) CloseView(ctx context.Context, req *api.CloseViewRequest) (*api.CloseViewResponse, error) {
-	if req.PluginName == "" || req.ViewId == "" {
+	if req.GetPluginName() == "" || req.GetViewId() == "" {
 		return nil, fmt.Errorf("plugin host: close view: plugin_name and view_id are required")
 	}
 
 	h.viewsMu.Lock()
-	owned := h.views[req.PluginName]
+	owned := h.views[req.GetPluginName()]
 	if owned == nil {
 		h.viewsMu.Unlock()
 		return &api.CloseViewResponse{}, nil
 	}
-	if _, ok := owned[req.ViewId]; !ok {
+	if _, ok := owned[req.GetViewId()]; !ok {
 		h.viewsMu.Unlock()
 		// Not owned by this plugin - silently no-op rather than letting one
 		// plugin close another plugin's view via a guessed/colliding id.
 		return &api.CloseViewResponse{}, nil
 	}
-	delete(owned, req.ViewId)
+	delete(owned, req.GetViewId())
 	h.viewsMu.Unlock()
 
 	if h.viewRenderer != nil {
-		if err := h.viewRenderer.CloseView(ctx, req.PluginName, req.ViewId); err != nil {
+		if err := h.viewRenderer.CloseView(ctx, req.GetPluginName(), req.GetViewId()); err != nil {
 			return nil, err
 		}
 	}

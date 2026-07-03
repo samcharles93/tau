@@ -57,7 +57,7 @@ func (h *hostClient) GetConfig(ctx context.Context, key string) (string, bool, e
 	if err != nil {
 		return "", false, err
 	}
-	return resp.Value, resp.Found, nil
+	return resp.GetValue(), resp.GetFound(), nil
 }
 
 func (h *hostClient) SetConfig(ctx context.Context, key, value string) error {
@@ -70,7 +70,7 @@ func (h *hostClient) GetSessionState(ctx context.Context, sessionID string) (str
 	if err != nil {
 		return "", false, err
 	}
-	return resp.StateJson, resp.Found, nil
+	return resp.GetStateJson(), resp.GetFound(), nil
 }
 
 func (h *hostClient) GetAvailableModels(ctx context.Context) ([]string, error) {
@@ -78,7 +78,7 @@ func (h *hostClient) GetAvailableModels(ctx context.Context) ([]string, error) {
 	if err != nil {
 		return nil, err
 	}
-	return resp.Models, nil
+	return resp.GetModels(), nil
 }
 
 func (h *hostClient) Notify(ctx context.Context, level, message string) error {
@@ -91,10 +91,10 @@ func (h *hostClient) Confirm(ctx context.Context, title, description string) (bo
 	if err != nil {
 		return false, err
 	}
-	if resp.Canceled {
+	if resp.GetCanceled() {
 		return false, ErrPromptCanceled
 	}
-	return resp.Confirmed, nil
+	return resp.GetConfirmed(), nil
 }
 
 func (h *hostClient) Input(ctx context.Context, title, placeholder string) (string, error) {
@@ -102,10 +102,10 @@ func (h *hostClient) Input(ctx context.Context, title, placeholder string) (stri
 	if err != nil {
 		return "", err
 	}
-	if resp.Canceled {
+	if resp.GetCanceled() {
 		return "", ErrPromptCanceled
 	}
-	return resp.Value, nil
+	return resp.GetValue(), nil
 }
 
 func (h *hostClient) Log(ctx context.Context, level, message string, fields map[string]string) error {

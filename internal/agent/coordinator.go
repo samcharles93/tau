@@ -1086,19 +1086,19 @@ func (c *Coordinator) runTurn(ctx context.Context, state chat.ChatSessionState) 
 		})
 
 		var extraHeaders map[string]string
-		if pluginResp != nil && len(pluginResp.AddHeaders) > 0 {
-			extraHeaders = pluginResp.AddHeaders
+		if pluginResp != nil && len(pluginResp.GetAddHeaders()) > 0 {
+			extraHeaders = pluginResp.GetAddHeaders()
 		}
 
 		// Apply LLM-boundary modifiers for this call only.
 		originalSystemPrompt := state.SystemPrompt
 		originalModelID := state.Model.ID
 		if pluginResp != nil {
-			if pluginResp.InjectSystemPrompt != "" {
-				state.SystemPrompt = state.SystemPrompt + "\n" + pluginResp.InjectSystemPrompt
+			if pluginResp.GetInjectSystemPrompt() != "" {
+				state.SystemPrompt = state.SystemPrompt + "\n" + pluginResp.GetInjectSystemPrompt()
 			}
-			if pluginResp.ModifiedModelId != "" {
-				state.Model.ID = pluginResp.ModifiedModelId
+			if pluginResp.GetModifiedModelId() != "" {
+				state.Model.ID = pluginResp.GetModifiedModelId()
 			}
 		}
 
@@ -1251,21 +1251,21 @@ func (c *Coordinator) executeToolsParallel(ctx context.Context, sessionID, reque
 		}
 
 		switch {
-		case beforeResp != nil && beforeResp.BlockToolExecution:
-			reason := beforeResp.BlockReason
+		case beforeResp != nil && beforeResp.GetBlockToolExecution():
+			reason := beforeResp.GetBlockReason()
 			if reason == "" {
 				reason = "tool execution blocked by plugin"
 			}
 			result = tools.Result{Content: reason, IsError: true}
 
-		case beforeResp != nil && beforeResp.ModifiedToolArguments != "":
-			if !json.Valid([]byte(beforeResp.ModifiedToolArguments)) {
+		case beforeResp != nil && beforeResp.GetModifiedToolArguments() != "":
+			if !json.Valid([]byte(beforeResp.GetModifiedToolArguments())) {
 				result = tools.Result{
 					Content: "plugin returned invalid modified_tool_arguments (not valid JSON)",
 					IsError: true,
 				}
 			} else {
-				effectiveArgs = beforeResp.ModifiedToolArguments
+				effectiveArgs = beforeResp.GetModifiedToolArguments()
 				tool, ok := c.registry.Get(tc.Function.Name)
 				if !ok {
 					result = tools.Result{
@@ -1323,8 +1323,8 @@ func (c *Coordinator) executeToolsParallel(ctx context.Context, sessionID, reque
 				},
 			},
 		})
-		if afterResp != nil && afterResp.ModifiedToolResult != "" {
-			result.Content = afterResp.ModifiedToolResult
+		if afterResp != nil && afterResp.GetModifiedToolResult() != "" {
+			result.Content = afterResp.GetModifiedToolResult()
 		}
 
 		// Truncate after plugin modifications.
@@ -1790,8 +1790,8 @@ func (c *Coordinator) applyPluginMessageModifications(state *chat.ChatSessionSta
 		return
 	}
 	// Process removals in descending order to keep indices stable.
-	indices := make([]int32, len(resp.RemoveMessageIndices))
-	copy(indices, resp.RemoveMessageIndices)
+	indices := make([]int32, len(resp.GetRemoveMessageIndices()))
+	copy(indices, resp.GetRemoveMessageIndices())
 	sort.Slice(indices, func(i, j int) bool { return indices[i] > indices[j] })
 	for _, idx := range indices {
 		if int(idx) >= 0 && int(idx) < len(state.Messages) {
@@ -1799,7 +1799,7 @@ func (c *Coordinator) applyPluginMessageModifications(state *chat.ChatSessionSta
 		}
 	}
 	// Inject messages.
-	for _, raw := range resp.InjectMessages {
+	for _, raw := range resp.GetInjectMessages() {
 		var msg chat.ChatMessage
 		if err := json.Unmarshal([]byte(raw), &msg); err != nil {
 			slog.Warn("coordinator: failed to decode injected message", "err", err)

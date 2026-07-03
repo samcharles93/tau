@@ -293,8 +293,8 @@ func (m *Manager) ExecutePluginTool(ctx context.Context, pluginName, toolName st
 	}
 
 	return tools.Result{
-		Content: resp.Content,
-		IsError: resp.IsError,
+		Content: resp.GetContent(),
+		IsError: resp.GetIsError(),
 	}, nil
 }
 
@@ -336,9 +336,9 @@ func (m *Manager) DispatchEvent(ctx context.Context, event string, sessionID str
 			}
 			continue
 		}
-		if resp.Response != nil {
-			m.cfg.Logger.Debug("plugin manager: got response", "event", event, "plugin", name, "has_add_headers", len(resp.Response.AddHeaders) > 0)
-			responses = append(responses, resp.Response)
+		if resp.GetResponse() != nil {
+			m.cfg.Logger.Debug("plugin manager: got response", "event", event, "plugin", name, "has_add_headers", len(resp.GetResponse().GetAddHeaders()) > 0)
+			responses = append(responses, resp.GetResponse())
 		} else {
 			m.cfg.Logger.Debug("plugin manager: nil response", "event", event, "plugin", name)
 		}
@@ -352,37 +352,37 @@ func mergeResponses(responses []*api.EventResponse) *api.EventResponse {
 	}
 	merged := &api.EventResponse{}
 	for _, r := range responses {
-		merged.InjectMessages = append(merged.InjectMessages, r.InjectMessages...)
-		merged.RemoveMessageIndices = append(merged.RemoveMessageIndices, r.RemoveMessageIndices...)
-		if r.InjectSystemPrompt != "" {
-			if merged.InjectSystemPrompt != "" {
+		merged.InjectMessages = append(merged.GetInjectMessages(), r.GetInjectMessages()...)
+		merged.RemoveMessageIndices = append(merged.GetRemoveMessageIndices(), r.GetRemoveMessageIndices()...)
+		if r.GetInjectSystemPrompt() != "" {
+			if merged.GetInjectSystemPrompt() != "" {
 				merged.InjectSystemPrompt += "\n"
 			}
-			merged.InjectSystemPrompt += r.InjectSystemPrompt
+			merged.InjectSystemPrompt += r.GetInjectSystemPrompt()
 		}
-		if r.BlockToolExecution && !merged.BlockToolExecution {
+		if r.GetBlockToolExecution() && !merged.GetBlockToolExecution() {
 			merged.BlockToolExecution = true
-			merged.BlockReason = r.BlockReason
+			merged.BlockReason = r.GetBlockReason()
 		}
-		modifiedToolArgs := r.ModifiedToolArguments
+		modifiedToolArgs := r.GetModifiedToolArguments()
 		if modifiedToolArgs != "" {
 			merged.ModifiedToolArguments = modifiedToolArgs
 		}
-		modifiedToolResult := r.ModifiedToolResult
+		modifiedToolResult := r.GetModifiedToolResult()
 		if modifiedToolResult != "" {
 			merged.ModifiedToolResult = modifiedToolResult
 		}
-		if r.AddHeaders != nil {
-			if merged.AddHeaders == nil {
+		if r.GetAddHeaders() != nil {
+			if merged.GetAddHeaders() == nil {
 				merged.AddHeaders = make(map[string]string)
 			}
-			maps.Copy(merged.AddHeaders, r.AddHeaders)
+			maps.Copy(merged.GetAddHeaders(), r.GetAddHeaders())
 		}
-		if r.ModifiedModelId != "" {
-			merged.ModifiedModelId = r.ModifiedModelId
+		if r.GetModifiedModelId() != "" {
+			merged.ModifiedModelId = r.GetModifiedModelId()
 		}
-		merged.Diagnostics = append(merged.Diagnostics, r.Diagnostics...)
-		if r.SuppressDefault {
+		merged.Diagnostics = append(merged.GetDiagnostics(), r.GetDiagnostics()...)
+		if r.GetSuppressDefault() {
 			merged.SuppressDefault = true
 		}
 	}
@@ -425,15 +425,15 @@ func (m *Manager) registerPluginTools(ctx context.Context, pluginName string, c 
 		return 0
 	}
 
-	for _, td := range toolsResp.Tools {
+	for _, td := range toolsResp.GetTools() {
 		m.cfg.ToolRegistry.RegisterPluginTool(pluginName, tools.PluginToolDef{
-			Name:        td.Name,
-			Description: td.Description,
-			InputSchema: td.InputSchema,
+			Name:        td.GetName(),
+			Description: td.GetDescription(),
+			InputSchema: td.GetInputSchema(),
 		})
 	}
 
-	return len(toolsResp.Tools)
+	return len(toolsResp.GetTools())
 }
 
 func (m *Manager) startPlugin(ctx context.Context, pluginPath string) (*goplugin.Client, *api.GRPCClient, error) {
@@ -480,8 +480,8 @@ func (m *Manager) startPlugin(ctx context.Context, pluginPath string) (*goplugin
 	// Hand the plugin its HostService broker id, scoped by its reported name so
 	// HostService.GetConfig resolves the right `plugins.<name>` block.
 	pluginName := filepath.Base(pluginPath)
-	if meta, err := grpcClient.Client.GetMetadata(ctx, &api.GetMetadataRequest{}); err == nil && meta.Name != "" {
-		pluginName = meta.Name
+	if meta, err := grpcClient.Client.GetMetadata(ctx, &api.GetMetadataRequest{}); err == nil && meta.GetName() != "" {
+		pluginName = meta.GetName()
 	}
 	if err := grpcClient.Init(ctx, pluginName); err != nil {
 		m.cfg.Logger.Warn("plugin host init failed", "plugin", pluginName, "err", err)

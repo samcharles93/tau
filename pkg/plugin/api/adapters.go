@@ -17,14 +17,14 @@ type GRPCServer struct {
 // Init receives the host's HostService broker id, dials it, and hands the
 // resulting Host to the Extension if it is HostAware.
 func (s *GRPCServer) Init(ctx context.Context, req *InitRequest) (*InitResponse, error) {
-	if s.broker == nil || req.HostBrokerId == 0 {
+	if s.broker == nil || req.GetHostBrokerId() == 0 {
 		return &InitResponse{}, nil
 	}
-	conn, err := s.broker.Dial(req.HostBrokerId)
+	conn, err := s.broker.Dial(req.GetHostBrokerId())
 	if err != nil {
 		return nil, err
 	}
-	host := &hostClient{client: NewHostServiceClient(conn), pluginName: req.PluginName}
+	host := &hostClient{client: NewHostServiceClient(conn), pluginName: req.GetPluginName()}
 	if aware, ok := s.Impl.(HostAware); ok {
 		aware.SetHost(host)
 	}
@@ -46,7 +46,7 @@ func (s *GRPCServer) GetMetadata(ctx context.Context, req *GetMetadataRequest) (
 }
 
 func (s *GRPCServer) RunCommand(ctx context.Context, req *RunCommandRequest) (*RunCommandResponse, error) {
-	output, view, err := s.Impl.RunCommand(ctx, req.Name, req.Args)
+	output, view, err := s.Impl.RunCommand(ctx, req.GetName(), req.GetArgs())
 	if err != nil {
 		return nil, err
 	}
@@ -62,7 +62,7 @@ func (s *GRPCServer) Reload(ctx context.Context, req *ReloadRequest) (*ReloadRes
 }
 
 func (s *GRPCServer) DispatchEvent(ctx context.Context, req *DispatchEventRequest) (*DispatchEventResponse, error) {
-	resp := s.Impl.DispatchEvent(ctx, req.Event, req.SessionId, req.Payload)
+	resp := s.Impl.DispatchEvent(ctx, req.GetEvent(), req.GetSessionId(), req.GetPayload())
 	return &DispatchEventResponse{Response: resp}, nil
 }
 
@@ -75,7 +75,7 @@ func (s *GRPCServer) GetTools(ctx context.Context, req *GetToolsRequest) (*GetTo
 }
 
 func (s *GRPCServer) ExecuteTool(ctx context.Context, req *ExecuteToolRequest) (*ExecuteToolResponse, error) {
-	content, isError, err := s.Impl.ExecuteTool(ctx, req.ToolName, req.Arguments)
+	content, isError, err := s.Impl.ExecuteTool(ctx, req.GetToolName(), req.GetArguments())
 	if err != nil {
 		return nil, err
 	}
@@ -97,7 +97,7 @@ func (c *GRPCClient) Capabilities(ctx context.Context) ([]string, error) {
 	if err != nil {
 		return nil, err
 	}
-	return resp.Capabilities, nil
+	return resp.GetCapabilities(), nil
 }
 
 // Init tells the plugin which broker id to dial for the host's HostService.
@@ -115,10 +115,10 @@ func (c *GRPCClient) ReloadExtensions(ctx context.Context, idle bool) (chat.Exte
 	if err != nil {
 		return chat.ExtensionReloadResult{}, err
 	}
-	c.cmds = protoCommandsToChat(resp.Commands)
+	c.cmds = protoCommandsToChat(resp.GetCommands())
 	return chat.ExtensionReloadResult{
 		ExtensionCount: 1,
-		Diagnostics:    protoDiagnosticsToChat(resp.Diagnostics),
+		Diagnostics:    protoDiagnosticsToChat(resp.GetDiagnostics()),
 		Commands:       c.cmds,
 	}, nil
 }
@@ -131,7 +131,7 @@ func (c *GRPCClient) ExtensionCommands() []chat.ExtensionCommand {
 	if err != nil {
 		return nil
 	}
-	c.cmds = protoCommandsToChat(resp.Commands)
+	c.cmds = protoCommandsToChat(resp.GetCommands())
 	return c.cmds
 }
 
@@ -140,18 +140,18 @@ func (c *GRPCClient) RunExtensionCommand(ctx context.Context, name, args string,
 	if err != nil {
 		return "", nil, err
 	}
-	return resp.Output, ProtoViewToChat(resp.View), nil
+	return resp.GetOutput(), ProtoViewToChat(resp.GetView()), nil
 }
 
 func protoCommandsToChat(cmds []*Command) []chat.ExtensionCommand {
 	out := make([]chat.ExtensionCommand, len(cmds))
 	for i, c := range cmds {
 		out[i] = chat.ExtensionCommand{
-			Name:          c.Name,
-			Description:   c.Description,
-			ExtensionName: c.ExtensionName,
-			ArgsHint:      c.ArgsHint,
-			Subcommands:   protoCommandsToChat(c.Subcommands),
+			Name:          c.GetName(),
+			Description:   c.GetDescription(),
+			ExtensionName: c.GetExtensionName(),
+			ArgsHint:      c.GetArgsHint(),
+			Subcommands:   protoCommandsToChat(c.GetSubcommands()),
 		}
 	}
 	return out
@@ -161,10 +161,10 @@ func protoDiagnosticsToChat(diags []*Diagnostic) []chat.ExtensionDiagnostic {
 	out := make([]chat.ExtensionDiagnostic, len(diags))
 	for i, d := range diags {
 		out[i] = chat.ExtensionDiagnostic{
-			Path:          d.Path,
-			ExtensionName: d.ExtensionName,
-			Severity:      d.Severity,
-			Message:       d.Message,
+			Path:          d.GetPath(),
+			ExtensionName: d.GetExtensionName(),
+			Severity:      d.GetSeverity(),
+			Message:       d.GetMessage(),
 		}
 	}
 	return out
@@ -178,15 +178,15 @@ func ProtoViewToChat(v *View) *chat.ExtensionView {
 	if v == nil {
 		return nil
 	}
-	widgets := make([]chat.Widget, 0, len(v.Widgets))
-	for _, w := range v.Widgets {
+	widgets := make([]chat.Widget, 0, len(v.GetWidgets()))
+	for _, w := range v.GetWidgets() {
 		widgets = append(widgets, ProtoWidgetToChat(w))
 	}
 	return &chat.ExtensionView{
-		ID:      v.Id,
-		Title:   v.Title,
+		ID:      v.GetId(),
+		Title:   v.GetTitle(),
 		Widgets: widgets,
-		Style:   protoStyleToChat(v.Style),
+		Style:   protoStyleToChat(v.GetStyle()),
 	}
 }
 
@@ -198,7 +198,7 @@ func ProtoWidgetToChat(w *Widget) chat.Widget {
 	if w == nil {
 		return chat.Widget{}
 	}
-	switch k := w.Kind.(type) {
+	switch k := w.GetKind().(type) {
 	case *Widget_Text:
 		return chat.Widget{
 			Kind: chat.WidgetKindText,
@@ -288,7 +288,7 @@ func protoStyleToChat(s *Style) *chat.Style {
 		return nil
 	}
 	tone := chat.ToneDefault
-	switch s.Tone {
+	switch s.GetTone() {
 	case Style_TONE_INFO:
 		tone = chat.ToneInfo
 	case Style_TONE_SUCCESS:
@@ -302,11 +302,11 @@ func protoStyleToChat(s *Style) *chat.Style {
 	}
 	return &chat.Style{
 		Tone:      tone,
-		FgHex:     s.FgHex,
-		BgHex:     s.BgHex,
-		Bold:      s.Bold,
-		Dim:       s.Dim,
-		Italic:    s.Italic,
-		Underline: s.Underline,
+		FgHex:     s.GetFgHex(),
+		BgHex:     s.GetBgHex(),
+		Bold:      s.GetBold(),
+		Dim:       s.GetDim(),
+		Italic:    s.GetItalic(),
+		Underline: s.GetUnderline(),
 	}
 }

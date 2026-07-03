@@ -19,6 +19,7 @@ linters:
     - tparallel
     - unused
     - whitespace
+    - protogetter
   exclusions:
     generated: lax
     presets:

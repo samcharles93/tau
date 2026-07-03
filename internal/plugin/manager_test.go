@@ -89,8 +89,8 @@ func TestDispatchEvent_AllSuccess(t *testing.T) {
 		t.Fatal("expected non-nil merged response")
 		return
 	}
-	if resp.InjectSystemPrompt != "from-a\nfrom-b" {
-		t.Errorf("expected merged system prompt %q, got %q", "from-a\nfrom-b", resp.InjectSystemPrompt)
+	if resp.GetInjectSystemPrompt() != "from-a\nfrom-b" {
+		t.Errorf("expected merged system prompt %q, got %q", "from-a\nfrom-b", resp.GetInjectSystemPrompt())
 	}
 }
 
@@ -120,8 +120,8 @@ func TestDispatchEvent_OneTimeout_OneSuccess(t *testing.T) {
 		t.Fatal("expected non-nil response from fast plugin")
 		return
 	}
-	if resp.InjectSystemPrompt != "from-fast" {
-		t.Errorf("expected InjectSystemPrompt %q, got %q", "from-fast", resp.InjectSystemPrompt)
+	if resp.GetInjectSystemPrompt() != "from-fast" {
+		t.Errorf("expected InjectSystemPrompt %q, got %q", "from-fast", resp.GetInjectSystemPrompt())
 	}
 }
 
@@ -179,7 +179,7 @@ func TestDispatchEvent_PluginNotFound(t *testing.T) {
 
 	// plugin-b is not registered — it should be silently skipped.
 	resp := m.DispatchEvent(context.Background(), "test_event", "session-1", nil)
-	if resp == nil || resp.InjectSystemPrompt != "ok" {
+	if resp == nil || resp.GetInjectSystemPrompt() != "ok" {
 		t.Errorf("expected response from plugin-a only, got %+v", resp)
 	}
 }

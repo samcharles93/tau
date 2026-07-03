@@ -12,7 +12,7 @@ type fakeOverlay struct {
 }
 
 func (f *fakeOverlay) Render(int) []string { return nil }
-func (f *fakeOverlay) Invalidate()          {}
+func (f *fakeOverlay) Invalidate()         {}
 func (f *fakeOverlay) HandleInput(data string) bool {
 	f.inputCalled = true
 	f.lastInput = data

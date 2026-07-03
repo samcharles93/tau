@@ -33,20 +33,20 @@ func TestHostServiceGetConfig(t *testing.T) {
 	// Whole block.
 	resp, err := h.GetConfig(ctx, &api.GetConfigRequest{PluginName: "mcp-plugin"})
 	require.NoError(t, err)
-	require.True(t, resp.Found)
-	require.Contains(t, resp.Value, "servers")
+	require.True(t, resp.GetFound())
+	require.Contains(t, resp.GetValue(), "servers")
 
 	// Single key.
 	resp, err = h.GetConfig(ctx, &api.GetConfigRequest{PluginName: "mcp-plugin", Key: "enabled"})
 	require.NoError(t, err)
-	require.True(t, resp.Found)
-	require.Equal(t, "true", resp.Value)
+	require.True(t, resp.GetFound())
+	require.Equal(t, "true", resp.GetValue())
 
 	// Unknown plugin and unknown key.
 	resp, _ = h.GetConfig(ctx, &api.GetConfigRequest{PluginName: "nope"})
-	require.False(t, resp.Found)
+	require.False(t, resp.GetFound())
 	resp, _ = h.GetConfig(ctx, &api.GetConfigRequest{PluginName: "mcp-plugin", Key: "missing"})
-	require.False(t, resp.Found)
+	require.False(t, resp.GetFound())
 }
 
 func TestHostServiceSetConfigOverridesAndPersists(t *testing.T) {
@@ -69,8 +69,8 @@ func TestHostServiceSetConfigOverridesAndPersists(t *testing.T) {
 
 	resp, err := h.GetConfig(ctx, &api.GetConfigRequest{PluginName: "mcp-plugin", Key: "servers"})
 	require.NoError(t, err)
-	require.True(t, resp.Found)
-	require.Equal(t, `[{"name":"x"}]`, resp.Value)
+	require.True(t, resp.GetFound())
+	require.Equal(t, `[{"name":"x"}]`, resp.GetValue())
 
 	// A fresh store from the same path sees the persisted value.
 	reopened := newKVStore(path)
@@ -101,7 +101,7 @@ func TestHostServiceLogAndNotifyNilSafe(t *testing.T) {
 	require.NoError(t, err)
 	resp, err := h.GetAvailableModels(ctx, &api.GetAvailableModelsRequest{})
 	require.NoError(t, err)
-	require.Empty(t, resp.Models)
+	require.Empty(t, resp.GetModels())
 }
 
 // fakeViewRenderer records RenderView/CloseView calls for assertions.
@@ -115,7 +115,7 @@ type fakeViewRenderer struct {
 func (f *fakeViewRenderer) RenderView(_ context.Context, pluginName string, view *api.View) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	key := pluginName + ":" + view.Id
+	key := pluginName + ":" + view.GetId()
 	f.rendered = append(f.rendered, key)
 	if f.failIDs[key] {
 		return errors.New("fakeViewRenderer: forced failure")
