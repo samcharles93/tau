@@ -35,13 +35,9 @@
         @input="onInput"
         @keydown="onKeydown"
         @paste="onPaste"
+        @click="updateCursor"
+        @keyup="updateCursor"
       />
-      <span
-        v-if="draft.length"
-        class="shrink-0 self-end pb-2.5 text-xs tabular-nums text-muted-foreground/60 select-none"
-      >
-        {{ draft.length }}&thinsp;·&thinsp;~{{ Math.ceil(draft.length / 4) }}t
-      </span>
       <button
         v-if="streaming"
         type="button"
@@ -60,11 +56,6 @@
         Send
       </button>
     </form>
-
-    <!-- Token usage / cost for the current session, pinned bottom-right. -->
-    <div class="flex justify-end px-3 pb-1.5">
-      <UsageIndicator />
-    </div>
   </div>
 </template>
 
@@ -72,7 +63,6 @@
 import { computed, nextTick, onMounted, ref } from 'vue'
 import { useDropZone } from '@vueuse/core'
 import { PaperclipIcon } from '@lucide/vue'
-import UsageIndicator from '@/components/UsageIndicator.vue'
 import CompletionMenu, { type CompletionItem } from '@/components/input/CompletionMenu.vue'
 import InputContextBar from '@/components/input/InputContextBar.vue'
 import AttachmentChips from '@/components/input/AttachmentChips.vue'
@@ -98,22 +88,207 @@ const fileInput = ref<HTMLInputElement | null>(null)
 const wrapper = ref<HTMLElement | null>(null)
 const selected = ref(0)
 const menuDismissed = ref(false)
+const cursorPosition = ref(0)
 
-const slashMode = computed(() => draft.value.startsWith('/') && !/[ \n]/.test(draft.value))
+function updateCursor() {
+  if (textarea.value) {
+    cursorPosition.value = textarea.value.selectionStart
+  }
+}
+
+const slashMode = computed(() => draft.value.startsWith('/'))
 
 const completionItems = computed<CompletionItem[]>(() => {
   if (!slashMode.value) return []
-  const token = draft.value.slice(1).toLowerCase()
-  return session.commands
-    .filter((c) => c.name.replace(/^\//, '').toLowerCase().startsWith(token))
-    .slice(0, 24)
-    .map((c) => ({
-      id: `cmd:${c.name}`,
-      group: 'commands' as const,
-      name: c.name,
-      description: c.description,
-      acceptsArgs: c.accepts_args,
-    }))
+
+  const cur = cursorPosition.value
+  const before = draft.value.slice(0, cur)
+  if (!before.startsWith('/')) return []
+
+  const endsWithSpace = before.endsWith(' ')
+  const fields = before.match(/\S+/g) || []
+  if (fields.length === 0) return []
+
+  const token = endsWithSpace ? '' : fields[fields.length - 1]
+  const replaceStart = endsWithSpace ? cur : cur - token.length
+
+  let endOfWord = cur
+  while (endOfWord < draft.value.length && draft.value[endOfWord] !== ' ') {
+    endOfWord++
+  }
+
+  const matches: CompletionItem[] = []
+
+  if (fields.length <= 1 && !endsWithSpace) {
+    // Completing the command name itself
+    const searchToken = (fields[0] || '').startsWith('/') ? (fields[0] || '').slice(1).toLowerCase() : ''
+
+    // Built-in commands
+    for (const c of session.commands) {
+      if ((c.name || '').toLowerCase().startsWith(searchToken)) {
+        matches.push({
+          id: `cmd:${c.name}`,
+          group: 'commands',
+          name: '/' + c.name,
+          description: c.description,
+          acceptsArgs: c.accepts_args,
+          replaceStart,
+          replaceEnd: endOfWord,
+        })
+      }
+    }
+
+    // Extension commands
+    for (const ext of session.extensionCommands) {
+      if (ext.name.toLowerCase().startsWith(searchToken)) {
+        matches.push({
+          id: `ext:${ext.name}`,
+          group: 'extensions',
+          name: '/' + ext.name,
+          description: ext.description,
+          acceptsArgs: true,
+          replaceStart,
+          replaceEnd: endOfWord,
+        })
+      }
+    }
+  } else {
+    // Completing arguments
+    let argsBefore = fields.length - 1
+    if (!endsWithSpace) {
+      argsBefore--
+    }
+    const cmdName = (fields[0] || '').toLowerCase().replace(/^\//, '')
+    const tokenLower = token.toLowerCase()
+
+    if (cmdName === 'model') {
+      if (argsBefore === 0) {
+        for (const m of session.availableModels) {
+          if (m.id.toLowerCase().includes(tokenLower)) {
+            matches.push({
+              id: `model:${m.id}`,
+              group: 'models',
+              name: m.id,
+              description: m.provider || m.url,
+              replaceStart,
+              replaceEnd: endOfWord,
+            })
+          }
+        }
+      }
+    } else if (cmdName === 'resume') {
+      if (argsBefore === 0) {
+        for (const s of session.sessions) {
+          if (s.id.toLowerCase().includes(tokenLower) || s.model_id.toLowerCase().includes(tokenLower)) {
+            matches.push({
+              id: `session:${s.id}`,
+              group: 'sessions',
+              name: s.id,
+              description: `${s.model_id} · ${s.message_count} msgs`,
+              replaceStart,
+              replaceEnd: endOfWord,
+            })
+          }
+        }
+      }
+    } else if (cmdName === 'session') {
+      if (argsBefore === 0) {
+        const subs = ['list', 'info', 'export', 'delete']
+        for (const s of subs) {
+          if (s.startsWith(tokenLower)) {
+            matches.push({
+              id: `sub:${s}`,
+              group: 'commands',
+              name: s,
+              replaceStart,
+              replaceEnd: endOfWord,
+            })
+          }
+        }
+      } else if (argsBefore === 1) {
+        const sub = fields[1].toLowerCase()
+        if (['info', 'export', 'delete'].includes(sub)) {
+          for (const s of session.sessions) {
+            if (s.id.toLowerCase().includes(tokenLower)) {
+              matches.push({
+                id: `session:${s.id}`,
+                group: 'sessions',
+                name: s.id,
+                description: `${s.model_id} · ${s.message_count} msgs`,
+                replaceStart,
+                replaceEnd: endOfWord,
+              })
+            }
+          }
+        }
+      }
+    } else if (cmdName === 'effort') {
+      if (argsBefore === 0) {
+        const activeModel = session.availableModels.find(m => m.id === session.model)
+        const efforts = ['off', ...(activeModel?.reasoning_efforts ?? [])]
+        for (const e of efforts) {
+          if (e.startsWith(tokenLower)) {
+            matches.push({
+              id: `effort:${e}`,
+              group: 'effort',
+              name: e,
+              description: `effort level: ${e}`,
+              replaceStart,
+              replaceEnd: endOfWord,
+            })
+          }
+        }
+      }
+    } else if (cmdName === 'reasoning') {
+      if (argsBefore === 0) {
+        const options = ['on', 'off', 'toggle']
+        for (const o of options) {
+          if (o.startsWith(tokenLower)) {
+            matches.push({
+              id: `reasoning:${o}`,
+              group: 'commands',
+              name: o,
+              replaceStart,
+              replaceEnd: endOfWord,
+            })
+          }
+        }
+      }
+    } else if (cmdName === 'login' || cmdName === 'logout') {
+      if (argsBefore === 0) {
+        for (const p of session.providers) {
+          if (p.toLowerCase().startsWith(tokenLower)) {
+            matches.push({
+              id: `provider:${p}`,
+              group: 'login',
+              name: p,
+              replaceStart,
+              replaceEnd: endOfWord,
+            })
+          }
+        }
+      }
+    } else {
+      // Check if it is an extension command (like /mcp)
+      const extCmd = session.extensionCommands.find(e => e.name.toLowerCase() === cmdName)
+      if (extCmd && extCmd.subcommands && argsBefore === 0) {
+        for (const sub of extCmd.subcommands) {
+          if (sub.name.toLowerCase().startsWith(tokenLower)) {
+            matches.push({
+              id: `extsub:${extCmd.name}:${sub.name}`,
+              group: 'commands',
+              name: sub.name,
+              description: sub.description,
+              replaceStart,
+              replaceEnd: endOfWord,
+            })
+          }
+        }
+      }
+    }
+  }
+
+  return matches
 })
 
 const showMenu = computed(() => !menuDismissed.value && completionItems.value.length > 0)
@@ -137,6 +312,7 @@ function onInput() {
   history.saveDraft(draft.value)
   history.resetCursor()
   autogrow()
+  updateCursor()
 }
 
 function isOnFirstLine(el: HTMLTextAreaElement): boolean {
@@ -209,9 +385,20 @@ function onKeydown(e: KeyboardEvent) {
 
 function accept(item: CompletionItem) {
   if (!item) return
-  draft.value = item.acceptsArgs ? `${item.name} ` : item.name
-  menuDismissed.value = true
-  nextTick(() => textarea.value?.focus())
+  const text = draft.value
+  const prefix = text.slice(0, item.replaceStart)
+  const suffix = text.slice(item.replaceEnd)
+  const nameWithSpace = item.name + ' '
+  draft.value = prefix + nameWithSpace + suffix
+  const newCursor = prefix.length + nameWithSpace.length
+  cursorPosition.value = newCursor
+  menuDismissed.value = false
+  selected.value = 0
+  nextTick(() => {
+    textarea.value?.focus()
+    textarea.value?.setSelectionRange(newCursor, newCursor)
+    autogrow()
+  })
 }
 
 async function onFilePicked(e: Event) {

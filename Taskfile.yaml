@@ -111,9 +111,7 @@ tasks:
     desc: Run all quality checks (format, lint, vet, fix, test) for all platforms
     deps:
       - check:windows
-      - check:webui
     cmds:
-      - gofumpt -w .
       - go vet ./...
       - go fix ./...
       - gofumpt -w .

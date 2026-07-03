@@ -51,12 +51,14 @@ import { computed, watch } from 'vue'
 
 export interface CompletionItem {
   id: string
-  group: 'commands' | 'skills' | 'extensions' | 'models'
+  group: 'commands' | 'skills' | 'extensions' | 'models' | 'sessions' | 'effort' | 'login'
   name: string
   description?: string
   badge?: string
   badgeClass?: string
   acceptsArgs?: boolean
+  replaceStart?: number
+  replaceEnd?: number
 }
 
 const GROUP_LABELS: Record<CompletionItem['group'], string> = {
@@ -64,6 +66,9 @@ const GROUP_LABELS: Record<CompletionItem['group'], string> = {
   skills: 'Skills',
   extensions: 'Extensions',
   models: 'Models',
+  sessions: 'Sessions',
+  effort: 'Effort',
+  login: 'Providers',
 }
 
 const props = defineProps<{

@@ -137,7 +137,7 @@ func newInlineChat(
 
 	c.header = taui.NewStyledText(headerIdle, c.grey, nil)
 	c.status = taui.NewText("")
-	c.input = taui.NewLineInput("› ")
+	c.input = taui.NewLineInput("")
 	c.input.SetStyles(c.bold, nil, c.grey)
 	c.input.SetOnSubmit(c.onSubmit)
 
@@ -189,7 +189,7 @@ func newInlineChat(
 	box.AddChild(c.header)
 	box.AddChild(c.stage)
 	box.AddChild(c.promptSlot)
-	box.AddChild(taui.NewText(""))
+	box.AddChild(taui.NewDivider(""))
 	box.AddChild(c.input)
 	box.AddChild(c.completions)
 	// Panels render between the input area and the status bar — same region
@@ -198,6 +198,7 @@ func newInlineChat(
 	// completions do. When empty, Container.Render returns nil, so there's
 	// no dead space when no panels are open.
 	box.AddChild(c.panels)
+	box.AddChild(taui.NewDivider(""))
 	box.AddChild(c.status)
 
 	engine.AddChild(box)

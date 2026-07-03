@@ -7,11 +7,10 @@
     <!-- Model picker: floats upward from the context bar -->
     <div
       v-if="showPicker"
-      class="absolute bottom-full left-0 right-0 mb-1 flex flex-col overflow-hidden rounded-md border border-border bg-popover shadow-lg"
-      style="max-height: 320px"
+      class="absolute bottom-full left-0 right-0 mb-1 rounded-md border border-border bg-popover shadow-lg overflow-hidden"
     >
       <!-- Scrollable model list -->
-      <div class="min-h-0 flex-1 overflow-y-auto">
+      <div class="max-h-[272px] overflow-y-auto overscroll-contain">
         <template v-for="group in filteredGroups" :key="group.provider">
           <div class="sticky top-0 bg-popover/95 px-3 py-1 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground backdrop-blur-sm">
             {{ group.provider }}
@@ -68,6 +67,7 @@
     >
       {{ session.parameters.reasoning_effort }}
     </span>
+    <UsageIndicator class="ml-auto" />
   </div>
 </template>
 
@@ -75,6 +75,7 @@
 import { computed, nextTick, ref } from 'vue'
 import { onClickOutside } from '@vueuse/core'
 import { CpuIcon } from '@lucide/vue'
+import UsageIndicator from '@/components/UsageIndicator.vue'
 import { useSessionStore } from '@/stores/session'
 import type { ChatModelRef, ChatSessionPatch } from '@/lib/protocol'
 
