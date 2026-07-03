@@ -147,7 +147,7 @@ The project follows a **layered architecture** with a command/event boundary bet
 | Orchestration | `internal/app/` | Wires subsystems together for each use case (chat, token, models) |
 | Domain | `internal/chat/`, `internal/skills/`, `internal/agent/` | Core business logic, commands, events |
 | Presentation | `internal/tui/` | taui-based interactive terminal UI |
-| Infrastructure | `internal/config/`, `internal/eventbus/`, `internal/store/`, `internal/sessions/`, `internal/indexing/` | Config, event bus, persistence, search |
+| Infrastructure | `internal/config/`, `internal/eventbus/`, `internal/store/`, `internal/sessions/` | Config, event bus, persistence |
 
 ### Package Responsibilities
 
@@ -165,7 +165,6 @@ The project follows a **layered architecture** with a command/event boundary bet
 - **`sessions`** — Session lifecycle management (create, update, close, branch). Wraps the coordinator and store for session orchestration.
 - **`plugin`** — gRPC-based plugin/extension system using HashiCorp go-plugin.
 - **`registry`** — Command registry: discovers built-in, custom (markdown-based), skill-based, and extension commands. Publishes `CommandsChangedEvent` on the event bus so the TUI can update completions.
-- **`indexing`** — Full-text search over sessions using Bleve.
 - **`chat/commands`** — User-defined custom command loading from markdown files (user-level `~/.config/tau/commands/` and project-level `.tau/commands/`).
 
 ### Dependency Rules
@@ -410,10 +409,6 @@ LLM provider integration is handled through the external `github.com/samcharles9
 - `internal/app/chat.go:newRuntimeForProviders()` — builds `runtime.Runtime` from provider configs + embedded snapshot; `resolveProviderClass()` maps tau provider → ai-sdk class (default `"openai-compatible"`, `"anthropic"` for Anthropic native API)
 - ai-sdk URL rule: base URLs with `/v1` in the path are left as-is; host-only URLs get `/v1` appended. Endpoint paths do NOT include `/v1` (e.g., `/chat/completions` not `/v1/chat/completions`). Violating this causes 404s.
 - `internal/providers/snapshot/models.json` is the single authoritative model catalogue at runtime. `~/.config/tau/models.json` is no longer used.
-
-### Changing Search / Indexing
-
-- `internal/indexing/indexing.go` — Full-text search index backed by Bleve. `SearchIndex` wraps bleve with document serialization, indexing, and search operations.
 
 ---
 
