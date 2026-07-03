@@ -54,8 +54,14 @@ func (fs *FileSubscriber) handle(e chat.MetricEvent) {
 	fs.f.Write(b)
 }
 
-// Close closes the subscriber and the underlying file.
+// Close closes the subscriber and the underlying file. The file is
+// synced to disk before closing to ensure buffered writes are durable.
 func (fs *FileSubscriber) Close() error {
 	fs.sub.Close()
+	// Sync flushes OS buffers to disk before closing.
+	if err := fs.f.Sync(); err != nil {
+		fs.f.Close()
+		return err
+	}
 	return fs.f.Close()
 }

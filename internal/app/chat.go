@@ -688,6 +688,7 @@ func buildCoordinator(ctx context.Context, cfg coordinatorConfig) (*agent.Coordi
 			}
 			return nil
 		},
+		MetricsConfig: cfg.MetricsConfig,
 	})
 	if err != nil {
 		return nil, nil, nil, err

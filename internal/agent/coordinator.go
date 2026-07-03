@@ -97,6 +97,7 @@ type coordinatorSession struct {
 	cancel          context.CancelFunc
 	steeringMu      sync.Mutex
 	pendingSteering []string
+	turnStartedAt   time.Time
 }
 
 // CoordinatorConfig holds the dependencies for creating a Coordinator.
@@ -446,6 +447,10 @@ func (c *Coordinator) handleUpdate(cmd chat.UpdateChatSessionCommand) {
 		return
 	}
 
+	// Capture old values for model/provider switch metrics.
+	oldModel := session.state.Model.ID
+	oldProvider := session.state.ProviderName
+
 	// If the patch changes the model ID, try to enrich the bare {id: "..."}
 	// with the full Config (context window, pricing) so snapshots carry
 	// correct metadata to wire consumers.
@@ -472,6 +477,28 @@ func (c *Coordinator) handleUpdate(cmd chat.UpdateChatSessionCommand) {
 	// handleUpdate is a config change, not a session lifecycle transition.
 	// Session shutdown is dispatched by handleClose and cancelAllSessions.
 	c.emit(chat.ChatSessionSnapshotEvent{State: snapshot})
+
+	// Emit model/provider switch metrics.
+	if cmd.Patch.Model != nil && oldModel != snapshot.Model.ID {
+		c.emitMetrics(chat.MetricEvent{
+			Category:  chat.MetricCategorySession,
+			Name:      "session.model_changed",
+			Value:     1,
+			Unit:      "count",
+			Labels:    map[string]string{"from": oldModel, "to": snapshot.Model.ID},
+			SessionID: snapshot.SessionID,
+		})
+	}
+	if cmd.Patch.Provider != nil && oldProvider != snapshot.ProviderName {
+		c.emitMetrics(chat.MetricEvent{
+			Category:  chat.MetricCategorySession,
+			Name:      "session.provider_changed",
+			Value:     1,
+			Unit:      "count",
+			Labels:    map[string]string{"from": oldProvider, "to": snapshot.ProviderName},
+			SessionID: snapshot.SessionID,
+		})
+	}
 
 	// Persist provider/model changes to the local config file so they survive
 	// restarts. This runs outside the mutex (file I/O is blocking).
@@ -633,6 +660,14 @@ func (c *Coordinator) handleRunSkill(cmd chat.RunSkillCommand) {
 	if c.skillTracker != nil {
 		c.skillTracker.Activate(matched)
 	}
+	c.emitMetrics(chat.MetricEvent{
+		Category:  chat.MetricCategorySkill,
+		Name:      "skill.activated",
+		Value:     1,
+		Unit:      "count",
+		Labels:    map[string]string{"skill_name": matched.Name},
+		SessionID: cmd.SessionID,
+	})
 	if matched.AllowedTools != "" {
 		c.SetAllowedTools(tools.ParseAllowedTools(matched.AllowedTools))
 	} else {
@@ -993,13 +1028,24 @@ func (c *Coordinator) handleRunExtensionCommand(cmd chat.RunExtensionCommandComm
 	c.turnWG.Go(func() {
 		output, view, err := c.extensionReloader.RunExtensionCommand(c.ctx, name, args, c.uiBridge)
 		at := time.Now().UTC()
+		status := "success"
 		if err != nil {
+			status = "error"
 			// A single user-facing error notification.
 			c.emit(chat.ChatNotificationEvent{
 				Message:    "Extension command failed: " + err.Error(),
 				Level:      chat.ChatNotificationError,
 				OccurredAt: at,
 			})
+		}
+		c.emitMetrics(chat.MetricEvent{
+			Category: chat.MetricCategoryExtension,
+			Name:     "extension.command",
+			Value:    1,
+			Unit:     "count",
+			Labels:   map[string]string{"command": name, "status": status},
+		})
+		if err != nil {
 			return
 		}
 		c.emit(chat.ExtensionCommandResultEvent{Name: name, Output: output, View: view, OccurredAt: at})
@@ -1041,6 +1087,13 @@ func (c *Coordinator) runTurn(ctx context.Context, state chat.ChatSessionState) 
 	sessionID := state.SessionID
 	requestID := state.ActiveRequestID
 	now := time.Now().UTC()
+	turnStartedAt := now
+
+	c.mu.Lock()
+	if s := c.sessions[sessionID]; s != nil {
+		s.turnStartedAt = turnStartedAt
+	}
+	c.mu.Unlock()
 
 	c.publishPluginLifecycleEvent("turn_start", sessionID, &api.EventPayload{
 		Kind: &api.EventPayload_Turn{Turn: &api.TurnPayload{Direction: "start"}},
@@ -1540,6 +1593,13 @@ func summarizeForUIWithTruncation(value string) (string, bool) {
 	return value[:toolSummaryMaxBytes] + "…", true
 }
 
+// isSuccessFinish returns true for finish reasons that indicate a normal, successful
+// completion. All other reasons (including empty, "error", "content_filter",
+// "length", "cancelled") are treated as error outcomes for metric purposes.
+func isSuccessFinish(reason string) bool {
+	return reason == "stop" || reason == "tool_calls"
+}
+
 // computeCost calculates the USD cost of a completion from model pricing
 // and usage data. Returns 0 when pricing is not configured.
 func computeCost(costCfg tauconfig.CostConfig, usage chat.ChatUsage) float64 {
@@ -1649,10 +1709,43 @@ func (c *Coordinator) completeTurn(sessionID, requestID string, result chat.Comp
 		c.mu.Unlock()
 		return
 	}
+	turnStartedAt := session.turnStartedAt
 	_ = session.state.CompleteTurnWithReasoning(result.FinishReason, result.Usage, result.ReasoningContent, at)
 	session.cancel = nil
 	snapshot := chat.CloneChatSessionState(session.state)
 	c.mu.Unlock()
+
+	// Emit LLM latency metric when we have a turn start timestamp.
+	if !turnStartedAt.IsZero() {
+		c.emitMetrics(chat.MetricEvent{
+			Category: chat.MetricCategoryLLM,
+			Name:     "llm.latency",
+			Value:    float64(time.Since(turnStartedAt).Milliseconds()),
+			Unit:     "ms",
+			Labels: map[string]string{
+				"provider": snapshot.Provider.Name,
+				"model":    snapshot.Model.ID,
+			},
+			SessionID: sessionID,
+		})
+	}
+
+	// Emit error metric for non-success finish reasons.
+	if !isSuccessFinish(result.FinishReason) {
+		c.emitMetrics(chat.MetricEvent{
+			Category: chat.MetricCategoryLLM,
+			Name:     "llm.error",
+			Value:    1,
+			Unit:     "count",
+			Labels: map[string]string{
+				"provider":      snapshot.Provider.Name,
+				"model":         snapshot.Model.ID,
+				"finish_reason": result.FinishReason,
+				"error_kind":    result.FinishReason,
+			},
+			SessionID: sessionID,
+		})
+	}
 
 	// Emit LLM response metrics with token counts and cost.
 	cost := computeCost(snapshot.Model.Config.Cost, result.Usage)
@@ -1705,6 +1798,20 @@ func (c *Coordinator) cancelTurn(sessionID, requestID string, at time.Time) {
 	session.cancel = nil
 	snapshot := chat.CloneChatSessionState(session.state)
 	c.mu.Unlock()
+
+	c.emitMetrics(chat.MetricEvent{
+		Category: chat.MetricCategoryLLM,
+		Name:     "llm.error",
+		Value:    1,
+		Unit:     "count",
+		Labels: map[string]string{
+			"provider":      snapshot.Provider.Name,
+			"model":         snapshot.Model.ID,
+			"finish_reason": "cancelled",
+			"error_kind":    "cancelled",
+		},
+		SessionID: sessionID,
+	})
 
 	c.emit(chat.ChatResponseCancelledEvent{
 		State:       snapshot,

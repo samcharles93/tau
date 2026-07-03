@@ -11,6 +11,7 @@ import (
 
 	tauchat "github.com/samcharles93/tau/internal/chat"
 	"github.com/samcharles93/tau/internal/eventbus"
+	"github.com/samcharles93/tau/internal/metrics"
 	"github.com/samcharles93/tau/internal/sessions"
 	"github.com/samcharles93/tau/internal/skills"
 )
@@ -50,6 +51,26 @@ func RunStdIn(ctx context.Context, opts ChatOptions, prompt string) error {
 	// Create a local event bus and skills manager for headless mode.
 	bus := eventbus.New()
 	defer bus.Close()
+
+	// UsageTracker: subscribes to MetricEvent on a dedicated client so the
+	// coordinator's metric emission activates and we can snapshot totals.
+	metricsClient := bus.Client("stdin-metrics")
+	defer metricsClient.Close()
+	tracker := metrics.NewUsageTracker(metricsClient)
+	defer tracker.Close()
+
+	// FileSubscriber: when MetricsConfig.Dir is set, append every MetricEvent
+	// as JSONL to the configured directory for offline analysis.
+	if opts.Config.Metrics.Dir != "" {
+		fsClient := bus.Client("stdin-metrics-file")
+		fileSub, err := metrics.NewFileSubscriber(fsClient, opts.Config.Metrics.Dir)
+		if err != nil {
+			slog.Warn("metrics file subscriber unavailable", "err", err)
+		} else {
+			defer fileSub.Close()
+			defer fsClient.Close()
+		}
+	}
 
 	skillsMgr := skills.NewManager(bus)
 	defer skillsMgr.Close()
@@ -161,6 +182,7 @@ func RunStdIn(ctx context.Context, opts ChatOptions, prompt string) error {
 					if e.FinishReason == "length" {
 						fmt.Fprintln(os.Stderr, "\nwarning: response was truncated by max_tokens; rerun with --max-tokens N for a longer answer")
 					}
+					printStdinSummary(tracker, sessionID)
 					return nil
 				}
 			case tauchat.ChatRuntimeErrorEvent:
@@ -174,5 +196,58 @@ func RunStdIn(ctx context.Context, opts ChatOptions, prompt string) error {
 				}
 			}
 		}
+	}
+}
+
+// printStdinSummary prints a compact metrics summary to stderr after a
+// completed headless turn.
+func printStdinSummary(tracker *metrics.UsageTracker, sessionID string) {
+	totals := tracker.Snapshot(sessionID)
+	if totals == nil {
+		return
+	}
+	var parts []string
+	if totals.PromptTokens > 0 || totals.CompletionTokens > 0 {
+		parts = append(parts, fmt.Sprintf("tokens: %s / %s",
+			stdinTokens(totals.PromptTokens), stdinTokens(totals.CompletionTokens)))
+	}
+	if totals.Cost > 0 {
+		parts = append(parts, fmt.Sprintf("cost: %s", stdinCost(totals.Cost)))
+	}
+	if totals.LLMTotalLatencyMs > 0 {
+		parts = append(parts, stdinDuration(totals.LLMTotalLatencyMs))
+	}
+	if len(parts) > 0 {
+		fmt.Fprintf(os.Stderr, "\n%s\n", strings.Join(parts, " | "))
+	}
+}
+
+func stdinTokens(n int) string {
+	switch {
+	case n < 1000:
+		return fmt.Sprintf("%d", n)
+	case n < 1_000_000:
+		return fmt.Sprintf("%.1fk", float64(n)/1000)
+	default:
+		return fmt.Sprintf("%.1fM", float64(n)/1_000_000)
+	}
+}
+
+func stdinCost(usd float64) string {
+	if usd < 1 {
+		return fmt.Sprintf("$%.4f", usd)
+	}
+	return fmt.Sprintf("$%.2f", usd)
+}
+
+func stdinDuration(ms int64) string {
+	d := time.Duration(ms) * time.Millisecond
+	switch {
+	case d < time.Second:
+		return fmt.Sprintf("%dms", ms)
+	case d < time.Minute:
+		return fmt.Sprintf("%.1fs", d.Seconds())
+	default:
+		return d.Round(time.Second).String()
 	}
 }

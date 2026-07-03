@@ -380,6 +380,9 @@ func (c *inlineChat) printSessionSummaries(summaries []tauchat.SessionSummary, n
 	b.WriteString("Sessions:\n")
 	for _, s := range summaries {
 		fmt.Fprintf(&b, "- %s · %d messages · %s\n", s.ID, s.MessageCount, s.ModelID)
+		if line := sessionSummaryMetricsLine(s); line != "" {
+			fmt.Fprintf(&b, "  %s\n", line)
+		}
 	}
 	if nextCursor != "" {
 		b.WriteString("More sessions available.")
@@ -387,12 +390,73 @@ func (c *inlineChat) printSessionSummaries(summaries []tauchat.SessionSummary, n
 	c.engine.PrintAbove("%s", c.grey(strings.TrimRight(b.String(), "\n")))
 }
 
+// sessionSummaryMetricsLine builds a compact single-line metrics summary for a
+// session entry when at least one metric field is non-zero.
+func sessionSummaryMetricsLine(s tauchat.SessionSummary) string {
+	var parts []string
+	if s.InputTokens > 0 || s.OutputTokens > 0 {
+		parts = append(parts, "↑"+humanizeTokens(s.InputTokens)+" ↓"+humanizeTokens(s.OutputTokens))
+	}
+	if s.Cost > 0 {
+		parts = append(parts, formatCost(s.Cost))
+	}
+	if s.ToolCalls > 0 {
+		toolStr := fmt.Sprintf("%d tools", s.ToolCalls)
+		if s.ToolErrors > 0 {
+			toolStr += fmt.Sprintf(" (%d err)", s.ToolErrors)
+		}
+		parts = append(parts, toolStr)
+	}
+	if s.DurationMs > 0 {
+		parts = append(parts, formatDurationCompact(s.DurationMs))
+	}
+	return strings.Join(parts, " · ")
+}
+
+// formatDurationCompact renders milliseconds as a compact duration string.
+func formatDurationCompact(ms int64) string {
+	d := time.Duration(ms) * time.Millisecond
+	switch {
+	case d < time.Second:
+		return fmt.Sprintf("%dms", ms)
+	case d < time.Minute:
+		return fmt.Sprintf("%ds", int(d.Seconds()))
+	case d < time.Hour:
+		return fmt.Sprintf("%dm", int(d.Minutes()))
+	default:
+		h := int(d.Hours())
+		m := int(d.Minutes()) % 60
+		return fmt.Sprintf("%dh %dm", h, m)
+	}
+}
+
 func (c *inlineChat) printSessionInfo(s tauchat.SessionSummary) {
-	c.engine.PrintAbove("%s", c.grey(fmt.Sprintf(
-		"Session %s\nModel: %s\nProvider: %s\nMessages: %d\nTokens: %d\nCreated: %s\nUpdated: %s",
-		s.ID, s.ModelID, s.Provider, s.MessageCount, s.TotalTokens,
-		s.CreatedAt.Format(time.RFC3339), s.UpdatedAt.Format(time.RFC3339),
-	)))
+	var b strings.Builder
+	fmt.Fprintf(&b, "Session %s\n", s.ID)
+	fmt.Fprintf(&b, "Model: %s\n", s.ModelID)
+	fmt.Fprintf(&b, "Provider: %s\n", s.Provider)
+	fmt.Fprintf(&b, "Messages: %d\n", s.MessageCount)
+	if s.TotalTokens > 0 {
+		fmt.Fprintf(&b, "Tokens: ↑%s ↓%s (total %s)\n",
+			humanizeTokens(s.InputTokens), humanizeTokens(s.OutputTokens),
+			humanizeTokens(s.TotalTokens))
+	}
+	if s.Cost > 0 {
+		fmt.Fprintf(&b, "Cost: %s\n", formatCost(s.Cost))
+	}
+	if s.DurationMs > 0 {
+		fmt.Fprintf(&b, "Duration: %s\n", formatDurationCompact(s.DurationMs))
+	}
+	if s.ToolCalls > 0 {
+		fmt.Fprintf(&b, "Tool calls: %d", s.ToolCalls)
+		if s.ToolErrors > 0 {
+			fmt.Fprintf(&b, " (%d errors)", s.ToolErrors)
+		}
+		b.WriteByte('\n')
+	}
+	fmt.Fprintf(&b, "Created: %s\n", s.CreatedAt.Format(time.RFC3339))
+	fmt.Fprintf(&b, "Updated: %s", s.UpdatedAt.Format(time.RFC3339))
+	c.engine.PrintAbove("%s", c.grey(b.String()))
 }
 
 func (c *inlineChat) printMessage(msg tauchat.ChatMessage) {

@@ -30,6 +30,18 @@ func RunInline(ctx context.Context, runtime tauchat.ChatRuntime, cfg TUIConfig) 
 	tracker := metrics.NewUsageTracker(metricsClient)
 	defer tracker.Close()
 
+	// FileSubscriber: when MetricsConfig.Dir is set, append every MetricEvent
+	// as JSONL to the configured directory for offline analysis.
+	if cfg.MetricsConfig.Dir != "" {
+		fsClient := cfg.Bus.Client("tui-metrics-file")
+		fileSub, err := metrics.NewFileSubscriber(fsClient, cfg.MetricsConfig.Dir)
+		if err != nil {
+			return fmt.Errorf("metrics file subscriber: %w", err)
+		}
+		defer fileSub.Close()
+		defer fsClient.Close()
+	}
+
 	term := taui.NewProcessTerminal()
 	engine := taui.NewTUI(term)
 
