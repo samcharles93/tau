@@ -3,6 +3,7 @@ package tui
 import (
 	"context"
 	"fmt"
+	"log/slog"
 
 	tauchat "github.com/samcharles93/tau/internal/chat"
 	"github.com/samcharles93/tau/internal/eventbus"
@@ -36,11 +37,13 @@ func RunInline(ctx context.Context, runtime tauchat.ChatRuntime, cfg TUIConfig) 
 		fsClient := cfg.Bus.Client("tui-metrics-file")
 		fileSub, err := metrics.NewFileSubscriber(fsClient, cfg.MetricsConfig.Dir)
 		if err != nil {
+			// Metrics file export is best-effort; never block startup.
+			slog.Warn("metrics file subscriber unavailable", "err", err)
 			fsClient.Close()
-			return fmt.Errorf("metrics file subscriber: %w", err)
+		} else {
+			defer fileSub.Close()
+			defer fsClient.Close()
 		}
-		defer fileSub.Close()
-		defer fsClient.Close()
 	}
 
 	term := taui.NewProcessTerminal()

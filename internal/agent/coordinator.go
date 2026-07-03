@@ -1401,6 +1401,29 @@ func (c *Coordinator) executeToolsParallel(ctx context.Context, sessionID, reque
 		results[i] = result
 		c.emitToolCompleted(sessionID, requestID, tc, result, startedAt, tr.Truncated)
 
+		// Skill activations via the LLM-invoked "skill" tool (the dominant
+		// path) need their own metric; handleRunSkill covers the user-command
+		// slash command path.
+		if tc.Function.Name == "skill" && !result.IsError {
+			skillName := tc.Function.Name // fallback
+			if args := strings.TrimSpace(tc.Function.Arguments); args != "" {
+				var skillArgs struct {
+					Name string `json:"name"`
+				}
+				if json.Unmarshal([]byte(args), &skillArgs) == nil && skillArgs.Name != "" {
+					skillName = skillArgs.Name
+				}
+			}
+			c.emitMetrics(chat.MetricEvent{
+				Category:  chat.MetricCategorySkill,
+				Name:      "skill.activated",
+				Value:     1,
+				Unit:      "count",
+				Labels:    map[string]string{"skill_name": skillName},
+				SessionID: sessionID,
+			})
+		}
+
 		c.publishPluginLifecycleEvent("tool_execution_end", sessionID, &api.EventPayload{
 			Kind: &api.EventPayload_AfterToolExec{
 				AfterToolExec: &api.ToolResultPayload{
@@ -1719,7 +1742,7 @@ func (c *Coordinator) completeTurn(sessionID, requestID string, result chat.Comp
 	if !turnStartedAt.IsZero() {
 		c.emitMetrics(chat.MetricEvent{
 			Category: chat.MetricCategoryLLM,
-			Name:     "llm.latency",
+			Name:     "turn.duration",
 			Value:    float64(time.Since(turnStartedAt).Milliseconds()),
 			Unit:     "ms",
 			Labels: map[string]string{

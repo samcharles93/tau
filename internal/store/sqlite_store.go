@@ -87,8 +87,6 @@ func (s *SQLiteStore) Save(ctx context.Context, state chat.ChatSessionState, dur
 			total_tokens      = excluded.total_tokens,
 			cost              = excluded.cost,
 			duration_ms       = excluded.duration_ms,
-			tool_calls        = excluded.tool_calls,
-			tool_errors       = excluded.tool_errors,
 			system_prompt     = excluded.system_prompt,
 			parent_session_id = excluded.parent_session_id
 	`,

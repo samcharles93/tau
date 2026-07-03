@@ -193,12 +193,12 @@ func TestUsageTracker_MultiSessionIsolation(t *testing.T) {
 
 // ── New metric event type tests (added for metrics system coverage) ─────────
 
-func TestUsageTracker_LLMLatencyAccumulates(t *testing.T) {
+func TestUsageTracker_TurnDurationAccumulates(t *testing.T) {
 	tracker, pub := newHarness(t)
 
 	pub.Publish(chat.MetricEvent{
 		Category:  chat.MetricCategoryLLM,
-		Name:      "llm.latency",
+		Name:      "turn.duration",
 		Value:     420.0,
 		Unit:      "ms",
 		Labels:    map[string]string{"provider": "openai", "model": "gpt-x"},
@@ -206,7 +206,7 @@ func TestUsageTracker_LLMLatencyAccumulates(t *testing.T) {
 	})
 	pub.Publish(chat.MetricEvent{
 		Category:  chat.MetricCategoryLLM,
-		Name:      "llm.latency",
+		Name:      "turn.duration",
 		Value:     150.0,
 		Unit:      "ms",
 		Labels:    map[string]string{"provider": "openai", "model": "gpt-x"},
@@ -215,7 +215,7 @@ func TestUsageTracker_LLMLatencyAccumulates(t *testing.T) {
 
 	require.Eventually(t, func() bool {
 		s := tracker.Snapshot("s1")
-		return s != nil && s.LLMTotalLatencyMs == 570
+		return s != nil && s.TurnDurationMs == 570
 	}, time.Second, time.Millisecond)
 }
 

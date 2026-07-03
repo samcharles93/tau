@@ -139,6 +139,10 @@ func RunStdIn(ctx context.Context, opts ChatOptions, prompt string) error {
 	}
 
 	sub, err := coordinator.SubscribeEvents()
+	// Note: tracker and chat subscriber intentionally share bridgeClient
+	// so per-client delivery ordering guarantees the tracker processes
+	// metric events (published before ChatResponseCompletedEvent in
+	// completeTurn) before we snapshot on the completion event.
 	if err != nil {
 		return err
 	}
@@ -215,8 +219,8 @@ func printStdinSummary(tracker *metrics.UsageTracker, sessionID string) {
 	if totals.Cost > 0 {
 		parts = append(parts, fmt.Sprintf("cost: %s", stdinCost(totals.Cost)))
 	}
-	if totals.LLMTotalLatencyMs > 0 {
-		parts = append(parts, stdinDuration(totals.LLMTotalLatencyMs))
+	if totals.TurnDurationMs > 0 {
+		parts = append(parts, stdinDuration(totals.TurnDurationMs))
 	}
 	if len(parts) > 0 {
 		fmt.Fprintf(os.Stderr, "\n%s\n", strings.Join(parts, " | "))

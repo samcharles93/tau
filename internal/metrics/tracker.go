@@ -22,8 +22,10 @@ type SessionTotals struct {
 	ToolErrors       int
 	LastProvider     string
 	LastModel        string
-	// LLMTotalLatencyMs accumulates llm.latency metric values (ms).
-	LLMTotalLatencyMs int64
+	// TurnDurationMs accumulates turn.duration metric values (ms).
+	// This is wall-clock time for the entire agentic turn including
+	// all LLM calls and tool executions in the loop.
+	TurnDurationMs int64
 	// SkillActivations counts unique skill activation events.
 	SkillActivations int
 	// ExtensionCommands counts extension command invocations.
@@ -93,8 +95,8 @@ func (t *UsageTracker) handle(e chat.MetricEvent) {
 			}
 		case "llm.cost":
 			totals.Cost += e.Value
-		case "llm.latency":
-			totals.LLMTotalLatencyMs += int64(e.Value)
+		case "turn.duration":
+			totals.TurnDurationMs += int64(e.Value)
 		case "llm.error":
 			totals.TurnErrors++
 		}
@@ -106,10 +108,16 @@ func (t *UsageTracker) handle(e chat.MetricEvent) {
 		}
 
 	case chat.MetricCategorySkill:
-		totals.SkillActivations++
+		switch e.Name {
+		case "skill.activated":
+			totals.SkillActivations++
+		}
 
 	case chat.MetricCategoryExtension:
-		totals.ExtensionCommands++
+		switch e.Name {
+		case "extension.command":
+			totals.ExtensionCommands++
+		}
 
 	case chat.MetricCategorySession:
 		switch e.Name {
