@@ -146,6 +146,25 @@ func newInlineChat(
 		c.input.SetValueAndCursor(s, len([]rune(s)))
 		c.engine.RequestRender()
 	})
+	c.completions.SetOnAccept(func(s string) {
+		c.input.SetValueAndCursor(s, len([]rune(s)))
+		value := c.input.Value()
+		cur := c.input.Cursor()
+
+		// If selecting this item leaves no further completions and we've
+		// already moved past the command name into an argument slot, submit
+		// immediately. Otherwise leave the filled line open so the user can
+		// pick the next completion slot or keep typing.
+		if c.argsBefore(value, cur) > 0 {
+			set := c.completionSet(taui.CompletionContext{Text: value, Cursor: cur})
+			if set == nil || len(set.Groups) == 0 {
+				c.input.Clear()
+				c.onSubmit(value)
+				return
+			}
+		}
+		c.engine.RequestRender()
+	})
 	c.completions.SetOnDetail(func(word string) bool {
 		c.mu.Lock()
 		for _, s := range c.sessionSummaries {
@@ -619,6 +638,34 @@ func (c *inlineChat) width() int {
 		w = 80
 	}
 	return w
+}
+
+// argsBefore returns the number of fully-typed argument tokens before the
+// cursor, mirroring the logic used by completionSet. This is used by the
+// Enter-on-completion accept handler to decide whether a selection is at the
+// bottom of the completion chain and should be submitted immediately.
+func (c *inlineChat) argsBefore(text string, cursor int) int {
+	runes := []rune(text)
+	if cursor > len(runes) {
+		cursor = len(runes)
+	}
+	if cursor < 0 {
+		cursor = 0
+	}
+	if !strings.HasPrefix(text, "/") {
+		return -1
+	}
+	before := string(runes[:cursor])
+	endsWithSpace := strings.HasSuffix(before, " ")
+	fields := strings.Fields(before)
+	if len(fields) <= 1 && !endsWithSpace {
+		return 0
+	}
+	argsBefore := len(fields) - 1
+	if !endsWithSpace {
+		argsBefore--
+	}
+	return argsBefore
 }
 
 // ── Tool box colours ─────────────────────────────────────────────────────────
