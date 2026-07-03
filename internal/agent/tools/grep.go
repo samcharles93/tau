@@ -17,7 +17,7 @@ type GrepParams struct {
 	Pattern       string `json:"pattern"`
 	Path          string `json:"path,omitempty"`    // file or directory
 	Include       string `json:"include,omitempty"` // glob pattern for file names
-	IsRegex       bool   `json:"is_regex,omitempty"`
+	Literal       bool   `json:"literal,omitempty"`
 	CaseSensitive bool   `json:"case_sensitive,omitempty"`
 	ContextBefore int    `json:"context_before,omitempty"` // lines before each match (-B)
 	ContextAfter  int    `json:"context_after,omitempty"`  // lines after each match (-A)
@@ -25,13 +25,13 @@ type GrepParams struct {
 
 var grepSchema = Schema{
 	Name:        "grep",
-	Description: "Search for a pattern in files using ripgrep (rg). Respects .gitignore. Returns matching lines with file paths and line numbers. Use context_before/context_after to show surrounding lines.",
+	Description: "Search file contents for a regex pattern using ripgrep (rg). Respects .gitignore. Returns matching lines with file paths and line numbers. Supports alternation (e.g. 'foo|bar') and full regex syntax. Use context_before/context_after to show surrounding lines.",
 	Parameters: json.RawMessage(`{
 		"type": "object",
 		"properties": {
 			"pattern": {
 				"type": "string",
-				"description": "Search pattern (literal text or regex)"
+				"description": "Regex pattern to search for (e.g. 'handleCancel|CancelChat'). Set literal:true to match the pattern as plain text instead."
 			},
 			"path": {
 				"type": "string",
@@ -41,9 +41,9 @@ var grepSchema = Schema{
 				"type": "string",
 				"description": "Glob pattern for file inclusion (e.g. '*.go', '*.ts')"
 			},
-			"is_regex": {
+			"literal": {
 				"type": "boolean",
-				"description": "Treat pattern as a regex. Defaults to false (literal)."
+				"description": "Treat pattern as literal text instead of a regex. Defaults to false."
 			},
 			"case_sensitive": {
 				"type": "boolean",
@@ -146,7 +146,7 @@ func grepFallback(ctx context.Context, p GrepParams, searchPath, cwd string) (st
 	}
 
 	var matcher func(line string) bool
-	if p.IsRegex {
+	if !p.Literal {
 		var re *regexp.Regexp
 		if p.CaseSensitive || hasUppercase(p.Pattern) {
 			re, err = regexp.Compile(p.Pattern)
@@ -160,7 +160,7 @@ func grepFallback(ctx context.Context, p GrepParams, searchPath, cwd string) (st
 			return re.MatchString(line)
 		}
 	} else {
-		if p.CaseSensitive {
+		if p.CaseSensitive || hasUppercase(p.Pattern) {
 			matcher = func(line string) bool {
 				return strings.Contains(line, p.Pattern)
 			}
@@ -331,7 +331,7 @@ func dedupLines(lines []string) []string {
 func buildGrepArgs(p GrepParams) []string {
 	args := []string{"--line-number", "--no-heading", "--color=never"}
 
-	if !p.IsRegex {
+	if p.Literal {
 		args = append(args, "--fixed-strings")
 	}
 

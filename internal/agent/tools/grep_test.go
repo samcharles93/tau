@@ -33,8 +33,20 @@ func TestGrepFallback(t *testing.T) {
 			want:   []string{"alpha.go:2:func Hello() {}"},
 		},
 		{
-			name:   "literal match in directory",
+			// Smart case: an uppercase letter in the pattern makes the
+			// search case-sensitive, matching ripgrep's --smart-case.
+			name:   "match in directory (smart case)",
 			params: GrepParams{Pattern: "Hello", Path: tmp},
+			want: []string{
+				"alpha.go:2:func Hello() {}",
+				"gamma.txt:1:Hello world",
+				"subdir/nested.go:2:func HelloThere() {}",
+				"vendor/mod.go:2:func Hello() {}",
+			},
+		},
+		{
+			name:   "lowercase pattern matches both cases",
+			params: GrepParams{Pattern: "hello", Path: tmp},
 			want: []string{
 				"alpha.go:2:func Hello() {}",
 				"beta.go:3:func hello() {}",
@@ -54,8 +66,8 @@ func TestGrepFallback(t *testing.T) {
 			},
 		},
 		{
-			name:   "regex match",
-			params: GrepParams{Pattern: "Hello.*", Path: tmp, IsRegex: true},
+			name:   "regex match by default",
+			params: GrepParams{Pattern: "Hello.*", Path: tmp},
 			want: []string{
 				"alpha.go:2:func Hello() {}",
 				"gamma.txt:1:Hello world",
@@ -64,8 +76,24 @@ func TestGrepFallback(t *testing.T) {
 			},
 		},
 		{
+			name:   "regex alternation",
+			params: GrepParams{Pattern: "World|world", Path: tmp},
+			want: []string{
+				"beta.go:2:func World() {}",
+				"gamma.txt:1:Hello world",
+			},
+		},
+		{
+			name:   "literal match with regex metacharacters",
+			params: GrepParams{Pattern: "Hello() {}", Path: tmp, Literal: true, CaseSensitive: true},
+			want: []string{
+				"alpha.go:2:func Hello() {}",
+				"vendor/mod.go:2:func Hello() {}",
+			},
+		},
+		{
 			name:   "include filter",
-			params: GrepParams{Pattern: "Hello", Path: tmp, Include: "*.go"},
+			params: GrepParams{Pattern: "hello", Path: tmp, Include: "*.go"},
 			want: []string{
 				"alpha.go:2:func Hello() {}",
 				"beta.go:3:func hello() {}",

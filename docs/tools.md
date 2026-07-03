@@ -67,20 +67,19 @@ Registered via `RegisterBuiltins()` in `internal/agent/tools/builtin.go`:
 | `read` | `read.go` | Read file contents with line-range support |
 | `write` | `write.go` | Create or overwrite files (queued in MutationQueue) |
 | `edit` | `edit.go` | Precise text replacements in files (queued) |
-| `patch` | `patch.go` | Apply unified diffs to files (queued) |
 | `shell` | `shell.go` | Execute shell commands with timeout |
-| `grep` | `grep.go` | Search file contents with regex |
-| `find` | `find.go` | Find files by glob pattern |
-| `ls` | `ls.go` | List directory contents |
-| `search_tau_docs` | `docs.go` | Search tau's embedded documentation |
-| `read_tau_doc` | `docs.go` | Read a specific tau documentation file |
+| `grep` | `grep.go` | Search file contents with regex (regex by default; `literal: true` for plain text) |
+| `find` | `find.go` | Find files by glob pattern or list a directory |
+| `docs` | `docs.go` | Search, read, or list tau's embedded documentation |
+
+The set is deliberately small: each tool has one clear job and no two tools overlap, so models pick the right one without deliberating. Session analysis showed that redundant tools (`patch`, `glob`, `ls`, split doc tools) went unused or pushed models to shell out instead.
 
 ## MutationQueue
 
-Write, edit, and patch operations share a `MutationQueue` (`internal/agent/tools/mutation.go`). This enforces sequential execution of file mutations to prevent race conditions when tools run in parallel.
+Write and edit operations share a `MutationQueue` (`internal/agent/tools/mutation.go`). This enforces sequential execution of file mutations to prevent race conditions when tools run in parallel.
 
 The queue:
-- Serializes all write/edit/patch operations
+- Serializes all write/edit operations
 - Returns results in order
 - Prevents interleaved writes to the same file
 

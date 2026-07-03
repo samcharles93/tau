@@ -7,7 +7,7 @@ import (
 )
 
 // ReadTracker records which files the model has read so that mutation
-// tools (write, edit, patch) can enforce a read-before-write safety
+// tools (write, edit) can enforce a read-before-write safety
 // check.
 type ReadTracker struct {
 	mu    sync.Mutex
@@ -33,7 +33,7 @@ func (rt *ReadTracker) MarkRead(cwd, path string) {
 // CheckRead returns an error if the file at the given path has not been
 // read by the model in this session. The path is normalised to absolute
 // form. A file must be read (via the read tool) before it can be written,
-// edited, or patched.
+// edited.
 func (rt *ReadTracker) CheckRead(cwd, path string) error {
 	abs := resolvePath(cwd, path)
 	rt.mu.Lock()

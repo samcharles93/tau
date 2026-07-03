@@ -26,7 +26,7 @@ type ShellParams struct {
 
 var shellSchema = Schema{
 	Name:        "shell",
-	Description: "Execute a shell command. Uses PowerShell on Windows, bash on Linux/macOS. Returns stdout and stderr.",
+	Description: "Execute a shell command. Uses PowerShell on Windows, bash on Linux/macOS. Returns stdout and stderr. Use for builds, tests, git, and other commands — prefer the dedicated grep, find, and read tools for searching and reading files.",
 	Parameters: json.RawMessage(`{
 		"type": "object",
 		"properties": {
@@ -89,7 +89,7 @@ func makeShellExecutor(cwd string, mq *MutationQueue) Executor {
 		}
 
 		// Serialize with file-mutation tools: shell commands may modify
-		// files that write/edit/patch are working on.
+		// files that write/edit are working on.
 		if mq != nil {
 			mq.GlobalLock()
 			defer mq.GlobalUnlock()

@@ -9,7 +9,7 @@ import (
 // parallel tool execution.
 //
 // A sync.RWMutex coordinates between shell commands and file-mutation
-// tools. File mutations (write, edit, patch) take a read lock so they
+// tools. File mutations (write, edit) take a read lock so they
 // can run concurrently with each other. Shell commands take the write
 // lock, blocking all file mutations for the duration of the command.
 type MutationQueue struct {
