@@ -52,9 +52,12 @@ func RunStdIn(ctx context.Context, opts ChatOptions, prompt string) error {
 	bus := eventbus.New()
 	defer bus.Close()
 
-	// UsageTracker: subscribes to MetricEvent on a dedicated client so the
-	// coordinator's metric emission activates and we can snapshot totals.
-	metricsClient := bus.Client("stdin-metrics")
+	// UsageTracker: subscribes MetricEvent on this client so the
+	// coordinator's metric emission activates. The main event loop
+	// subscribes ChatEvent on the same client (see below) so per-client
+	// delivery ordering guarantees the tracker has processed
+	// llm.response/llm.cost before we snapshot on completion.
+	metricsClient := bus.Client("stdin-bridge")
 	defer metricsClient.Close()
 	tracker := metrics.NewUsageTracker(metricsClient)
 	defer tracker.Close()
@@ -138,15 +141,12 @@ func RunStdIn(ctx context.Context, opts ChatOptions, prompt string) error {
 		slog.Warn("model discovery failed", "err", discoverErr)
 	}
 
-	sub, err := coordinator.SubscribeEvents()
-	// Note: tracker and chat subscriber intentionally share bridgeClient
-	// so per-client delivery ordering guarantees the tracker processes
-	// metric events (published before ChatResponseCompletedEvent in
-	// completeTurn) before we snapshot on the completion event.
-	if err != nil {
-		return err
-	}
-	defer sub.Close()
+	// Subscribe ChatEvent on the same client as the tracker so per-client
+	// delivery ordering preserves the publish sequence: completeTurn emits
+	// metrics before ChatResponseCompletedEvent, and both arrive in order
+	// on this client's dispatch goroutine.
+	chatSub := eventbus.Subscribe[tauchat.ChatEvent](metricsClient)
+	defer chatSub.Close()
 
 	requestID, err := newID()
 	if err != nil {
@@ -169,7 +169,7 @@ func RunStdIn(ctx context.Context, opts ChatOptions, prompt string) error {
 		case <-ctx.Done():
 			fmt.Fprintln(os.Stderr, "\ntimed out")
 			return ctx.Err()
-		case event, ok := <-sub.Events():
+		case event, ok := <-chatSub.Events():
 			if !ok {
 				return nil
 			}
