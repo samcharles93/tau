@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.12.0](https://github.com/samcharles93/tau/compare/v0.11.0...v0.12.0) (2026-07-03)
+
+
+### Features
+
+* **tool-stats:** join metrics.jsonl for ground-truth error rates and durations ([a16e764](https://github.com/samcharles93/tau/commit/a16e764ee185ba2d3ea29624f71e3c0cb85d6004))
+
 ## [0.11.0](https://github.com/samcharles93/tau/compare/v0.10.1...v0.11.0) (2026-07-03)
 
 
