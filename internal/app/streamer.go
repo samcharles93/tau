@@ -249,4 +249,3 @@ func buildToolCalls(calls map[int]*assembledToolCall) []tauchat.ChatToolCall {
 	}
 	return out
 }
-

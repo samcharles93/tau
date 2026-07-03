@@ -299,9 +299,10 @@ func TestUsageTracker_ExtensionCommandIncrements(t *testing.T) {
 func TestUsageTracker_ModelAndProviderSwitches(t *testing.T) {
 	tracker, pub := newHarness(t)
 
+	// When publishing session events use dotted names consistently.
 	pub.Publish(chat.MetricEvent{
 		Category:  chat.MetricCategorySession,
-		Name:      "session.model_changed",
+		Name:      "session.model.changed",
 		Value:     1,
 		Unit:      "count",
 		Labels:    map[string]string{"from": "gpt-4", "to": "gpt-5"},
@@ -309,7 +310,7 @@ func TestUsageTracker_ModelAndProviderSwitches(t *testing.T) {
 	})
 	pub.Publish(chat.MetricEvent{
 		Category:  chat.MetricCategorySession,
-		Name:      "session.provider_changed",
+		Name:      "session.provider.changed",
 		Value:     1,
 		Unit:      "count",
 		Labels:    map[string]string{"from": "openai", "to": "anthropic"},

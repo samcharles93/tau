@@ -482,7 +482,7 @@ func (c *Coordinator) handleUpdate(cmd chat.UpdateChatSessionCommand) {
 	if cmd.Patch.Model != nil && oldModel != snapshot.Model.ID {
 		c.emitMetrics(chat.MetricEvent{
 			Category:  chat.MetricCategorySession,
-			Name:      "session.model_changed",
+			Name:      "session.model.changed",
 			Value:     1,
 			Unit:      "count",
 			Labels:    map[string]string{"from": oldModel, "to": snapshot.Model.ID},
@@ -492,7 +492,7 @@ func (c *Coordinator) handleUpdate(cmd chat.UpdateChatSessionCommand) {
 	if cmd.Patch.Provider != nil && oldProvider != snapshot.ProviderName {
 		c.emitMetrics(chat.MetricEvent{
 			Category:  chat.MetricCategorySession,
-			Name:      "session.provider_changed",
+			Name:      "session.provider.changed",
 			Value:     1,
 			Unit:      "count",
 			Labels:    map[string]string{"from": oldProvider, "to": snapshot.ProviderName},
@@ -1730,7 +1730,9 @@ func (c *Coordinator) completeTurn(sessionID, requestID string, result chat.Comp
 		})
 	}
 
-	// Emit error metric for non-success finish reasons.
+	// Emit error metric for non-success finish reasons.  error_kind
+	// differentiates between cancellation, content filtering, length
+	// truncation, and provider-specific refusals (e.g. Gemini safety).
 	if !isSuccessFinish(result.FinishReason) {
 		c.emitMetrics(chat.MetricEvent{
 			Category: chat.MetricCategoryLLM,
@@ -1741,7 +1743,6 @@ func (c *Coordinator) completeTurn(sessionID, requestID string, result chat.Comp
 				"provider":      snapshot.Provider.Name,
 				"model":         snapshot.Model.ID,
 				"finish_reason": result.FinishReason,
-				"error_kind":    result.FinishReason,
 			},
 			SessionID: sessionID,
 		})
@@ -1808,7 +1809,6 @@ func (c *Coordinator) cancelTurn(sessionID, requestID string, at time.Time) {
 			"provider":      snapshot.Provider.Name,
 			"model":         snapshot.Model.ID,
 			"finish_reason": "cancelled",
-			"error_kind":    "cancelled",
 		},
 		SessionID: sessionID,
 	})
@@ -1831,6 +1831,20 @@ func (c *Coordinator) failTurn(sessionID, requestID string, err error, at time.T
 	session.cancel = nil
 	snapshot := chat.CloneChatSessionState(session.state)
 	c.mu.Unlock()
+
+	c.emitMetrics(chat.MetricEvent{
+		Category: chat.MetricCategoryLLM,
+		Name:     "llm.error",
+		Value:    1,
+		Unit:     "count",
+		Labels: map[string]string{
+			"provider":      snapshot.Provider.Name,
+			"model":         snapshot.Model.ID,
+			"finish_reason": "error",
+			"error_kind":    "stream_error",
+		},
+		SessionID: sessionID,
+	})
 
 	c.emit(chat.ChatSessionSnapshotEvent{State: snapshot})
 	c.emit(chat.ChatRuntimeErrorEvent{

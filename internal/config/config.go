@@ -225,8 +225,8 @@ type ModelConfig struct {
 	// advertise explicit effort-type options. Zero means not applicable.
 	ReasoningBudgetMax int            `json:"reasoning_budget_max,omitempty"`
 	Thinking           ThinkingConfig `yaml:"thinking,omitempty" json:"thinking"`
-	Cost             CostConfig     `yaml:"cost,omitempty" json:"cost"`
-	Compat           CompatConfig   `yaml:"compat,omitempty" json:"compat"`
+	Cost               CostConfig     `yaml:"cost,omitempty" json:"cost"`
+	Compat             CompatConfig   `yaml:"compat,omitempty" json:"compat"`
 }
 
 func (m *ModelConfig) UnmarshalYAML(value *yaml.Node) error {

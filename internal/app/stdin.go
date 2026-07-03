@@ -66,6 +66,7 @@ func RunStdIn(ctx context.Context, opts ChatOptions, prompt string) error {
 		fileSub, err := metrics.NewFileSubscriber(fsClient, opts.Config.Metrics.Dir)
 		if err != nil {
 			slog.Warn("metrics file subscriber unavailable", "err", err)
+			fsClient.Close()
 		} else {
 			defer fileSub.Close()
 			defer fsClient.Close()

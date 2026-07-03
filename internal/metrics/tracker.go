@@ -59,9 +59,9 @@ func NewUsageTracker(client *eventbus.Client) *UsageTracker {
 }
 
 func (t *UsageTracker) handle(e chat.MetricEvent) {
-	// Session lifecycle events with a signalling purpose (session.created,
-	// session.closed) don't carry numeric aggregates. Specific session
-	// state-change events (model_changed, provider_changed) are handled below.
+	// Session lifecycle events (created, closed) carry no numeric
+	// aggregates. State-change events (model.changed, provider.changed)
+	// increment their respective counters below.
 
 	t.mu.Lock()
 	defer t.mu.Unlock()
@@ -113,9 +113,9 @@ func (t *UsageTracker) handle(e chat.MetricEvent) {
 
 	case chat.MetricCategorySession:
 		switch e.Name {
-		case "session.model_changed":
+		case "session.model.changed":
 			totals.ModelSwitches++
-		case "session.provider_changed":
+		case "session.provider.changed":
 			totals.ProviderSwitches++
 		default:
 			// session.created, session.closed — no numeric aggregate.

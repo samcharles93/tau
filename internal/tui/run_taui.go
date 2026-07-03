@@ -36,6 +36,7 @@ func RunInline(ctx context.Context, runtime tauchat.ChatRuntime, cfg TUIConfig) 
 		fsClient := cfg.Bus.Client("tui-metrics-file")
 		fileSub, err := metrics.NewFileSubscriber(fsClient, cfg.MetricsConfig.Dir)
 		if err != nil {
+			fsClient.Close()
 			return fmt.Errorf("metrics file subscriber: %w", err)
 		}
 		defer fileSub.Close()

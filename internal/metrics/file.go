@@ -5,6 +5,7 @@ package metrics
 import (
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"sync"
@@ -49,10 +50,13 @@ func (fs *FileSubscriber) handle(e chat.MetricEvent) {
 
 	b, err := json.Marshal(e)
 	if err != nil {
-		return // skip malformed events
+		slog.Warn("metrics file subscriber: json marshal failed", "err", err)
+		return
 	}
 	b = append(b, '\n')
-	fs.f.Write(b)
+	if _, err := fs.f.Write(b); err != nil {
+		slog.Warn("metrics file subscriber: write failed", "err", err)
+	}
 }
 
 // Close closes the subscriber and the underlying file. The file is
