@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.10.1](https://github.com/samcharles93/tau/compare/v0.10.0...v0.10.1) (2026-07-03)
+
+
+### Bug Fixes
+
+* **taui:** fix dead bracketed-paste path and add OverlayStack ([#25](https://github.com/samcharles93/tau/issues/25)) ([d06e4ec](https://github.com/samcharles93/tau/commit/d06e4ecf36824afe5234978ecefa61b0812cd5b8))
+
 ## [0.10.0](https://github.com/samcharles93/tau/compare/v0.9.1...v0.10.0) (2026-07-03)
 
 
