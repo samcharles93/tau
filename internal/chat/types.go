@@ -378,6 +378,20 @@ type RunSkillCommand struct {
 
 func (RunSkillCommand) IsChatCommand() {}
 
+// RunAgentCommand activates a built-in agent command (e.g. /plan, /research)
+// by name (user-invoked via the matching slash command). The coordinator
+// renders the agent's prompt template, replaces the session's system prompt
+// with it, and restricts the tool registry per the agent's spec. Any trailing
+// prompt text typed alongside the command is submitted separately via
+// SubmitChatPromptCommand so it goes through the normal turn/queue bookkeeping.
+type RunAgentCommand struct {
+	SessionID   string    `json:"session_id"`
+	Name        string    `json:"name"`
+	RequestedAt time.Time `json:"requested_at"`
+}
+
+func (RunAgentCommand) IsChatCommand() {}
+
 // ReloadSkillsCommand triggers a skills catalog refresh from disk.
 type ReloadSkillsCommand struct {
 	RequestedAt time.Time

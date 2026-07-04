@@ -38,6 +38,11 @@ var (
 	// in the status line when the user interrupts the agent mid-turn.
 	SteeringFG = termkit.Color{100, 130, 220}
 
+	// CommandFG is the accent colour used to echo a submitted slash command
+	// into scrollback, so it reads visually distinct from a plain bold chat
+	// prompt.
+	CommandFG = termkit.Color{120, 170, 255}
+
 	// SkillRunning is the dark lilac state shown while the Skill tool is executing,
 	// so a skill load is visually distinct from a regular tool call.
 	SkillRunning = ToolStatus{

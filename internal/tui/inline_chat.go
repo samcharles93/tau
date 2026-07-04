@@ -501,17 +501,30 @@ func (c *inlineChat) onSubmit(prompt string) {
 	c.mu.Unlock()
 
 	if strings.HasPrefix(trimmed, "/") {
+		c.commit(commandEchoStyle(trimmed))
 		c.handleSlashCommand(trimmed)
 		return
 	}
 
-	c.input.AddToHistory(trimmed)
+	c.startOrQueueTurn(trimmed)
+}
+
+// commandEchoStyle paints a submitted slash command in the accent colour
+// (theme.CommandFG) so it reads as a command in scrollback rather than a
+// plain bold chat prompt (see doTurn's "› "+prompt echo).
+func commandEchoStyle(s string) string { return termkit.FgOnly(s, theme.CommandFG) }
+
+// startOrQueueTurn submits prompt as a new turn, or queues it behind a
+// running one. Shared by onSubmit and agent-command activation (e.g. /plan
+// with trailing text) so both interleave correctly with an in-flight turn.
+func (c *inlineChat) startOrQueueTurn(prompt string) {
+	c.input.AddToHistory(prompt)
 
 	c.mu.Lock()
 	if c.running {
-		c.queue = append(c.queue, trimmed)
+		c.queue = append(c.queue, prompt)
 		c.mu.Unlock()
-		c.engine.PrintAbove("%s", c.grey("⏳ queued: "+trimmed))
+		c.engine.PrintAbove("%s", c.grey("⏳ queued: "+prompt))
 		return
 	}
 	c.running = true
@@ -519,7 +532,7 @@ func (c *inlineChat) onSubmit(prompt string) {
 	c.steering.Store(false)
 	c.generating.Store(false)
 	c.cancelSent = false
-	go c.runTurn(trimmed)
+	go c.runTurn(prompt)
 }
 
 // onSteer handles Ctrl+S. When idle it's a normal submit. When busy it sends a

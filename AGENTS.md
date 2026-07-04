@@ -232,9 +232,10 @@ Use this section to quickly find the right files for a given change.
   - **Tool execution**: `executeToolsParallel()`, `mergeToolCallDelta()`
   - **Event emission**: `emit()` (non-blocking), `emitMustDeliver()` (bounded-blocking for terminal events)
   - **Plugin dispatch**: `dispatchPluginEvent()`, `broadcastTurnLifecycle()`, `applyPluginMessageModifications()`
-- `internal/agent/prompt.go` — System prompt construction: `PromptConfig`, `BuildSystemPrompt()`, `DiscoverContextFiles()`, `BuildPrompt()` (for built-in command templates)
+- `internal/agent/prompt.go` — System prompt construction: `PromptConfig`, `BuildSystemPrompt()`, `DiscoverContextFiles()`, `RenderAgentPrompt()` (renders a built-in agent command's template)
 - `internal/agent/ui_bridge.go` — `coordinatorUIBridge` implementing `tools.UIBridge` (Confirm, Select, Input, Notify)
-- `internal/agent/templates/*.md.tpl` — Go text/template prompt templates
+- `internal/agent/templates/agent.md.tpl` — the base system prompt, a Go text/template
+- `internal/agent/spec/` (package `spec`) — declarative built-in agent commands (`/plan`, `/research`, etc.), one `*.agent.md` frontmatter+template file per command in `internal/agent/spec/templates/`. A dependency-free leaf package (no import of `agent` or `registry`) so both the coordinator and the command registry can consume `spec.Builtins()`/`spec.Lookup()` without a cycle.
 
 ### Changing the Tool Registry / Adding Tools
 

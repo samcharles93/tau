@@ -242,7 +242,7 @@ func Parse(path string) (*Skill, []Diagnostic, error) {
 		return nil, []Diagnostic{diagnostic}, err
 	}
 
-	frontmatter, body, err := splitFrontmatter(string(content))
+	frontmatter, body, err := SplitFrontmatter(string(content))
 	if err != nil {
 		diagnostic := Diagnostic{Path: path, Severity: SeverityError, Message: err.Error()}
 		return nil, []Diagnostic{diagnostic}, err
@@ -444,7 +444,10 @@ func validateSkill(skill *Skill) []Diagnostic {
 	return diagnostics
 }
 
-func splitFrontmatter(content string) (string, string, error) {
+// SplitFrontmatter separates a leading YAML frontmatter block (delimited by
+// `---` lines) from the remaining Markdown body. Shared by skill and agent
+// definition parsing so both use identical frontmatter conventions.
+func SplitFrontmatter(content string) (string, string, error) {
 	content = strings.TrimPrefix(content, "\uFEFF")
 	content = strings.ReplaceAll(content, "\r\n", "\n")
 	content = strings.ReplaceAll(content, "\r", "\n")
@@ -479,18 +482,23 @@ func splitFrontmatter(content string) (string, string, error) {
 }
 
 func unmarshalFrontmatter(frontmatter string, skill *Skill) error {
-	if err := yaml.Unmarshal([]byte(frontmatter), skill); err == nil {
+	return UnmarshalFrontmatter(frontmatter, skill)
+}
+
+// UnmarshalFrontmatter unmarshals a YAML frontmatter block into out, retrying
+// with automatic quoting of unquoted colon-containing values (a common
+// authoring mistake, e.g. `description: Handles X: Y`) if the first attempt
+// fails. Shared by skill and agent definition parsing.
+func UnmarshalFrontmatter(frontmatter string, out any) error {
+	if err := yaml.Unmarshal([]byte(frontmatter), out); err == nil {
 		return nil
 	}
 
 	normalized := quoteColonValues(frontmatter)
 	if normalized == frontmatter {
-		return yaml.Unmarshal([]byte(frontmatter), skill)
+		return yaml.Unmarshal([]byte(frontmatter), out)
 	}
-	if err := yaml.Unmarshal([]byte(normalized), skill); err != nil {
-		return err
-	}
-	return nil
+	return yaml.Unmarshal([]byte(normalized), out)
 }
 
 func quoteColonValues(frontmatter string) string {

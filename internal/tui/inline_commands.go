@@ -6,6 +6,7 @@ import (
 	"strings"
 	"time"
 
+	agentspec "github.com/samcharles93/tau/internal/agent/spec"
 	tauchat "github.com/samcharles93/tau/internal/chat"
 	"github.com/samcharles93/tau/pkg/taui"
 )
@@ -20,6 +21,10 @@ type slashCommand struct {
 	description string
 	run         func(c *inlineChat, args string)
 	complete    completeFunc // nil → command takes no completable arguments
+	// isAgent marks a command generated from a built-in agent definition
+	// (internal/agent/spec), so the completion dropdown can list it under its
+	// own "Agents" group instead of lumping it in with core commands.
+	isAgent bool
 }
 
 // completeFunc returns argument completions for a command. fields are the
@@ -106,6 +111,7 @@ func init() {
 			run: func(c *inlineChat, _ string) { go c.engine.Stop() },
 		},
 	}
+	slashCommands = append(slashCommands, agentSlashCommands()...)
 
 	// Index by primary name and alias for O(1) dispatch.
 	slashByName = make(map[string]*slashCommand, len(slashCommands)*2)
@@ -200,6 +206,57 @@ func (c *inlineChat) printHelp() {
 	}
 	fmt.Fprintf(&b, "\n  %-38s %s", "Ctrl+S", "steer the agent mid-turn")
 	c.engine.PrintAbove("%s", c.grey(b.String()))
+}
+
+// agentSlashCommands builds slash-command table entries for tau's built-in
+// agent definitions (internal/agent/spec), skipping any marked
+// user-invocable: false. Each dispatches through runAgentCommand so the
+// definitions in spec/templates/*.agent.md are the single source of truth
+// for name, description, and argument hint — this table just wires them up.
+func agentSlashCommands() []slashCommand {
+	defs, err := agentspec.Builtins()
+	if err != nil {
+		return nil
+	}
+	cmds := make([]slashCommand, 0, len(defs))
+	for _, def := range defs {
+		if !def.UserInvocable {
+			continue
+		}
+		name := def.Name
+		usage := def.ArgumentHint
+		if usage == "" {
+			usage = "[prompt]"
+		}
+		cmds = append(cmds, slashCommand{
+			name:        name,
+			usage:       usage,
+			description: def.Description,
+			run: func(c *inlineChat, args string) {
+				c.runAgentCommand(name, args)
+			},
+			isAgent: true,
+		})
+	}
+	return cmds
+}
+
+// runAgentCommand activates a built-in agent (e.g. /plan) by name and, when
+// args are non-empty, submits them as the turn's prompt via the same
+// queueing path as a normal submit — so it interleaves correctly with an
+// already-running turn instead of racing the coordinator's own turn loop.
+func (c *inlineChat) runAgentCommand(name, args string) {
+	c.send(tauchat.RunAgentCommand{
+		SessionID:   c.sid(),
+		Name:        name,
+		RequestedAt: time.Now().UTC(),
+	})
+
+	args = strings.TrimSpace(args)
+	if args == "" {
+		return
+	}
+	c.startOrQueueTurn(args)
 }
 
 // ── Command argument handlers ────────────────────────────────────────────────

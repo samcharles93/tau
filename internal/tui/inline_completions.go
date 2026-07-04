@@ -47,30 +47,37 @@ func (c *inlineChat) completionSet(ctx taui.CompletionContext) *taui.CompletionS
 		endOfWord++
 	}
 
-	var (
-		title   string
-		matches []taui.Match
-	)
-
-	// Still typing the command name itself (no argument slot yet).
+	// Still typing the command name itself (no argument slot yet): offer the
+	// full command list split into groups by origin (core / agents /
+	// extensions) rather than one flat "Commands" list.
 	if len(fields) <= 1 && !endsWithSpace {
-		title, matches = "Commands", c.commandMatches()
-	} else {
-		// argsBefore counts fully-typed argument tokens before the cursor,
-		// excluding any token currently being edited. This is what stops a
-		// completed argument (trailing space) from re-opening the dropdown.
-		argsBefore := len(fields) - 1
-		if !endsWithSpace {
-			argsBefore--
+		groups := c.commandGroups()
+		if len(groups) == 0 {
+			return nil
 		}
-		name := strings.TrimPrefix(strings.ToLower(fields[0]), "/")
-		if cmd, ok := slashByName[name]; ok && cmd.complete != nil {
-			title, matches = cmd.complete(c, fields, argsBefore)
-		} else if argsBefore == 0 {
-			// Completing the first argument slot of an extension command group:
-			// offer its sub-actions (e.g. /mcp <list|reconnect|reload>).
-			title, matches = c.extensionSubcommandMatches(name)
+		return &taui.CompletionSet{
+			ReplaceStart: replaceStart,
+			ReplaceEnd:   endOfWord,
+			Groups:       groups,
 		}
+	}
+
+	// argsBefore counts fully-typed argument tokens before the cursor,
+	// excluding any token currently being edited. This is what stops a
+	// completed argument (trailing space) from re-opening the dropdown.
+	argsBefore := len(fields) - 1
+	if !endsWithSpace {
+		argsBefore--
+	}
+	name := strings.TrimPrefix(strings.ToLower(fields[0]), "/")
+	var title string
+	var matches []taui.Match
+	if cmd, ok := slashByName[name]; ok && cmd.complete != nil {
+		title, matches = cmd.complete(c, fields, argsBefore)
+	} else if argsBefore == 0 {
+		// Completing the first argument slot of an extension command group:
+		// offer its sub-actions (e.g. /mcp <list|reconnect|reload>).
+		title, matches = c.extensionSubcommandMatches(name)
 	}
 
 	if len(matches) == 0 {
@@ -83,24 +90,33 @@ func (c *inlineChat) completionSet(ctx taui.CompletionContext) *taui.CompletionS
 	}
 }
 
-// commandMatches lists slash-command name completions: the built-in command
-// table (the single source of truth) merged with registry and extension
-// commands. Built-ins are always offered so completion works even when the
+// commandGroups lists slash-command name completions split into groups by
+// origin — core built-ins, built-in agents (/plan, /research, ...), and
+// extension commands — so the dropdown reads as categories instead of one
+// undifferentiated list. Registry commands mirror the core built-ins (they
+// exist for the web UI) and fold into the "Commands" group, deduped against
+// it. Built-ins are always offered so completion works even when the
 // registry snapshot is empty.
-func (c *inlineChat) commandMatches() []taui.Match {
+func (c *inlineChat) commandGroups() []taui.MatchGroup {
 	seen := make(map[string]struct{})
-	out := make([]taui.Match, 0, len(slashCommands))
-	add := func(m taui.Match) {
+	add := func(dst *[]taui.Match, m taui.Match) {
 		key := strings.ToLower(m.Word)
 		if _, ok := seen[key]; ok {
 			return
 		}
 		seen[key] = struct{}{}
-		out = append(out, m)
+		*dst = append(*dst, m)
 	}
+
+	var commands, agents []taui.Match
 	for i := range slashCommands {
 		cmd := &slashCommands[i]
-		add(taui.Match{Word: "/" + cmd.name, Description: cmd.description})
+		m := taui.Match{Word: "/" + cmd.name, Description: cmd.description}
+		if cmd.isAgent {
+			add(&agents, m)
+		} else {
+			add(&commands, m)
+		}
 	}
 
 	c.mu.Lock()
@@ -123,12 +139,35 @@ func (c *inlineChat) commandMatches() []taui.Match {
 		if !strings.HasPrefix(word, "/") {
 			word = "/" + word
 		}
-		add(taui.Match{Word: word, Description: ref.Description})
+		add(&commands, taui.Match{Word: word, Description: ref.Description})
 	}
 
 	slices.SortFunc(exts, func(a, b tauchat.ExtensionCommand) int { return strings.Compare(a.Name, b.Name) })
+	var extensions []taui.Match
 	for _, ext := range exts {
-		add(taui.Match{Word: "/" + ext.Name, Description: ext.Description})
+		add(&extensions, taui.Match{Word: "/" + ext.Name, Description: ext.Description})
+	}
+
+	var groups []taui.MatchGroup
+	if len(commands) > 0 {
+		groups = append(groups, taui.MatchGroup{Title: "Commands", Matches: commands})
+	}
+	if len(agents) > 0 {
+		groups = append(groups, taui.MatchGroup{Title: "Agents", Matches: agents})
+	}
+	if len(extensions) > 0 {
+		groups = append(groups, taui.MatchGroup{Title: "Extensions", Matches: extensions})
+	}
+	return groups
+}
+
+// commandMatches flattens commandGroups into a single list, for callers (and
+// tests) that don't care about the category split.
+func (c *inlineChat) commandMatches() []taui.Match {
+	groups := c.commandGroups()
+	var out []taui.Match
+	for _, g := range groups {
+		out = append(out, g.Matches...)
 	}
 	return out
 }

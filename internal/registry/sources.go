@@ -1,6 +1,7 @@
 package registry
 
 import (
+	agentspec "github.com/samcharles93/tau/internal/agent/spec"
 	cc "github.com/samcharles93/tau/internal/chat/commands"
 	"github.com/samcharles93/tau/internal/skills"
 )
@@ -10,7 +11,7 @@ import (
 // the TUI's inline_commands.go hardcodes the same set for dispatch but the
 // registry feed is what drives the web UI completion menu and /help output.
 func builtinCommands() []Command {
-	return []Command{
+	cmds := []Command{
 		{Name: "model", Label: "/model", Description: "switch model", AcceptsArgs: true},
 		{Name: "system", Label: "/system", Description: "set the system prompt", AcceptsArgs: true},
 		{Name: "effort", Label: "/effort", Description: "set reasoning effort", AcceptsArgs: true},
@@ -23,6 +24,30 @@ func builtinCommands() []Command {
 		{Name: "reset", Label: "/reset", Description: "start a fresh conversation (alias for /new)", AcceptsArgs: false},
 		{Name: "help", Label: "/help", Description: "show available commands", AcceptsArgs: false},
 	}
+	cmds = append(cmds, agentCommands()...)
+	return cmds
+}
+
+// agentCommands adapts tau's built-in agent definitions (internal/agent/spec)
+// into registry Commands, skipping any marked user-invocable: false.
+func agentCommands() []Command {
+	defs, err := agentspec.Builtins()
+	if err != nil {
+		return nil
+	}
+	cmds := make([]Command, 0, len(defs))
+	for _, def := range defs {
+		if !def.UserInvocable {
+			continue
+		}
+		cmds = append(cmds, Command{
+			Name:        def.Name,
+			Label:       "/" + def.Name,
+			Description: def.Description,
+			AcceptsArgs: true,
+		})
+	}
+	return cmds
 }
 
 // mergeCustomCommands loads custom commands from ~/.tau/commands/ and

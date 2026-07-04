@@ -16,6 +16,7 @@ import (
 	"sync"
 	"time"
 
+	agentspec "github.com/samcharles93/tau/internal/agent/spec"
 	"github.com/samcharles93/tau/internal/agent/tools"
 	"github.com/samcharles93/tau/internal/chat"
 	tauconfig "github.com/samcharles93/tau/internal/config"
@@ -319,6 +320,8 @@ func (c *Coordinator) handleCommand(cmd chat.ChatCommand) {
 		c.handleExportSession(command)
 	case chat.RunSkillCommand:
 		c.handleRunSkill(command)
+	case chat.RunAgentCommand:
+		c.handleRunAgent(command)
 	case chat.ReloadSkillsCommand:
 		c.handleReloadSkills(command)
 	case chat.ListSkillsCommand:
@@ -709,6 +712,60 @@ func (c *Coordinator) handleRunSkill(cmd chat.RunSkillCommand) {
 		ResultSummary: "loaded",
 		IsError:       false,
 		CompletedAt:   completedAt,
+	})
+}
+
+// handleRunAgent activates a built-in agent command (e.g. /plan, /research)
+// in response to its matching slash command. It looks the agent up by name,
+// renders its prompt template, replaces the session's system prompt with it,
+// and applies its tool restriction (if any) via the same AllowedTools
+// mechanism skills use. Unlike handleRunSkill, this replaces rather than
+// appends to the system prompt: these are distinct operating modes, not
+// stacked knowledge.
+func (c *Coordinator) handleRunAgent(cmd chat.RunAgentCommand) {
+	now := normalizedTime(cmd.RequestedAt)
+
+	name := strings.TrimSpace(cmd.Name)
+	def, ok := agentspec.Lookup(name)
+	if !ok {
+		c.emit(chat.ChatNotificationEvent{
+			Message:    "agent not found: " + name,
+			Level:      chat.ChatNotificationWarn,
+			OccurredAt: now,
+		})
+		return
+	}
+
+	rendered := RenderAgentPrompt(def, c.projectDir)
+
+	c.mu.Lock()
+	session, ok := c.sessions[cmd.SessionID]
+	if !ok || session.state == nil {
+		c.mu.Unlock()
+		c.emit(chat.ChatRuntimeErrorEvent{
+			SessionID:  cmd.SessionID,
+			Message:    "session not found",
+			Fatal:      false,
+			OccurredAt: now,
+		})
+		return
+	}
+	session.state.SystemPrompt = rendered
+	snapshot := chat.CloneChatSessionState(session.state)
+	c.mu.Unlock()
+
+	c.emit(chat.ChatSessionSnapshotEvent{State: snapshot})
+
+	if len(def.Tools) > 0 {
+		c.SetAllowedTools(def.Tools)
+	} else {
+		c.SetAllowedTools(nil)
+	}
+
+	c.emit(chat.ChatNotificationEvent{
+		Message:    "agent activated: " + def.Name,
+		Level:      chat.ChatNotificationInfo,
+		OccurredAt: now,
 	})
 }
 

@@ -1,7 +1,7 @@
 package agent
 
 import (
-	"embed"
+	_ "embed"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -12,35 +12,13 @@ import (
 	"text/template"
 	"time"
 
+	agentspec "github.com/samcharles93/tau/internal/agent/spec"
 	"github.com/samcharles93/tau/internal/agent/tools"
 	"github.com/samcharles93/tau/internal/skills"
 )
 
 //go:embed templates/agent.md.tpl
 var agentPromptTpl string
-
-//go:embed templates/*.md.tpl
-var templateFS embed.FS
-
-// BuiltinCommand defines a built-in slash command backed by a template.
-type BuiltinCommand struct {
-	Name        string
-	Description string
-	Template    string // filename within templates/ (e.g. "plan.md.tpl")
-}
-
-// BuiltinCommands returns the set of template-backed built-in commands.
-// These inject a system/user prompt for a specific task mode.
-func BuiltinCommands() []BuiltinCommand {
-	return []BuiltinCommand{
-		{Name: "init", Description: "Generate an AGENTS.md for the current project", Template: "init.md.tpl"},
-		{Name: "plan", Description: "Create an implementation plan before coding", Template: "plan.md.tpl"},
-		{Name: "research", Description: "Run a deep research investigation", Template: "research.md.tpl"},
-		{Name: "rubber-duck", Description: "Get an independent critique of current work", Template: "rubber-duck.md.tpl"},
-		{Name: "compact", Description: "Compact conversation to preserve context", Template: "compact.md.tpl"},
-		{Name: "summarise", Description: "Summarize conversation for later continuation", Template: "summarise.md.tpl"},
-	}
-}
 
 // PromptConfig holds all inputs for building the system prompt.
 type PromptConfig struct {
@@ -145,20 +123,11 @@ func renderPromptTemplate(templateName, source string, data promptData) string {
 	return b.String()
 }
 
-// BuildPrompt renders a built-in command template by name.
-// The name should match a filename in templates/ (e.g. "plan.md.tpl").
-// Returns the rendered prompt, or an error if the template is not found.
-func BuildPrompt(templateName, cwd string) (string, error) {
-	content, err := templateFS.ReadFile("templates/" + templateName)
-	if err != nil {
-		return "", err
-	}
-
-	return renderPromptTemplate(
-		templateName,
-		string(content),
-		buildPromptData(PromptConfig{CWD: cwd}),
-	), nil
+// RenderAgentPrompt renders a built-in agent definition's prompt body against
+// the given working directory. def is expected to come from
+// [agentspec.Builtins] or [agentspec.Lookup].
+func RenderAgentPrompt(def *agentspec.Definition, cwd string) string {
+	return renderPromptTemplate(def.Name, def.Body, buildPromptData(PromptConfig{CWD: cwd}))
 }
 
 // DiscoverContextFiles finds project-level context documents (AGENTS.md, etc.)
