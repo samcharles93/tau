@@ -56,6 +56,19 @@ tasks:
     cmds:
       - pnpm build
 
+  specgen:
+    desc: Regenerate docs/asyncapi/tau.yaml from internal/bridge's wire type registries
+    dir: tools
+    cmds:
+      - go run ./specgen
+    sources:
+      - ../internal/bridge/wire.go
+      - ../internal/chat/types.go
+      - specgen/main.go
+      - ../docs/asyncapi/header.yaml
+    generates:
+      - ../docs/asyncapi/tau.yaml
+
   docs:dev:
     desc: Serve the docs site locally with live reload
     dir: docs

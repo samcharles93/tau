@@ -2,6 +2,7 @@ package taui
 
 import (
 	"testing"
+	"time"
 )
 
 func TestCompletionsHiddenByDefault(t *testing.T) {
@@ -262,6 +263,42 @@ func TestCompletionsEnterUsesOnAccept(t *testing.T) {
 	}
 	if accepted != "alpha " {
 		t.Errorf("accepted %q, want %q", accepted, "alpha ")
+	}
+}
+
+// TestCompletionsEnterOnAcceptCanRenderWithoutDeadlock guards against a
+// regression where case "\r" invoked onAccept while c.mu was still held
+// (HandleInput unlocks only after the switch). A host's onAccept commonly
+// triggers a synchronous re-render (e.g. submitting a command prints to
+// scrollback and immediately redraws the frame, which renders this same
+// Completions widget) — calling Render from inside that locked callback
+// deadlocks on the non-reentrant mutex. Runs HandleInput on a goroutine and
+// fails the test if it doesn't return within a short deadline.
+func TestCompletionsEnterOnAcceptCanRenderWithoutDeadlock(t *testing.T) {
+	input := NewLineInput("")
+	for _, r := range "a" {
+		input.HandleInput(string(r))
+	}
+	c := NewCompletions(input, func(ctx CompletionContext) *CompletionSet {
+		return &CompletionSet{
+			ReplaceStart: 0, ReplaceEnd: 1,
+			Groups: []MatchGroup{{Matches: []Match{{Word: "alpha"}}}},
+		}
+	})
+	c.SetOnAccept(func(s string) {
+		c.Render(20) // simulates a submit triggering a synchronous re-render
+	})
+	c.Render(20)
+
+	done := make(chan struct{})
+	go func() {
+		c.HandleInput("\r")
+		close(done)
+	}()
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("HandleInput(\"\\r\") deadlocked calling onAccept while c.mu was held")
 	}
 }
 

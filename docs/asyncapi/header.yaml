@@ -1,0 +1,60 @@
+asyncapi: '3.0.0'
+info:
+  title: Tau Web UI Protocol
+  version: '0.1.0'
+  description: |
+    Real-time protocol between the Tau chat runtime and its Web UI. All
+    communication happens over a single WebSocket connection on the local Tau
+    process. The runtime publishes chat events; the browser sends chat commands.
+
+servers:
+  local:
+    host: localhost:{port}
+    pathname: /ws
+    protocol: ws
+    description: Local Tau WebSocket endpoint. Port is chosen by Tau (ephemeral by default) and printed at startup.
+
+operations:
+  receiveEvents:
+    action: receive
+    channel:
+      $ref: '#/channels/tauWebSocket'
+    messages:
+      - $ref: '#/channels/tauWebSocket/messages/init'
+      - $ref: '#/channels/tauWebSocket/messages/event'
+      - $ref: '#/channels/tauWebSocket/messages/error'
+  sendCommands:
+    action: send
+    channel:
+      $ref: '#/channels/tauWebSocket'
+    messages:
+      - $ref: '#/channels/tauWebSocket/messages/command'
+
+channels:
+  tauWebSocket:
+    address: /ws
+    messages:
+      init:
+        name: InitMessage
+        title: Connection init
+        contentType: application/json
+        payload:
+          $ref: '#/components/schemas/InitMessage'
+      event:
+        name: ChatEventEnvelope
+        title: Chat event
+        contentType: application/json
+        payload:
+          $ref: '#/components/schemas/ChatEventEnvelope'
+      command:
+        name: ChatCommandEnvelope
+        title: Chat command
+        contentType: application/json
+        payload:
+          $ref: '#/components/schemas/ChatCommandEnvelope'
+      error:
+        name: ErrorEnvelope
+        title: Protocol error
+        contentType: application/json
+        payload:
+          $ref: '#/components/schemas/ErrorEnvelope'

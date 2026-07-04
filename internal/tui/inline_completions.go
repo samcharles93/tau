@@ -51,7 +51,7 @@ func (c *inlineChat) completionSet(ctx taui.CompletionContext) *taui.CompletionS
 	// full command list split into groups by origin (core / agents /
 	// extensions) rather than one flat "Commands" list.
 	if len(fields) <= 1 && !endsWithSpace {
-		groups := c.commandGroups()
+		groups := c.commandGroups(token)
 		if len(groups) == 0 {
 			return nil
 		}
@@ -97,7 +97,15 @@ func (c *inlineChat) completionSet(ctx taui.CompletionContext) *taui.CompletionS
 // exist for the web UI) and fold into the "Commands" group, deduped against
 // it. Built-ins are always offered so completion works even when the
 // registry snapshot is empty.
-func (c *inlineChat) commandGroups() []taui.MatchGroup {
+//
+// token is the partial command being typed (e.g. "/", "/ne", "/clear").
+// When it's just "/" (empty after stripping) alias entries are suppressed so
+// they don't clutter the browsing view. When the user has typed enough to
+// match an alias prefix (e.g. "/ne" for "new"), the alias is surfaced with
+// that alias as the completion word.
+func (c *inlineChat) commandGroups(token string) []taui.MatchGroup {
+	cmdToken := strings.ToLower(strings.TrimPrefix(token, "/"))
+
 	seen := make(map[string]struct{})
 	add := func(dst *[]taui.Match, m taui.Match) {
 		key := strings.ToLower(m.Word)
@@ -111,11 +119,37 @@ func (c *inlineChat) commandGroups() []taui.MatchGroup {
 	var commands, agents []taui.Match
 	for i := range slashCommands {
 		cmd := &slashCommands[i]
-		m := taui.Match{Word: "/" + cmd.name, Description: cmd.description}
+
+		desc := cmd.description
+		if len(cmd.aliases) > 0 {
+			aliasStrs := make([]string, len(cmd.aliases))
+			for j, a := range cmd.aliases {
+				aliasStrs[j] = "/" + a
+			}
+			desc += " [alias: " + strings.Join(aliasStrs, ", ") + "]"
+		}
+
+		m := taui.Match{Word: "/" + cmd.name, Description: desc}
 		if cmd.isAgent {
 			add(&agents, m)
 		} else {
 			add(&commands, m)
+		}
+
+		// Surface aliases as matches only when the user has typed enough
+		// to match an alias prefix. Prevents aliases from cluttering the
+		// dropdown when browsing the full command list.
+		if cmdToken != "" && len(cmd.aliases) > 0 {
+			for _, alias := range cmd.aliases {
+				if strings.HasPrefix(strings.ToLower(alias), cmdToken) {
+					aliasMatch := taui.Match{Word: "/" + alias, Description: desc}
+					if cmd.isAgent {
+						add(&agents, aliasMatch)
+					} else {
+						add(&commands, aliasMatch)
+					}
+				}
+			}
 		}
 	}
 
@@ -164,7 +198,7 @@ func (c *inlineChat) commandGroups() []taui.MatchGroup {
 // commandMatches flattens commandGroups into a single list, for callers (and
 // tests) that don't care about the category split.
 func (c *inlineChat) commandMatches() []taui.Match {
-	groups := c.commandGroups()
+	groups := c.commandGroups("/")
 	var out []taui.Match
 	for _, g := range groups {
 		out = append(out, g.Matches...)

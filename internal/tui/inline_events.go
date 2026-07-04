@@ -80,7 +80,28 @@ func (c *inlineChat) handleEvent(ev tauchat.ChatEvent) {
 
 	case tauchat.ChatToolExecutionStartedEvent:
 		c.mu.Unlock()
-		c.engine.Update(func() {
+		c.engine.UpdateThenPrint(func() []string {
+			// A tool call ends the text segment (if any) that preceded it —
+			// the backend commits it as its own message and starts a fresh
+			// one after the tool runs. Flush it to scrollback and reset so
+			// the next ChatResponseDeltaEvent starts a new Paragraph instead
+			// of silently concatenating onto this one with no separator.
+			var above []string
+			if c.turnReasoning != nil {
+				if t := c.turnReasoning.Text(); t != "" {
+					above = append(above, c.dim(t))
+				}
+				c.stage.RemoveChild(c.turnReasoning)
+				c.turnReasoning = nil
+			}
+			if c.turnText != nil {
+				if t := c.turnText.Text(); t != "" {
+					above = append(above, t+"\n")
+				}
+				c.stage.RemoveChild(c.turnText)
+				c.turnText = nil
+			}
+
 			label := e.ArgumentsSummary
 			bgStatus := theme.ToolRunning
 			if e.ToolName == skillToolName {
@@ -95,6 +116,7 @@ func (c *inlineChat) handleEvent(ev tauchat.ChatEvent) {
 			}
 			c.activeTools[e.CallID] = &activeToolBox{row: tr, box: tbox}
 			c.stage.AddChild(tbox)
+			return above
 		})
 		c.mu.Lock()
 

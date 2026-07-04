@@ -40,11 +40,17 @@ func NewQueue() *Queue {
 	return &Queue{}
 }
 
-// Push adds a notification to the back of the queue.
+// Push adds a notification to the back of the queue. A non-positive Duration
+// means the notification never expires on its own — it stays current until
+// Dismiss is called or it's overtaken by earlier entries expiring.
 func (q *Queue) Push(n Notification) {
+	var expiresAt time.Time
+	if n.Duration > 0 {
+		expiresAt = time.Now().Add(n.Duration)
+	}
 	q.items = append(q.items, entry{
 		notification: n,
-		expiresAt:    time.Now().Add(n.Duration),
+		expiresAt:    expiresAt,
 	})
 }
 
@@ -82,10 +88,15 @@ func (q *Queue) IsEmpty() bool {
 	return len(q.items) == 0
 }
 
-// prune removes all expired entries from the front.
+// prune removes all expired entries from the front. A zero expiresAt means
+// the entry never expires on its own (see Push) and is left in place.
 func (q *Queue) prune() {
 	now := time.Now()
-	for len(q.items) > 0 && now.After(q.items[0].expiresAt) {
+	for len(q.items) > 0 {
+		exp := q.items[0].expiresAt
+		if exp.IsZero() || !now.After(exp) {
+			break
+		}
 		q.items[0] = entry{} // zero out to allow GC of notification data
 		q.items = q.items[1:]
 	}

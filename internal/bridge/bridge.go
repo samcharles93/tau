@@ -68,17 +68,7 @@ func NewBridge(runtime Runtime, bus *eventbus.Bus, init InitInfo, logger *slog.L
 		return nil, errors.New("event bus is required")
 	}
 
-	// Convert skills to the bridge-level type for the init message.
-	bridgeSkills := make([]SkillInfo, 0, len(init.Skills))
-	for _, s := range init.Skills {
-		bridgeSkills = append(bridgeSkills, SkillInfo{
-			Name:        s.Name,
-			Description: s.Description,
-			Scope:       s.Scope,
-		})
-	}
-
-	initData, err := MarshalInit(init.SessionID, init.Model, init.Provider, init.Models, init.Providers, init.Commands, bridgeSkills, init.ExtensionCommands)
+	initData, err := MarshalInit(init.SessionID, init.Model, init.Provider, init.Models, init.Providers, init.Commands, init.Skills, init.ExtensionCommands)
 	if err != nil {
 		return nil, fmt.Errorf("marshal init message: %w", err)
 	}

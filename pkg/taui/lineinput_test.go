@@ -267,7 +267,7 @@ func TestLineInputCursorOnEmptyNewline(t *testing.T) {
 func TestLineInputCursorColorDefault(t *testing.T) {
 	li := NewLineInput("› ")
 	// Default: (0,0,0) → mid-grey fallback in cursorOn().
-	if got := li.cursorOn(); got != "\x1b[48;2;128;134;150m" {
+	if got := li.cursorOn(false); got != "\x1b[48;2;128;134;150m" {
 		t.Errorf("default cursorOn = %q, want mid-grey", got)
 	}
 }
@@ -275,7 +275,7 @@ func TestLineInputCursorColorDefault(t *testing.T) {
 func TestLineInputCursorColorCustom(t *testing.T) {
 	li := NewLineInput("")
 	li.SetCursorColor(255, 158, 0) // amber
-	if got := li.cursorOn(); got != "\x1b[48;2;255;158;0m" {
+	if got := li.cursorOn(false); got != "\x1b[48;2;255;158;0m" {
 		t.Errorf("custom cursorOn = %q, want amber", got)
 	}
 }

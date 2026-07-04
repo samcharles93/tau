@@ -74,6 +74,7 @@ type Completions struct {
 	groups   []matchedGroup
 	selected int
 	visible  bool
+	cursorFG *termkit.Color // nil = default grey for the selected row
 }
 
 type filteredRow struct {
@@ -83,6 +84,12 @@ type filteredRow struct {
 	noSpace  bool
 	hl       [][2]int
 	text     string
+	// origIdx is this entry's position in the unfiltered, freshly rebuilt
+	// candidate list (stable across refreshes as long as the provider's
+	// output order doesn't change). Used instead of match.Word to track the
+	// selection across re-filtering, since Word alone isn't unique — e.g. the
+	// same model name offered by two different providers.
+	origIdx int
 }
 
 type matchedGroup struct {
@@ -100,6 +107,14 @@ func (c *Completions) SetOnAccept(fn func(string))      { c.onAccept = fn }
 func (c *Completions) SetOnDetail(fn func(string) bool) { c.onDetail = fn }
 func (c *Completions) Invalidate()                      {}
 
+// SetCursorColor sets the accent colour used to highlight the selected row
+// (the dropdown's "cursor"), in place of the default grey used for every row.
+func (c *Completions) SetCursorColor(fg termkit.Color) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.cursorFG = &fg
+}
+
 func (c *Completions) HandleInput(data string) bool {
 	c.mu.Lock()
 	if !c.visible {
@@ -109,6 +124,7 @@ func (c *Completions) HandleInput(data string) bool {
 	var chosen string
 	detail := ""
 	choose := false
+	accept := false
 	wantDetail := false
 	consumed := true
 	n := len(c.filtered)
@@ -151,11 +167,7 @@ func (c *Completions) HandleInput(data string) bool {
 	case "\r":
 		if c.selected >= 0 && c.selected < n {
 			chosen = c.fullReplace(c.filtered[c.selected])
-			if c.onAccept != nil {
-				c.onAccept(chosen)
-			} else if c.onSelect != nil {
-				c.onSelect(chosen)
-			}
+			accept = true
 		}
 	case "\x1b":
 		c.hideLocked()
@@ -181,6 +193,18 @@ func (c *Completions) HandleInput(data string) bool {
 		// fall through so it is inserted as text (e.g. "/mcp " to reveal
 		// sub-actions).
 		return c.onDetail(detail)
+	}
+	// accept/choose callbacks run only after c.mu is released: onAccept in
+	// particular can trigger a submit that re-renders synchronously, which
+	// calls back into Render() and would deadlock on this same mutex if
+	// invoked while still held.
+	if accept {
+		if c.onAccept != nil {
+			c.onAccept(chosen)
+		} else if c.onSelect != nil {
+			c.onSelect(chosen)
+		}
+		return consumed
 	}
 	if choose && c.onSelect != nil {
 		c.onSelect(chosen)
@@ -361,13 +385,20 @@ func (c *Completions) renderRow(selected bool, word, desc string, hl [][2]int, c
 		body = sb.String()
 	}
 	chevron := "  "
+	fg := termkit.ColorGrey
 	if selected {
 		chevron = "▶ "
+		if c.cursorFG != nil {
+			fg = *c.cursorFG
+		}
 	}
-	body = termkit.FgOnly(chevron+body, termkit.ColorGrey)
+	body = termkit.FgOnly(chevron+body, fg)
 	if desc != "" {
 		// Pad outside the highlight so the selection bar stays tight to the
-		// word while descriptions still line up in a column.
+		// word while descriptions still line up in a column. The description
+		// stays grey regardless of selection — only the word/chevron carry
+		// the cursor accent, so a model's provider name doesn't compete with
+		// its name for attention.
 		body += padTo(word, descCol)
 		body += termkit.FgOnly(" "+desc, termkit.ColorGrey)
 	}
@@ -421,15 +452,26 @@ func (c *Completions) refreshLocked() {
 		match   Match
 		group   int
 		noSpace bool
+		origIdx int
 	}
 	var all []raw
 	for gi, g := range set.Groups {
 		for _, m := range g.Matches {
-			all = append(all, raw{m, gi, g.NoTrailingSpace})
+			all = append(all, raw{m, gi, g.NoTrailingSpace, len(all)})
 		}
 	}
 
 	filtered := fuzzyFilterSlice(all, query, func(r raw) string { return r.match.Word })
+
+	// Remember the previously selected entry's origIdx so the highlight
+	// follows the same item across re-filtering (each keystroke re-sorts by
+	// fuzzy score) instead of sticking to a numeric index that now points at
+	// a different, unrelated item. origIdx (not match.Word) disambiguates
+	// duplicate names, e.g. the same model offered by two providers.
+	selectedOrigIdx := -1
+	if c.selected >= 0 && c.selected < len(c.filtered) {
+		selectedOrigIdx = c.filtered[c.selected].origIdx
+	}
 
 	c.rawSet = set
 	c.filtered = c.filtered[:0]
@@ -452,6 +494,7 @@ func (c *Completions) refreshLocked() {
 			noSpace:  fr.noSpace,
 			hl:       hl,
 			text:     display,
+			origIdx:  fr.origIdx,
 		}
 		c.filtered = append(c.filtered, row)
 
@@ -472,8 +515,14 @@ func (c *Completions) refreshLocked() {
 	}
 
 	c.visible = len(c.filtered) > 0
-	if c.selected >= len(c.filtered) {
-		c.selected = 0
+	c.selected = 0
+	if selectedOrigIdx >= 0 {
+		for i := range c.filtered {
+			if c.filtered[i].origIdx == selectedOrigIdx {
+				c.selected = i
+				break
+			}
+		}
 	}
 }
 

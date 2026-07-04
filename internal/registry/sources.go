@@ -19,9 +19,7 @@ func builtinCommands() []Command {
 		{Name: "resume", Label: "/resume", Description: "resume a saved session", AcceptsArgs: true},
 		{Name: "refresh", Label: "/refresh", Description: "re-discover available models", AcceptsArgs: false},
 		{Name: "reload", Label: "/reload", Description: "reload extensions", AcceptsArgs: false},
-		{Name: "new", Label: "/new", Description: "start a fresh conversation", AcceptsArgs: false},
-		{Name: "clear", Label: "/clear", Description: "start a fresh conversation (alias for /new)", AcceptsArgs: false},
-		{Name: "reset", Label: "/reset", Description: "start a fresh conversation (alias for /new)", AcceptsArgs: false},
+		{Name: "clear", Label: "/clear", Description: "start a fresh session [alias: /new, /reset]", AcceptsArgs: false},
 		{Name: "help", Label: "/help", Description: "show available commands", AcceptsArgs: false},
 	}
 	cmds = append(cmds, agentCommands()...)

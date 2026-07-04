@@ -11,8 +11,7 @@ import (
 	"github.com/samcharles93/tau/pkg/taui"
 )
 
-// RunInline launches the chat TUI using taui's inline renderer. Selected by
-// TAU_TUI=taui (checked in internal/tui/run.go or internal/app).
+// RunInline launches the chat TUI using taui's inline renderer.
 func RunInline(ctx context.Context, runtime tauchat.ChatRuntime, cfg TUIConfig) error {
 	if cfg.Bus == nil {
 		return fmt.Errorf("event bus is required for TUI")

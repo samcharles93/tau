@@ -92,8 +92,8 @@ func init() {
 			},
 		},
 		{
-			name: "new", aliases: []string{"clear", "reset"}, description: "start a fresh conversation",
-			run: (*inlineChat).cmdNew,
+			name: "clear", aliases: []string{"new", "reset"}, description: "Start a new session",
+			run: (*inlineChat).cmdClear,
 		},
 		{
 			name: "help", aliases: []string{"?"}, description: "show available commands",
@@ -184,7 +184,7 @@ func (c *inlineChat) handleSlashCommand(text string) {
 	c.engine.PrintAbove("%s %s", c.grey("✗"), "unknown command: /"+name)
 }
 
-func (c *inlineChat) cmdNew(_ string) {
+func (c *inlineChat) cmdClear(_ string) {
 	c.send(tauchat.ResetChatSessionCommand{SessionID: c.sid(), RequestedAt: time.Now().UTC()})
 	c.engine.Update(c.clearTurnLocked)
 	c.engine.PrintAbove("%s", c.grey("conversation cleared"))

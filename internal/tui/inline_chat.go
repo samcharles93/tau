@@ -25,6 +25,11 @@ import (
 // and the header slot is reused to show the working indicator during a turn.
 const headerIdle = ""
 
+// quitConfirmWindow is how long a second Ctrl+C is honored as "confirm quit"
+// after the first. The status-bar hint's Duration must match this exactly so
+// the hint never outlives (or undersells) the armed window.
+const quitConfirmWindow = 800 * time.Millisecond
+
 type activeToolBox struct {
 	row *taui.ToolRow
 	box *taui.Box
@@ -139,9 +144,12 @@ func newInlineChat(
 	c.status = taui.NewText("")
 	c.input = taui.NewLineInput("")
 	c.input.SetStyles(c.bold, nil, c.grey)
+	c.input.SetCommandStyle(commandEchoStyle)
+	c.input.SetCommandCursorColor(theme.CommandFG)
 	c.input.SetOnSubmit(c.onSubmit)
 
 	c.completions = taui.NewCompletions(c.input, c.completionSet)
+	c.completions.SetCursorColor(theme.CommandFG)
 	c.completions.SetOnSelect(func(s string) {
 		c.input.SetValueAndCursor(s, len([]rune(s)))
 		c.engine.RequestRender()
@@ -509,10 +517,18 @@ func (c *inlineChat) onSubmit(prompt string) {
 	c.startOrQueueTurn(trimmed)
 }
 
-// commandEchoStyle paints a submitted slash command in the accent colour
-// (theme.CommandFG) so it reads as a command in scrollback rather than a
-// plain bold chat prompt (see doTurn's "› "+prompt echo).
-func commandEchoStyle(s string) string { return termkit.FgOnly(s, theme.CommandFG) }
+// commandEchoStyle paints just the leading "/" of a slash command in the
+// accent colour (theme.CommandFG); the rest of the line (command name and
+// arguments) is left in default styling. Used both for the live input (as
+// each chunk of typed text is painted — only the chunk starting at the very
+// beginning of the line will ever start with "/") and the submitted echo
+// into scrollback.
+func commandEchoStyle(s string) string {
+	if !strings.HasPrefix(s, "/") {
+		return s
+	}
+	return termkit.FgColor("/", theme.CommandFG) + s[1:]
+}
 
 // startOrQueueTurn submits prompt as a new turn, or queues it behind a
 // running one. Shared by onSubmit and agent-command activation (e.g. /plan
@@ -578,6 +594,14 @@ func (c *inlineChat) doTurn(prompt string) {
 	c.working.Store(true)
 	c.cancelSent = false
 	defer c.working.Store(false)
+
+	c.mu.Lock()
+	if c.notifyQueue != nil {
+		if n := c.notifyQueue.Current(); n != nil && n.Level == notify.LevelError {
+			c.notifyQueue.Dismiss()
+		}
+	}
+	c.mu.Unlock()
 
 	c.engine.Update(func() { c.header.SetText(c.grey("τ tau is working…")) })
 	c.commit(c.bold("› " + prompt))
@@ -739,7 +763,7 @@ func (c *inlineCtrl) HandleInput(data string) bool {
 			return true
 		}
 		now := time.Now()
-		if now.Sub(c.chat.pendingQuit) < 800*time.Millisecond {
+		if now.Sub(c.chat.pendingQuit) < quitConfirmWindow {
 			c.chat.engine.Terminal.SignalStop()
 			go c.chat.engine.Stop()
 			return true
@@ -747,7 +771,7 @@ func (c *inlineCtrl) HandleInput(data string) bool {
 		c.chat.pendingQuit = now
 		c.chat.mu.Lock()
 		if c.chat.notifyQueue != nil {
-			c.chat.notifyQueue.Push(notify.Notification{Message: "quit: press Ctrl+C again", Level: notify.LevelInfo, Duration: 3 * time.Second})
+			c.chat.notifyQueue.Push(notify.Notification{Message: "quit: press Ctrl+C again", Level: notify.LevelInfo, Duration: quitConfirmWindow})
 		}
 		c.chat.mu.Unlock()
 		return true

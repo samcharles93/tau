@@ -7,6 +7,7 @@ package bridge
 import (
 	"encoding/json"
 	"fmt"
+	"reflect"
 
 	tauchat "github.com/samcharles93/tau/internal/chat"
 )
@@ -23,15 +24,6 @@ type EventEnvelope struct {
 	Payload tauchat.ChatEvent `json:"payload"`
 }
 
-// SkillInfo is the bridge-level representation of a skill sent to WebSocket
-// clients. It mirrors tauchat.SkillInfo but is defined here to avoid a direct
-// dependency on the chat layer for this struct.
-type SkillInfo struct {
-	Name        string `json:"name"`
-	Description string `json:"description"`
-	Scope       string `json:"scope"`
-}
-
 // InitMessage is sent once on connection so the SPA can render initial state.
 type InitMessage struct {
 	Type              string                     `json:"type"`
@@ -41,9 +33,93 @@ type InitMessage struct {
 	Models            []tauchat.ChatModelRef     `json:"models,omitempty"`
 	Providers         []string                   `json:"providers,omitempty"`
 	Commands          []tauchat.CommandRef       `json:"commands,omitempty"`
-	Skills            []SkillInfo                `json:"skills,omitempty"`
+	Skills            []tauchat.SkillInfo        `json:"skills,omitempty"`
 	ExtensionCommands []tauchat.ExtensionCommand `json:"extension_commands,omitempty"`
 }
+
+// EventTypeInfo pairs a wire discriminator name with its concrete
+// chat.ChatEvent type.
+type EventTypeInfo struct {
+	Name string
+	Type reflect.Type
+}
+
+// EventTypes is the authoritative registry of ChatEvent types the bridge
+// puts on the wire. Anything not listed here never reaches browser clients.
+// tools/specgen reads this registry to (re)generate docs/asyncapi/tau.yaml,
+// so adding an event here is what puts it in the published spec.
+var EventTypes = []EventTypeInfo{
+	{"ChatSessionSnapshotEvent", reflect.TypeFor[tauchat.ChatSessionSnapshotEvent]()},
+	{"ChatResponseStartedEvent", reflect.TypeFor[tauchat.ChatResponseStartedEvent]()},
+	{"ChatResponseDeltaEvent", reflect.TypeFor[tauchat.ChatResponseDeltaEvent]()},
+	{"ChatReasoningDeltaEvent", reflect.TypeFor[tauchat.ChatReasoningDeltaEvent]()},
+	{"ChatToolCallDeltaEvent", reflect.TypeFor[tauchat.ChatToolCallDeltaEvent]()},
+	{"ChatToolExecutionStartedEvent", reflect.TypeFor[tauchat.ChatToolExecutionStartedEvent]()},
+	{"ChatToolExecutionCompletedEvent", reflect.TypeFor[tauchat.ChatToolExecutionCompletedEvent]()},
+	{"ChatToolOutputEvent", reflect.TypeFor[tauchat.ChatToolOutputEvent]()},
+	{"ChatResponseCompletedEvent", reflect.TypeFor[tauchat.ChatResponseCompletedEvent]()},
+	{"ChatResponseCancelledEvent", reflect.TypeFor[tauchat.ChatResponseCancelledEvent]()},
+	{"ChatRuntimeErrorEvent", reflect.TypeFor[tauchat.ChatRuntimeErrorEvent]()},
+	{"ChatNotificationEvent", reflect.TypeFor[tauchat.ChatNotificationEvent]()},
+	{"ExtensionsReloadedEvent", reflect.TypeFor[tauchat.ExtensionsReloadedEvent]()},
+	{"ExtensionCommandsChangedEvent", reflect.TypeFor[tauchat.ExtensionCommandsChangedEvent]()},
+	{"ExtensionCommandResultEvent", reflect.TypeFor[tauchat.ExtensionCommandResultEvent]()},
+	{"ExtensionViewRenderedEvent", reflect.TypeFor[tauchat.ExtensionViewRenderedEvent]()},
+	{"ExtensionViewClosedEvent", reflect.TypeFor[tauchat.ExtensionViewClosedEvent]()},
+	{"InteractivePromptRequestedEvent", reflect.TypeFor[tauchat.InteractivePromptRequestedEvent]()},
+	{"SessionsListedEvent", reflect.TypeFor[tauchat.SessionsListedEvent]()},
+	{"SessionLoadedEvent", reflect.TypeFor[tauchat.SessionLoadedEvent]()},
+	{"SessionDeletedEvent", reflect.TypeFor[tauchat.SessionDeletedEvent]()},
+	{"SessionExportedEvent", reflect.TypeFor[tauchat.SessionExportedEvent]()},
+	{"CommandsChangedEvent", reflect.TypeFor[tauchat.CommandsChangedEvent]()},
+	{"SkillsChangedEvent", reflect.TypeFor[tauchat.SkillsChangedEvent]()},
+}
+
+// CommandTypeInfo pairs a wire discriminator name with its concrete
+// chat.ChatCommand type.
+type CommandTypeInfo struct {
+	Name string
+	Type reflect.Type
+}
+
+// CommandTypes is the authoritative registry of ChatCommand types the bridge
+// accepts from browser clients. See EventTypes.
+var CommandTypes = []CommandTypeInfo{
+	{"StartChatSessionCommand", reflect.TypeFor[tauchat.StartChatSessionCommand]()},
+	{"SubmitChatPromptCommand", reflect.TypeFor[tauchat.SubmitChatPromptCommand]()},
+	{"SteerChatPromptCommand", reflect.TypeFor[tauchat.SteerChatPromptCommand]()},
+	{"UpdateChatSessionCommand", reflect.TypeFor[tauchat.UpdateChatSessionCommand]()},
+	{"CancelChatRequestCommand", reflect.TypeFor[tauchat.CancelChatRequestCommand]()},
+	{"ResetChatSessionCommand", reflect.TypeFor[tauchat.ResetChatSessionCommand]()},
+	{"CloseChatSessionCommand", reflect.TypeFor[tauchat.CloseChatSessionCommand]()},
+	{"ReloadExtensionsCommand", reflect.TypeFor[tauchat.ReloadExtensionsCommand]()},
+	{"RunExtensionCommandCommand", reflect.TypeFor[tauchat.RunExtensionCommandCommand]()},
+	{"RespondInteractivePromptCommand", reflect.TypeFor[tauchat.RespondInteractivePromptCommand]()},
+	{"ListSessionsCommand", reflect.TypeFor[tauchat.ListSessionsCommand]()},
+	{"LoadSessionCommand", reflect.TypeFor[tauchat.LoadSessionCommand]()},
+	{"DeleteSessionCommand", reflect.TypeFor[tauchat.DeleteSessionCommand]()},
+	{"ExportSessionCommand", reflect.TypeFor[tauchat.ExportSessionCommand]()},
+	{"RunSkillCommand", reflect.TypeFor[tauchat.RunSkillCommand]()},
+	{"RunAgentCommand", reflect.TypeFor[tauchat.RunAgentCommand]()},
+	{"ReloadSkillsCommand", reflect.TypeFor[tauchat.ReloadSkillsCommand]()},
+	{"ListSkillsCommand", reflect.TypeFor[tauchat.ListSkillsCommand]()},
+}
+
+var eventNameByType = func() map[reflect.Type]string {
+	m := make(map[reflect.Type]string, len(EventTypes))
+	for _, e := range EventTypes {
+		m[e.Type] = e.Name
+	}
+	return m
+}()
+
+var commandTypeByName = func() map[string]reflect.Type {
+	m := make(map[string]reflect.Type, len(CommandTypes))
+	for _, c := range CommandTypes {
+		m[c.Name] = c.Type
+	}
+	return m
+}()
 
 // MarshalEvent serializes a ChatEvent into an envelope with a type discriminator.
 func MarshalEvent(ev tauchat.ChatEvent) ([]byte, error) {
@@ -67,7 +143,7 @@ func UnmarshalCommand(data []byte) (tauchat.ChatCommand, error) {
 }
 
 // MarshalInit builds the one-time init message.
-func MarshalInit(sessionID, model, provider string, models []tauchat.ChatModelRef, providers []string, commands []tauchat.CommandRef, skills []SkillInfo, extCmds []tauchat.ExtensionCommand) ([]byte, error) {
+func MarshalInit(sessionID, model, provider string, models []tauchat.ChatModelRef, providers []string, commands []tauchat.CommandRef, skills []tauchat.SkillInfo, extCmds []tauchat.ExtensionCommand) ([]byte, error) {
 	return json.Marshal(InitMessage{
 		Type:              "init",
 		SessionID:         sessionID,
@@ -82,159 +158,24 @@ func MarshalInit(sessionID, model, provider string, models []tauchat.ChatModelRe
 }
 
 func eventTypeName(ev tauchat.ChatEvent) string {
-	switch ev.(type) {
-	case tauchat.ChatSessionSnapshotEvent:
-		return "ChatSessionSnapshotEvent"
-	case tauchat.ChatResponseStartedEvent:
-		return "ChatResponseStartedEvent"
-	case tauchat.ChatResponseDeltaEvent:
-		return "ChatResponseDeltaEvent"
-	case tauchat.ChatReasoningDeltaEvent:
-		return "ChatReasoningDeltaEvent"
-	case tauchat.ChatToolCallDeltaEvent:
-		return "ChatToolCallDeltaEvent"
-	case tauchat.ChatToolExecutionStartedEvent:
-		return "ChatToolExecutionStartedEvent"
-	case tauchat.ChatToolExecutionCompletedEvent:
-		return "ChatToolExecutionCompletedEvent"
-	case tauchat.ChatToolOutputEvent:
-		return "ChatToolOutputEvent"
-	case tauchat.ChatResponseCompletedEvent:
-		return "ChatResponseCompletedEvent"
-	case tauchat.ChatResponseCancelledEvent:
-		return "ChatResponseCancelledEvent"
-	case tauchat.ChatRuntimeErrorEvent:
-		return "ChatRuntimeErrorEvent"
-	case tauchat.ChatNotificationEvent:
-		return "ChatNotificationEvent"
-	case tauchat.ExtensionsReloadedEvent:
-		return "ExtensionsReloadedEvent"
-	case tauchat.ExtensionCommandsChangedEvent:
-		return "ExtensionCommandsChangedEvent"
-	case tauchat.ExtensionCommandResultEvent:
-		return "ExtensionCommandResultEvent"
-	case tauchat.InteractivePromptRequestedEvent:
-		return "InteractivePromptRequestedEvent"
-	case tauchat.SessionsListedEvent:
-		return "SessionsListedEvent"
-	case tauchat.SessionLoadedEvent:
-		return "SessionLoadedEvent"
-	case tauchat.SessionDeletedEvent:
-		return "SessionDeletedEvent"
-	case tauchat.SessionExportedEvent:
-		return "SessionExportedEvent"
-	case tauchat.CommandsChangedEvent:
-		return "CommandsChangedEvent"
-	case tauchat.SkillsChangedEvent:
-		return "SkillsChangedEvent"
-	default:
-		return "UnknownChatEvent"
+	if name, ok := eventNameByType[reflect.TypeOf(ev)]; ok {
+		return name
 	}
+	return "UnknownChatEvent"
 }
 
 func unmarshalCommandPayload(name string, raw json.RawMessage) (tauchat.ChatCommand, error) {
-	var cmd tauchat.ChatCommand
-	switch name {
-	case "StartChatSessionCommand":
-		var v tauchat.StartChatSessionCommand
-		err := json.Unmarshal(raw, &v)
-		cmd = v
-		if err != nil {
-			return nil, err
-		}
-	case "SubmitChatPromptCommand":
-		var v tauchat.SubmitChatPromptCommand
-		err := json.Unmarshal(raw, &v)
-		cmd = v
-		if err != nil {
-			return nil, err
-		}
-	case "SteerChatPromptCommand":
-		var v tauchat.SteerChatPromptCommand
-		err := json.Unmarshal(raw, &v)
-		cmd = v
-		if err != nil {
-			return nil, err
-		}
-	case "UpdateChatSessionCommand":
-		var v tauchat.UpdateChatSessionCommand
-		err := json.Unmarshal(raw, &v)
-		cmd = v
-		if err != nil {
-			return nil, err
-		}
-	case "CancelChatRequestCommand":
-		var v tauchat.CancelChatRequestCommand
-		err := json.Unmarshal(raw, &v)
-		cmd = v
-		if err != nil {
-			return nil, err
-		}
-	case "ResetChatSessionCommand":
-		var v tauchat.ResetChatSessionCommand
-		err := json.Unmarshal(raw, &v)
-		cmd = v
-		if err != nil {
-			return nil, err
-		}
-	case "CloseChatSessionCommand":
-		var v tauchat.CloseChatSessionCommand
-		err := json.Unmarshal(raw, &v)
-		cmd = v
-		if err != nil {
-			return nil, err
-		}
-	case "ReloadExtensionsCommand":
-		var v tauchat.ReloadExtensionsCommand
-		err := json.Unmarshal(raw, &v)
-		cmd = v
-		if err != nil {
-			return nil, err
-		}
-	case "RunExtensionCommandCommand":
-		var v tauchat.RunExtensionCommandCommand
-		err := json.Unmarshal(raw, &v)
-		cmd = v
-		if err != nil {
-			return nil, err
-		}
-	case "RespondInteractivePromptCommand":
-		var v tauchat.RespondInteractivePromptCommand
-		err := json.Unmarshal(raw, &v)
-		cmd = v
-		if err != nil {
-			return nil, err
-		}
-	case "ListSessionsCommand":
-		var v tauchat.ListSessionsCommand
-		err := json.Unmarshal(raw, &v)
-		cmd = v
-		if err != nil {
-			return nil, err
-		}
-	case "LoadSessionCommand":
-		var v tauchat.LoadSessionCommand
-		err := json.Unmarshal(raw, &v)
-		cmd = v
-		if err != nil {
-			return nil, err
-		}
-	case "DeleteSessionCommand":
-		var v tauchat.DeleteSessionCommand
-		err := json.Unmarshal(raw, &v)
-		cmd = v
-		if err != nil {
-			return nil, err
-		}
-	case "ExportSessionCommand":
-		var v tauchat.ExportSessionCommand
-		err := json.Unmarshal(raw, &v)
-		cmd = v
-		if err != nil {
-			return nil, err
-		}
-	default:
+	t, ok := commandTypeByName[name]
+	if !ok {
 		return nil, fmt.Errorf("unknown command type %q", name)
+	}
+	ptr := reflect.New(t)
+	if err := json.Unmarshal(raw, ptr.Interface()); err != nil {
+		return nil, err
+	}
+	cmd, ok := ptr.Elem().Interface().(tauchat.ChatCommand)
+	if !ok {
+		return nil, fmt.Errorf("command type %q does not implement ChatCommand", name)
 	}
 	return cmd, nil
 }

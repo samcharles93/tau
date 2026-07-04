@@ -24,8 +24,10 @@ type LineInput struct {
 	promptFn func(string) string
 	textFn   func(string) string
 	hintFn   func(string) string
+	cmdFn    func(string) string // applied instead of textFn while the line begins with "/"
 
 	cursorR, cursorG, cursorB uint8 // cursor background colour (0 = default grey)
+	cmdCursor                 *termkit.Color // cursor background used instead while isCommand (see SetCommandCursorColor)
 
 	// History buffer for readline-style recall of submitted prompts.
 	// historyPos is -1 when live-editing; 0..len(history)-1 when browsing.
@@ -58,6 +60,25 @@ func (li *LineInput) SetCursorColor(r, g, b uint8) {
 // SetStyles sets colour callbacks for the prompt, typed text, and placeholder.
 func (li *LineInput) SetStyles(promptFn, textFn, hintFn func(string) string) {
 	li.promptFn, li.textFn, li.hintFn = promptFn, textFn, hintFn
+}
+
+// SetCommandStyle sets a colour callback applied to the whole line, in place
+// of textFn, whenever the current input begins with "/" — so a slash command
+// reads visually distinct from a plain prompt while it's being typed, not
+// just once submitted. Pass nil to disable.
+func (li *LineInput) SetCommandStyle(fn func(string) string) {
+	li.mu.Lock()
+	defer li.mu.Unlock()
+	li.cmdFn = fn
+}
+
+// SetCommandCursorColor sets the block-cursor background colour used while
+// the line begins with "/" (see SetCommandStyle), so the caret matches the
+// same accent as the coloured command text.
+func (li *LineInput) SetCommandCursorColor(fg termkit.Color) {
+	li.mu.Lock()
+	defer li.mu.Unlock()
+	li.cmdCursor = &fg
 }
 
 // Focused reports whether the input has focus.
@@ -420,7 +441,10 @@ func (li *LineInput) wordRightLocked() int {
 
 const cursorOff = "\x1b[49m"
 
-func (li *LineInput) cursorOn() string {
+func (li *LineInput) cursorOn(isCommand bool) string {
+	if isCommand && li.cmdCursor != nil {
+		return li.cmdCursor.Bg()
+	}
 	r, g, b := li.cursorR, li.cursorG, li.cursorB
 	if r == 0 && g == 0 && b == 0 {
 		return "\x1b[48;2;128;134;150m" // default mid-grey
@@ -450,8 +474,18 @@ func (li *LineInput) Render(width int) []string {
 		return []string{prompt + hint}
 	}
 
+	// A line beginning with "/" is a slash command in progress — colour the
+	// whole thing with cmdFn instead of textFn, mirroring the accent used to
+	// echo it into scrollback once submitted.
+	isCommand := li.cmdFn != nil && strings.HasPrefix(strings.TrimSpace(string(li.runes)), "/")
 	paint := func(s string) string {
-		if li.textFn != nil && colour {
+		if !colour {
+			return s
+		}
+		if isCommand {
+			return li.cmdFn(s)
+		}
+		if li.textFn != nil {
 			return li.textFn(s)
 		}
 		return s
@@ -470,7 +504,7 @@ func (li *LineInput) Render(width int) []string {
 		if i > 0 {
 			prefix = strings.Repeat(" ", promptW)
 		}
-		out = append(out, li.renderOneLine(ln, i == curLine, curCol, prefix, contentWidth, paint)...)
+		out = append(out, li.renderOneLine(ln, i == curLine, curCol, prefix, contentWidth, paint, isCommand)...)
 	}
 	return out
 }
@@ -486,12 +520,12 @@ type renderChunk struct {
 // renderOneLine wraps a single logical line to maxW columns and injects the
 // block cursor at cursorCol (when hasCursor is true). Wrapping and cursor
 // tracking use the same word-scanning loop — no duplicated logic.
-func (li *LineInput) renderOneLine(ln []rune, hasCursor bool, cursorCol int, prefix string, maxW int, paint func(string) string) []string {
+func (li *LineInput) renderOneLine(ln []rune, hasCursor bool, cursorCol int, prefix string, maxW int, paint func(string) string, isCommand bool) []string {
 	if len(ln) == 0 {
 		// Empty logical line (e.g. just after a newline). Still show the cursor
 		// here when it falls on this line — otherwise it vanishes on blank lines.
 		if hasCursor {
-			return []string{prefix + li.cursorAtEnd("")}
+			return []string{prefix + li.cursorAtEnd("", paint, isCommand)}
 		}
 		return []string{prefix}
 	}
@@ -592,11 +626,11 @@ func (li *LineInput) renderOneLine(ln []rune, hasCursor bool, cursorCol int, pre
 				localCol = len(flat)
 			}
 			sb.WriteString(paint(string(flat[:localCol])))
-			sb.WriteString(li.cursorAtEnd(string(flat[localCol:])))
+			sb.WriteString(li.cursorAtEnd(string(flat[localCol:]), paint, isCommand))
 			placed = true
 		}
 		if !placed {
-			sb.WriteString(li.cursorAtEnd(""))
+			sb.WriteString(li.cursorAtEnd("", paint, isCommand))
 		}
 		out = append(out, sb.String())
 	}
@@ -613,20 +647,26 @@ func (li *LineInput) joinRenderChunks(chunks []renderChunk, paint func(string) s
 
 // cursorAtEnd applies cursor styling to tail text. The character under the
 // cursor gets a coloured background. Spaces are replaced with a visible block
-// (█) so the cursor is never invisible between words.
-func (li *LineInput) cursorAtEnd(tail string) string {
+// (█) so the cursor is never invisible between words. The remainder after
+// the cursor character is run through paint so it keeps whatever text
+// styling (e.g. command colouring) applies to the rest of the line.
+func (li *LineInput) cursorAtEnd(tail string, paint func(string) string, isCommand bool) string {
 	if !li.focused || !termkit.ColorEnabled() {
 		return tail
 	}
 	if tail == "" {
-		return li.cursorOn() + "█" + cursorOff
+		return li.cursorOn(isCommand) + "█" + cursorOff
 	}
 	runes := []rune(tail)
 	ch := string(runes[0])
 	if ch == " " {
 		ch = "█"
 	}
-	return li.cursorOn() + ch + cursorOff + string(runes[1:])
+	rest := string(runes[1:])
+	if paint != nil {
+		rest = paint(rest)
+	}
+	return li.cursorOn(isCommand) + ch + cursorOff + rest
 }
 
 // insertable reports whether a key sequence is printable text.
