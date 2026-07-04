@@ -5,6 +5,8 @@ import (
 	"time"
 
 	tauchat "github.com/samcharles93/tau/internal/chat"
+	"github.com/samcharles93/tau/internal/tui/notify"
+	"github.com/samcharles93/tau/pkg/taui"
 )
 
 // runHandleEvent runs handleEvent in its own goroutine and fails the test if
@@ -37,6 +39,53 @@ func runHandleEvent(t *testing.T, c *inlineChat, ev tauchat.ChatEvent) {
 	case <-time.After(2 * time.Second):
 		t.Fatalf("handleEvent(%T) did not return — likely deadlock", ev)
 	}
+}
+
+// TestHandleEvent_ToolOutput_AppendsToActiveTail verifies streamed tool
+// output is routed into the running tool's bounded tail (not printed
+// straight to permanent scrollback), and that the tail is removed from the
+// box once the tool resolves so the resolved scrollback line doesn't carry
+// the streamed output with it.
+func TestHandleEvent_ToolOutput_AppendsToActiveTail(t *testing.T) {
+	c, _ := newTestChat(t)
+	c.stage = &taui.Container{}
+
+	runHandleEvent(t, c, tauchat.ChatToolExecutionStartedEvent{CallID: "1", ToolName: "shell"})
+
+	tb, ok := c.activeTools["1"]
+	if !ok {
+		t.Fatal("expected an active tool box for call 1")
+	}
+	if tb.tail == nil {
+		t.Fatal("expected ToolExecutionStarted to create a tail log")
+	}
+
+	runHandleEvent(t, c, tauchat.ChatToolOutputEvent{CallID: "1", Chunk: "building...\n"})
+	runHandleEvent(t, c, tauchat.ChatToolOutputEvent{CallID: "1", Chunk: "done\n"})
+
+	if got := tb.tail.Render(0); len(got) != 2 || got[0] != "building..." || got[1] != "done" {
+		t.Fatalf("tail.Render() = %q, want [%q %q]", got, "building...", "done")
+	}
+
+	runHandleEvent(t, c, tauchat.ChatToolExecutionCompletedEvent{CallID: "1", ToolName: "shell", ResultSummary: "ok"})
+
+	if tb.tail != nil {
+		t.Fatal("expected the tail reference to be cleared on the activeToolBox after completion")
+	}
+	for _, child := range tb.box.Children {
+		if _, isRow := child.(*taui.ToolRow); !isRow {
+			t.Fatalf("expected only the resolved ToolRow left in the box, found %T", child)
+		}
+	}
+}
+
+// TestHandleEvent_ToolOutput_UnknownCallIDIsNoop guards against a panic if
+// output arrives for a call that has no active box (e.g. already resolved).
+func TestHandleEvent_ToolOutput_UnknownCallIDIsNoop(t *testing.T) {
+	c, _ := newTestChat(t)
+	c.activeTools = map[string]*activeToolBox{}
+
+	runHandleEvent(t, c, tauchat.ChatToolOutputEvent{CallID: "missing", Chunk: "stray output\n"})
 }
 
 // TestHandleEvent_ToolExecutionCompleted_NoDoubleUnlock guards against a
@@ -171,4 +220,63 @@ func TestHandleEvent_ExtensionCommandResult_WithView_NoDeadlock(t *testing.T) {
 	runHandleEvent(t, c, tauchat.ExtensionCommandResultEvent{
 		Name: "hello", View: &v,
 	})
+}
+
+// TestHandleEvent_ToolExecutionStarted_FlushesPrecedingText guards against a
+// regression where a text segment preceding a tool call was left mounted in
+// turnText instead of being flushed and reset, causing the next
+// ChatResponseDeltaEvent to concatenate straight onto it with no separator
+// (e.g. "...browsing `/`Now update the two callers...").
+func TestHandleEvent_ToolExecutionStarted_FlushesPrecedingText(t *testing.T) {
+	c, _ := newTestChat(t)
+	c.stage = &taui.Container{}
+
+	runHandleEvent(t, c, tauchat.ChatResponseDeltaEvent{Delta: "foo"})
+	runHandleEvent(t, c, tauchat.ChatToolExecutionStartedEvent{CallID: "1", ToolName: "read"})
+
+	if c.turnText != nil {
+		t.Fatalf("expected turnText to be reset after a tool call starts, got %q", c.turnText.Text())
+	}
+
+	runHandleEvent(t, c, tauchat.ChatResponseDeltaEvent{Delta: "bar"})
+
+	if got := c.turnText.Text(); got != "bar" {
+		t.Fatalf("expected fresh segment %q, got %q (segments concatenated)", "bar", got)
+	}
+}
+
+// TestHandleEvent_ToolExecutionStarted_BackToBackNoFlushStorm guards against
+// a regression where consecutive tool-call starts with no intervening text
+// delta (a parallel tool-call batch) would panic or emit blank scrollback
+// lines from re-flushing an already-nil turnText/turnReasoning.
+func TestHandleEvent_ToolExecutionStarted_BackToBackNoFlushStorm(t *testing.T) {
+	c, _ := newTestChat(t)
+	c.stage = &taui.Container{}
+
+	runHandleEvent(t, c, tauchat.ChatToolExecutionStartedEvent{CallID: "1", ToolName: "read"})
+	runHandleEvent(t, c, tauchat.ChatToolExecutionStartedEvent{CallID: "2", ToolName: "read"})
+
+	if c.turnText != nil || c.turnReasoning != nil {
+		t.Fatal("expected turnText/turnReasoning to remain nil across back-to-back tool starts")
+	}
+}
+
+// TestHandleEvent_RuntimeError_ReachesStatusBar guards against a regression
+// where ChatRuntimeErrorEvent only printed to scrollback and never surfaced
+// in the status bar, unlike ChatNotificationEvent{Level: Error}.
+func TestHandleEvent_RuntimeError_ReachesStatusBar(t *testing.T) {
+	c, _ := newTestChat(t)
+
+	runHandleEvent(t, c, tauchat.ChatRuntimeErrorEvent{Message: "boom"})
+
+	n := c.notifyQueue.Current()
+	if n == nil {
+		t.Fatal("expected ChatRuntimeErrorEvent to push a status-bar notification")
+	}
+	if n.Message != "boom" {
+		t.Fatalf("expected notification message %q, got %q", "boom", n.Message)
+	}
+	if n.Level != notify.LevelError {
+		t.Fatalf("expected error level, got %v", n.Level)
+	}
 }

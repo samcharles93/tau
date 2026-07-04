@@ -109,12 +109,14 @@ func (c *inlineChat) handleEvent(ev tauchat.ChatEvent) {
 				bgStatus = theme.SkillRunning
 			}
 			tr := taui.NewToolRow(e.ToolName, label)
+			tail := taui.NewTailLog(toolTailLines, c.grey)
 			tbox := taui.NewBox().Padding(2, 1).Bg(toolBoxBg(bgStatus)).ExpandW().Build()
 			tbox.AddChild(tr)
+			tbox.AddChild(tail)
 			if c.activeTools == nil {
 				c.activeTools = make(map[string]*activeToolBox)
 			}
-			c.activeTools[e.CallID] = &activeToolBox{row: tr, box: tbox}
+			c.activeTools[e.CallID] = &activeToolBox{row: tr, box: tbox, tail: tail}
 			c.stage.AddChild(tbox)
 			return above
 		})
@@ -152,6 +154,13 @@ func (c *inlineChat) handleEvent(ev tauchat.ChatEvent) {
 					tb.box.SetBgFn(toolBoxBg(theme.ToolSuccess))
 				}
 			}
+			// The streamed tail was a live peek, not part of the permanent
+			// record — drop it now so neither the resolved hold-state nor the
+			// scrollback commit below include it, only the resolved row.
+			if tb.tail != nil {
+				tb.box.RemoveChild(tb.tail)
+				tb.tail = nil
+			}
 		})
 		c.engine.RequestRender()
 		time.Sleep(450 * time.Millisecond)
@@ -174,7 +183,13 @@ func (c *inlineChat) handleEvent(ev tauchat.ChatEvent) {
 
 	case tauchat.ChatToolOutputEvent:
 		c.mu.Unlock()
-		c.engine.PrintAbove("%s", c.grey("  "+e.Chunk))
+		c.engine.Update(func() {
+			tb, ok := c.activeTools[e.CallID]
+			if !ok || tb.tail == nil {
+				return
+			}
+			tb.tail.Append(e.Chunk)
+		})
 		c.mu.Lock()
 
 	case tauchat.ChatResponseCompletedEvent:
@@ -221,6 +236,13 @@ func (c *inlineChat) handleEvent(ev tauchat.ChatEvent) {
 	case tauchat.ChatRuntimeErrorEvent:
 		c.steering.Store(false)
 		c.generating.Store(false)
+		if c.notifyQueue != nil {
+			c.notifyQueue.Push(notify.Notification{
+				Message:  e.Message,
+				Level:    notify.LevelError,
+				Duration: notifyDurationFromChat(tauchat.ChatNotificationError),
+			})
+		}
 		c.mu.Unlock()
 		c.engine.PrintAbove("%s %s", c.grey("✗"), e.Message)
 		c.engine.Update(c.clearTurnLocked)

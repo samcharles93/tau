@@ -31,9 +31,16 @@ const headerIdle = ""
 const quitConfirmWindow = 800 * time.Millisecond
 
 type activeToolBox struct {
-	row *taui.ToolRow
-	box *taui.Box
+	row  *taui.ToolRow
+	box  *taui.Box
+	tail *taui.TailLog
 }
+
+// toolTailLines is how many trailing lines of streamed tool output stay
+// visible in a running tool's box. It collapses away (RemoveChild) once the
+// tool resolves — it's a live peek, not part of the permanent scrollback
+// record the resolved ToolRow line becomes.
+const toolTailLines = 6
 
 type inlineChat struct {
 	engine *taui.TUI
