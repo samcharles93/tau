@@ -1,5 +1,14 @@
 # Changelog
 
+## [0.14.0](https://github.com/samcharles93/tau/compare/v0.13.0...v0.14.0) (2026-07-04)
+
+
+### Features
+
+* add specgen tool and regenerate AsyncAPI spec, enhance TUI command experience ([7e6f23c](https://github.com/samcharles93/tau/commit/7e6f23ca1bf55615007c320546f8b8c0bb874196))
+* **agent:** add declarative agent spec system for built-in commands ([e2b64d8](https://github.com/samcharles93/tau/commit/e2b64d869105b3d59692ecf37ed19f8b1f6ef13e))
+* **tui:** stream tool output to a live tail log, surface runtime errors in status bar ([ffebdbb](https://github.com/samcharles93/tau/commit/ffebdbb3898917a3ee1779a794e87e52d1c32bc0))
+
 ## [0.13.0](https://github.com/samcharles93/tau/compare/v0.12.0...v0.13.0) (2026-07-03)
 
 
