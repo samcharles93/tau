@@ -32,6 +32,10 @@ func Run(
 	onReady func(),
 	sessionID, modelName, provider string,
 	metricsCfg tauconfig.MetricsConfig,
+	availableModels []tauchat.ChatModelRef,
+	refresh func(context.Context) ([]tauchat.ChatModelRef, error),
+	webURL string,
+	debug bool,
 ) error {
 	if bus == nil {
 		return fmt.Errorf("tui2: event bus is required")
@@ -72,7 +76,7 @@ func Run(
 		onReady()
 	}
 
-	m := newModel(ctx, runtime, chatSub, sessionID, modelName, provider)
+	m := newModel(ctx, runtime, chatSub, sessionID, modelName, provider, availableModels, refresh, tracker, webURL, debug)
 	p := tea.NewProgram(m,
 		tea.WithContext(ctx),
 		tea.WithoutSignalHandler(), // tau manages signals at the app layer

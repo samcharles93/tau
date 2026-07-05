@@ -110,9 +110,11 @@ internal/app/ (orchestration: creates eventbus.Bus, wires subsystems as Clients)
         ├─► internal/app/streamer.go (ai-sdk adapter)
         ├─► internal/app/platform.go (token resolution via ai-sdk)
         │
-        └─► internal/tui/ (taui-based inline terminal UI)
-                │
-                └─► internal/tui/notify/ (queue-based notification system)
+        ├─► internal/tui/ (taui-based inline terminal UI — legacy)
+        │       │
+        │       └─► internal/tui/notify/ (queue-based notification system)
+        │
+        └─► internal/tui2/ (Bubbletea v2-based terminal UI — experimental, --new-tui)
 ```
 
 ### Communication Flow
@@ -146,7 +148,7 @@ The project follows a **layered architecture** with a command/event boundary bet
 | CLI | `internal/cli/` | Command definitions & flag parsing (thin handlers) |
 | Orchestration | `internal/app/` | Wires subsystems together for each use case (chat, token, models) |
 | Domain | `internal/chat/`, `internal/skills/`, `internal/agent/` | Core business logic, commands, events |
-| Presentation | `internal/tui/` | taui-based interactive terminal UI |
+| Presentation | `internal/tui/`, `internal/tui2/` | Legacy taui inline TUI and experimental Bubbletea v2 TUI |
 | Infrastructure | `internal/config/`, `internal/eventbus/`, `internal/store/`, `internal/sessions/` | Config, event bus, persistence |
 
 ### Package Responsibilities
@@ -157,8 +159,9 @@ The project follows a **layered architecture** with a command/event boundary bet
 - **`eventbus`** — Central in-process event bus. Routes events by Go type (`Publisher[ChatEvent]` → `Subscriber[ChatEvent]`) rather than string topics. Adapted from Tailscale's `util/eventbus` (BSD-3-Clause). The bus enforces total ordering of published events via a single pump goroutine. Clients are named handles that own their publishers and subscribers; `Client.Close()` cascades cleanup. Designed so that subsystems communicate through the bus without importing each other.
 - **`agent`** — Coordinator runtime: agentic turn loop, tool execution, plugin lifecycle dispatch, session persistence. Receives `ChatCommand` via its command channel and publishes `ChatEvent` on the event bus. Defines `Streamer` and `TokenSource` interfaces.
 - **`tui`** — taui-based interactive terminal UI. Subscribes to `ChatEvent` on the event bus and sends `ChatCommand` to the coordinator. Files are prefixed `inline_*` reflecting the inline rendering approach. Uses `pkg/taui` for all widget rendering (no direct go-tui dependency).
-  - **Core (`internal/tui/`)**: Handles app bootstrapping, event watchers, slash command dispatch, completions, and inline rendering.
-  - **Notify (`internal/tui/notify/`)**: Queue-based notification system.
+  - **Legacy TUI (`internal/tui/`)**: Handles app bootstrapping, event watchers, slash command dispatch, completions, and inline rendering. Gated behind legacy path (default); `--new-tui` flag delegates to `internal/tui2`.
+  - **Notify (`internal/tui/notify/`)**: Queue-based notification system. Shared leaf package — usable by both frontends.
+  - **Experimental TUI (`internal/tui2/`)**: Bubbletea v2-based interactive terminal UI behind `--new-tui`. Subscribes to the same event bus as the legacy TUI; implements its own rendering, input handling, and command dispatch. See `reference/tui-migration/parity-checklist.md` for feature parity status.
 - **`config`** — Loads `~/.config/tau/config.yaml` (global) and `.tau.yaml` (project-local); foundation package with no internal imports.
 - **`skills`** — Skill discovery from markdown/YAML files, lifecycle management, activation tracking. Publishes `skills.Event` on the event bus when the catalog is refreshed.
 - **`store`** — Session persistence layer (SQLite + raw SQL). Defines `SessionStore` interface and `SessionSummary` struct. Implements JSONL export.
@@ -260,6 +263,8 @@ Use this section to quickly find the right files for a given change.
 
 ### Changing the TUI (Interactive Chat UI)
 
+#### Legacy taui TUI (`internal/tui/`)
+
 - `internal/tui/inline_chat.go` — `inlineChat` struct (root taui component):
   - **State**: `provider`, `modelName`, `debug`, `sessionID`, `showReasoning`, `reasoningEffort`, `availableModels`, `registryCommands`, `extensionCommands`, `sessionSummaries`, `turnText`, `turnReasoning`, `activeTools`, `working`, `running`
   - **Lifecycle**: `newInlineChat()`, `close()`, `eventLoop()`, `spinnerLoop()`, `statusLoop()`
@@ -272,6 +277,13 @@ Use this section to quickly find the right files for a given change.
 - `internal/tui/api.go` — `TUIConfig` struct, `ModelRefresher` type
 - `internal/tui/inline_commands.go` — Slash command table: `/model`, `/system`, `/temperature`, `/max-tokens`, `/reset`, `/reasoning`, `/refresh`, `/sessions`, `/export`, `/help`, `/debug`, `/quit`, and extension commands. Structured as `slashCommand` entries with `run` and `complete` closures.
 - `internal/tui/inline_completions.go` — Dynamic completion provider: `completionSet()` returns `*taui.CompletionSet` for the inline input. Resolves command names first, then per-command argument completions (models, sessions, boolean toggles, etc.).
+
+#### Experimental Bubbletea v2 TUI (`internal/tui2/`)
+
+- `internal/tui2/run.go` — `Run()` entry point. Creates `"tui2"` bus client, subscribes `ChatEvent`, wires metrics tracking (UsageTracker + FileSubscriber), calls `OnReady` for deferred plugin loading, creates and runs a `tea.NewProgram`.
+- `internal/tui2/model.go` — Root `model` implementing `tea.Model`. Handles input via `KeyPressMsg`, bridges events via the channel-drain-rearm pattern (`readNextEvent` → `chatEventMsg` → re-arm), renders with lipgloss v2 styles in `View()`. Currently covers 12 of 24 ChatEvent variants; full parity is tracked in `reference/tui-migration/parity-checklist.md`.
+- **Flag gating**: `--new-tui` flag in `internal/cli/root.go` → `ChatOptions.NewTUI` → `TUIConfig.NewTUI` → `internal/tui/run.go` branches to `tui2.Run()`.
+- **Circular dependency avoidance**: `internal/tui/run.go` imports `internal/tui2`, but `internal/tui2` does NOT import `internal/tui`. Parameters are passed individually (not via `TUIConfig`).
 
 ### Changing the Command Registry
 
@@ -335,6 +347,9 @@ Use this section to quickly find the right files for a given change.
 | Client | Publisher Type | Subscriber Type | Where Created | Where Subscribed |
 | ------ | -------------- | --------------- | ------------- | ---------------- |
 | `"coordinator"` | `ChatEvent` | — | `agent.NewCoordinator` | — |
+| `"tui2"` | — | `ChatEvent` | `tui2.Run` | `model.Init` → `readNextEvent` |
+| `"tui2-metrics"` | — | `MetricEvent` | `tui2.Run` | `metrics.NewUsageTracker` |
+| `"tui2-metrics-file"` | — | `MetricEvent` | `tui2.Run` | `metrics.NewFileSubscriber` |
 | `"tui"` | — | `ChatEvent` | `tui.RunInline` | `inlineChat.eventLoop` |
 | `"web"` | — | `ChatEvent` | `bridge.NewBridge` | `bridge.broadcastLoop` → WebSocket clients |
 | `"plugin-host"` | `ChatEvent` | — | `app.buildCoordinator` | — (plugin notifications) |
@@ -577,10 +592,28 @@ type ExtensionReloader interface {
 
 ## TUI Architecture
 
-### File Layout
+### Legacy taui TUI File Layout
 
 ```tree
 internal/tui/
+├── inline_chat.go       # inlineChat — root component, event loop, rendering, tool display
+├── run.go               # Run() entry point, delegates to RunInline or tui2.Run
+├── run_taui.go          # RunInline — taui bootstrap, event subscription, cleanup
+├── api.go               # TUIConfig, ModelRefresher
+├── inline_commands.go   # Slash command table
+├── inline_completions.go # Tab-completion engine
+├── inline_events.go     # ChatEvent handling (21 event variants)
+├── inline_views.go      # Plugin Widget union renderer
+├── inline_providers.go  # /login, /logout, provider menu
+├── statusbar.go         # Priority-drop status bar
+├── notify/              # Queue-based notification system
+│   └── notify.go        # Notification, Queue (FIFO with expiry)
+```
+
+### Experimental Bubbletea v2 TUI File Layout
+
+```tree
+internal/tui2/
 ├── inline_chat.go       # inlineChat — root component, event loop, rendering, tool display
 ├── run.go               # Run() entry point, delegates to RunInline
 ├── run_taui.go          # RunInline — taui bootstrap, event subscription, cleanup
