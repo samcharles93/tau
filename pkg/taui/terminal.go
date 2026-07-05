@@ -78,6 +78,13 @@ func (t *ProcessTerminal) Start(onInput func(data string), onResize func()) {
 	// Enable bracketed paste.
 	_, _ = os.Stdout.WriteString("\x1b[?2004h")
 
+	// Enable focus reporting (CSI I on focus-in, CSI O on focus-out), so the
+	// engine's Focused() reflects whether the terminal window is actually
+	// active — used to gate desktop notifications. Terminals without support
+	// just never send the reports, which leaves Focused() at its default of
+	// true. Popped in Stop.
+	_, _ = os.Stdout.WriteString("\x1b[?1004h")
+
 	// Push the Kitty keyboard protocol (flag 1 = disambiguate escape codes) so
 	// modified keys — Shift+Enter, Ctrl+Enter, etc. — arrive as unambiguous
 	// CSI-u sequences instead of colliding with legacy encodings. Terminals
@@ -170,6 +177,9 @@ func (t *ProcessTerminal) Stop() {
 
 	// Pop the Kitty keyboard protocol pushed in Start.
 	_, _ = os.Stdout.WriteString(kittyKeyboardPop)
+
+	// Disable focus reporting.
+	_, _ = os.Stdout.WriteString("\x1b[?1004l")
 
 	// Disable bracketed paste.
 	_, _ = os.Stdout.WriteString("\x1b[?2004l")

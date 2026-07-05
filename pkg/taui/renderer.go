@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 )
 
@@ -61,6 +62,13 @@ type TUI struct {
 	// Focus
 	focused Component
 
+	// termFocused mirrors the terminal window's own focus state, from CSI
+	// ?1004 reports (see ProcessTerminal.Start/Stop). Defaults to true: a
+	// terminal without focus-reporting support never sends a report, so
+	// callers gating on Focused() (e.g. desktop notifications) simply always
+	// fire on those terminals rather than silently never firing.
+	termFocused atomic.Bool
+
 	// Input segmentation (paste handling + batched-key splitting).
 	input *stdinBuffer
 
@@ -73,19 +81,28 @@ const minRenderInterval = 16 * time.Millisecond
 
 // NewTUI creates a TUI engine with the given terminal and default config.
 func NewTUI(term Terminal) *TUI {
-	return &TUI{
+	t := &TUI{
 		Terminal: term,
 		done:     make(chan struct{}),
 	}
+	t.termFocused.Store(true)
+	return t
 }
 
 // NewTUIWithConfig creates a TUI engine with custom configuration.
 func NewTUIWithConfig(term Terminal, cfg Config) *TUI {
-	return &TUI{
+	t := &TUI{
 		Terminal: term,
 		Config:   cfg,
 		done:     make(chan struct{}),
 	}
+	t.termFocused.Store(true)
+	return t
+}
+
+// Focused reports whether the terminal window currently has focus.
+func (t *TUI) Focused() bool {
+	return t.termFocused.Load()
 }
 
 // SetFocus sets the focused component.
@@ -197,6 +214,18 @@ func (t *TUI) dispatchKey(seq string) {
 	// Normalize Kitty-protocol disambiguated keys back to their legacy bytes so
 	// components (and existing `case "\x1b"` handlers) stay terminal-agnostic.
 	seq = canonicalKey(seq)
+
+	// Focus-in/out reports (CSI ?1004, enabled in ProcessTerminal.Start) aren't
+	// keystrokes — update termFocused and stop rather than forwarding to the
+	// focused component.
+	switch seq {
+	case "\x1b[I":
+		t.termFocused.Store(true)
+		return
+	case "\x1b[O":
+		t.termFocused.Store(false)
+		return
+	}
 
 	if h, ok := t.focused.(InputHandler); ok {
 		if h.HandleInput(seq) {

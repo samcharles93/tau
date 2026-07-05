@@ -474,10 +474,15 @@ func (li *LineInput) Render(width int) []string {
 		return []string{prompt + hint}
 	}
 
-	// A line beginning with "/" is a slash command in progress — colour the
-	// whole thing with cmdFn instead of textFn, mirroring the accent used to
-	// echo it into scrollback once submitted.
-	isCommand := li.cmdFn != nil && strings.HasPrefix(strings.TrimSpace(string(li.runes)), "/")
+	// A line beginning with "/" (slash command) or "!" (bash mode) is a
+	// command in progress — colour the whole thing with cmdFn instead of
+	// textFn, mirroring the accent used to echo it into scrollback once
+	// submitted. cmdFn itself decides the exact colour per trigger/mode; this
+	// gate only decides whether cmdFn applies at all, and also drives the
+	// command cursor colour below, so a plain prompt with no trigger doesn't
+	// get command styling just because cmdFn happens to be set.
+	trimmed := strings.TrimSpace(string(li.runes))
+	isCommand := li.cmdFn != nil && (strings.HasPrefix(trimmed, "/") || strings.HasPrefix(trimmed, "!"))
 	paint := func(s string) string {
 		if !colour {
 			return s

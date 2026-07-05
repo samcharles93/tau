@@ -265,3 +265,30 @@ func TestShrinkClearsOrphanLinesRelatively(t *testing.T) {
 		t.Errorf("after shrink to one line, cursorRow = %d, want 0", engine.cursorRow)
 	}
 }
+
+// TestFocusedDefaultsTrue verifies a fresh engine reports focused, so a
+// terminal that never sends CSI ?1004 reports (no focus-tracking support)
+// doesn't permanently suppress notifications gated on Focused().
+func TestFocusedDefaultsTrue(t *testing.T) {
+	engine := NewTUI(newFakeTerm(80, 24))
+	if !engine.Focused() {
+		t.Error("Focused() = false on a fresh engine, want true")
+	}
+}
+
+// TestDispatchKeyTracksFocusReports verifies CSI ?1004 focus in/out reports
+// update Focused() and are consumed rather than forwarded to the focused
+// component as ordinary keystrokes.
+func TestDispatchKeyTracksFocusReports(t *testing.T) {
+	engine := NewTUI(newFakeTerm(80, 24))
+
+	engine.dispatchKey("\x1b[O")
+	if engine.Focused() {
+		t.Error("after focus-out report, Focused() = true, want false")
+	}
+
+	engine.dispatchKey("\x1b[I")
+	if !engine.Focused() {
+		t.Error("after focus-in report, Focused() = false, want true")
+	}
+}
