@@ -36,7 +36,7 @@ func TestRenderStatusBar_RightJustified(t *testing.T) {
 	termkit.DisableColor()
 
 	left := []statusSeg{{text: "τ tau"}, {text: "opus"}}
-	right := []statusSeg{{text: "web: :7777", prio: prioWeb}}
+	right := []statusSeg{{text: "Open Browser", prio: prioWeb}}
 
 	const width = 40
 	out := renderStatusBar(width, left, right)
@@ -47,11 +47,11 @@ func TestRenderStatusBar_RightJustified(t *testing.T) {
 	if !strings.HasPrefix(out, "τ tau · opus") {
 		t.Fatalf("left group not pinned left: %q", out)
 	}
-	if !strings.HasSuffix(out, "web: :7777") {
+	if !strings.HasSuffix(out, "Open Browser") {
 		t.Fatalf("right group not flush-right: %q", out)
 	}
 	// The gap between the two groups must be >= 1 column of spaces.
-	mid := strings.TrimSuffix(strings.TrimPrefix(out, "τ tau · opus"), "web: :7777")
+	mid := strings.TrimSuffix(strings.TrimPrefix(out, "τ tau · opus"), "Open Browser")
 	if mid == "" || strings.TrimSpace(mid) != "" {
 		t.Fatalf("expected a whitespace-only gap between groups, got %q", out)
 	}
@@ -66,7 +66,7 @@ func TestRenderStatusBar_DropOrder(t *testing.T) {
 	tokens := statusSeg{text: "↑12.3k ↓4.5k", prio: prioTokens}
 	cost := statusSeg{text: "$0.0182", prio: prioCost}
 	ctx := statusSeg{text: "ctx 41%", prio: prioContext}
-	web := statusSeg{text: "web: :7777", prio: prioWeb}
+	web := statusSeg{text: "Open Browser", prio: prioWeb}
 	right := []statusSeg{tokens, cost, ctx, web} // visual order
 
 	cases := []struct {
@@ -79,19 +79,19 @@ func TestRenderStatusBar_DropOrder(t *testing.T) {
 			name:    "drops web first",
 			keep:    []statusSeg{tokens, cost, ctx},
 			present: []string{"↑12.3k ↓4.5k", "$0.0182", "ctx 41%"},
-			absent:  []string{"web:"},
+			absent:  []string{"Open Browser"},
 		},
 		{
 			name:    "then drops cost",
 			keep:    []statusSeg{tokens, ctx},
 			present: []string{"↑12.3k ↓4.5k", "ctx 41%"},
-			absent:  []string{"web:", "$0.0182"},
+			absent:  []string{"Open Browser", "$0.0182"},
 		},
 		{
 			name:    "then drops tokens, context survives",
 			keep:    []statusSeg{ctx},
 			present: []string{"ctx 41%"},
-			absent:  []string{"web:", "$0.0182", "↑12.3k"},
+			absent:  []string{"Open Browser", "$0.0182", "↑12.3k"},
 		},
 	}
 
@@ -124,7 +124,7 @@ func TestRenderStatusBar_TransientNeverDropped(t *testing.T) {
 	right := []statusSeg{
 		{text: "[STEERING...]", prio: prioTransient},
 		{text: "$0.0182", prio: prioCost},
-		{text: "web: :7777", prio: prioWeb},
+		{text: "Open Browser", prio: prioWeb},
 	}
 
 	const width = 20
@@ -230,7 +230,7 @@ func TestRenderStatusBar_NeverExceedsBudget(t *testing.T) {
 		{text: "↑12.3k ↓4.5k", prio: prioTokens},
 		{text: "$0.0182", prio: prioCost},
 		{text: "ctx 41%", prio: prioContext},
-		{text: "web: :7777", prio: prioWeb},
+		{text: "Open Browser", prio: prioWeb},
 	}
 	for width := 1; width <= 120; width++ {
 		out := renderStatusBar(width, left, right)

@@ -9,6 +9,7 @@ import (
 	"github.com/samcharles93/tau/internal/theme"
 	"github.com/samcharles93/tau/internal/tui/notify"
 	"github.com/samcharles93/tau/pkg/taui"
+	"github.com/samcharles93/tau/pkg/taui/termkit"
 )
 
 // eventLoop bridges runtime chat events into the inline UI until the session
@@ -123,6 +124,10 @@ func (c *inlineChat) handleEvent(ev tauchat.ChatEvent) {
 		c.mu.Lock()
 
 	case tauchat.ChatToolExecutionCompletedEvent:
+		if e.CallID == c.bashCallID {
+			c.bashCallID = ""
+			c.bashRunning.Store(false)
+		}
 		c.mu.Unlock()
 		c.engine.Update(func() {
 			tb, ok := c.activeTools[e.CallID]
@@ -200,6 +205,7 @@ func (c *inlineChat) handleEvent(ev tauchat.ChatEvent) {
 		c.steering.Store(false)
 		c.generating.Store(false)
 		c.mu.Unlock()
+		var finalText string
 		c.engine.UpdateThenPrint(func() []string {
 			var above []string
 			if c.turnReasoning != nil {
@@ -211,6 +217,7 @@ func (c *inlineChat) handleEvent(ev tauchat.ChatEvent) {
 			if c.turnText != nil {
 				if t := c.turnText.Text(); t != "" {
 					above = append(above, t+"\n")
+					finalText = t
 				}
 				c.turnText = nil
 			}
@@ -223,6 +230,17 @@ func (c *inlineChat) handleEvent(ev tauchat.ChatEvent) {
 			c.header.SetText(c.grey(headerIdle))
 			return above
 		})
+		if finalText != "" {
+			c.mu.Lock()
+			c.lastResponseText = finalText
+			c.mu.Unlock()
+			// Only nudge the user via desktop notification when they've
+			// actually looked away — while focused, the response already
+			// streamed onto their screen.
+			if !c.engine.Focused() {
+				c.engine.Terminal.Write(termkit.Notify("tau", finalText))
+			}
+		}
 		c.mu.Lock()
 
 	case tauchat.ChatResponseCancelledEvent:

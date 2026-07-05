@@ -3,12 +3,15 @@ package tui
 import (
 	"fmt"
 	"slices"
+	"strconv"
 	"strings"
 	"time"
 
 	agentspec "github.com/samcharles93/tau/internal/agent/spec"
 	tauchat "github.com/samcharles93/tau/internal/chat"
+	"github.com/samcharles93/tau/internal/theme"
 	"github.com/samcharles93/tau/pkg/taui"
+	"github.com/samcharles93/tau/pkg/taui/termkit"
 )
 
 // slashCommand is one entry in the inline chat's command table. The table is the
@@ -25,6 +28,12 @@ type slashCommand struct {
 	// (internal/agent/spec), so the completion dropdown can list it under its
 	// own "Agents" group instead of lumping it in with core commands.
 	isAgent bool
+	// mode is the input-mode indicator (name + color) shown on the
+	// surrounding dividers and the leading "/" while this command is being
+	// typed — see currentInputMode in inline_chat.go. Only isAgent commands
+	// get one (populated in agentSlashCommands); nil for plain commands,
+	// which are one-shot actions rather than an operating-mode change.
+	mode *taui.InputMode
 }
 
 // completeFunc returns argument completions for a command. fields are the
@@ -76,6 +85,10 @@ func init() {
 			name: "cost", aliases: []string{"usage"},
 			description: "show token usage and cost for this session",
 			run:         (*inlineChat).handleCostCommand,
+		},
+		{
+			name: "copy", description: "copy the assistant's last response to the clipboard (Ctrl+Shift+G)",
+			run: (*inlineChat).handleCopyCommand,
 		},
 		{
 			name: "login", usage: "[provider]", description: "enable a provider (or list providers)",
@@ -205,6 +218,7 @@ func (c *inlineChat) printHelp() {
 		fmt.Fprintf(&b, "\n  %-38s %s", label, cmd.description)
 	}
 	fmt.Fprintf(&b, "\n  %-38s %s", "Ctrl+S", "steer the agent mid-turn")
+	fmt.Fprintf(&b, "\n  %-38s %s", "Ctrl+Shift+G", "copy the assistant's last response (same as /copy)")
 	c.engine.PrintAbove("%s", c.grey(b.String()))
 }
 
@@ -236,9 +250,29 @@ func agentSlashCommands() []slashCommand {
 				c.runAgentCommand(name, args)
 			},
 			isAgent: true,
+			mode:    agentInputMode(def),
 		})
 	}
 	return cmds
+}
+
+// agentInputMode builds the input-mode indicator for an agent command —
+// every agent command gets one, defaulting to the shared agent accent
+// (theme.CommandFG) so all of them read as "you're about to enter a mode"
+// consistently, even before a template author bothers to pick a specific
+// color via the optional "color" frontmatter field (an xterm-256 palette
+// index, e.g. "134" for /plan's purple).
+func agentInputMode(def *agentspec.Definition) *taui.InputMode {
+	mode := &taui.InputMode{Label: def.DisplayName, Color: theme.CommandFG}
+	if def.Color == "" {
+		return mode
+	}
+	idx, err := strconv.ParseUint(def.Color, 10, 8)
+	if err != nil {
+		return mode
+	}
+	mode.Color = termkit.Xterm256(uint8(idx))
+	return mode
 }
 
 // runAgentCommand activates a built-in agent (e.g. /plan) by name and, when
@@ -516,6 +550,28 @@ func (c *inlineChat) handleCostCommand(_ string) {
 		fmt.Fprintf(&b, "\n  %-12s %s", "model", model)
 	}
 	c.engine.PrintAbove("%s", c.grey(b.String()))
+}
+
+// handleCopyCommand copies the assistant's last completed response to the
+// system clipboard via OSC 52 (termkit.OSC52Copy) rather than shelling out to
+// a clipboard utility, so it works over SSH and inside tmux where no local
+// clipboard binary is reachable. Also bound to Ctrl+Shift+G — see
+// inline_chat.go's inlineCtrl.HandleInput.
+func (c *inlineChat) handleCopyCommand(_ string) {
+	c.mu.Lock()
+	text := c.lastResponseText
+	c.mu.Unlock()
+	if strings.TrimSpace(text) == "" {
+		c.pushNotice("nothing to copy yet")
+		return
+	}
+	seq, ok := termkit.OSC52Copy(text)
+	if !ok {
+		c.pushNotice(fmt.Sprintf("response too large to copy (over %d chars)", termkit.OSC52MaxBytes))
+		return
+	}
+	c.engine.Terminal.Write(seq)
+	c.pushNotice("copied last response to clipboard")
 }
 
 // ── Session management ────────────────────────────────────────────────────────

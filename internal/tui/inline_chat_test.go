@@ -7,8 +7,10 @@ import (
 
 	tauchat "github.com/samcharles93/tau/internal/chat"
 	"github.com/samcharles93/tau/internal/config"
+	"github.com/samcharles93/tau/internal/theme"
 	"github.com/samcharles93/tau/internal/tui/notify"
 	"github.com/samcharles93/tau/pkg/taui"
+	"github.com/samcharles93/tau/pkg/taui/termkit"
 )
 
 // nullTerminal is a no-op Terminal so the engine can render without touching a
@@ -309,6 +311,175 @@ func TestCompletionSet_CompletedSessionArgStops(t *testing.T) {
 	text := "/session info abc " // second arg complete → nothing more to offer
 	if set := c.completionSet(taui.CompletionContext{Text: text, Cursor: len([]rune(text))}); set != nil {
 		t.Fatalf("expected nil after a completed session arg, got %+v", set)
+	}
+}
+
+func TestHandleBashCommand_SendsRunBashCommand(t *testing.T) {
+	c, rt := newTestChat(t)
+	c.handleBashCommand("!ls -la")
+
+	cmd, ok := rt.last().(tauchat.RunBashCommand)
+	if !ok {
+		t.Fatalf("expected RunBashCommand, got %T", rt.last())
+	}
+	if cmd.Command != "ls -la" {
+		t.Fatalf("expected command %q, got %q", "ls -la", cmd.Command)
+	}
+	if cmd.Exclude {
+		t.Fatal("expected Exclude=false for a single '!'")
+	}
+	if cmd.CallID == "" {
+		t.Fatal("expected a non-empty CallID")
+	}
+	if !c.bashRunning.Load() {
+		t.Fatal("expected bashRunning to be true after sending")
+	}
+	if c.bashCallID != cmd.CallID {
+		t.Fatalf("expected bashCallID %q to match sent CallID %q", c.bashCallID, cmd.CallID)
+	}
+}
+
+func TestHandleBashCommand_DoubleBangExcludesFromContext(t *testing.T) {
+	c, rt := newTestChat(t)
+	c.handleBashCommand("!!echo secret")
+
+	cmd, ok := rt.last().(tauchat.RunBashCommand)
+	if !ok {
+		t.Fatalf("expected RunBashCommand, got %T", rt.last())
+	}
+	if cmd.Command != "echo secret" {
+		t.Fatalf("expected command %q, got %q", "echo secret", cmd.Command)
+	}
+	if !cmd.Exclude {
+		t.Fatal("expected Exclude=true for '!!'")
+	}
+}
+
+// TestHandleBashCommand_RejectsWhileRunning guards against two concurrent
+// bash commands racing on the shell tool's mutation lock and streaming into
+// the same tail log.
+func TestHandleBashCommand_RejectsWhileRunning(t *testing.T) {
+	c, rt := newTestChat(t)
+	c.bashRunning.Store(true)
+
+	c.handleBashCommand("!ls")
+
+	if rt.last() != nil {
+		t.Fatalf("expected no command sent while a bash command is running, got %T", rt.last())
+	}
+}
+
+// TestHandleBashCommand_TripleBangStripsAllBangs guards against a regression
+// (found via real interactive testing) where three or more leading "!"
+// characters only had two stripped, leaving a literal "!" glued onto the
+// front of the command — bash then choked on it as a history-expansion
+// token and the command failed instead of running.
+func TestHandleBashCommand_TripleBangStripsAllBangs(t *testing.T) {
+	c, rt := newTestChat(t)
+	c.handleBashCommand("!!! ls -alh")
+
+	cmd, ok := rt.last().(tauchat.RunBashCommand)
+	if !ok {
+		t.Fatalf("expected RunBashCommand, got %T", rt.last())
+	}
+	if cmd.Command != "ls -alh" {
+		t.Fatalf("expected command %q with all bangs stripped, got %q", "ls -alh", cmd.Command)
+	}
+	if !cmd.Exclude {
+		t.Fatal("expected Exclude=true for 3+ leading bangs")
+	}
+}
+
+// TestInputEchoStyle_ColorsWholeBangRun guards against a regression where
+// only the first one or two "!" characters were colored, leaving any extra
+// leading bangs (e.g. from "!!!ls") rendered as if they were part of the
+// command text instead of the trigger.
+func TestInputEchoStyle_ColorsWholeBangRun(t *testing.T) {
+	cases := []struct {
+		name  string
+		input string
+		want  string
+	}{
+		{"single bang", "!ls", termkit.FgColor("!", theme.BashFG) + "ls"},
+		{"double bang", "!!ls", termkit.FgColor("!!", theme.BashExcludedFG) + "ls"},
+		{"triple bang", "!!!ls", termkit.FgColor("!!!", theme.BashExcludedFG) + "ls"},
+		{"slash command", "/model x", termkit.FgColor("/", theme.CommandFG) + "model x"},
+		{"plain text", "hello", "hello"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := inputEchoStyle(tc.input); got != tc.want {
+				t.Fatalf("inputEchoStyle(%q) = %q, want %q", tc.input, got, tc.want)
+			}
+		})
+	}
+}
+
+func TestHandleBashCommand_EmptyCommandIsNoop(t *testing.T) {
+	c, rt := newTestChat(t)
+	c.handleBashCommand("!")
+
+	if rt.last() != nil {
+		t.Fatalf("expected no command sent for an empty bash command, got %T", rt.last())
+	}
+	if c.bashRunning.Load() {
+		t.Fatal("expected bashRunning to remain false")
+	}
+}
+
+// TestCurrentInputMode covers every case the resolver must handle: bash
+// mode ("!"/"!!"), an agent command with a configured color ("/plan"), a
+// plain non-agent slash command (no mode — one-shot action, not an
+// operating mode), and plain text (no mode).
+func TestCurrentInputMode(t *testing.T) {
+	cases := []struct {
+		name      string
+		input     string
+		wantLabel string
+		wantColor termkit.Color
+		wantNil   bool
+	}{
+		{"single bang", "!ls", "Shell", theme.BashFG, false},
+		{"double bang", "!!ls", "Shell (excluded)", theme.BashExcludedFG, false},
+		{"triple bang", "!!!ls", "Shell (excluded)", theme.BashExcludedFG, false},
+		{"agent command with color", "/plan add auth", "Planning", termkit.Xterm256(134), false},
+		{"agent command bare", "/plan", "Planning", termkit.Xterm256(134), false},
+		{"plain non-agent command", "/model x", "", termkit.Color{}, true},
+		{"unknown slash command", "/nope", "", termkit.Color{}, true},
+		{"plain text", "hello", "", termkit.Color{}, true},
+		{"empty", "", "", termkit.Color{}, true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			mode := currentInputMode(tc.input)
+			if tc.wantNil {
+				if mode != nil {
+					t.Fatalf("currentInputMode(%q) = %+v, want nil", tc.input, mode)
+				}
+				return
+			}
+			if mode == nil {
+				t.Fatalf("currentInputMode(%q) = nil, want Label=%q", tc.input, tc.wantLabel)
+			}
+			if mode.Label != tc.wantLabel {
+				t.Errorf("currentInputMode(%q).Label = %q, want %q", tc.input, mode.Label, tc.wantLabel)
+			}
+			if mode.Color != tc.wantColor {
+				t.Errorf("currentInputMode(%q).Color = %v, want %v", tc.input, mode.Color, tc.wantColor)
+			}
+		})
+	}
+}
+
+// TestInputEchoStyle_AgentCommandUsesModeColor verifies the leading "/" of
+// an agent command with a configured color is painted with that mode's
+// color rather than the default theme.CommandFG, so the trigger character
+// always matches the surrounding dividers.
+func TestInputEchoStyle_AgentCommandUsesModeColor(t *testing.T) {
+	got := inputEchoStyle("/plan add auth")
+	want := termkit.FgColor("/", termkit.Xterm256(134)) + "plan add auth"
+	if got != want {
+		t.Fatalf("inputEchoStyle(%q) = %q, want %q", "/plan add auth", got, want)
 	}
 }
 

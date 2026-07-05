@@ -4,6 +4,8 @@ description: Create an implementation plan before coding
 tools: [read, find, grep, docs]
 argument-hint: <what to plan>
 disable-model-invocation: true
+display-name: Planning
+color: "134"
 metadata:
   category: workflow
 ---

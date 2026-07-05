@@ -13,6 +13,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"unicode"
 
 	"github.com/samcharles93/tau/internal/skills"
 )
@@ -58,6 +59,17 @@ type Definition struct {
 	// ArgumentHint is shown next to the command name in /help, e.g. "<prompt>".
 	ArgumentHint string
 
+	// DisplayName is the name shown for this agent's input-mode indicator
+	// (the labeled divider surrounding the chat input while the command is
+	// being typed), e.g. "Planning" for /plan. Defaults to the title-cased
+	// Name when not set.
+	DisplayName string
+
+	// Color is an xterm-256 palette index (e.g. "134"), as a string so this
+	// leaf package doesn't need a termkit dependency — internal/tui converts
+	// it. Empty means "use the default agent-mode accent."
+	Color string
+
 	Metadata map[string]string
 
 	// Body is the unrendered Go text/template prompt.
@@ -75,7 +87,21 @@ type frontmatter struct {
 	DisableModelInvocation bool              `yaml:"disable-model-invocation,omitempty"`
 	UserInvocable          *bool             `yaml:"user-invocable,omitempty"`
 	ArgumentHint           string            `yaml:"argument-hint,omitempty"`
+	DisplayName            string            `yaml:"display-name,omitempty"`
+	Color                  string            `yaml:"color,omitempty"`
 	Metadata               map[string]string `yaml:"metadata,omitempty"`
+}
+
+// titleCase uppercases the first rune of s, leaving the rest unchanged — used
+// to derive a default DisplayName ("plan" -> "Plan") for agent commands that
+// don't set display-name explicitly.
+func titleCase(s string) string {
+	if s == "" {
+		return s
+	}
+	r := []rune(s)
+	r[0] = unicode.ToUpper(r[0])
+	return string(r)
 }
 
 // Parse parses a single agent definition file (YAML frontmatter + Go
@@ -105,6 +131,11 @@ func Parse(content []byte) (*Definition, error) {
 		userInvocable = *parsed.UserInvocable
 	}
 
+	displayName := strings.TrimSpace(parsed.DisplayName)
+	if displayName == "" {
+		displayName = titleCase(name)
+	}
+
 	return &Definition{
 		Name:                   name,
 		Description:            description,
@@ -113,6 +144,8 @@ func Parse(content []byte) (*Definition, error) {
 		DisableModelInvocation: parsed.DisableModelInvocation,
 		UserInvocable:          userInvocable,
 		ArgumentHint:           strings.TrimSpace(parsed.ArgumentHint),
+		DisplayName:            displayName,
+		Color:                  strings.TrimSpace(parsed.Color),
 		Metadata:               parsed.Metadata,
 		Body:                   strings.TrimSpace(body),
 	}, nil

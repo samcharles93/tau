@@ -280,3 +280,45 @@ func TestHandleEvent_RuntimeError_ReachesStatusBar(t *testing.T) {
 		t.Fatalf("expected error level, got %v", n.Level)
 	}
 }
+
+// TestHandleEvent_BashCompletion_ClearsBashRunning guards against a
+// regression where bashRunning/bashCallID were never reset on completion,
+// permanently locking out further "!" commands (and the Esc/Ctrl+C cancel
+// routing that depends on bashRunning) after the first one finished.
+func TestHandleEvent_BashCompletion_ClearsBashRunning(t *testing.T) {
+	c, _ := newTestChat(t)
+	c.stage = &taui.Container{}
+	c.bashRunning.Store(true)
+	c.bashCallID = "bash-1"
+
+	runHandleEvent(t, c, tauchat.ChatToolExecutionStartedEvent{CallID: "bash-1", ToolName: "shell"})
+	runHandleEvent(t, c, tauchat.ChatToolExecutionCompletedEvent{CallID: "bash-1", ToolName: "shell", ResultSummary: "ok"})
+
+	if c.bashRunning.Load() {
+		t.Fatal("expected bashRunning to be cleared after the matching CallID completes")
+	}
+	if c.bashCallID != "" {
+		t.Fatalf("expected bashCallID to be cleared, got %q", c.bashCallID)
+	}
+}
+
+// TestHandleEvent_UnrelatedCompletion_DoesNotClearBashRunning guards against
+// a regression where an unrelated tool call's completion (e.g. a real
+// LLM-invoked shell call running concurrently) would clear bashRunning for a
+// still-in-flight bash command.
+func TestHandleEvent_UnrelatedCompletion_DoesNotClearBashRunning(t *testing.T) {
+	c, _ := newTestChat(t)
+	c.stage = &taui.Container{}
+	c.bashRunning.Store(true)
+	c.bashCallID = "bash-1"
+
+	runHandleEvent(t, c, tauchat.ChatToolExecutionStartedEvent{CallID: "other", ToolName: "shell"})
+	runHandleEvent(t, c, tauchat.ChatToolExecutionCompletedEvent{CallID: "other", ToolName: "shell", ResultSummary: "ok"})
+
+	if !c.bashRunning.Load() {
+		t.Fatal("expected bashRunning to remain true — the completed call wasn't the bash command")
+	}
+	if c.bashCallID != "bash-1" {
+		t.Fatalf("expected bashCallID to remain %q, got %q", "bash-1", c.bashCallID)
+	}
+}

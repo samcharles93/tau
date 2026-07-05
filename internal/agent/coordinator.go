@@ -99,6 +99,12 @@ type coordinatorSession struct {
 	steeringMu      sync.Mutex
 	pendingSteering []string
 	turnStartedAt   time.Time
+
+	// bashCancel cancels the session's in-flight bash-mode ("!") command, if
+	// any. Independent of cancel (the turn-cancellation func above) since a
+	// bash command runs outside the LLM turn loop and can be in flight
+	// concurrently with a turn.
+	bashCancel context.CancelFunc
 }
 
 // CoordinatorConfig holds the dependencies for creating a Coordinator.
@@ -322,6 +328,10 @@ func (c *Coordinator) handleCommand(cmd chat.ChatCommand) {
 		c.handleRunSkill(command)
 	case chat.RunAgentCommand:
 		c.handleRunAgent(command)
+	case chat.RunBashCommand:
+		c.handleRunBashCommand(command)
+	case chat.CancelBashCommand:
+		c.handleCancelBash(command)
 	case chat.ReloadSkillsCommand:
 		c.handleReloadSkills(command)
 	case chat.ListSkillsCommand:
@@ -429,6 +439,14 @@ func (c *Coordinator) handleSubmit(cmd chat.SubmitChatPromptCommand) {
 		StartedAt: now,
 	})
 
+	slog.Debug("coordinator: turn started",
+		"session_id", cmd.SessionID,
+		"request_id", cmd.RequestID,
+		"provider", turnState.ProviderName,
+		"model", turnState.Model.ID,
+		"msg_count", len(turnState.Messages),
+	)
+
 	c.turnWG.Go(func() {
 		c.runTurn(turnCtx, turnState)
 	})
@@ -528,6 +546,7 @@ func (c *Coordinator) persistDefaultsOnUpdate(patch chat.ChatSessionPatch, snaps
 	if err := tauconfig.SaveDefaultProviderAndModel(c.projectDir, provider, model); err != nil {
 		slog.Error(
 			"coordinator: saving default provider/model to local config",
+			"session_id", snapshot.SessionID,
 			"err", err,
 		)
 	}
@@ -767,6 +786,100 @@ func (c *Coordinator) handleRunAgent(cmd chat.RunAgentCommand) {
 		Level:      chat.ChatNotificationInfo,
 		OccurredAt: now,
 	})
+}
+
+// handleRunBashCommand runs a "!" (or "!!") bash-mode command entered
+// directly at the chat input. It executes the same registered "shell" tool
+// the LLM itself uses, outside the normal turn loop, and emits the same
+// started/output/completed event trio a real LLM-invoked tool call would —
+// so it renders identically in the TUI — before appending the result to
+// session history (unless Exclude, the "!!" variant, is set).
+func (c *Coordinator) handleRunBashCommand(cmd chat.RunBashCommand) {
+	now := normalizedTime(cmd.RequestedAt)
+
+	c.mu.Lock()
+	session, ok := c.sessions[cmd.SessionID]
+	if !ok || session.state == nil {
+		c.mu.Unlock()
+		c.emit(chat.ChatRuntimeErrorEvent{
+			SessionID:  cmd.SessionID,
+			Message:    "session not found",
+			Fatal:      false,
+			OccurredAt: now,
+		})
+		return
+	}
+	ctx, cancel := context.WithCancel(c.ctx)
+	session.bashCancel = cancel
+	c.mu.Unlock()
+
+	// Executing the tool blocks on the subprocess for the command's whole
+	// duration, so it must run off the command-dispatch goroutine — handleCommand
+	// is called synchronously from the coordinator's single-threaded command
+	// loop (run()), and blocking there would stall every other command
+	// (including a CancelBashCommand for this very command) until it finished.
+	c.turnWG.Go(func() {
+		c.runBashCommand(ctx, cancel, cmd, now)
+	})
+}
+
+// runBashCommand executes the shell tool for a "!" bash command and reports
+// its result, off the coordinator's command-dispatch goroutine (see
+// handleRunBashCommand).
+func (c *Coordinator) runBashCommand(ctx context.Context, cancel context.CancelFunc, cmd chat.RunBashCommand, now time.Time) {
+	defer cancel()
+
+	c.emit(chat.ChatToolExecutionStartedEvent{
+		SessionID:        cmd.SessionID,
+		CallID:           cmd.CallID,
+		ToolName:         "shell",
+		ArgumentsSummary: summarizeForUI(cmd.Command),
+		StartedAt:        now,
+	})
+
+	bridge := &loggingUIBridge{UIBridge: c.uiBridge, sessionID: cmd.SessionID, callID: cmd.CallID, c: c}
+	tool, ok := c.registry.Get("shell")
+	var result tools.Result
+	if !ok {
+		result = tools.Result{Content: "shell tool unavailable", IsError: true}
+	} else {
+		argsJSON, _ := json.Marshal(tools.ShellParams{Command: cmd.Command})
+		var toolErr error
+		result, toolErr = tool.Execute(ctx, argsJSON, bridge)
+		if toolErr != nil {
+			result = tools.Result{Content: toolErr.Error(), IsError: true}
+		}
+	}
+
+	c.mu.Lock()
+	session, ok := c.sessions[cmd.SessionID]
+	if ok && session.bashCancel != nil {
+		session.bashCancel = nil
+	}
+	// Append to history before emitting the completed event, so observers
+	// that treat "completed" as "fully done" never race a subsequent read of
+	// session state against this append.
+	if ok && !cmd.Exclude {
+		content := fmt.Sprintf("Ran `%s`\n\n```\n%s\n```", cmd.Command, result.Content)
+		_ = session.state.AppendStandaloneMessage(chat.ChatRoleUser, content, time.Now().UTC())
+	}
+	c.mu.Unlock()
+
+	c.emitToolCompleted(cmd.SessionID, "", chat.ChatToolCall{ID: cmd.CallID, Function: chat.ChatFunctionCall{Name: "shell"}}, result, now, false)
+}
+
+// handleCancelBash stops the session's in-flight bash-mode command, if any.
+func (c *Coordinator) handleCancelBash(cmd chat.CancelBashCommand) {
+	c.mu.Lock()
+	session, ok := c.sessions[cmd.SessionID]
+	var cancel context.CancelFunc
+	if ok {
+		cancel = session.bashCancel
+	}
+	c.mu.Unlock()
+	if cancel != nil {
+		cancel()
+	}
 }
 
 // handleReloadSkills re-discovers skills from disk and merges them into the
@@ -1158,9 +1271,21 @@ func (c *Coordinator) runTurn(ctx context.Context, state chat.ChatSessionState) 
 
 	bearerToken, err := c.tokenSource(ctx, state.Provider)
 	if err != nil {
+		slog.Debug("coordinator: turn failed — token source error",
+			"session_id", sessionID,
+			"request_id", requestID,
+			"err", err,
+		)
 		c.failTurn(sessionID, requestID, err, now)
 		return
 	}
+
+	slog.Debug("coordinator: turn loop begin",
+		"session_id", sessionID,
+		"request_id", requestID,
+		"provider", state.ProviderName,
+		"model", state.Model.ID,
+	)
 
 	// The turn loop: call LLM, if tool_calls → execute → append → repeat.
 	for iteration := 0; ; iteration++ {
@@ -1226,6 +1351,16 @@ func (c *Coordinator) runTurn(ctx context.Context, state chat.ChatSessionState) 
 			}
 		}
 
+		slog.Debug("coordinator: llm call start",
+			"session_id", sessionID,
+			"request_id", requestID,
+			"iteration", iteration,
+			"model", state.Model.ID,
+			"provider", state.ProviderName,
+			"msg_count", len(state.Messages),
+			"tool_count", len(state.Tools),
+		)
+
 		result, err := c.streamer.StreamChatCompletionFull(ctx, state, bearerToken, extraHeaders, chat.StreamCallbacks{
 			OnDelta: func(delta string) error {
 				return c.appendDelta(sessionID, requestID, delta, time.Now().UTC())
@@ -1261,9 +1396,21 @@ func (c *Coordinator) runTurn(ctx context.Context, state chat.ChatSessionState) 
 			state.SystemPrompt = originalSystemPrompt
 			state.Model.ID = originalModelID
 			if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) || errors.Is(ctx.Err(), context.Canceled) {
+				slog.Debug("coordinator: llm call cancelled",
+					"session_id", sessionID,
+					"request_id", requestID,
+					"iteration", iteration,
+					"err", err,
+				)
 				c.cancelTurn(sessionID, requestID, time.Now().UTC())
 				return
 			}
+			slog.Warn("coordinator: llm call failed",
+				"session_id", sessionID,
+				"request_id", requestID,
+				"iteration", iteration,
+				"err", err,
+			)
 			c.failTurn(sessionID, requestID, err, time.Now().UTC())
 			return
 		}
@@ -1285,6 +1432,17 @@ func (c *Coordinator) runTurn(ctx context.Context, state chat.ChatSessionState) 
 			},
 		})
 
+		slog.Debug("coordinator: llm call complete",
+			"session_id", sessionID,
+			"request_id", requestID,
+			"iteration", iteration,
+			"finish_reason", result.FinishReason,
+			"input_tokens", result.Usage.PromptTokens,
+			"output_tokens", result.Usage.CompletionTokens,
+			"total_tokens", result.Usage.TotalTokens,
+			"tool_calls", len(result.ToolCalls),
+		)
+
 		// No tool calls → final response. Complete the turn.
 		if len(result.ToolCalls) == 0 {
 			c.completeTurn(sessionID, requestID, result, time.Now().UTC())
@@ -1294,6 +1452,18 @@ func (c *Coordinator) runTurn(ctx context.Context, state chat.ChatSessionState) 
 		// Tool calls detected. Validate arguments before committing —
 		// malformed JSON in tool call arguments poisons the session history
 		// and causes downstream API 400 errors on subsequent turns.
+		toolNames := make([]string, len(result.ToolCalls))
+		for i, tc := range result.ToolCalls {
+			toolNames[i] = tc.Function.Name
+		}
+		slog.Debug("coordinator: tool calls detected",
+			"session_id", sessionID,
+			"request_id", requestID,
+			"iteration", iteration,
+			"count", len(result.ToolCalls),
+			"tools", toolNames,
+		)
+
 		sanitized := sanitizeToolCallArguments(result.ToolCalls)
 		if sanitized > 0 {
 			c.emitMetrics(chat.MetricEvent{
@@ -1334,6 +1504,18 @@ func (c *Coordinator) runTurn(ctx context.Context, state chat.ChatSessionState) 
 // When parallelToolCalls is true, calls run concurrently; otherwise sequentially.
 func (c *Coordinator) executeToolsParallel(ctx context.Context, sessionID, requestID string, calls []chat.ChatToolCall) []tools.Result {
 	results := make([]tools.Result, len(calls))
+
+	toolNames := make([]string, len(calls))
+	for i, tc := range calls {
+		toolNames[i] = tc.Function.Name
+	}
+	slog.Debug("coordinator: executing tools",
+		"session_id", sessionID,
+		"request_id", requestID,
+		"count", len(calls),
+		"tools", toolNames,
+		"parallel", c.parallelToolCalls,
+	)
 
 	executeTool := func(i int, tc chat.ChatToolCall) {
 		startedAt := time.Now().UTC()
@@ -1456,6 +1638,15 @@ func (c *Coordinator) executeToolsParallel(ctx context.Context, sessionID, reque
 		result.Content = tr.Content
 
 		results[i] = result
+		slog.Debug("coordinator: tool executed",
+			"session_id", sessionID,
+			"request_id", requestID,
+			"tool", tc.Function.Name,
+			"call_id", tc.ID,
+			"is_error", result.IsError,
+			"duration_ms", time.Since(startedAt).Milliseconds(),
+			"result_bytes", len(result.Content),
+		)
 		c.emitToolCompleted(sessionID, requestID, tc, result, startedAt, tr.Truncated)
 
 		// Skill activations via the LLM-invoked "skill" tool (the dominant
@@ -1795,6 +1986,14 @@ func (c *Coordinator) completeTurn(sessionID, requestID string, result chat.Comp
 	snapshot := chat.CloneChatSessionState(session.state)
 	c.mu.Unlock()
 
+	slog.Debug("coordinator: turn completed",
+		"session_id", sessionID,
+		"request_id", requestID,
+		"finish_reason", result.FinishReason,
+		"total_tokens", result.Usage.TotalTokens,
+		"duration_ms", time.Since(turnStartedAt).Milliseconds(),
+	)
+
 	// Emit LLM latency metric when we have a turn start timestamp.
 	if !turnStartedAt.IsZero() {
 		c.emitMetrics(chat.MetricEvent{
@@ -1880,6 +2079,13 @@ func (c *Coordinator) cancelTurn(sessionID, requestID string, at time.Time) {
 	snapshot := chat.CloneChatSessionState(session.state)
 	c.mu.Unlock()
 
+	slog.Debug("coordinator: turn cancelled",
+		"session_id", sessionID,
+		"request_id", requestID,
+		"provider", snapshot.Provider.Name,
+		"model", snapshot.Model.ID,
+	)
+
 	c.emitMetrics(chat.MetricEvent{
 		Category: chat.MetricCategoryLLM,
 		Name:     "llm.error",
@@ -1911,6 +2117,14 @@ func (c *Coordinator) failTurn(sessionID, requestID string, err error, at time.T
 	session.cancel = nil
 	snapshot := chat.CloneChatSessionState(session.state)
 	c.mu.Unlock()
+
+	slog.Warn("coordinator: turn failed",
+		"session_id", sessionID,
+		"request_id", requestID,
+		"provider", snapshot.Provider.Name,
+		"model", snapshot.Model.ID,
+		"err", err,
+	)
 
 	c.emitMetrics(chat.MetricEvent{
 		Category: chat.MetricCategoryLLM,
@@ -2017,7 +2231,10 @@ func (c *Coordinator) applyPluginMessageModifications(state *chat.ChatSessionSta
 	for _, raw := range resp.GetInjectMessages() {
 		var msg chat.ChatMessage
 		if err := json.Unmarshal([]byte(raw), &msg); err != nil {
-			slog.Warn("coordinator: failed to decode injected message", "err", err)
+			slog.Warn("coordinator: failed to decode injected message",
+				"session_id", state.SessionID,
+				"err", err,
+			)
 			continue
 		}
 		state.Messages = append(state.Messages, msg)
@@ -2256,6 +2473,12 @@ func (c *Coordinator) persistSession(state chat.ChatSessionState, duration time.
 		)
 		return
 	}
+
+	slog.Debug("coordinator: session persisted",
+		"session_id", state.SessionID,
+		"msg_count", len(state.Messages),
+		"duration_ms", duration.Milliseconds(),
+	)
 
 	if !c.autoExportJSONL {
 		return

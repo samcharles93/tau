@@ -36,6 +36,15 @@ func TestBuiltins_ParsesAllDefinitions(t *testing.T) {
 	require.True(t, ok)
 	require.Contains(t, plan.Tools, "read")
 	require.NotContains(t, plan.Tools, "write", "plan should not be able to write files")
+	require.Equal(t, "Planning", plan.DisplayName)
+	require.Equal(t, "134", plan.Color)
+
+	// Agents without an explicit display-name still get one, defaulted from
+	// the command name, so every agent's input-mode indicator has a label.
+	research, ok := names["research"]
+	require.True(t, ok)
+	require.Equal(t, "Research", research.DisplayName)
+	require.Empty(t, research.Color)
 }
 
 func TestLookup(t *testing.T) {
@@ -63,4 +72,30 @@ func TestParse_UserInvocableDefaultsTrue(t *testing.T) {
 	def, err = Parse([]byte("---\nname: x\ndescription: y\nuser-invocable: false\n---\nbody"))
 	require.NoError(t, err)
 	require.False(t, def.UserInvocable)
+}
+
+// TestParse_DisplayNameDefaultsToTitleCase guards against a regression where
+// an agent command without an explicit display-name would have no label for
+// its input-mode indicator at all.
+func TestParse_DisplayNameDefaultsToTitleCase(t *testing.T) {
+	def, err := Parse([]byte("---\nname: rubber-duck\ndescription: y\n---\nbody"))
+	require.NoError(t, err)
+	require.Equal(t, "Rubber-duck", def.DisplayName)
+
+	def, err = Parse([]byte("---\nname: plan\ndescription: y\ndisplay-name: Planning\n---\nbody"))
+	require.NoError(t, err)
+	require.Equal(t, "Planning", def.DisplayName)
+}
+
+// TestParse_ColorPassthrough verifies the optional xterm-256 color string is
+// carried through unmodified (as a string — the spec package intentionally
+// has no termkit dependency; internal/tui converts it).
+func TestParse_ColorPassthrough(t *testing.T) {
+	def, err := Parse([]byte("---\nname: x\ndescription: y\ncolor: \"134\"\n---\nbody"))
+	require.NoError(t, err)
+	require.Equal(t, "134", def.Color)
+
+	def, err = Parse([]byte("---\nname: x\ndescription: y\n---\nbody"))
+	require.NoError(t, err)
+	require.Empty(t, def.Color)
 }

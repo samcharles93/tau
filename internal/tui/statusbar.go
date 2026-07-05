@@ -14,10 +14,16 @@ import (
 // width math); style applies ANSI styling and is nil for the default grey. prio
 // orders width-pressure dropping within the right group: lower prios are dropped
 // first, prioTransient is never dropped.
+//
+// When styledOverride is non-empty it replaces style(text) in the styled output
+// (text is still used for width measurement). This allows embedding raw ANSI
+// sequences — e.g. OSC 8 hyperlinks — that can't be produced by applying style
+// to text alone.
 type statusSeg struct {
-	text  string
-	style func(string) string
-	prio  int
+	text           string
+	style          func(string) string
+	prio           int
+	styledOverride string
 }
 
 // Drop priorities for right-group segments. Lower is dropped first under width
@@ -52,11 +58,15 @@ func joinSegs(segs []statusSeg) (styled, plain string) {
 			pb.WriteString(statusSep)
 		}
 		first = false
-		style := s.style
-		if style == nil {
-			style = statusGrey
+		if s.styledOverride != "" {
+			sb.WriteString(s.styledOverride)
+		} else {
+			style := s.style
+			if style == nil {
+				style = statusGrey
+			}
+			sb.WriteString(style(s.text))
 		}
-		sb.WriteString(style(s.text))
 		pb.WriteString(s.text)
 	}
 	return sb.String(), pb.String()

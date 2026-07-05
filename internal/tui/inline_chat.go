@@ -54,6 +54,13 @@ type inlineChat struct {
 	completions *taui.Completions
 	status      *taui.Text
 
+	// topDivider/bottomDivider surround the input box. Their mode func (set
+	// once at construction) re-resolves the current input mode — e.g. "!"
+	// bash mode or an active agent command — on every render, so they always
+	// agree with the leading-trigger coloring in inputEchoStyle without any
+	// push-based update wiring.
+	topDivider, bottomDivider *taui.Divider
+
 	// panelsByID indexes async, plugin-pushed panels by host-qualified view id
 	// (pluginName + ":" + View.ID) so RenderView/CloseView can replace/remove
 	// them in place. Like activeTools, it's only ever mutated inside an
@@ -84,6 +91,10 @@ type inlineChat struct {
 	extensionCommands map[string]tauchat.ExtensionCommand
 	sessionSummaries  []tauchat.SessionSummary
 	lastSubmit        time.Time
+	// lastResponseText is the assistant's last fully-completed response, used
+	// by /copy and its Ctrl+Shift+G shortcut. Set on ChatResponseCompletedEvent
+	// (inline_events.go); empty until the first turn finishes.
+	lastResponseText string
 
 	// overlays routes input to whichever modal-like widget (interactive
 	// prompt, completions dropdown) is currently active, ahead of the base
@@ -109,6 +120,15 @@ type inlineChat struct {
 	// Double Ctrl+C quit guard.
 	pendingQuit time.Time
 	cancelSent  bool
+
+	// Bash-mode ("!cmd") state. Independent of generating/running — a bash
+	// command executes outside the LLM turn loop and can run concurrently
+	// with one. bashCallID identifies which activeTools entry (if any)
+	// corresponds to the in-flight bash command, so its completion event can
+	// clear bashRunning.
+	bashRunning    atomic.Bool
+	bashCancelSent bool
+	bashCallID     string
 }
 
 func newInlineChat(
@@ -151,7 +171,7 @@ func newInlineChat(
 	c.status = taui.NewText("")
 	c.input = taui.NewLineInput("")
 	c.input.SetStyles(c.bold, nil, c.grey)
-	c.input.SetCommandStyle(commandEchoStyle)
+	c.input.SetCommandStyle(inputEchoStyle)
 	c.input.SetCommandCursorColor(theme.CommandFG)
 	c.input.SetOnSubmit(c.onSubmit)
 
@@ -200,11 +220,18 @@ func newInlineChat(
 	c.overlays = taui.NewOverlayStack(c.input)
 	c.overlays.Push(c.completions, false)
 
+	inputModeFn := func() *taui.InputMode { return currentInputMode(c.input.Value()) }
+	c.topDivider = taui.NewDivider("")
+	c.topDivider.SetModeFunc(inputModeFn)
+	c.bottomDivider = taui.NewDivider("")
+	c.bottomDivider.SetModeFunc(inputModeFn)
+	c.bottomDivider.HideModeLabel() // only the top divider names the mode
+
 	box := taui.NewBox().Padding(1, 1).ExpandW().Build()
 	box.AddChild(c.header)
 	box.AddChild(c.stage)
 	box.AddChild(c.promptSlot)
-	box.AddChild(taui.NewDivider(""))
+	box.AddChild(c.topDivider)
 	box.AddChild(c.input)
 	box.AddChild(c.completions)
 	// Panels render between the input area and the status bar — same region
@@ -213,7 +240,7 @@ func newInlineChat(
 	// completions do. When empty, Container.Render returns nil, so there's
 	// no dead space when no panels are open.
 	box.AddChild(c.panels)
-	box.AddChild(taui.NewDivider(""))
+	box.AddChild(c.bottomDivider)
 	box.AddChild(c.status)
 
 	engine.AddChild(box)
@@ -396,7 +423,11 @@ func (c *inlineChat) computeStatus() string {
 		}
 	}
 	if webURL != "" {
-		right = append(right, statusSeg{text: "web: " + webURL, prio: prioWeb})
+		right = append(right, statusSeg{
+			text:           "Open Browser",
+			styledOverride: termkit.FgOnly(termkit.Hyperlink("Open Browser", webURL), termkit.ColorGrey),
+			prio:           prioWeb,
+		})
 	}
 
 	// Box Padding(1,1) leaves an inner content width of termWidth-2.
@@ -516,25 +547,82 @@ func (c *inlineChat) onSubmit(prompt string) {
 	c.mu.Unlock()
 
 	if strings.HasPrefix(trimmed, "/") {
-		c.commit(commandEchoStyle(trimmed))
+		c.commit(inputEchoStyle(trimmed))
 		c.handleSlashCommand(trimmed)
+		return
+	}
+
+	if strings.HasPrefix(trimmed, "!") {
+		c.commit(inputEchoStyle(trimmed))
+		c.handleBashCommand(trimmed)
 		return
 	}
 
 	c.startOrQueueTurn(trimmed)
 }
 
-// commandEchoStyle paints just the leading "/" of a slash command in the
-// accent colour (theme.CommandFG); the rest of the line (command name and
-// arguments) is left in default styling. Used both for the live input (as
-// each chunk of typed text is painted — only the chunk starting at the very
-// beginning of the line will ever start with "/") and the submitted echo
-// into scrollback.
-func commandEchoStyle(s string) string {
-	if !strings.HasPrefix(s, "/") {
+// inputEchoStyle paints just the leading trigger character(s) of a slash
+// command ("/") or bash-mode command ("!" / "!!") in an accent colour; the
+// rest of the line (command name and arguments) is left in default styling.
+// Used both for the live input (as each chunk of typed text is painted —
+// only the chunk starting at the very beginning of the line will ever start
+// with a trigger character) and the submitted echo into scrollback.
+// currentInputMode resolves the input's current "mode" — bash ("!"/"!!") or
+// an active agent command (e.g. "/plan") — if any. It is the single source
+// of truth consulted by both inputEchoStyle (leading-trigger coloring) and
+// the dividers surrounding the input box (see topDivider/bottomDivider), so
+// all three always agree without any push-based update wiring — every
+// render, each just asks "what mode is active right now?"
+//
+// Plain, non-agent slash commands (/model, /help, /session, ...) are
+// intentionally NOT a "mode" — they're one-shot actions, not an operating
+// mode change, so they resolve to nil here and keep the default accent.
+func currentInputMode(s string) *taui.InputMode {
+	trimmed := strings.TrimSpace(s)
+	switch {
+	case strings.HasPrefix(trimmed, "!"):
+		if strings.HasPrefix(trimmed, "!!") {
+			return &taui.InputMode{Label: "Shell (excluded)", Color: theme.BashExcludedFG}
+		}
+		return &taui.InputMode{Label: "Shell", Color: theme.BashFG}
+	case strings.HasPrefix(trimmed, "/"):
+		name, _, _ := strings.Cut(strings.TrimPrefix(trimmed, "/"), " ")
+		if cmd, ok := slashByName[strings.ToLower(name)]; ok && cmd.isAgent && cmd.mode != nil {
+			return cmd.mode
+		}
+	}
+	return nil
+}
+
+// inputEchoStyle paints the leading trigger character(s) of a slash command
+// ("/") or bash-mode command ("!"/"!!") in an accent colour; the rest of the
+// line is left in default styling. A "/" command that resolves to a
+// configured input mode (see currentInputMode) — an agent command like
+// "/plan" — uses that mode's colour instead of the default accent, so the
+// trigger character always matches the surrounding dividers. Used both for
+// live input (SetCommandStyle) and the submitted echo into scrollback.
+func inputEchoStyle(s string) string {
+	switch {
+	case strings.HasPrefix(s, "!"):
+		// Color the whole leading run of "!" (not just the first one or two),
+		// matching how handleBashCommand strips it: 3+ bangs still mean
+		// "excluded", and none of them should leak into the echoed line
+		// looking like part of the command.
+		bangs := len(s) - len(strings.TrimLeft(s, "!"))
+		color := theme.BashFG
+		if bangs >= 2 {
+			color = theme.BashExcludedFG
+		}
+		return termkit.FgColor(s[:bangs], color) + s[bangs:]
+	case strings.HasPrefix(s, "/"):
+		color := theme.CommandFG
+		if mode := currentInputMode(s); mode != nil {
+			color = mode.Color
+		}
+		return termkit.FgColor("/", color) + s[1:]
+	default:
 		return s
 	}
-	return termkit.FgColor("/", theme.CommandFG) + s[1:]
 }
 
 // startOrQueueTurn submits prompt as a new turn, or queues it behind a
@@ -580,6 +668,53 @@ func (c *inlineChat) onSteer(prompt string) {
 		Prompt:      prompt,
 		SubmittedAt: time.Now().UTC(),
 	})
+}
+
+// handleBashCommand runs a "!" (or "!!") bash-mode command. Unlike slash
+// commands, this executes outside the LLM turn loop — it can run
+// concurrently with an in-flight chat turn — so it's guarded by its own
+// bashRunning flag rather than working/generating. The CallID is generated
+// here (not by the coordinator) so bashCallID can be recorded before the
+// command is even sent, leaving no window where a ChatToolExecutionStartedEvent
+// could arrive before the TUI knows which CallID is "ours."
+func (c *inlineChat) handleBashCommand(trimmed string) {
+	if c.bashRunning.Load() {
+		c.engine.PrintAbove("%s", c.grey("bash command already running — press Esc to cancel"))
+		return
+	}
+
+	exclude := strings.HasPrefix(trimmed, "!!")
+	// Strip every leading "!", not just one or two — e.g. "!!!ls" (three
+	// bangs) must not leave a literal "!" glued onto the front of the
+	// command, which bash would otherwise choke on as a history-expansion
+	// token.
+	command := strings.TrimSpace(strings.TrimLeft(trimmed, "!"))
+	if command == "" {
+		return
+	}
+
+	c.input.AddToHistory(trimmed)
+
+	callID := "bash-" + newRequestID()
+	c.mu.Lock()
+	c.bashCallID = callID
+	c.bashCancelSent = false
+	c.mu.Unlock()
+	c.bashRunning.Store(true)
+
+	if err := c.runtime.Send(tauchat.RunBashCommand{
+		SessionID:   c.sid(),
+		CallID:      callID,
+		Command:     command,
+		Exclude:     exclude,
+		RequestedAt: time.Now().UTC(),
+	}); err != nil {
+		c.bashRunning.Store(false)
+		c.mu.Lock()
+		c.bashCallID = ""
+		c.mu.Unlock()
+		c.engine.PrintAbove("%s %s", c.grey("✗"), err.Error())
+	}
 }
 
 func (c *inlineChat) runTurn(prompt string) {
@@ -641,6 +776,22 @@ func (c *inlineChat) cancelTurn() {
 	_ = c.runtime.Send(tauchat.CancelChatRequestCommand{
 		SessionID:   c.sid(),
 		RequestID:   "",
+		RequestedAt: time.Now().UTC(),
+	})
+}
+
+// cancelBash sends a CancelBashCommand to stop the in-flight "!" command.
+func (c *inlineChat) cancelBash() {
+	c.mu.Lock()
+	if c.bashCancelSent {
+		c.mu.Unlock()
+		return
+	}
+	c.bashCancelSent = true
+	c.mu.Unlock()
+
+	_ = c.runtime.Send(tauchat.CancelBashCommand{
+		SessionID:   c.sid(),
 		RequestedAt: time.Now().UTC(),
 	})
 }
@@ -764,9 +915,17 @@ func (c *inlineCtrl) HandleInput(data string) bool {
 		c.chat.onSteer(c.chat.input.Value())
 		return true
 
+	case "\x1b[71;6u": // Ctrl+Shift+G (Kitty keyboard protocol CSI-u: 'G'=71, shift+ctrl=6) → /copy
+		c.chat.handleCopyCommand("")
+		return true
+
 	case "\x03": // Ctrl+C
 		if c.chat.generating.Load() {
 			c.chat.cancelTurn()
+			return true
+		}
+		if c.chat.bashRunning.Load() {
+			c.chat.cancelBash()
 			return true
 		}
 		now := time.Now()
@@ -786,6 +945,10 @@ func (c *inlineCtrl) HandleInput(data string) bool {
 	case "\x1b": // Escape — cancel generation if running
 		if c.chat.generating.Load() {
 			c.chat.cancelTurn()
+			return true
+		}
+		if c.chat.bashRunning.Load() {
+			c.chat.cancelBash()
 			return true
 		}
 	}
