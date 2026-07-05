@@ -1,10 +1,13 @@
 package config
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"gopkg.in/yaml.v3"
 )
 
 func TestLoadConfigMergesGlobalAndLocal(t *testing.T) {
@@ -291,6 +294,117 @@ func TestValidateAuthTypes(t *testing.T) {
 	}}
 	if err := Validate(cfg); err != nil {
 		t.Fatalf("Validate() error = %v", err)
+	}
+}
+
+func TestSyncConfigSchemaAddsMissingBlocksPreservesExisting(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "config.yaml")
+	writeFile(t, path, `default_provider: acme
+providers:
+  - name: acme
+    base_url: https://acme.example
+    auth:
+      type: none
+ui:
+  show_reasoning: true
+`)
+
+	if err := syncConfigSchema(path); err != nil {
+		t.Fatalf("syncConfigSchema() error = %v", err)
+	}
+
+	out, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("ReadFile() error = %v", err)
+	}
+	if !containsAll(string(out), "metrics:", "registry:") {
+		t.Fatalf("expected missing schema blocks to be added, got:\n%s", out)
+	}
+
+	// The existing ui.show_reasoning value must survive untouched.
+	var cfg Config
+	if err := yaml.Unmarshal(out, &cfg); err != nil {
+		t.Fatalf("Unmarshal() error = %v", err)
+	}
+	if !cfg.UI.ShowReasoning {
+		t.Fatalf("expected ui.show_reasoning to remain true, got %+v", cfg.UI)
+	}
+	if cfg.DefaultProvider != "acme" {
+		t.Fatalf("expected default_provider to remain acme, got %q", cfg.DefaultProvider)
+	}
+}
+
+func TestSyncConfigSchemaNoopWhenAllBlocksPresent(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "config.yaml")
+	original := `default_provider: acme
+providers:
+  - name: acme
+    base_url: https://acme.example
+    auth:
+      type: none
+ui:
+  show_reasoning: false
+registry:
+  url: https://registry.example
+  token: ""
+metrics:
+  dir: ""
+  session: false
+  tui: false
+`
+	writeFile(t, path, original)
+
+	if err := syncConfigSchema(path); err != nil {
+		t.Fatalf("syncConfigSchema() error = %v", err)
+	}
+
+	out, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("ReadFile() error = %v", err)
+	}
+	if string(out) != original {
+		t.Fatalf("expected file to be left untouched, got:\n%s", out)
+	}
+}
+
+func TestSyncConfigSchemaSkipsMissingFile(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "config.yaml")
+
+	if err := syncConfigSchema(path); err != nil {
+		t.Fatalf("syncConfigSchema() error = %v", err)
+	}
+	if _, err := os.Stat(path); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("expected syncConfigSchema not to create a file, stat err = %v", err)
+	}
+}
+
+func TestLoadConfigFromSyncsGlobalSchemaOnLoad(t *testing.T) {
+	configDir := t.TempDir()
+	projectDir := t.TempDir()
+	t.Setenv("TAU_CONFIG_DIR", configDir)
+	globalPath := filepath.Join(configDir, "config.yaml")
+
+	writeFile(t, globalPath, `default_provider: acme
+providers:
+  - name: acme
+    base_url: https://acme.example
+    auth:
+      type: none
+`)
+
+	if _, err := LoadConfigFrom(projectDir); err != nil {
+		t.Fatalf("LoadConfigFrom() error = %v", err)
+	}
+
+	out, err := os.ReadFile(globalPath)
+	if err != nil {
+		t.Fatalf("ReadFile() error = %v", err)
+	}
+	if !containsAll(string(out), "metrics:", "registry:", "ui:") {
+		t.Fatalf("expected LoadConfigFrom to sync missing schema blocks into global config, got:\n%s", out)
 	}
 }
 

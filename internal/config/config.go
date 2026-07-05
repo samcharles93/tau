@@ -3,8 +3,10 @@ package config
 import (
 	"errors"
 	"fmt"
+	"log/slog"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"time"
 
@@ -506,6 +508,11 @@ func loadConfigFrom(cwd string, requireProviders bool) (Config, error) {
 	if err != nil {
 		return Config{}, err
 	}
+	if globalFound {
+		if err := syncConfigSchema(globalPath); err != nil {
+			slog.Warn("config: syncing schema defaults into config file", "path", globalPath, "err", err)
+		}
+	}
 	localCfg, localFound, err := readConfigFile(localPath)
 	if err != nil {
 		return Config{}, err
@@ -539,6 +546,92 @@ func readConfigFile(path string) (Config, bool, error) {
 		return Config{}, true, fmt.Errorf("parse config %s: %w", path, err)
 	}
 	return cfg, true, nil
+}
+
+// schemaBlock is a top-level, struct-typed Config field: a named block of
+// related settings (e.g. "metrics", "registry", "ui") as opposed to a
+// scalar or a user-authored collection like providers/plugins.
+type schemaBlock struct {
+	key  string
+	zero any
+}
+
+// schemaBlocks reflects over Config's fields to discover every top-level
+// struct-typed block the current binary knows about, along with each
+// block's zero value encoded as a plain YAML-decodable value. Discovering
+// blocks via reflection (rather than a hand-maintained list) means a newly
+// added struct field on Config is picked up automatically the next time
+// this runs, so the schema-sync stays correct without further changes here.
+func schemaBlocks() []schemaBlock {
+	t := reflect.TypeFor[Config]()
+	blocks := make([]schemaBlock, 0, t.NumField())
+	for field := range t.Fields() {
+		if field.Type.Kind() != reflect.Struct {
+			continue
+		}
+		key, _, _ := strings.Cut(field.Tag.Get("yaml"), ",")
+		if key == "" || key == "-" {
+			continue
+		}
+		zeroVal := reflect.New(field.Type).Elem().Interface()
+		encoded, err := yaml.Marshal(zeroVal)
+		if err != nil {
+			continue
+		}
+		var decoded any
+		if err := yaml.Unmarshal(encoded, &decoded); err != nil {
+			continue
+		}
+		blocks = append(blocks, schemaBlock{key: key, zero: decoded})
+	}
+	return blocks
+}
+
+// syncConfigSchema ensures the config file at path contains every top-level
+// struct-typed block known to the current schema (e.g. "metrics",
+// "registry", "ui"), adding any that are entirely missing with their
+// zero-value defaults so the file's schema stays discoverable across Tau
+// upgrades. It never touches a key that's already present, even if it's
+// set to a zero value, and it never creates a file that doesn't exist or
+// touches user-authored collections like providers/plugins. It is a no-op
+// if nothing is missing.
+func syncConfigSchema(path string) error {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return nil
+		}
+		return fmt.Errorf("read config %s: %w", path, err)
+	}
+	if strings.TrimSpace(string(data)) == "" {
+		return nil
+	}
+
+	raw := make(map[string]any)
+	if err := yaml.Unmarshal(data, &raw); err != nil {
+		return fmt.Errorf("parse config %s: %w", path, err)
+	}
+
+	changed := false
+	for _, block := range schemaBlocks() {
+		if _, ok := raw[block.key]; ok {
+			continue
+		}
+		raw[block.key] = block.zero
+		changed = true
+	}
+	if !changed {
+		return nil
+	}
+
+	out, err := yaml.Marshal(raw)
+	if err != nil {
+		return fmt.Errorf("marshal config %s: %w", path, err)
+	}
+	if err := os.WriteFile(path, out, 0o644); err != nil {
+		return fmt.Errorf("write config %s: %w", path, err)
+	}
+	return nil
 }
 
 type modelConfigs []ModelConfig

@@ -32,6 +32,20 @@ func initLogging(debug bool, version string) {
 	if debug {
 		level = slog.LevelDebug
 	}
+	// TAU_LOG_LEVEL overrides the default (Info) but --verbose / config.debug
+	// still wins to ensure explicit user intent is honoured.
+	if envLevel := os.Getenv("TAU_LOG_LEVEL"); envLevel != "" && !debug {
+		switch strings.ToLower(strings.TrimSpace(envLevel)) {
+		case "debug":
+			level = slog.LevelDebug
+		case "info":
+			level = slog.LevelInfo
+		case "warn":
+			level = slog.LevelWarn
+		case "error":
+			level = slog.LevelError
+		}
+	}
 	taulogger.SetDefault(logFile, taulogger.Options{
 		Level:  level,
 		Format: taulogger.FormatText,

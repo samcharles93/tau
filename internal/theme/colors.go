@@ -43,6 +43,18 @@ var (
 	// prompt.
 	CommandFG = termkit.Color{120, 170, 255}
 
+	// BashFG is the accent colour for "!" bash mode — both the leading
+	// trigger character and the "Shell" input-mode divider — xterm 256
+	// color 209.
+	BashFG = termkit.Xterm256(209)
+
+	// BashExcludedFG is the muted variant used for "!!" bash commands, which
+	// run the same way but are excluded from the LLM's context — the dimmer
+	// tone signals "local only." Hand-tuned as a desaturated variant of
+	// BashFG rather than another palette index, since there's no single
+	// xterm-256 entry that reads as "dim 209."
+	BashExcludedFG = termkit.Color{130, 90, 70}
+
 	// SkillRunning is the dark lilac state shown while the Skill tool is executing,
 	// so a skill load is visually distinct from a regular tool call.
 	SkillRunning = ToolStatus{

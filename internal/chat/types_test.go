@@ -248,3 +248,39 @@ func TestChatSessionPatchCancelAndFailure(t *testing.T) {
 		t.Fatalf("message count = %d, want 2 user messages only", len(session.Messages))
 	}
 }
+
+// TestAppendStandaloneMessageRequiresNoActiveRequest guards against a
+// regression where bash-mode ("!") results couldn't be appended to history
+// because, unlike AppendStandaloneMessage, the other Append* helpers require
+// HasActiveRequest() — but a bash command runs outside the turn loop and has
+// no active request.
+func TestAppendStandaloneMessageRequiresNoActiveRequest(t *testing.T) {
+	now := time.Date(2026, 5, 21, 10, 0, 0, 0, time.UTC)
+	session, err := NewChatSessionState("s1", ChatSessionConfig{
+		Provider: testProvider(),
+		Model:    ChatModelRef{ID: "test-model", URL: "https://model.example/v1"},
+	}, now)
+	if err != nil {
+		t.Fatalf("NewChatSessionState() error = %v", err)
+	}
+
+	if session.HasActiveRequest() {
+		t.Fatal("fresh session should have no active request")
+	}
+
+	content := "Ran `ls`\n\n```\nfile.go\n```"
+	if err := session.AppendStandaloneMessage(ChatRoleUser, content, now.Add(time.Second)); err != nil {
+		t.Fatalf("AppendStandaloneMessage() error = %v", err)
+	}
+
+	if len(session.Messages) != 1 {
+		t.Fatalf("message count = %d, want 1", len(session.Messages))
+	}
+	got := session.Messages[0]
+	if got.Role != ChatRoleUser || got.Content != content {
+		t.Fatalf("appended message = %#v, want role=%q content=%q", got, ChatRoleUser, content)
+	}
+	if !session.UpdatedAt.Equal(now.Add(time.Second)) {
+		t.Fatalf("UpdatedAt = %v, want %v", session.UpdatedAt, now.Add(time.Second))
+	}
+}
