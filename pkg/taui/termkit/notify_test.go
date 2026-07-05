@@ -42,10 +42,10 @@ func TestNotify_truncatesLongBody(t *testing.T) {
 
 func TestSanitizeNotifyText(t *testing.T) {
 	cases := map[string]string{
-		"hello\nworld":  "hello world",
-		"a;b;c":         "a,b,c",
-		"a\tb":          "a b",
-		"a  b   c":      "a b c",
+		"hello\nworld":   "hello world",
+		"a;b;c":          "a,b,c",
+		"a\tb":           "a b",
+		"a  b   c":       "a b c",
 		"\x01hidden\x01": "hidden",
 	}
 	for in, want := range cases {

@@ -38,4 +38,8 @@ type TUIConfig struct {
 	// MetricsConfig controls observability export (file path for JSONL,
 	// session persistence, TUI widget toggles).
 	MetricsConfig tauconfig.MetricsConfig
+
+	// NewTUI selects the new Bubbletea-based TUI instead of the legacy
+	// taui inline renderer.
+	NewTUI bool
 }

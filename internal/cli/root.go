@@ -118,6 +118,10 @@ func NewRootCommand(version string) *urfavecli.Command {
 				Value: 0,
 			},
 			&urfavecli.BoolFlag{
+				Name:  "new-tui",
+				Usage: "Use the new Bubbletea-based TUI (experimental)",
+			},
+			&urfavecli.BoolFlag{
 				Name:  "no-web",
 				Usage: "Do not start the web UI",
 			},
@@ -195,6 +199,7 @@ func chatOptionsFromCmd(cmd *urfavecli.Command, cfg tauconfig.Config, provider t
 		Temperature:     cmd.Float("temperature"),
 		Version:         version,
 		ResumeSessionID: cmd.String("resume"),
+		NewTUI:          cmd.Bool("new-tui"),
 		Web:             cmd.Bool("web"),
 		WebPort:         cmd.Int("port"),
 		NoWeb:           cmd.Bool("no-web"),

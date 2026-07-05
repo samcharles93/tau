@@ -26,7 +26,7 @@ type LineInput struct {
 	hintFn   func(string) string
 	cmdFn    func(string) string // applied instead of textFn while the line begins with "/"
 
-	cursorR, cursorG, cursorB uint8 // cursor background colour (0 = default grey)
+	cursorR, cursorG, cursorB uint8          // cursor background colour (0 = default grey)
 	cmdCursor                 *termkit.Color // cursor background used instead while isCommand (see SetCommandCursorColor)
 
 	// History buffer for readline-style recall of submitted prompts.

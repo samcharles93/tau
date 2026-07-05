@@ -316,6 +316,7 @@ func RunChat(ctx context.Context, opts ChatOptions) error {
 		WebURL:             webURL,
 		OnReady:            pluginOnReady,
 		MetricsConfig:      opts.Config.Metrics,
+		NewTUI:             opts.NewTUI,
 	}
 
 	logStartupPhase("after-tui", t0)

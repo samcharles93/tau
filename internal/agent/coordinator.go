@@ -53,6 +53,7 @@ type Streamer interface {
 type Coordinator struct {
 	ctx               context.Context
 	cancel            context.CancelFunc
+	logger            *slog.Logger
 	bus               *eventbus.Bus
 	client            *eventbus.Client
 	chatPub           *eventbus.Publisher[chat.ChatEvent]
@@ -117,6 +118,11 @@ type CoordinatorConfig struct {
 	TokenSource TokenSource
 	Streamer    Streamer
 	Registry    *tools.Registry
+
+	// Logger is the root logger for the coordinator. A child logger with
+	// component=coordinator is created automatically. When nil, the
+	// package-level slog.Default() is used.
+	Logger *slog.Logger
 
 	ParallelToolCalls *bool // nil → default (true)
 	InteractiveUI     bool
@@ -189,9 +195,16 @@ func NewCoordinator(ctx context.Context, cfg CoordinatorConfig) (*Coordinator, e
 	pluginPub := eventbus.Publish[chat.PluginLifecycleEvent](client)
 	metricsPub := eventbus.Publish[chat.MetricEvent](client)
 
+	logger := slog.Default()
+	if cfg.Logger != nil {
+		logger = cfg.Logger
+	}
+	logger = logger.With("component", "coordinator")
+
 	c := &Coordinator{
 		ctx:               ctx,
 		cancel:            cancel,
+		logger:            logger,
 		bus:               cfg.Bus,
 		client:            client,
 		chatPub:           chatPub,
@@ -439,9 +452,7 @@ func (c *Coordinator) handleSubmit(cmd chat.SubmitChatPromptCommand) {
 		StartedAt: now,
 	})
 
-	slog.Debug("coordinator: turn started",
-		"session_id", cmd.SessionID,
-		"request_id", cmd.RequestID,
+	c.loggerWithTurn(cmd.SessionID, cmd.RequestID).Debug("turn started",
 		"provider", turnState.ProviderName,
 		"model", turnState.Model.ID,
 		"msg_count", len(turnState.Messages),
@@ -544,9 +555,8 @@ func (c *Coordinator) persistDefaultsOnUpdate(patch chat.ChatSessionPatch, snaps
 		return
 	}
 	if err := tauconfig.SaveDefaultProviderAndModel(c.projectDir, provider, model); err != nil {
-		slog.Error(
-			"coordinator: saving default provider/model to local config",
-			"session_id", snapshot.SessionID,
+		c.loggerWith(snapshot.SessionID).Error(
+			"saving default provider/model to local config",
 			"err", err,
 		)
 	}
@@ -1249,6 +1259,18 @@ func (c *Coordinator) isIdle() bool {
 	return true
 }
 
+// loggerWith returns a child logger that carries the given session_id on
+// every log line. Call once per session and reuse.
+func (c *Coordinator) loggerWith(sessionID string) *slog.Logger {
+	return c.logger.With("session_id", sessionID)
+}
+
+// loggerWithTurn returns a child logger that carries both session_id and
+// request_id, suitable for use within a single turn.
+func (c *Coordinator) loggerWithTurn(sessionID, requestID string) *slog.Logger {
+	return c.logger.With("session_id", sessionID, "request_id", requestID)
+}
+
 // runTurn is the agentic turn loop. It streams a completion, and if the
 // model returns tool_calls, executes them in parallel, appends results
 // to the conversation, and loops. Stops when the model produces a final
@@ -1271,18 +1293,14 @@ func (c *Coordinator) runTurn(ctx context.Context, state chat.ChatSessionState) 
 
 	bearerToken, err := c.tokenSource(ctx, state.Provider)
 	if err != nil {
-		slog.Debug("coordinator: turn failed — token source error",
-			"session_id", sessionID,
-			"request_id", requestID,
+		c.loggerWithTurn(sessionID, requestID).Debug("turn failed — token source error",
 			"err", err,
 		)
 		c.failTurn(sessionID, requestID, err, now)
 		return
 	}
 
-	slog.Debug("coordinator: turn loop begin",
-		"session_id", sessionID,
-		"request_id", requestID,
+	c.loggerWithTurn(sessionID, requestID).Debug("turn loop begin",
 		"provider", state.ProviderName,
 		"model", state.Model.ID,
 	)
@@ -1351,9 +1369,7 @@ func (c *Coordinator) runTurn(ctx context.Context, state chat.ChatSessionState) 
 			}
 		}
 
-		slog.Debug("coordinator: llm call start",
-			"session_id", sessionID,
-			"request_id", requestID,
+		c.loggerWithTurn(sessionID, requestID).Debug("llm call start",
 			"iteration", iteration,
 			"model", state.Model.ID,
 			"provider", state.ProviderName,
@@ -1396,18 +1412,14 @@ func (c *Coordinator) runTurn(ctx context.Context, state chat.ChatSessionState) 
 			state.SystemPrompt = originalSystemPrompt
 			state.Model.ID = originalModelID
 			if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) || errors.Is(ctx.Err(), context.Canceled) {
-				slog.Debug("coordinator: llm call cancelled",
-					"session_id", sessionID,
-					"request_id", requestID,
+				c.loggerWithTurn(sessionID, requestID).Debug("llm call cancelled",
 					"iteration", iteration,
 					"err", err,
 				)
 				c.cancelTurn(sessionID, requestID, time.Now().UTC())
 				return
 			}
-			slog.Warn("coordinator: llm call failed",
-				"session_id", sessionID,
-				"request_id", requestID,
+			c.loggerWithTurn(sessionID, requestID).Warn("llm call failed",
 				"iteration", iteration,
 				"err", err,
 			)
@@ -1432,9 +1444,7 @@ func (c *Coordinator) runTurn(ctx context.Context, state chat.ChatSessionState) 
 			},
 		})
 
-		slog.Debug("coordinator: llm call complete",
-			"session_id", sessionID,
-			"request_id", requestID,
+		c.loggerWithTurn(sessionID, requestID).Debug("llm call complete",
 			"iteration", iteration,
 			"finish_reason", result.FinishReason,
 			"input_tokens", result.Usage.PromptTokens,
@@ -1456,9 +1466,7 @@ func (c *Coordinator) runTurn(ctx context.Context, state chat.ChatSessionState) 
 		for i, tc := range result.ToolCalls {
 			toolNames[i] = tc.Function.Name
 		}
-		slog.Debug("coordinator: tool calls detected",
-			"session_id", sessionID,
-			"request_id", requestID,
+		c.loggerWithTurn(sessionID, requestID).Debug("tool calls detected",
 			"iteration", iteration,
 			"count", len(result.ToolCalls),
 			"tools", toolNames,
@@ -1509,9 +1517,7 @@ func (c *Coordinator) executeToolsParallel(ctx context.Context, sessionID, reque
 	for i, tc := range calls {
 		toolNames[i] = tc.Function.Name
 	}
-	slog.Debug("coordinator: executing tools",
-		"session_id", sessionID,
-		"request_id", requestID,
+	c.loggerWithTurn(sessionID, requestID).Debug("executing tools",
 		"count", len(calls),
 		"tools", toolNames,
 		"parallel", c.parallelToolCalls,
@@ -1638,9 +1644,7 @@ func (c *Coordinator) executeToolsParallel(ctx context.Context, sessionID, reque
 		result.Content = tr.Content
 
 		results[i] = result
-		slog.Debug("coordinator: tool executed",
-			"session_id", sessionID,
-			"request_id", requestID,
+		c.loggerWithTurn(sessionID, requestID).Debug("tool executed",
 			"tool", tc.Function.Name,
 			"call_id", tc.ID,
 			"is_error", result.IsError,
@@ -1986,9 +1990,7 @@ func (c *Coordinator) completeTurn(sessionID, requestID string, result chat.Comp
 	snapshot := chat.CloneChatSessionState(session.state)
 	c.mu.Unlock()
 
-	slog.Debug("coordinator: turn completed",
-		"session_id", sessionID,
-		"request_id", requestID,
+	c.loggerWithTurn(sessionID, requestID).Debug("turn completed",
 		"finish_reason", result.FinishReason,
 		"total_tokens", result.Usage.TotalTokens,
 		"duration_ms", time.Since(turnStartedAt).Milliseconds(),
@@ -2079,9 +2081,7 @@ func (c *Coordinator) cancelTurn(sessionID, requestID string, at time.Time) {
 	snapshot := chat.CloneChatSessionState(session.state)
 	c.mu.Unlock()
 
-	slog.Debug("coordinator: turn cancelled",
-		"session_id", sessionID,
-		"request_id", requestID,
+	c.loggerWithTurn(sessionID, requestID).Debug("turn cancelled",
 		"provider", snapshot.Provider.Name,
 		"model", snapshot.Model.ID,
 	)
@@ -2118,9 +2118,7 @@ func (c *Coordinator) failTurn(sessionID, requestID string, err error, at time.T
 	snapshot := chat.CloneChatSessionState(session.state)
 	c.mu.Unlock()
 
-	slog.Warn("coordinator: turn failed",
-		"session_id", sessionID,
-		"request_id", requestID,
+	c.loggerWithTurn(sessionID, requestID).Warn("turn failed",
 		"provider", snapshot.Provider.Name,
 		"model", snapshot.Model.ID,
 		"err", err,
@@ -2231,8 +2229,7 @@ func (c *Coordinator) applyPluginMessageModifications(state *chat.ChatSessionSta
 	for _, raw := range resp.GetInjectMessages() {
 		var msg chat.ChatMessage
 		if err := json.Unmarshal([]byte(raw), &msg); err != nil {
-			slog.Warn("coordinator: failed to decode injected message",
-				"session_id", state.SessionID,
+			c.loggerWith(state.SessionID).Warn("failed to decode injected message",
 				"err", err,
 			)
 			continue
@@ -2466,16 +2463,14 @@ func (c *Coordinator) persistSession(state chat.ChatSessionState, duration time.
 	defer cancel()
 
 	if err := c.sessionManager.Save(ctx, state, duration); err != nil {
-		slog.Error(
-			"coordinator: persist session failed",
-			"session_id", state.SessionID,
+		c.loggerWith(state.SessionID).Error(
+			"persist session failed",
 			"err", err,
 		)
 		return
 	}
 
-	slog.Debug("coordinator: session persisted",
-		"session_id", state.SessionID,
+	c.loggerWith(state.SessionID).Debug("session persisted",
 		"msg_count", len(state.Messages),
 		"duration_ms", duration.Milliseconds(),
 	)
@@ -2490,9 +2485,8 @@ func (c *Coordinator) persistSession(state chat.ChatSessionState, duration time.
 		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 		defer cancel()
 		if err := c.sessionManager.ExportToJSONL(ctx, state.SessionID, exportPath); err != nil {
-			slog.Warn(
-				"coordinator: auto-export jsonl failed",
-				"session_id", state.SessionID,
+			c.loggerWith(state.SessionID).Warn(
+				"auto-export jsonl failed",
 				"err", err,
 			)
 		}

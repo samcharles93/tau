@@ -47,6 +47,10 @@ type ChatOptions struct {
 	WebPort         int      // --port: 0 = ephemeral
 	NoWeb           bool     // --no-web: do not start web UI
 	SkillDirs       []string // --skill-dir: additional skill directories
+	NewTUI          bool     // --new-tui: use the new Bubbletea-based TUI
+	// Logger is the root logger for the session. When nil, slog.Default() is
+	// used. Each subsystem derives a named child (component=xxx) from it.
+	Logger *slog.Logger
 }
 
 // printExitSummary prints session metadata after the TUI exits.
@@ -496,6 +500,10 @@ type coordinatorConfig struct {
 // buildCoordinator creates a coordinator with the full plugin/tool setup.
 func buildCoordinator(ctx context.Context, cfg coordinatorConfig) (*agent.Coordinator, []tauchat.ExtensionCommand, *plugin.Manager, error) {
 	cwd, _ := os.Getwd()
+	log := slog.Default()
+	if cfg.ChatOptions.Logger != nil {
+		log = cfg.ChatOptions.Logger
+	}
 	registry := tools.NewRegistry()
 	if err := tools.RegisterBuiltins(registry, cwd); err != nil {
 		return nil, nil, nil, fmt.Errorf("registering built-in tools: %w", err)
@@ -532,9 +540,15 @@ func buildCoordinator(ctx context.Context, cfg coordinatorConfig) (*agent.Coordi
 	}
 
 	// Plugin manager — discovers and manages extension binaries.
+	pluginLogger := slog.Default()
+	if cfg.ChatOptions.Logger != nil {
+		pluginLogger = cfg.ChatOptions.Logger
+	}
+	pluginLogger = pluginLogger.With("component", "plugin.manager")
+
 	pluginMgr, err := plugin.NewManager(plugin.Config{
 		ToolRegistry: registry,
-		Logger:       slog.Default(),
+		Logger:       pluginLogger,
 		Plugins:      cfg.ChatOptions.Config.Plugins,
 		Notify:       pluginNotify,
 	})
@@ -551,7 +565,7 @@ func buildCoordinator(ctx context.Context, cfg coordinatorConfig) (*agent.Coordi
 	// this step until after the TUI subscribes to bus events.
 	loadPlugins := func() {
 		if err := pluginMgr.Load(ctx); err != nil {
-			slog.Warn("plugin manager load failed", "err", err)
+			log.Warn("plugin manager load failed", "err", err)
 			notifyPub.Publish(tauchat.ChatNotificationEvent{
 				Message:    "Plugin load failed: " + err.Error(),
 				Level:      tauchat.ChatNotificationError,
@@ -577,7 +591,7 @@ func buildCoordinator(ctx context.Context, cfg coordinatorConfig) (*agent.Coordi
 	}
 
 	if cfg.DeferPluginLoad {
-		slog.Debug("plugin loading deferred until after TUI subscription")
+		log.Debug("plugin loading deferred until after TUI subscription")
 	} else {
 		loadPlugins()
 	}
@@ -659,6 +673,7 @@ func buildCoordinator(ctx context.Context, cfg coordinatorConfig) (*agent.Coordi
 
 	coordinator, err := agent.NewCoordinator(ctx, agent.CoordinatorConfig{
 		Bus:                   cfg.Bus,
+		Logger:                cfg.ChatOptions.Logger,
 		TokenSource:           staticTokenSource(cfg.BearerToken),
 		Streamer:              cfg.Streamer,
 		Registry:              registry,
