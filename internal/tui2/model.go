@@ -1479,23 +1479,15 @@ func toolStyleForStatus(toolName, status string) lipgloss.Style {
 // skillLabelFromArgs extracts a human-readable skill name from tool arguments
 // (JSON object with a "name": key). Falls back to "skill" when unparseable.
 func skillLabelFromArgs(args string) string {
-	// args arrives as concatenated JSON fragments via upsertToolCall; find
-	// the JSON key `"name":` (with colon) to avoid matching `"no-name"`.
-	if idx := strings.LastIndex(args, "}"); idx >= 0 {
-		prefix := args[:idx+1]
-		delim := "\"name\":"
-		for _, part := range strings.Split(prefix, delim) {
-			if len(part) == 0 {
-				continue
-			}
-			// part starts right after `"name":` — trim leading whitespace
-			// and the opening quote of the value.
-			rest := strings.TrimSpace(part)
-			if len(rest) > 0 && rest[0] == '"' {
-				rest = rest[1:]
-			}
-			if i := strings.IndexByte(rest, '"'); i >= 0 {
-				return "skill: " + rest[:i]
+	// Look for "name": followed by a JSON string value and extract it.
+	// Search for the exact key delimiter to avoid matching "no-name" etc.
+	key := `","name":"`
+	// Also try at the start of the object, right after the opening brace.
+	for _, prefix := range []string{`{"name":"`, key} {
+		if i := strings.Index(args, prefix); i >= 0 {
+			rest := args[i+len(prefix):]
+			if j := strings.IndexByte(rest, '"'); j >= 0 {
+				return "skill: " + rest[:j]
 			}
 		}
 	}
