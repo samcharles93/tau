@@ -378,7 +378,7 @@ func TestCmdHelpAppendsMessage(t *testing.T) {
 	// Should append a system message with the help text.
 	found := false
 	for _, line := range m.renderedLines {
-		if strings.Contains(stripANSI(line), "Commands:") {
+		if strings.Contains(stripANSI(line), "Slash commands:") {
 			found = true
 			break
 		}

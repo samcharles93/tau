@@ -209,7 +209,9 @@ func (m *model) cmdClear(_ string) tea.Cmd {
 
 func (m *model) cmdHelp(_ string) tea.Cmd {
 	var b strings.Builder
-	b.WriteString("Commands:")
+
+	// Slash commands.
+	b.WriteString("Slash commands:")
 	for i := range slashTable {
 		e := &slashTable[i]
 		label := "/" + e.name
@@ -218,9 +220,37 @@ func (m *model) cmdHelp(_ string) tea.Cmd {
 		}
 		fmt.Fprintf(&b, "\n  %-38s %s", label, e.description)
 	}
+
+	// Keyboard shortcuts — grouped by function.
+	b.WriteString("\n\nInput:")
+	fmt.Fprintf(&b, "\n  %-38s %s", "Ctrl+A / Home", "move cursor to start of line")
+	fmt.Fprintf(&b, "\n  %-38s %s", "Ctrl+E / End", "move cursor to end of line")
+	fmt.Fprintf(&b, "\n  %-38s %s", "Ctrl+Left / Alt+Left", "move cursor back one word")
+	fmt.Fprintf(&b, "\n  %-38s %s", "Ctrl+Right / Alt+Right", "move cursor forward one word")
+	fmt.Fprintf(&b, "\n  %-38s %s", "Ctrl+U", "delete from cursor to start of line")
+	fmt.Fprintf(&b, "\n  %-38s %s", "Ctrl+K", "delete from cursor to end of line")
+	fmt.Fprintf(&b, "\n  %-38s %s", "Ctrl+W / Ctrl+Backspace", "delete word before cursor")
+	fmt.Fprintf(&b, "\n  %-38s %s", "Shift+Enter / Ctrl+J", "insert newline (multi-line input)")
+	fmt.Fprintf(&b, "\n  %-38s %s", "Up / Down", "recall history (at first / last line)")
+	fmt.Fprintf(&b, "\n  %-38s %s", "Ctrl+D", "quit (when input is empty)")
+
+	b.WriteString("\nTurn control:")
 	fmt.Fprintf(&b, "\n  %-38s %s", "Ctrl+S", "steer the agent mid-turn")
-	fmt.Fprintf(&b, "\n  %-38s %s", "Ctrl+Shift+G", "copy the assistant's last response")
+	fmt.Fprintf(&b, "\n  %-38s %s", "Ctrl+C", "cancel the current turn (double-tap to quit)")
+	fmt.Fprintf(&b, "\n  %-38s %s", "!", "run a shell command prefixed with ! (!! to hide from model)")
+
+	b.WriteString("\nTool interaction:")
+	fmt.Fprintf(&b, "\n  %-38s %s", "Tab / Shift+Tab", "navigate focus through completed tools")
+	fmt.Fprintf(&b, "\n  %-38s %s", "Enter", "expand/collapse the focused tool's full output")
+	fmt.Fprintf(&b, "\n  %-38s %s", "Esc", "collapse tool → clear focus → clear input")
+	fmt.Fprintf(&b, "\n  %-38s %s", "Up / Down", "navigate tool focus (input empty, no history)")
+
+	b.WriteString("\nScreen:")
 	fmt.Fprintf(&b, "\n  %-38s %s", "Ctrl+L", "clear the screen (keeps the session)")
+	fmt.Fprintf(&b, "\n  %-38s %s", "Ctrl+Shift+G", "copy the assistant's last response")
+	fmt.Fprintf(&b, "\n  %-38s %s", "Mouse wheel", "scroll through conversation history")
+	fmt.Fprintf(&b, "\n  %-38s %s", "Tab", "cycle tab-completions when dropdown is visible")
+
 	m.appendMessage("system", b.String())
 	return nil
 }
