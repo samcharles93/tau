@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"charm.land/lipgloss/v2"
+	"github.com/samcharles93/tau/internal/theme"
 	"github.com/samcharles93/tau/internal/tui/notify"
 )
 
@@ -295,7 +296,7 @@ func TestTruncateANSIToWidthZeroBudget(t *testing.T) {
 }
 
 func TestTruncateANSIToWidthStyledOutput(t *testing.T) {
-	s := lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("#FF0000")).Render("very long text here")
+	s := lipgloss.NewStyle().Bold(true).Foreground(themeHex(theme.ToneError)).Render("very long text here")
 	out := truncateANSIToWidth(s, 10, "…")
 	plain := stripANSI(out)
 	// Truncation + ellipsis should produce <= budget.

@@ -112,10 +112,13 @@ var (
 	ShimmerBase      = termkit.Color{123, 47, 190}
 	ShimmerHighlight = termkit.Color{127, 219, 255}
 
-	// ToneInfo, ToneSuccess, ToneWarn, ToneError, and ToneMuted are the
-	// foreground colors for plugin-rendered widgets' semantic Style.Tone,
-	// resolved host-side so panels stay visually consistent with the rest of
-	// the theme regardless of what a plugin author picks.
+	// TonePrimary, ToneBody, ToneInfo, ToneSuccess, ToneWarn, ToneError, and
+	// ToneMuted are foreground colors for app text and plugin-rendered
+	// widgets' semantic Style.Tone, resolved host-side so panels stay visually
+	// consistent with the rest of the theme regardless of what a plugin author
+	// picks.
+	TonePrimary = termkit.ColorWhite
+	ToneBody    = termkit.Color{204, 204, 204}
 	ToneInfo    = termkit.Color{120, 170, 255}
 	ToneSuccess = termkit.Color{140, 220, 140}
 	ToneWarn    = termkit.Color{255, 200, 120}

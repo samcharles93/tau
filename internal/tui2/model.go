@@ -2585,9 +2585,9 @@ var (
 	userColor      = themeHex(theme.CommandFG)
 	assistantColor = themeHex(theme.ToolSuccess.FG)
 	reasoningColor = themeHex(theme.ToneWarn)
-	streamColor    = lipgloss.Color("#FFFFFF") // no theme equivalent
+	streamColor    = themeHex(theme.TonePrimary)
 	notifyColor    = themeHex(theme.ToolFailed.FG)
-	inputColor     = lipgloss.Color("#7FDBFF") // no theme equivalent
+	inputColor     = themeHex(theme.ShimmerHighlight)
 
 	userStyle      = lipgloss.NewStyle().Foreground(userColor)
 	assistantStyle = lipgloss.NewStyle().Foreground(assistantColor)
@@ -2607,13 +2607,13 @@ var (
 
 	// Prompt / completion styles.
 	promptBoxStyle       = lipgloss.NewStyle().Foreground(themeHex(theme.ToneWarn))
-	promptTextStyle      = lipgloss.NewStyle().Foreground(lipgloss.Color("#FFFFFF"))
+	promptTextStyle      = lipgloss.NewStyle().Foreground(themeHex(theme.TonePrimary))
 	promptHintStyle      = lipgloss.NewStyle().Foreground(themeHex(theme.ToneMuted)).Italic(true)
 	promptHighlightStyle = lipgloss.NewStyle().Bold(true).Underline(true)
 	compTitleStyle       = lipgloss.NewStyle().Foreground(themeHex(theme.ToneMuted)).Bold(true)
-	compItemStyle        = lipgloss.NewStyle().Foreground(lipgloss.Color("#CCCCCC"))
+	compItemStyle        = lipgloss.NewStyle().Foreground(themeHex(theme.ToneBody))
 	compSelectedStyle    = lipgloss.NewStyle().Foreground(themeHex(theme.CommandFG)).Bold(true)
-	compHighlightStyle   = lipgloss.NewStyle().Foreground(lipgloss.Color("#FFFFFF")).Bold(true).Underline(true)
+	compHighlightStyle   = lipgloss.NewStyle().Foreground(themeHex(theme.TonePrimary)).Bold(true).Underline(true)
 	compDescStyle        = lipgloss.NewStyle().Foreground(themeHex(theme.ToneMuted))
 	compMoreStyle        = lipgloss.NewStyle().Foreground(themeHex(theme.ToneMuted)).Italic(true)
 	panelStyle           = lipgloss.NewStyle().Foreground(themeHex(theme.CommandFG))
