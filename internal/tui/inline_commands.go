@@ -91,12 +91,9 @@ func init() {
 			run: (*inlineChat).handleCopyCommand,
 		},
 		{
-			name: "login", usage: "[provider]", description: "enable a provider (or list providers)",
-			run: (*inlineChat).handleLoginCommand, complete: argProviders,
-		},
-		{
-			name: "logout", usage: "<provider>", description: "disable a provider / remove its login",
-			run: (*inlineChat).handleLogoutCommand, complete: argProviders,
+			name: "provider", usage: "[<name>|login <name>|logout <name>]",
+			description: "toggle a provider on/off, or manage its OAuth login",
+			run:         (*inlineChat).handleProviderCommand, complete: argProvider,
 		},
 		{
 			name: "reload", description: "reload extensions",

@@ -121,7 +121,7 @@ type slashCommand struct {
 | `/export` | — | Export session as JSONL |
 | `/help` | `/?` | Show command help |
 | `/debug` | — | Toggle debug mode |
-| `/login` | — | Start OAuth login for a provider |
+| `/provider` | — | Toggle a provider on/off, or `/provider login <name>` for OAuth |
 | `/quit` | `/exit` | Exit tau |
 
 ### Extension Commands

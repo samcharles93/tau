@@ -214,10 +214,10 @@ func loadProvider(cmd *urfavecli.Command) (config.Config, config.ProviderConfig,
 }
 
 // noProvidersError explains how to get providers when none are usable, covering
-// both auto-detected env keys and the interactive /login flow.
+// both auto-detected env keys and the interactive /provider flow.
 func noProvidersError() error {
 	return fmt.Errorf("no usable providers: set a provider API key (e.g. OPENROUTER_API_KEY), "+
-		"run tau and use /login to enable a provider, or declare one in %s", config.GlobalPath())
+		"run tau and use /provider to enable a provider, or declare one in %s", config.GlobalPath())
 }
 
 func skillsCmd() *urfavecli.Command {

@@ -37,8 +37,9 @@ Tau discovers providers automatically. To enable a provider:
 
 1. **Environment variable (simplest):** Export the provider's API key env var
    (e.g. `DEEPSEEK_API_KEY=sk-...`). Tau detects it at startup.
-2. **TUI login:** Run `tau` and type `/login` in the chat input. Tau walks you
-   through entering the key and saves it to `~/.config/tau/auth.yaml`.
+2. **TUI:** Run `tau` and type `/provider <name>` in the chat input to toggle
+   a provider on/off; saved to `~/.config/tau/auth.yaml`. OAuth providers use
+   `/provider login <name>` instead.
 3. **config.yaml:** Add a provider block (see Configuration below).
 
 Run `/model` in the TUI to pick from all enabled providers' models.
@@ -64,8 +65,9 @@ TUI commands. Multiple browser tabs may connect to the same session.
 | Command | Description |
 | ------- | ----------- |
 | `/model [id]` | Switch model; opens picker when called without an ID |
-| `/login [provider]` | Enable a provider; lists all providers when called without an argument |
-| `/logout <provider>` | Disable a provider / remove its saved key |
+| `/provider [name]` | Toggle a provider on/off; lists all providers when called without an argument |
+| `/provider login <provider>` | OAuth sign-in for a provider (not yet implemented for any catalog provider) |
+| `/provider logout <provider>` | Disable a provider / remove its saved key |
 | `/refresh` | Re-discover models from all enabled providers |
 | `/effort [level]` | Set reasoning effort (`off`, `low`, `medium`, `high`, `max`) |
 | `/reasoning [on\|off]` | Toggle display of model reasoning content |

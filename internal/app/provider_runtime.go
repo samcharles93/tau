@@ -12,7 +12,7 @@ import (
 
 // providerRuntime holds the ai-sdk runtime together with the set of usable
 // providers it was built from. It can be rebuilt live when provider state
-// changes (e.g. after /login or /logout), so both the dynamic streamer and the
+// changes (e.g. after /provider), so both the dynamic streamer and the
 // model refresher always observe the current provider set without a restart.
 type providerRuntime struct {
 	insecure bool

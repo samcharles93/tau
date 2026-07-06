@@ -43,7 +43,7 @@ providers. Each `CatalogEntry` carries:
 | Field | Purpose |
 | ----- | ------- |
 | `ID` | tau's canonical name (e.g. `"deepseek"`) |
-| `DisplayName` | Human-readable label shown in `/login` menus |
+| `DisplayName` | Human-readable label shown in `/provider` menus |
 | `BaseURL` | Default API endpoint |
 | `EnvVars` | Environment variables to probe for the API key (first set wins) |
 | `Auth` | `AuthAPIKey`, `AuthOAuth`, or `AuthNone` |
@@ -70,7 +70,7 @@ providers. Each `CatalogEntry` carries:
 | `ollama-cloud` | Ollama (cloud) | API key (`OLLAMA_API_KEY`) | |
 
 Providers are activated either by the user's hand-written `config.yaml`,
-by the managed `auth.yaml` (via `/login`), or by auto-detecting a set API key
+by the managed `auth.yaml` (via `/provider`), or by auto-detecting a set API key
 in the environment.
 
 ## Model Catalogue (Embedded Snapshot)
@@ -124,10 +124,10 @@ ref := session.Provider.Name + "/" + session.Model.ID
 provider, modelID, err := providerRuntime.runtime().ChatProvider(ctx, ref)
 ```
 
-This means switching model or provider (via `/model` or `/login`) takes effect
+This means switching model or provider (via `/model` or `/provider`) takes effect
 on the next turn without rebuilding the coordinator.
 
-`providerRuntime.reload(ctx)` is called after `/login` or `/logout` to rebuild
+`providerRuntime.reload(ctx)` is called after `/provider` to rebuild
 the underlying runtime with the updated provider set, so newly enabled providers
 are immediately available.
 
@@ -189,7 +189,7 @@ overriding a specific value.
 
 Tau auto-detects API keys from the environment. Exporting any of the env vars
 listed in the provider catalogue above is enough to enable that provider. The
-TUI's `/login` command handles guided API-key entry and persists the key to
+TUI's `/provider` command toggles a provider on and persists the key to
 `~/.config/tau/auth.yaml`.
 
 ## Adding a New Provider

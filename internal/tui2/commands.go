@@ -2,6 +2,7 @@ package tui2
 
 import (
 	"fmt"
+	"os"
 	"slices"
 	"strings"
 	"time"
@@ -9,6 +10,8 @@ import (
 	tea "charm.land/bubbletea/v2"
 	agentspec "github.com/samcharles93/tau/internal/agent/spec"
 	tauchat "github.com/samcharles93/tau/internal/chat"
+	"github.com/samcharles93/tau/internal/config"
+	"github.com/samcharles93/tau/internal/providers"
 )
 
 // --- command table ---------------------------------------------------------
@@ -70,12 +73,9 @@ func init() {
 			run: (*model).cmdCopy,
 		},
 		{
-			name: "login", usage: "[provider]", description: "enable a provider (or list providers)",
-			run: (*model).cmdLogin,
-		},
-		{
-			name: "logout", usage: "<provider>", description: "disable a provider / remove its login",
-			run: (*model).cmdLogout,
+			name: "provider", usage: "[<name>|login <name>|logout <name>]",
+			description: "toggle a provider on/off, or manage its OAuth login",
+			run:         (*model).cmdProvider,
 		},
 		{
 			name: "reload", description: "reload extensions",
@@ -220,6 +220,7 @@ func (m *model) cmdHelp(_ string) tea.Cmd {
 	}
 	fmt.Fprintf(&b, "\n  %-38s %s", "Ctrl+S", "steer the agent mid-turn")
 	fmt.Fprintf(&b, "\n  %-38s %s", "Ctrl+Shift+G", "copy the assistant's last response")
+	fmt.Fprintf(&b, "\n  %-38s %s", "Ctrl+L", "clear the screen (keeps the session)")
 	m.appendMessage("system", b.String())
 	return nil
 }
@@ -351,26 +352,192 @@ func (m *model) cmdCost(_ string) tea.Cmd {
 	if totals == nil || totals.TotalTokens == 0 {
 		return m.setNotification("no usage recorded yet")
 	}
-	msg := fmt.Sprintf("Prompt: %d  Completion: %d  Total: %d  Cost: $%.4f",
+	msg := fmt.Sprintf(
+		"Prompt: %d  Completion: %d  Total: %d  Cost: $%.4f",
 		totals.PromptTokens, totals.CompletionTokens, totals.TotalTokens, totals.Cost,
 	)
 	return m.setNotification(msg)
 }
 
 func (m *model) cmdCopy(_ string) tea.Cmd {
-	content := m.lastAssistantContent()
-	if content == "" {
+	if m.lastAssistantText == "" {
 		return m.setNotification("nothing to copy")
 	}
-	return tea.SetClipboard(content)
+	return tea.Batch(tea.SetClipboard(m.lastAssistantText), m.setNotification("copied to clipboard"))
 }
 
-func (m *model) cmdLogin(args string) tea.Cmd {
-	return m.setNotification("/login not yet wired in tui2 — use legacy TUI")
+// cmdProvider dispatches /provider's three forms: bare (show the menu), a
+// provider name (toggle it on/off), or a "login"/"logout" sub-verb followed
+// by a name. There is no catalog provider literally named "login" or
+// "logout", so the sub-verb check is unambiguous.
+func (m *model) cmdProvider(args string) tea.Cmd {
+	args = strings.TrimSpace(args)
+	if args == "" {
+		m.appendMessage("system", providerMenuText())
+		return nil
+	}
+
+	fields := strings.Fields(args)
+	rest := strings.TrimSpace(strings.TrimPrefix(args, fields[0]))
+	switch strings.ToLower(fields[0]) {
+	case "login":
+		return m.providerLogin(rest)
+	case "logout":
+		return m.providerLogout(rest)
+	default:
+		return m.providerToggle(fields[0])
+	}
 }
 
-func (m *model) cmdLogout(args string) tea.Cmd {
-	return m.setNotification("/logout not yet wired in tui2 — use legacy TUI")
+// providerToggle enables an API-key/no-auth provider if it's currently off,
+// or disables it if it's currently on — the effective on/off state as shown
+// in the /provider menu, not just the raw explicit-enable list, so toggling
+// an auto-detected (env-key-present) provider off actually takes effect.
+// OAuth providers aren't toggleable this way; they need /provider login.
+func (m *model) providerToggle(name string) tea.Cmd {
+	name = strings.ToLower(strings.TrimSpace(name))
+	entry, ok := providers.Lookup(name)
+	if !ok {
+		return m.setNotification(fmt.Sprintf("unknown provider %q — see /provider for the list", name))
+	}
+	if entry.Auth == providers.AuthOAuth {
+		return m.setNotification(fmt.Sprintf("%s uses OAuth — use /provider login %s", entry.DisplayName, entry.ID))
+	}
+
+	state, err := providers.LoadState()
+	if err != nil {
+		return m.setNotification("load provider state: " + err.Error())
+	}
+
+	enabled := false
+	for _, e := range providers.Menu(providerCfg(), state, nil) {
+		if e.ID == entry.ID {
+			enabled = e.Enabled
+			break
+		}
+	}
+
+	var warning string
+	if enabled {
+		state.Disable(entry.ID)
+	} else {
+		state.Enable(entry.ID)
+		if envVar, present := entry.DetectEnvVar(os.Getenv); !present && envVar != "" {
+			warning = "no API key found — set $" + envVar
+		}
+	}
+	if err := state.Save(); err != nil {
+		return m.setNotification("save provider state: " + err.Error())
+	}
+	return m.refreshAfterProviderChange(entry.DisplayName, !enabled, warning)
+}
+
+// providerLogin handles /provider login <name> — the interactive OAuth flow,
+// not yet implemented for any catalog provider.
+func (m *model) providerLogin(name string) tea.Cmd {
+	name = strings.ToLower(strings.TrimSpace(name))
+	if name == "" {
+		return m.setNotification("usage: /provider login <provider>")
+	}
+	entry, ok := providers.Lookup(name)
+	if !ok {
+		return m.setNotification(fmt.Sprintf("unknown provider %q", name))
+	}
+	if entry.Auth != providers.AuthOAuth {
+		return m.setNotification(fmt.Sprintf("%s doesn't use OAuth — use /provider %s to toggle it", entry.DisplayName, entry.ID))
+	}
+	return m.setNotification(fmt.Sprintf("%s uses an interactive login that isn't wired up yet", entry.DisplayName))
+}
+
+// providerLogout handles /provider logout <name> — disables the provider and
+// clears any stored OAuth credentials, for any provider kind.
+func (m *model) providerLogout(name string) tea.Cmd {
+	name = strings.ToLower(strings.TrimSpace(name))
+	if name == "" {
+		return m.setNotification("usage: /provider logout <provider>")
+	}
+	entry, ok := providers.Lookup(name)
+	if !ok {
+		return m.setNotification(fmt.Sprintf("unknown provider %q", name))
+	}
+	state, err := providers.LoadState()
+	if err != nil {
+		return m.setNotification("load provider state: " + err.Error())
+	}
+	state.Disable(entry.ID)
+	state.RemoveOAuth(entry.ID)
+	if err := state.Save(); err != nil {
+		return m.setNotification("save provider state: " + err.Error())
+	}
+	return m.refreshAfterProviderChange(entry.DisplayName, false, "")
+}
+
+// refreshAfterProviderChange re-discovers models after a provider toggle and
+// returns a Cmd that reports the outcome (enabled/disabled + resulting
+// model count) as a single combined scrollback line once the refresh
+// completes — e.g. "OpenRouter enabled, models available: 42". Reporting
+// the toggle and the refresh separately let cmdRefresh's own
+// refreshResultMsg handler silently overwrite the toggle's own transient
+// notification with "refreshed: N models available" moments later.
+func (m *model) refreshAfterProviderChange(displayName string, enabled bool, warning string) tea.Cmd {
+	action := "disabled"
+	if enabled {
+		action = "enabled"
+	}
+	if m.refresh == nil {
+		m.appendMessage("system", fmt.Sprintf("%s %s (model refresh is not available)", displayName, action))
+		return nil
+	}
+	return func() tea.Msg {
+		models, err := m.refresh(m.ctx)
+		return providerToggleResultMsg{displayName: displayName, action: action, warning: warning, models: models, err: err}
+	}
+}
+
+// providerToggleResultMsg carries the outcome of a provider toggle plus its
+// model refresh (see refreshAfterProviderChange).
+type providerToggleResultMsg struct {
+	displayName string
+	action      string
+	warning     string
+	models      []tauchat.ChatModelRef
+	err         error
+}
+
+// providerCfg/providerState mirror internal/tui/inline_providers.go's helpers
+// of the same name.
+func providerCfg() config.Config { cfg, _, _ := providers.Effective(); return cfg }
+
+func providerState() providers.State {
+	s, _ := providers.LoadState()
+	return s
+}
+
+// providerMenuText renders the catalog with each provider's current state —
+// mirrors internal/tui/inline_providers.go's printProviderMenu.
+func providerMenuText() string {
+	menu := providers.Menu(providerCfg(), providerState(), nil)
+	var b strings.Builder
+	b.WriteString("Providers (use /provider <name> to toggle, /provider login <name> for OAuth):")
+	for _, e := range menu {
+		mark := "○"
+		if e.Enabled {
+			mark = "●"
+		}
+		note := ""
+		switch {
+		case e.Auth == providers.AuthOAuth:
+			note = "login required"
+		case e.FromConfig:
+			note = "from config"
+		case e.Available:
+			note = "key detected"
+		case e.EnvVar != "":
+			note = "set $" + e.EnvVar
+		}
+		fmt.Fprintf(&b, "\n  %s %-14s %s", mark, e.ID, note)
+	}
+	return b.String()
 }
 
 func (m *model) cmdSkills(args string) tea.Cmd {
@@ -482,18 +649,6 @@ func defaultEffortForModel(model tauchat.ChatModelRef) string {
 			return "medium"
 		}
 		return model.Config.ReasoningEfforts[0]
-	}
-	return ""
-}
-
-// lastAssistantContent returns the content of the last assistant message.
-func (m *model) lastAssistantContent() string {
-	for i := len(m.renderedLines) - 1; i >= 0; i-- {
-		// Search backwards for the most recent assistant line.
-		line := m.renderedLines[i]
-		if after, ok := strings.CutPrefix(line, "tau: "); ok {
-			return after
-		}
 	}
 	return ""
 }

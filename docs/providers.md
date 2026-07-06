@@ -150,7 +150,7 @@ When the user switches models (via `/model` or the Web UI), the dynamic streamer
 
 ## OAuth Login
 
-The `/login` command starts an OAuth 2.0 flow:
+The `/provider login <name>` command starts an OAuth 2.0 flow:
 
 1. Opens the provider's authorization URL in the default browser.
 2. Starts a local HTTP server to receive the callback.

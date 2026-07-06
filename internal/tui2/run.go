@@ -77,7 +77,8 @@ func Run(
 	}
 
 	m := newModel(ctx, runtime, chatSub, sessionID, modelName, provider, availableModels, refresh, tracker, webURL, debug)
-	p := tea.NewProgram(m,
+	p := tea.NewProgram(
+		m,
 		tea.WithContext(ctx),
 		tea.WithoutSignalHandler(), // tau manages signals at the app layer
 	)

@@ -67,8 +67,8 @@ tau --no-web                           # TUI only
 tau -p "Explain the architecture of this codebase"   # single-shot, no UI
 ```
 
-No config file yet? Run `tau` and use `/login` in the chat input to add a
-provider API key interactively — it's saved to `~/.config/tau/auth.yaml`.
+No config file yet? Run `tau` and use `/provider <name>` in the chat input to
+enable a provider — it's saved to `~/.config/tau/auth.yaml`.
 Full flag reference: [`docs/README.md`](docs/README.md).
 
 ## Web UI

@@ -67,7 +67,7 @@ Defined in `internal/registry/sources.go`. These are the core slash commands:
 | `/export` | Export session as JSONL |
 | `/help` | Show command help |
 | `/debug` | Toggle debug mode |
-| `/login` | Start OAuth login for a provider |
+| `/provider` | Toggle a provider on/off, or `/provider login <name>` for OAuth |
 | `/quit` | Exit tau |
 
 ## Custom Commands

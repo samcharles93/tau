@@ -26,8 +26,8 @@ func TestDynamicStreamerNoSelection(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error when no model is selected")
 	}
-	if !strings.Contains(err.Error(), "/login") || !strings.Contains(err.Error(), "/model") {
-		t.Fatalf("expected guidance toward /login and /model, got: %v", err)
+	if !strings.Contains(err.Error(), "/provider") || !strings.Contains(err.Error(), "/model") {
+		t.Fatalf("expected guidance toward /provider and /model, got: %v", err)
 	}
 }
 

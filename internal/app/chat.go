@@ -94,7 +94,7 @@ func formatTokensHuman(n int) string {
 func buildModelRefresher(pr *providerRuntime) tui.ModelRefresher {
 	return func(ctx context.Context) ([]tauchat.ChatModelRef, error) {
 		// Rebuild the runtime from current provider state so models from
-		// providers enabled since launch (via /login) appear, and the dynamic
+		// providers enabled since launch (via /provider) appear, and the dynamic
 		// streamer can route to them.
 		if err := pr.reload(ctx); err != nil {
 			return nil, err
@@ -297,15 +297,15 @@ func modelInfoToModelConfig(m runtime.ModelInfo) tauconfig.ModelConfig {
 // buildDynamicStreamer constructs a streamer that resolves its provider/model
 // per turn from the session state, against a runtime configured with every
 // usable provider. Switching model or provider mid-session (via /model or
-// /login) therefore takes effect on the next turn with no coordinator rebuild.
-// When no provider/model is selected it returns a friendly error pointing the
-// user at /login and /model.
+// /provider) therefore takes effect on the next turn with no coordinator
+// rebuild. When no provider/model is selected it returns a friendly error
+// pointing the user at /provider and /model.
 func buildDynamicStreamer(pr *providerRuntime) agent.Streamer {
 	return NewDynamicStreamer(func(ctx context.Context, session tauchat.ChatSessionState) (aisdkchat.Provider, string, error) {
 		providerName := strings.TrimSpace(session.Provider.Name)
 		modelID := strings.TrimSpace(session.Model.ID)
 		if providerName == "" || modelID == "" {
-			return nil, "", errors.New("no model selected — enable a provider with /login, then choose a model with /model")
+			return nil, "", errors.New("no model selected — enable a provider with /provider, then choose a model with /model")
 		}
 		ref := providerName + "/" + modelID
 		provider, resolvedID, err := pr.runtime().ChatProvider(ctx, ref)

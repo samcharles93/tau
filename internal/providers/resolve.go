@@ -31,7 +31,7 @@ type ResolvedProvider struct {
 	Available bool   // a usable credential is present right now
 }
 
-// MenuEntry is one row in the /login provider menu: every catalog provider plus
+// MenuEntry is one row in the /provider menu: every catalog provider plus
 // any OAuth providers with stored credentials, annotated with current status so
 // the selector can render toggles and login state.
 type MenuEntry struct {
@@ -123,7 +123,7 @@ func Resolve(cfg config.Config, state State, getenv func(string) string) []Resol
 	return out
 }
 
-// Menu builds the /login provider list: every catalog entry annotated with its
+// Menu builds the /provider list: every catalog entry annotated with its
 // current enable/availability state, plus any OAuth providers that have creds
 // but somehow aren't in the catalog (defensive). getenv may be nil.
 func Menu(cfg config.Config, state State, getenv func(string) string) []MenuEntry {

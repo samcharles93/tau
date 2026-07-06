@@ -374,7 +374,7 @@ Use this section to quickly find the right files for a given change.
 - `internal/app/run.go` — `RunChat()` (interactive entry point), wires config → coordinator → TUI; starts web UI bridge
 - `internal/app/stdin.go` — `RunStdIn()` (headless/stdin entry point); requires a model to be selected
 - `internal/app/streamer.go` — `Streamer`/`NewDynamicStreamer()`/`NewStreamer()` — ai-sdk adapter implementing `agent.Streamer`; `buildRequest()` maps session state to ai-sdk request
-- `internal/app/provider_runtime.go` — `providerRuntime` — mutex-guarded holder for ai-sdk `runtime.Runtime` + provider set; `reload()` rebuilds from current state (after `/login`); `runtime()` / `snapshot()` accessors
+- `internal/app/provider_runtime.go` — `providerRuntime` — mutex-guarded holder for ai-sdk `runtime.Runtime` + provider set; `reload()` rebuilds from current state (after `/provider`); `runtime()` / `snapshot()` accessors
 - `internal/app/live_models.go` — `liveModelRefs()` / `liveModelIDs()` — queries a running provider's `/models` endpoint for local discovery (Ollama); `providerAPIKey()` resolves key from literal or env var
 - `internal/app/web.go` — `startWebUI()` — launches the WebSocket bridge and HTTP server for the browser client
 - `internal/app/platform.go` — `ResolveToken()`, `ModelsOptions`, model discovery via ai-sdk runtime
@@ -604,7 +604,7 @@ internal/tui/
 ├── inline_completions.go # Tab-completion engine
 ├── inline_events.go     # ChatEvent handling (21 event variants)
 ├── inline_views.go      # Plugin Widget union renderer
-├── inline_providers.go  # /login, /logout, provider menu
+├── inline_providers.go  # /provider (toggle, login, logout), provider menu
 ├── statusbar.go         # Priority-drop status bar
 ├── notify/              # Queue-based notification system
 │   └── notify.go        # Notification, Queue (FIFO with expiry)
@@ -738,7 +738,7 @@ func(ctx, session) (Provider, string, error) {
 
 This means `/model deepseek-v3` + provider patch takes effect on the **next turn** without restarting the coordinator.
 
-`providerRuntime.reload(ctx)` is called by the model refresher (after `/login`/`/logout`) and rebuilds the runtime with updated provider state.
+`providerRuntime.reload(ctx)` is called by the model refresher (after `/provider`) and rebuilds the runtime with updated provider state.
 
 ### Provider Classes
 

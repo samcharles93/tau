@@ -70,7 +70,7 @@ func RunChat(ctx context.Context, opts ChatOptions) error {
 	usableProviders := opts.Config.Providers
 	rt := newRuntimeForProviders(usableProviders, opts.Insecure)
 	// Wrap the runtime so it can be rebuilt live when provider state changes
-	// (e.g. after /login), keeping the streamer and refresher in sync.
+	// (e.g. after /provider), keeping the streamer and refresher in sync.
 	pr := newProviderRuntime(rt, usableProviders, opts.Insecure)
 	logStartupPhase("after-config", t0)
 
@@ -152,12 +152,12 @@ func RunChat(ctx context.Context, opts ChatOptions) error {
 	available := aggregateModelRefs(ctx, rt, opts.Insecure, usableProviders)
 
 	// When no model is selected at launch (no --model, no default_model), the
-	// session starts unselected. Point the user at /model (or /login if there
-	// is nothing to choose from yet).
+	// session starts unselected. Point the user at /model (or /provider if
+	// there is nothing to choose from yet).
 	if strings.TrimSpace(model.ID) == "" {
 		hint := "No model selected — use /model to choose one."
 		if len(available) == 0 {
-			hint = "No models available — use /login to enable a provider."
+			hint = "No models available — use /provider to enable a provider."
 		}
 		startupEvents = append(startupEvents, tauchat.ChatNotificationEvent{
 			Message:    hint,

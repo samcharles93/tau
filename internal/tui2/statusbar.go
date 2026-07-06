@@ -61,8 +61,10 @@ func renderStatusBar(width int, left, right []statusSeg) string {
 		return 0
 	}
 
-	// Drop lowest-priority right segments until they fit.
-	for leftW+gap(rightW)+rightW > width && len(rights) > 0 {
+	// Drop lowest-priority right segments only once the right side can't
+	// stand on its own within width — the left identity blob always yields
+	// (via truncation below) before any right segment is dropped.
+	for rightW+gap(rightW) > width && len(rights) > 0 {
 		idx := -1
 		for i, s := range rights {
 			if s.prio >= prioTransient {
@@ -81,6 +83,9 @@ func renderStatusBar(width int, left, right []statusSeg) string {
 	}
 
 	if rightW == 0 {
+		if leftStyled == "" {
+			return strings.Repeat(" ", width)
+		}
 		if leftW > width {
 			return truncateANSIToWidth(leftStyled, width, "…")
 		}
@@ -92,7 +97,7 @@ func renderStatusBar(width int, left, right []statusSeg) string {
 		return leftStyled + strings.Repeat(" ", pad) + rightStyled
 	}
 
-	avail := width - 1 - rightW
+	avail := width - gap(rightW) - rightW
 	if avail < 1 {
 		return truncateANSIToWidth(rightStyled, width, "…")
 	}
@@ -258,15 +263,13 @@ func truncateANSIToWidth(s string, maxWidth int, ellipsis string) string {
 	if maxWidth <= 0 {
 		return ""
 	}
-	// Strip ANSI for measurement, truncate plain, then reapply by cutting
-	// the styled version at the measured boundary.
 	plain := stripANSI(s)
-	if len(plain) <= maxWidth {
+	if visibleWidth(plain) <= maxWidth {
 		return s
 	}
-	// Simple approach: render with lipgloss truncation.
-	style := lipgloss.NewStyle().MaxWidth(maxWidth)
-	return style.Render(s)
+	budget := max(maxWidth-visibleWidth(ellipsis), 0)
+	style := lipgloss.NewStyle().MaxWidth(budget)
+	return style.Render(s) + ellipsis
 }
 
 func stripANSI(s string) string {
