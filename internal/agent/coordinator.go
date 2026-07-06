@@ -2003,6 +2003,9 @@ func (c *Coordinator) completeTurn(sessionID, requestID string, result chat.Comp
 	turnStartedAt := session.turnStartedAt
 	_ = session.state.CompleteTurnWithReasoning(result.FinishReason, result.Usage, result.ReasoningContent, at)
 	session.cancel = nil
+	session.steeringMu.Lock()
+	session.pendingSteering = nil
+	session.steeringMu.Unlock()
 	snapshot := chat.CloneChatSessionState(session.state)
 	c.mu.Unlock()
 
@@ -2095,6 +2098,9 @@ func (c *Coordinator) cancelTurn(sessionID, requestID string, at time.Time) {
 	}
 	_ = session.state.CancelTurn(at)
 	session.cancel = nil
+	session.steeringMu.Lock()
+	session.pendingSteering = nil
+	session.steeringMu.Unlock()
 	snapshot := chat.CloneChatSessionState(session.state)
 	c.mu.Unlock()
 
@@ -2133,6 +2139,9 @@ func (c *Coordinator) failTurn(sessionID, requestID string, err error, at time.T
 	}
 	_ = session.state.FailTurn(err, at)
 	session.cancel = nil
+	session.steeringMu.Lock()
+	session.pendingSteering = nil
+	session.steeringMu.Unlock()
 	snapshot := chat.CloneChatSessionState(session.state)
 	c.mu.Unlock()
 

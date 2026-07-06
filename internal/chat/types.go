@@ -1261,7 +1261,16 @@ func (s ChatSessionState) RequestMessages() []ChatMessage {
 		})
 	}
 
-	messages = append(messages, s.Messages...)
+	for _, m := range s.Messages {
+		if len(messages) > 0 && m.Role == ChatRoleUser && messages[len(messages)-1].Role == ChatRoleUser {
+			// Merge consecutive user messages to guarantee alternating roles
+			// (system, user, assistant, user, assistant...) for providers that
+			// strictly enforce it (like OpenAI/Anthropic/DeepSeek).
+			messages[len(messages)-1].Content += "\n\n" + m.Content
+		} else {
+			messages = append(messages, m)
+		}
+	}
 	return messages
 }
 

@@ -276,14 +276,12 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.width = msg.Width
 		m.height = msg.Height
 		m.viewport.SetWidth(msg.Width)
-		// Alt-screen layout: viewport fills the full terminal minus a fixed
-		// chrome reservation: header (~2 lines) + separator (1) + input
-		// (~N, minimum 1) + status bar (1). The live area (streaming text,
-		// tool boxes, completions, notifications) shares space with the
-		// viewport inside the remaining height — View() dynamically shrinks
-		// the per-frame viewport to fit shorter content.
+		// Alt-screen layout: the viewport shares the terminal with the fixed
+		// chrome (separator, multi-line input, status bar). The actual space
+		// left for the viewport is recomputed every frame in View(); here we
+		// just store an upper-bound estimate for tests and sanity checks.
 		inputLines := max(strings.Count(m.input, "\n")+1, 1)
-		reserved := 2 + 1 + inputLines + 1 // header + separator + input + status
+		reserved := 1 + inputLines + 1 // separator + input + status
 		m.maxViewportHeight = max(msg.Height-reserved, 4)
 		m.viewport.SetHeight(m.maxViewportHeight)
 		// Rebuild the glamour renderer with the new terminal width so
@@ -504,27 +502,36 @@ func (m *model) View() tea.View {
 		statusStr = m.computeStatusBar()
 	}
 
-	// 9. Calculate total height occupied by all non-viewport elements.
-	reservedHeight := lipgloss.Height(activePanelStr) +
-		lipgloss.Height(streamStr) +
-		lipgloss.Height(toolsStr) +
-		lipgloss.Height(promptStr) +
-		lipgloss.Height(compStr) +
-		lipgloss.Height(notifyStr) +
-		lipgloss.Height(sepStr) +
-		lipgloss.Height(inputStr) +
-		lipgloss.Height(statusStr)
+	// 9. Calculate total visual height occupied by all non-viewport elements.
+	reservedHeight := visualLineCount(activePanelStr) +
+		visualLineCount(streamStr) +
+		visualLineCount(toolsStr) +
+		visualLineCount(promptStr) +
+		visualLineCount(compStr) +
+		visualLineCount(notifyStr) +
+		visualLineCount(sepStr) +
+		visualLineCount(inputStr) +
+		visualLineCount(statusStr)
 
-	// 10. Adjust viewport height to exactly fill the remaining terminal height.
-	vh := m.height - reservedHeight
-	if vh < 4 {
-		vh = 4
+	// 10. Decide how much vertical space the viewport region may use.
+	availableHeight := m.height - reservedHeight
+	if availableHeight < 4 {
+		availableHeight = 4
 	}
-	m.viewport.SetHeight(vh)
+	// Shrink the viewport to the actual content height when the conversation is
+	// short, and pad above it so the input/status bar stays pinned to the
+	// bottom of the alt-screen.
+	contentHeight := m.viewport.TotalLineCount()
+	desiredHeight := max(min(contentHeight, availableHeight), 1)
+	topPadding := availableHeight - desiredHeight
+	m.viewport.SetHeight(desiredHeight)
 
 	// Assemble final view in strict top-to-bottom layout order.
 	if activePanelStr != "" {
 		sb.WriteString(activePanelStr)
+	}
+	if topPadding > 0 {
+		sb.WriteString(strings.Repeat("\n", topPadding))
 	}
 	sb.WriteString(m.viewport.View())
 	if streamStr != "" {

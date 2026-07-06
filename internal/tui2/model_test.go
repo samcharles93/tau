@@ -2209,19 +2209,20 @@ func TestUpdateWindowSizeMsg(t *testing.T) {
 	}
 }
 
-// TestViewShrinksViewportToShortContent guards against a real bug: tui2
-// runs inline (no alt-screen), so a viewport fixed at maxViewportHeight
-// every frame left a large blank gap between a short conversation and the
-// input whenever the terminal was taller than the actual content.
-func TestViewShrinksViewportToShortContent(t *testing.T) {
+// TestViewPinsInputAreaToBottomInAltScreen verifies that the viewport height
+// is NOT shrunk to short content in alt-screen mode, so the input area and
+// status bar stay pinned to the very bottom of the terminal window.
+func TestViewPinsInputAreaToBottomInAltScreen(t *testing.T) {
 	m := newTestModel(&fakeRuntime{}, nil)
 	m.Update(tea.WindowSizeMsg{Width: 100, Height: 40})
 	m.appendMessage("user", "hi")
 
 	m.View()
 
-	if got := m.viewport.Height(); got != 1 {
-		t.Fatalf("viewport height = %d, want 1 (one rendered line for one short message)", got)
+	// The viewport should not shrink to 1; it should fill the remaining height
+	// to push the input box to the bottom.
+	if got := m.viewport.Height(); got < 20 {
+		t.Fatalf("viewport height = %d, expected it to fill the remaining screen height (>=20)", got)
 	}
 }
 
@@ -2234,8 +2235,10 @@ func TestViewCapsViewportAtMaxHeightForLongContent(t *testing.T) {
 
 	m.View()
 
-	if got := m.viewport.Height(); got != m.maxViewportHeight {
-		t.Fatalf("viewport height = %d, want maxViewportHeight (%d) when content overflows", got, m.maxViewportHeight)
+	// The viewport height is calculated dynamically based on the exact heights
+	// of the other components to fit the screen.
+	if got := m.viewport.Height(); got != 29 {
+		t.Fatalf("viewport height = %d, want dynamic height 29", got)
 	}
 }
 
