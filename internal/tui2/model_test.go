@@ -2327,6 +2327,50 @@ func TestViewCapsViewportAtMaxHeightForLongContent(t *testing.T) {
 	}
 }
 
+func TestViewPreservesIdleManualScrollback(t *testing.T) {
+	m := newTestModel(&fakeRuntime{}, nil)
+	m.Update(tea.WindowSizeMsg{Width: 100, Height: 40})
+	for i := 1; i <= 80; i++ {
+		m.appendMessage("user", fmt.Sprintf("line %02d", i))
+	}
+	m.View()
+	m.viewport.ScrollUp(10)
+	offset := m.viewport.YOffset()
+
+	view := m.View()
+
+	if got := m.viewport.YOffset(); got != offset {
+		t.Fatalf("YOffset = %d, want preserved manual scrollback offset %d", got, offset)
+	}
+	if lineContaining(strings.Split(view.Content, "\n"), "line 80") >= 0 {
+		t.Fatalf("latest line should not be forced into view while idle after manual scroll:\n%s", stripANSI(view.Content))
+	}
+}
+
+func TestViewClampsIdleViewportAfterChromeShrinks(t *testing.T) {
+	m := newTestModel(&fakeRuntime{}, nil)
+	m.Update(tea.WindowSizeMsg{Width: 100, Height: 40})
+	for i := 1; i <= 80; i++ {
+		m.appendMessage("user", fmt.Sprintf("line %02d", i))
+	}
+	m.notification = "temporary notice"
+	m.View()
+	m.viewport.GotoBottom()
+	if !m.viewport.AtBottom() {
+		t.Fatal("expected initial view to start at bottom")
+	}
+
+	m.notification = ""
+	view := m.View()
+
+	if m.viewport.PastBottom() {
+		t.Fatalf("viewport remained past bottom after chrome shrank: offset=%d", m.viewport.YOffset())
+	}
+	if lineContaining(strings.Split(view.Content, "\n"), "line 80") < 0 {
+		t.Fatalf("latest line should remain visible after clamping to bottom:\n%s", stripANSI(view.Content))
+	}
+}
+
 func lineContaining(lines []string, needle string) int {
 	for i, line := range lines {
 		if strings.Contains(stripANSI(line), needle) {

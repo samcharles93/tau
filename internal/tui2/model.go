@@ -520,7 +520,7 @@ func (m *model) View() tea.View {
 	viewportHeight := min(contentHeight, availableHeight)
 	topPadding := availableHeight - viewportHeight
 	m.viewport.SetHeight(viewportHeight)
-	if m.inResponse {
+	if m.inResponse || m.viewport.PastBottom() {
 		m.viewport.GotoBottom()
 	}
 
