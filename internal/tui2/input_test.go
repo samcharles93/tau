@@ -195,6 +195,29 @@ func TestInputAreaTitleReflectsAgentMode(t *testing.T) {
 	}
 }
 
+func TestInputAreaShowsModeDescriptionForEmptyAgentMode(t *testing.T) {
+	m := newTestModel(&fakeRuntime{}, nil)
+	m.width = 80
+
+	m.handleKey(key(tea.KeyTab, tea.ModShift))
+
+	name, args := slashNameAndArgs(m.input)
+	entry, ok := slashIndex[name]
+	if !ok || !entry.isAgent || args != "" {
+		t.Fatalf("input = %q, want empty agent mode scaffold", m.input)
+	}
+	plain := stripANSI(m.renderInputArea())
+	if !strings.Contains(plain, entry.description) {
+		t.Fatalf("input area = %q, want mode description %q", plain, entry.description)
+	}
+
+	m.handleKey(charKey('x'))
+	plain = stripANSI(m.renderInputArea())
+	if strings.Contains(plain, entry.description) {
+		t.Fatalf("input area = %q, want description hidden after typing", plain)
+	}
+}
+
 func TestUpDownRecallHistoryAtBufferEdgesElseMoveVertically(t *testing.T) {
 	m := newTestModel(&fakeRuntime{}, nil)
 	m.history = []string{"first prompt", "second prompt"}

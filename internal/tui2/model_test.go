@@ -585,6 +585,38 @@ func TestHandleChatEventToolExecutionStarted(t *testing.T) {
 	}
 }
 
+func TestHandleChatEventToolExecutionStartedCreatesMissingTool(t *testing.T) {
+	m := newTestModel(&fakeRuntime{}, nil)
+
+	m.handleChatEvent(tauchat.ChatToolExecutionStartedEvent{
+		CallID:           "bash-1",
+		ToolName:         "shell",
+		ArgumentsSummary: "git status",
+	})
+	m.handleChatEvent(tauchat.ChatToolOutputEvent{CallID: "bash-1", Chunk: "On branch main"})
+	m.handleChatEvent(tauchat.ChatToolExecutionCompletedEvent{
+		CallID:        "bash-1",
+		ResultSummary: "On branch main",
+	})
+
+	if len(m.tools) != 1 {
+		t.Fatalf("expected 1 tool, got %d", len(m.tools))
+	}
+	tool := m.tools[0]
+	if tool.name != "shell" {
+		t.Fatalf("tool name = %q, want shell", tool.name)
+	}
+	if tool.args != "git status" {
+		t.Fatalf("tool args = %q, want git status", tool.args)
+	}
+	if tool.status != "done" {
+		t.Fatalf("tool status = %q, want done", tool.status)
+	}
+	if tool.result != "On branch main" {
+		t.Fatalf("tool result = %q, want On branch main", tool.result)
+	}
+}
+
 func TestHandleChatEventToolExecutionCompletedDone(t *testing.T) {
 	m := newTestModel(&fakeRuntime{}, nil)
 	m.tools = []toolState{{id: "t1", status: "running"}}
@@ -2372,15 +2404,15 @@ func TestViewClampsIdleViewportAfterChromeShrinks(t *testing.T) {
 	}
 }
 
-func TestViewEnablesMouseWheelEvents(t *testing.T) {
+func TestViewKeepsMouseTrackingDisabledForSelection(t *testing.T) {
 	m := newTestModel(&fakeRuntime{}, nil)
 	m.Update(tea.WindowSizeMsg{Width: 80, Height: 24})
 	m.appendMessage("user", "hello")
 
 	view := m.View()
 
-	if view.MouseMode != tea.MouseModeCellMotion {
-		t.Fatalf("MouseMode = %v, want MouseModeCellMotion", view.MouseMode)
+	if view.MouseMode != tea.MouseModeNone {
+		t.Fatalf("MouseMode = %v, want MouseModeNone", view.MouseMode)
 	}
 }
 
@@ -2563,15 +2595,51 @@ func TestRenderInputAreaMultiLine(t *testing.T) {
 	}
 }
 
+func TestRenderInputAreaWrapsLongLineInsideBox(t *testing.T) {
+	m := newTestModel(&fakeRuntime{}, nil)
+	m.width = 32
+	m.input = "this is a long message that should wrap inside the input box"
+	m.inputCursor = len([]rune(m.input))
+
+	area := m.renderInputArea()
+	plain := stripANSI(area)
+	lines := strings.Split(plain, "\n")
+	if len(lines) <= 5 {
+		t.Fatalf("expected wrapped input area to grow vertically, got %d lines:\n%s", len(lines), plain)
+	}
+	for _, line := range lines {
+		if visibleWidth(line) > m.width {
+			t.Fatalf("input line width = %d, want <= %d: %q\n%s", visibleWidth(line), m.width, line, plain)
+		}
+	}
+	if strings.Contains(plain, "…") {
+		t.Fatalf("input should wrap instead of truncate with ellipsis:\n%s", plain)
+	}
+}
+
+func TestRenderInputAreaWrapsCursorOntoContinuationLine(t *testing.T) {
+	m := newTestModel(&fakeRuntime{}, nil)
+	m.width = 18
+	m.input = "abcdefghijklmnop"
+	m.inputCursor = 15
+
+	plain := stripANSI(m.renderInputArea())
+	if !strings.Contains(plain, "  op") {
+		t.Fatalf("expected wrapped continuation line with cursor cell, got:\n%s", plain)
+	}
+	for _, line := range strings.Split(plain, "\n") {
+		if visibleWidth(line) > m.width {
+			t.Fatalf("input line width = %d, want <= %d: %q\n%s", visibleWidth(line), m.width, line, plain)
+		}
+	}
+}
+
 func TestRenderLineWithCursor(t *testing.T) {
 	ln := []rune("hello")
 	col := 2
 	out := stripANSI(renderLineWithCursor(ln, col))
-	if !strings.HasPrefix(out, "he") {
-		t.Fatalf("before cursor: got %q", out)
-	}
-	if !strings.Contains(out, "llo") {
-		t.Fatalf("after cursor: got %q", out)
+	if out != "hello" {
+		t.Fatalf("cursor over character = %q, want %q", out, "hello")
 	}
 }
 
@@ -2588,8 +2656,8 @@ func TestRenderLineWithCursorAtStart(t *testing.T) {
 	ln := []rune("abc")
 	col := 0
 	out := stripANSI(renderLineWithCursor(ln, col))
-	if out != " abc" {
-		t.Fatalf("cursor at start = %q, want ' abc'", out)
+	if out != "abc" {
+		t.Fatalf("cursor at start = %q, want 'abc'", out)
 	}
 }
 

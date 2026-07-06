@@ -288,7 +288,7 @@ func (m *model) cmdHelp(_ string) tea.Cmd {
 	b.WriteString("\nScreen:")
 	fmt.Fprintf(&b, "\n  %-38s %s", "Ctrl+L", "clear the screen (keeps the session)")
 	fmt.Fprintf(&b, "\n  %-38s %s", "Ctrl+Shift+G", "copy the assistant's last response")
-	fmt.Fprintf(&b, "\n  %-38s %s", "Mouse wheel", "scroll through conversation history")
+	fmt.Fprintf(&b, "\n  %-38s %s", "PageUp / PageDown", "scroll through conversation history")
 	fmt.Fprintf(&b, "\n  %-38s %s", "Tab", "cycle tab-completions when dropdown is visible")
 
 	m.appendMessage("system", b.String())

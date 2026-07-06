@@ -544,10 +544,10 @@ func (m *model) View() tea.View {
 	// when the user has actually looked away — matches the legacy
 	// engine.Focused() gate in internal/tui/inline_events.go.
 	v.ReportFocus = true
-	// Enable click, release, and wheel events. Update already maps wheel
-	// messages to viewport scrolling; without this mode the terminal never
-	// sends those events to Bubble Tea.
-	v.MouseMode = tea.MouseModeCellMotion
+	// Keep terminal-native text selection available. Bubble Tea's mouse modes
+	// are global terminal tracking modes, so enabling wheel events also claims
+	// normal drag selection.
+	v.MouseMode = tea.MouseModeNone
 	return v
 }
 
@@ -929,20 +929,51 @@ func (m *model) renderInputArea() string {
 	lines := m.splitInputLines()
 	curLine, curCol := m.cursorLineCol(lines)
 
-	body := make([]string, len(lines))
+	boxWidth := m.width
+	if boxWidth <= 0 {
+		boxWidth = 80
+	}
+	innerWidth := max(boxWidth-2, 1)
+	body := make([]string, 0, len(lines))
 	for i, ln := range lines {
 		prefix := inputPromptStyle.Render("> ")
 		if m.inResponse {
 			prefix = inputSteerPromptStyle.Render("(steer) > ")
 		}
-		if i > 0 {
-			prefix = strings.Repeat(" ", len([]rune(stripANSI(prefix))))
+		prefixWidth := visibleWidth(stripANSI(prefix))
+		contentWidth := max(innerWidth-prefixWidth, 1)
+		continuationPrefix := strings.Repeat(" ", prefixWidth)
+
+		chunks := wrapInputLine(ln, contentWidth)
+		if i == curLine && curCol == len(ln) && len(chunks) > 0 {
+			last := chunks[len(chunks)-1]
+			if visibleWidth(string(ln[last.start:last.end])) >= contentWidth {
+				chunks = append(chunks, inputLineChunk{start: len(ln), end: len(ln)})
+			}
 		}
-		if i == curLine {
-			body[i] = prefix + renderLineWithCursor(ln, curCol)
-		} else {
-			body[i] = prefix + inputStyle.Render(string(ln))
+		for j, chunk := range chunks {
+			rowPrefix := prefix
+			if i > 0 || j > 0 {
+				rowPrefix = continuationPrefix
+			}
+
+			hasCursor := i == curLine && curCol >= chunk.start && curCol < chunk.end
+			if i == curLine && curCol == len(ln) && j == len(chunks)-1 {
+				hasCursor = true
+			}
+			if hasCursor {
+				body = append(body, rowPrefix+renderLineWithCursor(ln[chunk.start:chunk.end], curCol-chunk.start))
+			} else {
+				body = append(body, rowPrefix+inputStyle.Render(string(ln[chunk.start:chunk.end])))
+			}
 		}
+	}
+	if desc := m.inputModePlaceholder(); desc != "" {
+		prefixWidth := visibleWidth(stripANSI(inputPromptStyle.Render("> ")))
+		if m.inResponse {
+			prefixWidth = visibleWidth(stripANSI(inputSteerPromptStyle.Render("(steer) > ")))
+		}
+		body = append(body, strings.Repeat(" ", prefixWidth)+inputPlaceholderStyle.Render(desc))
 	}
 
 	title := m.inputModeTitle()
@@ -956,6 +987,50 @@ func (m *model) renderInputArea() string {
 		res = renderInputBox(m.width, "steer", body, hint)
 	}
 	return res
+}
+
+type inputLineChunk struct {
+	start int
+	end   int
+}
+
+func wrapInputLine(ln []rune, maxWidth int) []inputLineChunk {
+	if maxWidth < 1 {
+		maxWidth = 1
+	}
+	if len(ln) == 0 {
+		return []inputLineChunk{{start: 0, end: 0}}
+	}
+
+	var chunks []inputLineChunk
+	start, width := 0, 0
+	for i, r := range ln {
+		rw := max(visibleWidth(string(r)), 1)
+		if width > 0 && width+rw > maxWidth {
+			chunks = append(chunks, inputLineChunk{start: start, end: i})
+			start = i
+			width = 0
+		}
+		width += rw
+	}
+	chunks = append(chunks, inputLineChunk{start: start, end: len(ln)})
+	return chunks
+}
+
+func (m *model) inputModePlaceholder() string {
+	text := m.input
+	if !strings.HasPrefix(text, "/") || !strings.HasSuffix(text, " ") {
+		return ""
+	}
+	name, args := slashNameAndArgs(text)
+	if args != "" {
+		return ""
+	}
+	entry, ok := slashIndex[name]
+	if !ok || !entry.isAgent {
+		return ""
+	}
+	return entry.description
 }
 
 func (m *model) inputModeTitle() string {
@@ -1081,8 +1156,12 @@ func renderInputBoxLine(innerWidth int, line string) string {
 func renderLineWithCursor(ln []rune, col int) string {
 	col = min(col, len(ln))
 	before := inputStyle.Render(string(ln[:col]))
-	after := inputStyle.Render(string(ln[col:]))
-	return before + inputCursorStyle.Render(" ") + after
+	if col == len(ln) {
+		return before + inputCursorStyle.Render(" ")
+	}
+	cursor := inputCursorStyle.Render(string(ln[col]))
+	after := inputStyle.Render(string(ln[col+1:]))
+	return before + cursor + after
 }
 
 func (m *model) recallHistory(delta int) tea.Cmd {
@@ -1364,6 +1443,7 @@ func (m *model) handleChatEvent(evt tauchat.ChatEvent) tea.Cmd {
 		m.upsertToolCall(e.CallID, e.ToolName, e.ArgumentsSummary)
 
 	case tauchat.ChatToolExecutionStartedEvent:
+		m.upsertToolCall(e.CallID, e.ToolName, e.ArgumentsSummary)
 		m.setToolStatus(e.CallID, "running")
 
 	case tauchat.ChatToolExecutionCompletedEvent:
@@ -2706,6 +2786,7 @@ var (
 	// Styled input prompt and divider styles.
 	inputPromptStyle      = lipgloss.NewStyle().Foreground(themeHex(theme.CommandFG)).Bold(true)
 	inputSteerPromptStyle = lipgloss.NewStyle().Foreground(themeHex(theme.ToneWarn)).Bold(true)
+	inputPlaceholderStyle = lipgloss.NewStyle().Foreground(themeHex(theme.ToneMuted)).Italic(true)
 	inputBoxStyle         = lipgloss.NewStyle().Foreground(themeHex(theme.ToneMuted))
 	separatorStyle        = lipgloss.NewStyle().Foreground(themeHex(theme.ToneMuted))
 
