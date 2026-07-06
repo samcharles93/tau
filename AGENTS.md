@@ -281,7 +281,7 @@ Use this section to quickly find the right files for a given change.
 #### Experimental Bubbletea v2 TUI (`internal/tui2/`)
 
 - `internal/tui2/run.go` — `Run()` entry point. Creates `"tui2"` bus client, subscribes `ChatEvent`, wires metrics tracking (UsageTracker + FileSubscriber), calls `OnReady` for deferred plugin loading, creates and runs a `tea.NewProgram`.
-- `internal/tui2/model.go` — Root `model` implementing `tea.Model`. Handles input via `KeyPressMsg`, bridges events via the channel-drain-rearm pattern (`readNextEvent` → `chatEventMsg` → re-arm), renders with lipgloss v2 styles in `View()`. Currently covers 12 of 24 ChatEvent variants; full parity is tracked in `reference/tui-migration/parity-checklist.md`.
+- `internal/tui2/model.go` — Root `model` implementing `tea.Model`. Handles input via `KeyPressMsg`, bridges events via the channel-drain-rearm pattern (`readNextEvent` → `chatEventMsg` → re-arm), renders with lipgloss v2 styles in `View()`. Handles all 24 ChatEvent variants, all ~20 slash commands, completions, status bar, interactive prompts, plugin views, session management, steering, bash mode, and input history.
 - **Flag gating**: `--new-tui` flag in `internal/cli/root.go` → `ChatOptions.NewTUI` → `TUIConfig.NewTUI` → `internal/tui/run.go` branches to `tui2.Run()`.
 - **Circular dependency avoidance**: `internal/tui/run.go` imports `internal/tui2`, but `internal/tui2` does NOT import `internal/tui`. Parameters are passed individually (not via `TUIConfig`).
 
@@ -614,14 +614,14 @@ internal/tui/
 
 ```tree
 internal/tui2/
-├── inline_chat.go       # inlineChat — root component, event loop, rendering, tool display
-├── run.go               # Run() entry point, delegates to RunInline
-├── run_taui.go          # RunInline — taui bootstrap, event subscription, cleanup
-├── api.go               # TUIConfig, ModelRefresher
-├── inline_commands.go   # Slash command table (/model, /system, /session, /debug, etc.)
-├── inline_completions.go # Tab-completion engine (commands, models, args)
-├── notify/              # Queue-based notification system
-│   └── notify.go        # Notification, Queue (FIFO with expiry)
+├── run.go               # Run() entry point — bus clients, metrics, program start
+├── model.go              # Root Bubbletea model — event handling (all 24 ChatEvent variants), input, rendering
+├── commands.go           # Slash command table and dispatch (all ~20 commands from legacy)
+├── completions.go        # Tab-completion engine (commands, models, sessions, effort, providers)
+├── fuzzy.go              # Fuzzy matching for completion filtering
+├── statusbar.go          # Rich segmented status bar with priority-drop and live metrics
+├── views.go              # Plugin widget → lipgloss/v2 translation (all 8 widget kinds)
+├── *.go (test files)     # Table-driven tests for commands, completions, models, status bar, fuzzy matching
 ```
 
 ### Lifecycle
