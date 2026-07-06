@@ -5,6 +5,7 @@ import (
 	"math"
 	"strconv"
 	"strings"
+	"time"
 
 	"charm.land/lipgloss/v2"
 	"github.com/samcharles93/tau/internal/tui/notify"
@@ -147,10 +148,12 @@ func (m *model) computeStatusBar() string {
 	if m.reasoningEffort != "" && m.reasoningEffort != "auto" {
 		left = append(left, statusSeg{text: m.reasoningEffort})
 	}
-	// Steering indicator.
+	// Steering indicator — animated dots cycling 3 frames every 300ms.
 	if m.steering {
+		dots := int(time.Now().UnixMilli()/300) % 4
+		steerText := "steering" + strings.Repeat(".", dots)
 		left = append(left, statusSeg{
-			text:  "steering…",
+			text:  steerText,
 			style: func(s string) string { return termkit.FgOnly(s, termkit.ColorAmber) },
 		})
 	}

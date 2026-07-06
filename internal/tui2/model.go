@@ -114,8 +114,9 @@ type model struct {
 	sessionSummaries []tauchat.SessionSummary
 
 	// Turn management.
-	turnQueue  []string // queued prompts behind a running turn
-	lastSubmit time.Time
+	turnQueue    []string // queued prompts behind a running turn
+	lastSubmit   time.Time
+	spinnerFrame int // frame index for working indicator animation
 
 	// pendingQuit is the time of the last unanswered Ctrl+C (idle, nothing to
 	// cancel) — a second Ctrl+C within quitConfirmWindow confirms the quit,
@@ -186,6 +187,19 @@ func newModel(
 		extensionCommands: make(map[string]tauchat.ExtensionCommand),
 		panels:            make(map[string]pluginPanel),
 	}
+}
+
+// --- spinner ---------------------------------------------------------------
+
+// spinnerFrames are the Unicode braille dots cycled through at 80ms —
+// mirrors the legacy TUI's spinnerLoop (internal/tui/inline_chat.go).
+var spinnerFrames = []string{"⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"}
+
+// spinTick returns a tea.Cmd that fires a tickMsg after 80ms.
+func spinTick() tea.Cmd {
+	return tea.Tick(80*time.Millisecond, func(t time.Time) tea.Msg {
+		return tickMsg{t: t}
+	})
 }
 
 // --- Bubbletea model interface ---------------------------------------------
@@ -295,6 +309,13 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.appendMessage("system", line)
 		return m, nil
 
+	case tickMsg:
+		m.spinnerFrame++
+		if m.inResponse {
+			return m, spinTick()
+		}
+		return m, nil
+
 	case startupMsg:
 		m.sessionID = msg.sessionID
 		m.modelName = msg.modelName
@@ -332,6 +353,15 @@ func (m *model) View() tea.View {
 		m.viewport.SetHeight(max(min(m.viewport.TotalLineCount(), m.maxViewportHeight), 1))
 	}
 	sb.WriteString(m.viewport.View())
+
+	// Spinner / working indicator — shown when a turn is running but no
+	// streaming text or tool calls are visible yet (model warm-up).
+	// The spinner cycles through a frame array on each tea.Tick (80ms);
+	// see ChatResponseStartedEvent handler.
+	if m.inResponse && len(m.tools) == 0 && m.streaming == "" && m.reasoning == "" {
+		sb.WriteString(spinnerStyle.Render(spinnerFrames[m.spinnerFrame%len(spinnerFrames)] + " thinking…"))
+		sb.WriteString("\n")
+	}
 
 	// Streaming text (in-progress assistant response).
 	if m.reasoning != "" && m.showReasoning {
@@ -1027,6 +1057,8 @@ func (m *model) handleChatEvent(evt tauchat.ChatEvent) tea.Cmd {
 		m.reasoning = ""
 		m.tools = nil
 		m.inResponse = true
+		m.spinnerFrame = 0
+		return spinTick()
 
 	case tauchat.ChatResponseDeltaEvent:
 		m.streaming += e.Delta
@@ -1397,7 +1429,17 @@ func renderLine(role, content string) string {
 }
 
 func renderTool(t toolState) string {
-	line := fmt.Sprintf("  %s", t.name)
+	style := toolStyleForStatus(t.name, t.status)
+
+	// Build the label: tool name, or for skill tool, parse JSON args for
+	// the human-readable skill name.
+	label := t.name
+	if t.name == "skill" {
+		label = skillLabelFromArgs(t.args)
+	}
+
+	line := fmt.Sprintf("  %s", label)
+
 	// N11: render a short result summary when available.
 	const resultLimit = 60
 	if t.result != "" {
@@ -1407,7 +1449,57 @@ func renderTool(t toolState) string {
 		}
 		line += " — " + summary
 	}
-	return toolStyle.Render(line)
+	return style.Render(line)
+}
+
+// toolStyleForStatus returns the lipgloss style for a tool's current lifecycle
+// state — warm peach for pending/running, green for done, red for error —
+// with lilac variants for the Skill tool to keep it visually distinct.
+func toolStyleForStatus(toolName, status string) lipgloss.Style {
+	skill := toolName == "skill"
+	switch status {
+	case "done":
+		if skill {
+			return skillSuccessStyle
+		}
+		return toolSuccessStyle
+	case "error":
+		if skill {
+			return skillFailedStyle
+		}
+		return toolErrorStyle
+	default: // pending, running
+		if skill {
+			return skillRunningStyle
+		}
+		return toolRunningStyle
+	}
+}
+
+// skillLabelFromArgs extracts a human-readable skill name from tool arguments
+// (JSON object with a "name": key). Falls back to "skill" when unparseable.
+func skillLabelFromArgs(args string) string {
+	// args arrives as concatenated JSON fragments via upsertToolCall; find
+	// the JSON key `"name":` (with colon) to avoid matching `"no-name"`.
+	if idx := strings.LastIndex(args, "}"); idx >= 0 {
+		prefix := args[:idx+1]
+		delim := "\"name\":"
+		for _, part := range strings.Split(prefix, delim) {
+			if len(part) == 0 {
+				continue
+			}
+			// part starts right after `"name":` — trim leading whitespace
+			// and the opening quote of the value.
+			rest := strings.TrimSpace(part)
+			if len(rest) > 0 && rest[0] == '"' {
+				rest = rest[1:]
+			}
+			if i := strings.IndexByte(rest, '"'); i >= 0 {
+				return "skill: " + rest[:i]
+			}
+		}
+	}
+	return "skill"
 }
 
 // sessionSummariesText renders the /session list output — mirrors
@@ -1525,6 +1617,13 @@ func formatDurationCompact(ms int64) string {
 // chatEventMsg wraps a ChatEvent for delivery to the Bubbletea update loop.
 type chatEventMsg struct {
 	event tauchat.ChatEvent
+}
+
+// tickMsg is delivered by tea.Tick to drive timed animations (spinner,
+// steering dots). Each tick bumps the spinner frame and returns another
+// tick while the model is inResponse.
+type tickMsg struct {
+	t time.Time
 }
 
 // chatEventsClosedMsg is delivered when the subscriber channel closes, either
@@ -1871,7 +1970,6 @@ var (
 	assistantColor = themeHex(theme.ToolSuccess.FG)
 	reasoningColor = themeHex(theme.ToneWarn)
 	streamColor    = lipgloss.Color("#FFFFFF") // no theme equivalent
-	toolColor      = lipgloss.Color("#FFDC00") // no theme equivalent
 	notifyColor    = themeHex(theme.ToolFailed.FG)
 	inputColor     = lipgloss.Color("#7FDBFF") // no theme equivalent
 
@@ -1880,14 +1978,14 @@ var (
 	assistantStyle    = lipgloss.NewStyle().Foreground(assistantColor)
 	reasoningStyle    = lipgloss.NewStyle().Foreground(reasoningColor).Italic(true)
 	streamStyle       = lipgloss.NewStyle().Foreground(streamColor)
-	toolStyle         = lipgloss.NewStyle().Foreground(toolColor)
 	notifyStyle       = lipgloss.NewStyle().Foreground(notifyColor).Bold(true)
 	inputStyle        = lipgloss.NewStyle().Foreground(inputColor)
 	continuationStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("#555555")).PaddingLeft(6)
 
 	// inputCursorStyle is the block-cursor background — matches the default
 	// mid-grey pkg/taui/lineinput.go uses (\x1b[48;2;128;134;150m).
-	inputCursorStyle = lipgloss.NewStyle().Background(lipgloss.Color("#808696"))
+	// #808696 = R=128 G=134 B=150 = theme.ToneMuted.
+	inputCursorStyle = lipgloss.NewStyle().Background(themeHex(theme.ToneMuted))
 
 	// Prompt / completion styles.
 	promptBoxStyle       = lipgloss.NewStyle().Foreground(themeHex(theme.ToneWarn))
@@ -1901,4 +1999,15 @@ var (
 	compDescStyle        = lipgloss.NewStyle().Foreground(themeHex(theme.ToneMuted))
 	compMoreStyle        = lipgloss.NewStyle().Foreground(themeHex(theme.ToneMuted)).Italic(true)
 	panelStyle           = lipgloss.NewStyle().Foreground(themeHex(theme.CommandFG))
+	spinnerStyle         = lipgloss.NewStyle().Foreground(themeHex(theme.ToneWarn)).Italic(true)
+
+	// Tool status styles — per-state foreground colors for tool call rows.
+	// Use theme colors matching legacy's inline_chat.go tool box backgrounds.
+	toolRunningStyle = lipgloss.NewStyle().Foreground(themeHex(theme.ToolRunning.FG))
+	toolSuccessStyle = lipgloss.NewStyle().Foreground(themeHex(theme.ToolSuccess.FG))
+	toolErrorStyle   = lipgloss.NewStyle().Foreground(themeHex(theme.ToolFailed.FG))
+	// Skill tool gets lilac variants — same as theme.SkillRunning/SkillSuccess/SkillFailed.
+	skillRunningStyle = lipgloss.NewStyle().Foreground(themeHex(theme.SkillRunning.FG))
+	skillSuccessStyle = lipgloss.NewStyle().Foreground(themeHex(theme.SkillSuccess.FG))
+	skillFailedStyle  = lipgloss.NewStyle().Foreground(themeHex(theme.SkillFailed.FG))
 )

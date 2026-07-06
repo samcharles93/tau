@@ -2804,3 +2804,52 @@ func TestDispatchPrintableNonPrintableIgnored(t *testing.T) {
 	m.dispatchKey(tea.KeyPressMsg{Code: 999})
 	// No crash expected.
 }
+
+// --- toolStyleForStatus ---
+
+func TestToolStyleForStatus(t *testing.T) {
+	tests := []struct {
+		name, toolName, status string
+	}{
+		{"read running", "read", "running"},
+		{"read pending", "read", "pending"},
+		{"read done", "read", "done"},
+		{"read error", "read", "error"},
+		{"skill running", "skill", "running"},
+		{"skill done", "skill", "done"},
+		{"skill error", "skill", "error"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			s := toolStyleForStatus(tt.toolName, tt.status)
+			// Render a small string through the style — smoke test that it
+			// doesn't panic and emits output.
+			out := s.Render("x")
+			if out == "" {
+				t.Error("rendered output is empty")
+			}
+		})
+	}
+}
+
+// --- skillLabelFromArgs ---
+
+func TestSkillLabelFromArgs(t *testing.T) {
+	tests := []struct {
+		args string
+		want string
+	}{
+		{`{"name":"my-skill"}`, "skill: my-skill"},
+		{`{"name":"code-review","other":true}`, "skill: code-review"},
+		{"", "skill"},
+		{"not json", "skill"},
+		{`{"no-name":"here"}`, "skill"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.args, func(t *testing.T) {
+			if got := skillLabelFromArgs(tt.args); got != tt.want {
+				t.Errorf("skillLabelFromArgs(%q) = %q, want %q", tt.args, got, tt.want)
+			}
+		})
+	}
+}
