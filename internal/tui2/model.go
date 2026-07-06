@@ -412,10 +412,6 @@ func (m *model) View() tea.View {
 	_ = m.lastClickY // reserved for future mouse hit-testing (Phase 1)
 	var sb strings.Builder
 
-	// Header.
-	sb.WriteString(headerStyle.Render(" tau — Bubbletea v2 (experimental)"))
-	sb.WriteString("\n\n")
-
 	// Plugin panel (if active).
 	if p := m.activePanel(); p != nil {
 		sb.WriteString(panelStyle.Render("┌─ " + p.title + " ─┐"))
@@ -502,7 +498,7 @@ func (m *model) View() tea.View {
 	if sepWidth <= 0 {
 		sepWidth = 80
 	}
-	sb.WriteString(strings.Repeat("─", sepWidth))
+	sb.WriteString(separatorStyle.Render(strings.Repeat("─", sepWidth)))
 	sb.WriteString("\n")
 
 	// Input area.
@@ -512,8 +508,6 @@ func (m *model) View() tea.View {
 		} else {
 			sb.WriteString(m.renderInputArea())
 		}
-	} else if m.inResponse && !m.steering {
-		sb.WriteString(inputStyle.Render("waiting for response…"))
 	} else {
 		sb.WriteString(m.renderInputArea())
 	}
@@ -592,6 +586,14 @@ func (m *model) dispatchKey(msg tea.KeyPressMsg) tea.Cmd {
 
 	case "ctrl+shift+g":
 		return m.cmdCopy("")
+
+	case "pgup":
+		m.viewport.HalfPageUp()
+		return nil
+
+	case "pgdown":
+		m.viewport.HalfPageDown()
+		return nil
 
 	case "ctrl+l":
 		m.clearScreen()
@@ -911,9 +913,12 @@ func (m *model) renderInputArea() string {
 
 	out := make([]string, len(lines))
 	for i, ln := range lines {
-		prefix := "> "
+		prefix := inputPromptStyle.Render("> ")
+		if m.inResponse {
+			prefix = inputSteerPromptStyle.Render("(steer) > ")
+		}
 		if i > 0 {
-			prefix = "  "
+			prefix = strings.Repeat(" ", len([]rune(stripANSI(prefix))))
 		}
 		if i == curLine {
 			out[i] = prefix + renderLineWithCursor(ln, curCol)
@@ -921,7 +926,17 @@ func (m *model) renderInputArea() string {
 			out[i] = prefix + inputStyle.Render(string(ln))
 		}
 	}
-	return strings.Join(out, "\n")
+
+	res := strings.Join(out, "\n")
+	if m.inResponse {
+		ctrlC := lipgloss.NewStyle().Foreground(themeHex(theme.ToneError)).Bold(true).Render("Ctrl+C")
+		enter := lipgloss.NewStyle().Foreground(themeHex(theme.CommandFG)).Bold(true).Render("Enter")
+		hint := lipgloss.NewStyle().Foreground(themeHex(theme.ToneMuted)).Italic(true).Render(
+			fmt.Sprintf("  [%s] to stop | Type and press [%s] to steer/redirect the model", ctrlC, enter),
+		)
+		res = hint + "\n" + res
+	}
+	return res
 }
 
 // renderLineWithCursor renders one logical line with a highlighted cell at
@@ -983,8 +998,15 @@ func (m *model) submitInput() tea.Cmd {
 		return m.resolvePrompt(m.input)
 	}
 
-	// N6: guard against double-submit while a response is in-flight.
-	if m.inResponse || m.bashRunning {
+	// If a response is in-flight, any Enter press acts as a steering command!
+	if m.inResponse {
+		if strings.TrimSpace(m.input) == "" {
+			return nil
+		}
+		return m.handleSteer()
+	}
+
+	if m.bashRunning {
 		m.clearInput()
 		return m.setNotification("still waiting for a response…")
 	}
@@ -1895,8 +1917,8 @@ func (m *model) renderToolBox(t toolState, expanded bool, _ int) string {
 			// Fall through to plain-text rendering if glamour failed.
 		}
 
-		resultLines := strings.Split(t.result, "\n")
-		for _, line := range resultLines {
+		resultLines := strings.SplitSeq(t.result, "\n")
+		for line := range resultLines {
 			innerContent.WriteString(line + "\n")
 		}
 		// Render inner box and append each line to body.
@@ -2475,8 +2497,6 @@ func themeHex(c termkit.Color) color.Color {
 }
 
 var (
-	// Brand color — no exact theme match.
-	headerColor = lipgloss.Color("#7B2FBE")
 	// Semantic colors sourced from internal/theme.
 	userColor      = themeHex(theme.CommandFG)
 	assistantColor = themeHex(theme.ToolSuccess.FG)
@@ -2485,7 +2505,6 @@ var (
 	notifyColor    = themeHex(theme.ToolFailed.FG)
 	inputColor     = lipgloss.Color("#7FDBFF") // no theme equivalent
 
-	headerStyle       = lipgloss.NewStyle().Bold(true).Foreground(headerColor).Padding(0, 1)
 	userStyle         = lipgloss.NewStyle().Foreground(userColor)
 	assistantStyle    = lipgloss.NewStyle().Foreground(assistantColor)
 	reasoningStyle    = lipgloss.NewStyle().Foreground(reasoningColor).Italic(true)
@@ -2527,6 +2546,11 @@ var (
 	skillRunningStyle = lipgloss.NewStyle().Foreground(themeHex(theme.SkillRunning.FG))
 	skillSuccessStyle = lipgloss.NewStyle().Foreground(themeHex(theme.SkillSuccess.FG))
 	skillFailedStyle  = lipgloss.NewStyle().Foreground(themeHex(theme.SkillFailed.FG))
+
+	// Styled input prompt and divider styles.
+	inputPromptStyle      = lipgloss.NewStyle().Foreground(themeHex(theme.CommandFG)).Bold(true)
+	inputSteerPromptStyle = lipgloss.NewStyle().Foreground(themeHex(theme.ToneWarn)).Bold(true)
+	separatorStyle        = lipgloss.NewStyle().Foreground(themeHex(theme.ToneMuted))
 
 	// Phase 1: tool box styles — background-colored bordered boxes for each
 	// lifecycle state. Width is set dynamically at render time via .Width().

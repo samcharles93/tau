@@ -1053,18 +1053,31 @@ func TestSubmitInputEmpty(t *testing.T) {
 }
 
 func TestSubmitInputDuringResponse(t *testing.T) {
-	m := newTestModel(&fakeRuntime{}, nil)
+	rt := &fakeRuntime{}
+	m := newTestModel(rt, nil)
 	m.inResponse = true
 	m.input = "hello"
 
-	m.submitInput()
+	drainCmd(m.submitInput())
 
-	if m.notification == "" {
-		t.Fatal("expected notification about waiting for response")
+	// Should not show a waiting notification; should instead send a steer command.
+	if m.notification != "" {
+		t.Fatalf("unexpected notification: %q", m.notification)
 	}
 	// Input should be cleared.
 	if m.input != "" {
 		t.Fatalf("input = %q, want empty", m.input)
+	}
+	// Verify that SteerChatPromptCommand was sent.
+	if len(rt.sent) != 1 {
+		t.Fatalf("sent = %d, want 1 command", len(rt.sent))
+	}
+	cmd, ok := rt.sent[0].(tauchat.SteerChatPromptCommand)
+	if !ok {
+		t.Fatalf("sent command = %T, want SteerChatPromptCommand", rt.sent[0])
+	}
+	if cmd.Prompt != "hello" {
+		t.Fatalf("steer prompt = %q, want 'hello'", cmd.Prompt)
 	}
 }
 
