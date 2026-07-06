@@ -72,7 +72,7 @@ func (m *model) rawCandidateGroups() []compGroup {
 
 	// Still typing the command name.
 	if len(fields) <= 1 && !endsWithSpace {
-		return m.commandGroups()
+		return m.commandGroups(m.completionToken())
 	}
 
 	// Completing an argument.
@@ -209,7 +209,7 @@ func (m *model) completionRows() ([]compRow, string) {
 // commandGroups returns the full, unfiltered command/agent/extension
 // candidate pool — completionRows applies fuzzy filtering against whatever
 // has actually been typed, so this doesn't need to filter by token itself.
-func (m *model) commandGroups() []compGroup {
+func (m *model) commandGroups(token string) []compGroup {
 	seen := make(map[string]struct{})
 	add := func(dst *[]compMatch, mc compMatch) {
 		key := strings.ToLower(mc.Word)
@@ -250,6 +250,14 @@ func (m *model) commandGroups() []compGroup {
 		}
 
 		for _, alias := range e.aliases {
+			// Surface aliases as matches only when the user has typed enough
+			// to match an alias prefix, preventing aliases from cluttering the
+			// dropdown when browsing the full command list (e.g. "/?" and
+			// "/usage" should not appear until the user types "?" or "u").
+			// Mirrors internal/tui/inline_completions.go:139-143.
+			if token == "" || !strings.HasPrefix(strings.ToLower(alias), strings.ToLower(token)) {
+				continue
+			}
 			am := compMatch{Word: "/" + alias, Description: desc, RequiresArg: requiresArg}
 			if e.isAgent {
 				add(&agents, am)
