@@ -305,6 +305,17 @@ func stripANSI(s string) string {
 	return b.String()
 }
 
+// visualLineCount returns the number of visible lines in s, ignoring any
+// trailing newlines. Empty strings contribute zero height so they do not
+// inflate layout budgets.
+func visualLineCount(s string) int {
+	s = strings.TrimRight(s, "\n")
+	if s == "" {
+		return 0
+	}
+	return strings.Count(s, "\n") + 1
+}
+
 // --- helpers ---------------------------------------------------------------
 
 func boldText(s string) string {

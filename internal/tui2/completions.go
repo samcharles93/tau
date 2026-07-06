@@ -423,8 +423,14 @@ func (m *model) handleCompletionKey(msg tea.KeyPressMsg) (tea.Cmd, bool) {
 		// LCP extension: if the shared prefix across all matches extends
 		// further than what's typed, extend to it (matches taui's Tab
 		// behaviour). Otherwise accept the highlighted row.
+		//
+		// When the LCP is already present at the end of the input
+		// (e.g. token is "" for a bare "/" and LCP is "/"), extending
+		// is a no-op that would just reset compSelected to 0 — fall
+		// through to accepting the highlighted row instead so the
+		// viewport doesn't jump away from the item the user targeted.
 		lcp := longestCommonWordPrefix(rows)
-		if len([]rune(lcp)) > len([]rune(token)) {
+		if len([]rune(lcp)) > len([]rune(token)) && !strings.HasSuffix(m.input, lcp) {
 			m.replaceCompletionToken(lcp)
 		} else {
 			m.acceptCompletionRow(rows[m.compSelected])

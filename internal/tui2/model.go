@@ -39,11 +39,9 @@ type model struct {
 	height int
 
 	// maxViewportHeight is the most the message viewport may grow to (leaving
-	// room for the header/separator/input/status bar) — tui2 now owns the
-	// full terminal via alt-screen, so the viewport fills whatever vertical
-	// space remains after reserving fixed UI chrome (header ~2, separator 1,
-	// input ~1+N, status 1). View() still shrinks the per-frame height to
-	// fit shorter content so short conversations don't pad with blank lines.
+	// room for the separator/input/status bar). tui2 owns the full terminal via
+	// alt-screen, so the viewport fills whatever vertical space remains after
+	// reserving fixed UI chrome.
 	maxViewportHeight int
 
 	// Conversation state — stored as raw content string fed to the viewport.
@@ -277,11 +275,11 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.height = msg.Height
 		m.viewport.SetWidth(msg.Width)
 		// Alt-screen layout: the viewport shares the terminal with the fixed
-		// chrome (separator, multi-line input, status bar). The actual space
+		// chrome (separator, padded input box, status bar). The actual space
 		// left for the viewport is recomputed every frame in View(); here we
 		// just store an upper-bound estimate for tests and sanity checks.
 		inputLines := max(strings.Count(m.input, "\n")+1, 1)
-		reserved := 1 + inputLines + 1 // separator + input + status
+		reserved := 1 + inputLines + 4 + 1 // separator + input box + status
 		m.maxViewportHeight = max(msg.Height-reserved, 4)
 		m.viewport.SetHeight(m.maxViewportHeight)
 		// Rebuild the glamour renderer with the new terminal width so
@@ -414,11 +412,9 @@ func (m *model) View() tea.View {
 	_ = m.lastClickY // reserved for future mouse hit-testing (Phase 1)
 	var sb strings.Builder
 
-	// Pre-render non-viewport segments so we can measure their exact heights
-	// using lipgloss.Height() and dynamically shrink the viewport to fit.
-	// This guarantees that the input area and status bar are always pinned to
-	// the very bottom of the alt-screen without being pushed off-screen
-	// by completions, panels, or tools.
+	// Pre-render non-viewport segments so we can measure their exact heights.
+	// The viewport keeps the main pane, while the input block and status bar
+	// stay anchored at the bottom of the alt-screen.
 
 	// 1. Plugin panel.
 	var activePanelStr string
@@ -429,47 +425,33 @@ func (m *model) View() tea.View {
 		psb.WriteString(p.content)
 		psb.WriteString("\n")
 		psb.WriteString(panelStyle.Render("└" + strings.Repeat("─", min(m.width, 40)) + "┘"))
-		psb.WriteString("\n\n")
 		activePanelStr = psb.String()
 	}
 
-	// 2. Working indicator / streaming content.
-	var streamStr string
+	// 2. Live response content is rendered inside the viewport so it occupies
+	// the same bottom-aligned chat pane as finalized messages.
 	visibleReasoning := m.reasoning != "" && m.showReasoning
-	if m.inResponse && len(m.tools) == 0 && m.streaming == "" && !visibleReasoning {
-		streamStr = m.workingIndicator() + "\n"
-	} else {
-		var ssb strings.Builder
-		if visibleReasoning {
-			ssb.WriteString(reasoningStyle.Render("Thinking: " + m.reasoning))
-			ssb.WriteString("\n")
-		}
-		if m.streaming != "" {
-			ssb.WriteString(streamStyle.Render(m.streaming))
-		}
-		streamStr = ssb.String()
-	}
+	viewportLines := m.viewportLinesForView(visibleReasoning)
+	m.viewport.SetContentLines(viewportLines)
 
 	// 3. Tool calls.
 	var toolsStr string
 	if len(m.tools) > 0 {
-		var tsb strings.Builder
+		toolBoxes := make([]string, len(m.tools))
 		for i, t := range m.tools {
-			tsb.WriteString("\n")
 			expanded := m.expandedID != "" && m.expandedID == t.id
 			if expanded {
 				m.focusedTool = i
 			}
-			tsb.WriteString(m.renderToolBox(t, expanded, len(m.tools)))
+			toolBoxes[i] = m.renderToolBox(t, expanded, len(m.tools))
 		}
-		tsb.WriteString("\n")
-		toolsStr = tsb.String()
+		toolsStr = strings.Join(toolBoxes, "\n\n")
 	}
 
 	// 4. Interactive prompt (modal).
 	var promptStr string
 	if m.activePrompt != nil {
-		promptStr = "\n" + renderPrompt(m.activePrompt, m.promptConfirmYes) + "\n"
+		promptStr = renderPrompt(m.activePrompt, m.promptConfirmYes)
 	}
 
 	// 5. Completion dropdown.
@@ -479,13 +461,13 @@ func (m *model) View() tea.View {
 		if selected < 0 || selected >= len(rows) {
 			selected = 0
 		}
-		compStr = "\n" + renderCompletions(rows, selected, m.width)
+		compStr = renderCompletions(rows, selected, m.width)
 	}
 
 	// 6. Notification.
 	var notifyStr string
 	if m.notification != "" {
-		notifyStr = "\n" + notifyStyle.Render(m.notification)
+		notifyStr = notifyStyle.Render(m.notification)
 	}
 
 	// 7. Divider and input area.
@@ -493,8 +475,8 @@ func (m *model) View() tea.View {
 	if sepWidth <= 0 {
 		sepWidth = 80
 	}
-	sepStr := separatorStyle.Render(strings.Repeat("─", sepWidth)) + "\n"
-	inputStr := m.renderInputArea() + "\n"
+	sepStr := separatorStyle.Render(strings.Repeat("─", sepWidth))
+	inputStr := m.renderInputArea()
 
 	// 8. Status bar.
 	var statusStr string
@@ -502,56 +484,56 @@ func (m *model) View() tea.View {
 		statusStr = m.computeStatusBar()
 	}
 
-	// 9. Calculate total visual height occupied by all non-viewport elements.
-	reservedHeight := visualLineCount(activePanelStr) +
-		visualLineCount(streamStr) +
-		visualLineCount(toolsStr) +
-		visualLineCount(promptStr) +
-		visualLineCount(compStr) +
-		visualLineCount(notifyStr) +
-		visualLineCount(sepStr) +
-		visualLineCount(inputStr) +
-		visualLineCount(statusStr)
-
-	// 10. Decide how much vertical space the viewport region may use.
-	availableHeight := m.height - reservedHeight
-	if availableHeight < 4 {
-		availableHeight = 4
+	// 9. Assemble the chrome (everything below the viewport) as a single string
+	// with no leading newline.  The boundary newline between the viewport and
+	// the chrome is added during final assembly, so its height is not double
+	// counted by visualLineCount.
+	chromeParts := []string{}
+	if toolsStr != "" {
+		chromeParts = append(chromeParts, toolsStr)
 	}
-	// Shrink the viewport to the actual content height when the conversation is
-	// short, and pad above it so the input/status bar stays pinned to the
-	// bottom of the alt-screen.
-	contentHeight := m.viewport.TotalLineCount()
-	desiredHeight := max(min(contentHeight, availableHeight), 1)
-	topPadding := availableHeight - desiredHeight
-	m.viewport.SetHeight(desiredHeight)
+	if promptStr != "" {
+		chromeParts = append(chromeParts, promptStr)
+	}
+	if compStr != "" {
+		chromeParts = append(chromeParts, compStr)
+	}
+	if notifyStr != "" {
+		chromeParts = append(chromeParts, notifyStr)
+	}
+	chromeParts = append(chromeParts, sepStr, inputStr, statusStr)
 
-	// Assemble final view in strict top-to-bottom layout order.
+	chromeStr := strings.Join(chromeParts, "\n")
+	chromeHeight := visualLineCount(chromeStr)
+
+	// 10. Calculate total visual height occupied by all non-viewport elements.
+	reservedHeight := chromeHeight
+	panelSepStr := ""
 	if activePanelStr != "" {
-		sb.WriteString(activePanelStr)
+		panelSepStr = activePanelStr + "\n\n"
+		reservedHeight += visualLineCount(panelSepStr)
+	}
+
+	// 11. Decide how much vertical space the viewport region may use.
+	availableHeight := max(m.height-reservedHeight, 4)
+	contentHeight := max(m.viewport.TotalLineCount(), 1)
+	viewportHeight := min(contentHeight, availableHeight)
+	topPadding := availableHeight - viewportHeight
+	m.viewport.SetHeight(viewportHeight)
+	if m.inResponse {
+		m.viewport.GotoBottom()
+	}
+
+	// 12. Assemble final view in strict top-to-bottom layout order.
+	if panelSepStr != "" {
+		sb.WriteString(panelSepStr)
 	}
 	if topPadding > 0 {
 		sb.WriteString(strings.Repeat("\n", topPadding))
 	}
 	sb.WriteString(m.viewport.View())
-	if streamStr != "" {
-		sb.WriteString(streamStr)
-	}
-	if toolsStr != "" {
-		sb.WriteString(toolsStr)
-	}
-	if promptStr != "" {
-		sb.WriteString(promptStr)
-	}
-	if compStr != "" {
-		sb.WriteString(compStr)
-	}
-	if notifyStr != "" {
-		sb.WriteString(notifyStr)
-	}
-	sb.WriteString(sepStr)
-	sb.WriteString(inputStr)
-	sb.WriteString(statusStr)
+	sb.WriteString("\n")
+	sb.WriteString(chromeStr)
 
 	v := tea.NewView(sb.String())
 	// AltScreen owns the full terminal so we can use guaranteed screen real
@@ -946,7 +928,7 @@ func (m *model) renderInputArea() string {
 	lines := m.splitInputLines()
 	curLine, curCol := m.cursorLineCol(lines)
 
-	out := make([]string, len(lines))
+	body := make([]string, len(lines))
 	for i, ln := range lines {
 		prefix := inputPromptStyle.Render("> ")
 		if m.inResponse {
@@ -956,22 +938,78 @@ func (m *model) renderInputArea() string {
 			prefix = strings.Repeat(" ", len([]rune(stripANSI(prefix))))
 		}
 		if i == curLine {
-			out[i] = prefix + renderLineWithCursor(ln, curCol)
+			body[i] = prefix + renderLineWithCursor(ln, curCol)
 		} else {
-			out[i] = prefix + inputStyle.Render(string(ln))
+			body[i] = prefix + inputStyle.Render(string(ln))
 		}
 	}
 
-	res := strings.Join(out, "\n")
+	res := renderInputBox(m.width, "input", body, "")
 	if m.inResponse {
 		ctrlC := lipgloss.NewStyle().Foreground(themeHex(theme.ToneError)).Bold(true).Render("Ctrl+C")
 		enter := lipgloss.NewStyle().Foreground(themeHex(theme.CommandFG)).Bold(true).Render("Enter")
 		hint := lipgloss.NewStyle().Foreground(themeHex(theme.ToneMuted)).Italic(true).Render(
-			fmt.Sprintf("  [%s] to stop | Type and press [%s] to steer/redirect the model", ctrlC, enter),
+			fmt.Sprintf("[%s] stop | [%s] steer", ctrlC, enter),
 		)
-		res = hint + "\n" + res
+		res = renderInputBox(m.width, "steer", body, hint)
 	}
 	return res
+}
+
+func (m *model) viewportLinesForView(visibleReasoning bool) []string {
+	lines := make([]string, 0, len(m.renderedLines)+4)
+	lines = append(lines, m.renderedLines...)
+
+	if m.inResponse && len(m.tools) == 0 && m.streaming == "" && !visibleReasoning {
+		lines = append(lines, m.workingIndicator())
+		return lines
+	}
+	if visibleReasoning {
+		for line := range strings.SplitSeq(m.reasoning, "\n") {
+			lines = append(lines, reasoningStyle.Render("Thinking: "+line))
+		}
+	}
+	if m.streaming != "" {
+		for line := range strings.SplitSeq(m.streaming, "\n") {
+			lines = append(lines, streamStyle.Render(line))
+		}
+	}
+	return lines
+}
+
+func renderInputBox(width int, title string, lines []string, hint string) string {
+	if width <= 0 {
+		width = 80
+	}
+	if width < 8 {
+		return strings.Join(lines, "\n")
+	}
+
+	innerWidth := max(width-2, 1)
+	label := " " + title + " "
+	topRuleWidth := max(width-2-lipgloss.Width(label), 0)
+	top := inputBoxStyle.Render("╭" + label + strings.Repeat("─", topRuleWidth) + "╮")
+	bottom := inputBoxStyle.Render("╰" + strings.Repeat("─", width-2) + "╯")
+
+	out := make([]string, 0, len(lines)+2)
+	out = append(out, top)
+	out = append(out, renderInputBoxLine(innerWidth, hint))
+	for _, line := range lines {
+		out = append(out, renderInputBoxLine(innerWidth, line))
+	}
+	out = append(out, renderInputBoxLine(innerWidth, ""))
+	out = append(out, bottom)
+	return strings.Join(out, "\n")
+}
+
+func renderInputBoxLine(innerWidth int, line string) string {
+	plainWidth := visibleWidth(stripANSI(line))
+	if plainWidth > innerWidth {
+		line = truncateANSIToWidth(line, innerWidth, "…")
+		plainWidth = visibleWidth(stripANSI(line))
+	}
+	padding := strings.Repeat(" ", max(innerWidth-plainWidth, 0))
+	return inputBoxStyle.Render("│") + line + padding + inputBoxStyle.Render("│")
 }
 
 // renderLineWithCursor renders one logical line with a highlighted cell at
@@ -2585,6 +2623,7 @@ var (
 	// Styled input prompt and divider styles.
 	inputPromptStyle      = lipgloss.NewStyle().Foreground(themeHex(theme.CommandFG)).Bold(true)
 	inputSteerPromptStyle = lipgloss.NewStyle().Foreground(themeHex(theme.ToneWarn)).Bold(true)
+	inputBoxStyle         = lipgloss.NewStyle().Foreground(themeHex(theme.ToneMuted))
 	separatorStyle        = lipgloss.NewStyle().Foreground(themeHex(theme.ToneMuted))
 
 	// Phase 1: tool box styles — background-colored bordered boxes for each

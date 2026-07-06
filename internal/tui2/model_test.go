@@ -3,6 +3,7 @@ package tui2
 import (
 	"context"
 	"errors"
+	"fmt"
 	"os"
 	"reflect"
 	"strings"
@@ -2207,22 +2208,106 @@ func TestUpdateWindowSizeMsg(t *testing.T) {
 	if m.height != 30 {
 		t.Fatalf("height = %d, want 30", m.height)
 	}
+	if m.maxViewportHeight != 23 {
+		t.Fatalf("maxViewportHeight = %d, want 23", m.maxViewportHeight)
+	}
 }
 
-// TestViewPinsInputAreaToBottomInAltScreen verifies that the viewport height
-// is NOT shrunk to short content in alt-screen mode, so the input area and
-// status bar stay pinned to the very bottom of the terminal window.
+// TestViewPinsInputAreaToBottomInAltScreen verifies short conversations sit
+// just above the pinned input/status chrome, with blank space above.
 func TestViewPinsInputAreaToBottomInAltScreen(t *testing.T) {
 	m := newTestModel(&fakeRuntime{}, nil)
 	m.Update(tea.WindowSizeMsg{Width: 100, Height: 40})
 	m.appendMessage("user", "hi")
 
-	m.View()
+	view := m.View()
 
-	// The viewport should not shrink to 1; it should fill the remaining height
-	// to push the input box to the bottom.
-	if got := m.viewport.Height(); got < 20 {
-		t.Fatalf("viewport height = %d, expected it to fill the remaining screen height (>=20)", got)
+	if got := m.viewport.Height(); got != 1 {
+		t.Fatalf("viewport height = %d, want 1 for short bottom-aligned content", got)
+	}
+
+	lines := strings.Split(view.Content, "\n")
+	if len(lines) != 40 {
+		t.Fatalf("rendered view = %d lines, want 40 (fill terminal)", len(lines))
+	}
+	plain := stripANSI(view.Content)
+	for _, want := range []string{"⏎ hi", "╭ input", "╰"} {
+		if !strings.Contains(plain, want) {
+			t.Fatalf("rendered view missing %q:\n%s", want, plain)
+		}
+	}
+
+	hiLine := lineContaining(lines, "⏎ hi")
+	if hiLine < 30 {
+		t.Fatalf("content line = %d, expected short content near the bottom", hiLine)
+	}
+}
+
+func TestViewKeepsCompletedResponseAtStreamingPosition(t *testing.T) {
+	m := newTestModel(&fakeRuntime{}, nil)
+	m.Update(tea.WindowSizeMsg{Width: 100, Height: 40})
+	m.mdCache = nil
+	m.inResponse = true
+	m.streaming = "hello world"
+
+	streamingLines := strings.Split(m.View().Content, "\n")
+	streamingLine := lineContaining(streamingLines, "hello world")
+	if streamingLine < 0 {
+		t.Fatalf("streaming text missing:\n%s", stripANSI(strings.Join(streamingLines, "\n")))
+	}
+
+	m.handleChatEvent(tauchat.ChatResponseCompletedEvent{})
+	completedLines := strings.Split(m.View().Content, "\n")
+	completedLine := lineContaining(completedLines, "hello world")
+	if completedLine < 0 {
+		t.Fatalf("completed text missing:\n%s", stripANSI(strings.Join(completedLines, "\n")))
+	}
+	if completedLine != streamingLine {
+		t.Fatalf("completed response moved from line %d to line %d", streamingLine, completedLine)
+	}
+}
+
+func TestViewStreamsOverflowLikeBottomFollowingScroll(t *testing.T) {
+	m := newTestModel(&fakeRuntime{}, nil)
+	m.Update(tea.WindowSizeMsg{Width: 100, Height: 40})
+	m.mdCache = nil
+	m.inResponse = true
+
+	var streamed strings.Builder
+	for i := 1; i <= 60; i++ {
+		if i > 1 {
+			streamed.WriteString("\n")
+		}
+		streamed.WriteString(fmt.Sprintf("stream %02d", i))
+	}
+	m.streaming = streamed.String()
+
+	streamingView := m.View()
+	streamingLines := strings.Split(streamingView.Content, "\n")
+	if lineContaining(streamingLines, "stream 01") >= 0 {
+		t.Fatalf("oldest streaming line should have left through the top:\n%s", stripANSI(streamingView.Content))
+	}
+	latestStreamingLine := lineContaining(streamingLines, "stream 60")
+	if latestStreamingLine < 0 {
+		t.Fatalf("latest streaming line missing:\n%s", stripANSI(streamingView.Content))
+	}
+	inputLine := lineContaining(streamingLines, "╭ steer")
+	if inputLine < 0 {
+		t.Fatalf("steer input box missing:\n%s", stripANSI(streamingView.Content))
+	}
+	if latestStreamingLine >= inputLine {
+		t.Fatalf("latest streaming line %d should appear above input line %d", latestStreamingLine, inputLine)
+	}
+
+	m.handleChatEvent(tauchat.ChatResponseCompletedEvent{})
+	completedView := m.View()
+	completedLines := strings.Split(completedView.Content, "\n")
+	if lineContaining(completedLines, "stream 01") >= 0 {
+		t.Fatalf("oldest completed line should remain out of view:\n%s", stripANSI(completedView.Content))
+	}
+	latestCompletedLine := lineContaining(completedLines, "stream 60")
+	if latestCompletedLine != latestStreamingLine {
+		t.Fatalf("latest line moved from %d while streaming to %d after completion", latestStreamingLine, latestCompletedLine)
 	}
 }
 
@@ -2235,11 +2320,20 @@ func TestViewCapsViewportAtMaxHeightForLongContent(t *testing.T) {
 
 	m.View()
 
-	// The viewport height is calculated dynamically based on the exact heights
-	// of the other components to fit the screen.
-	if got := m.viewport.Height(); got != 29 {
-		t.Fatalf("viewport height = %d, want dynamic height 29", got)
+	// 100 lines overflow the available region; the viewport should expand to
+	// fill the terminal minus separator, padded input block, and status.
+	if got := m.viewport.Height(); got != 33 {
+		t.Fatalf("viewport height = %d, want 33 (fill terminal minus chrome)", got)
 	}
+}
+
+func lineContaining(lines []string, needle string) int {
+	for i, line := range lines {
+		if strings.Contains(stripANSI(line), needle) {
+			return i
+		}
+	}
+	return -1
 }
 
 func TestUpdatePasteMsg(t *testing.T) {
@@ -2385,8 +2479,11 @@ func TestRenderInputAreaEmpty(t *testing.T) {
 		t.Fatal("expected non-empty input area even for empty input")
 	}
 	plain := stripANSI(area)
-	if !strings.HasPrefix(plain, ">") {
-		t.Fatalf("input area = %q, want '>' prefix", plain)
+	if !strings.Contains(plain, "╭ input") {
+		t.Fatalf("input area = %q, want input box title", plain)
+	}
+	if !strings.Contains(plain, ">") {
+		t.Fatalf("input area = %q, want '>' prompt", plain)
 	}
 }
 
@@ -2398,14 +2495,14 @@ func TestRenderInputAreaMultiLine(t *testing.T) {
 	area := m.renderInputArea()
 	plain := stripANSI(area)
 	lines := strings.Split(plain, "\n")
-	if len(lines) != 2 {
-		t.Fatalf("expected 2 lines, got %d", len(lines))
+	if len(lines) != 6 {
+		t.Fatalf("expected 6 lines including padded input box, got %d", len(lines))
 	}
-	if !strings.Contains(lines[0], "line one") {
-		t.Fatalf("line 0 = %q, want 'line one'", lines[0])
+	if !strings.Contains(lines[2], "line one") {
+		t.Fatalf("line 2 = %q, want 'line one'", lines[2])
 	}
-	if !strings.Contains(lines[1], "line two") {
-		t.Fatalf("line 1 = %q, want 'line two'", lines[1])
+	if !strings.Contains(lines[3], "line two") {
+		t.Fatalf("line 3 = %q, want 'line two'", lines[3])
 	}
 }
 
