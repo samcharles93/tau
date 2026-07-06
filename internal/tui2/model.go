@@ -10,6 +10,7 @@ import (
 
 	"charm.land/bubbles/v2/viewport"
 	tea "charm.land/bubbletea/v2"
+	"charm.land/glamour/v2"
 	"charm.land/lipgloss/v2"
 
 	"github.com/google/uuid"
@@ -118,6 +119,12 @@ type model struct {
 	lastSubmit   time.Time
 	spinnerFrame int // frame index for working indicator animation
 
+	// Markdown rendering (P3 enhancement) — reusable glamour term renderer
+	// that converts assistant messages from markdown to ANSI-styled output
+	// with syntax-highlighted code blocks. Only applied on finalized messages
+	// (ChatResponseCompletedEvent), never during streaming.
+	mdRenderer *glamour.TermRenderer
+
 	// pendingQuit is the time of the last unanswered Ctrl+C (idle, nothing to
 	// cancel) — a second Ctrl+C within quitConfirmWindow confirms the quit,
 	// mirroring internal/tui/inline_chat.go's double-tap guard.
@@ -168,6 +175,17 @@ func newModel(
 ) *model {
 	vp := viewport.New(viewport.WithWidth(80), viewport.WithHeight(20))
 	vp.SoftWrap = true
+
+	// Glamour markdown renderer with word wrap at default 80 columns —
+	// updated on WindowSizeMsg to match the actual terminal width.
+	md, err := glamour.NewTermRenderer(
+		glamour.WithWordWrap(80),
+		glamour.WithStylePath("dark"),
+	)
+	if err != nil {
+		md = nil // fall back to plain-text rendering
+	}
+
 	return &model{
 		ctx:               ctx,
 		runtime:           runtime,
@@ -186,6 +204,7 @@ func newModel(
 		notifyQ:           notify.NewQueue(),
 		extensionCommands: make(map[string]tauchat.ExtensionCommand),
 		panels:            make(map[string]pluginPanel),
+		mdRenderer:        md,
 	}
 }
 
@@ -228,6 +247,9 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// maxViewportHeight's doc comment.
 		m.maxViewportHeight = max(msg.Height-5, 4)
 		m.viewport.SetHeight(m.maxViewportHeight)
+		// Rebuild the glamour renderer with the new terminal width so
+		// subsequent finalized messages don't wrap at a stale column.
+		m.rebuildMDRenderer(msg.Width)
 		return m, nil
 
 	case tea.PasteMsg:
@@ -1279,12 +1301,50 @@ func (m *model) finalizeResponse() string {
 		content = fmt.Sprintf("[tools: %s]", strings.Join(names, ", "))
 	}
 	if content != "" {
-		m.appendMessage("assistant", content)
+		// Store raw markdown for /copy before glamour renders it.
+		m.lastAssistantText = content
+		// Render through glamour (markdown → ANSI) and append to viewport.
+		// Glamour output is already fully styled, so each line goes
+		// directly into renderedLines without passing through renderLine().
+		rendered := m.renderMarkdown(content)
+		m.renderedLines = append(m.renderedLines, strings.Split(rendered, "\n")...)
+		m.viewport.SetContentLines(m.renderedLines)
+		m.viewport.GotoBottom()
 	}
 	m.streaming = ""
 	m.reasoning = ""
 	m.inResponse = false
 	return content
+}
+
+// rebuildMDRenderer creates a new glamour TermRenderer at the given width.
+// Called on WindowSizeMsg so finalized message wrapping stays current.
+func (m *model) rebuildMDRenderer(width int) {
+	if width < 20 {
+		width = 20
+	}
+	r, err := glamour.NewTermRenderer(
+		glamour.WithWordWrap(width),
+		glamour.WithStylePath("dark"),
+	)
+	if err != nil {
+		return // keep the old renderer
+	}
+	m.mdRenderer = r
+}
+
+// renderMarkdown converts raw markdown to ANSI-styled terminal output using
+// glamour. Falls back to plain text when the renderer is unavailable (e.g.
+// because the terminal doesn't support ANSI or glamour init failed).
+func (m *model) renderMarkdown(content string) string {
+	if m.mdRenderer == nil {
+		return content
+	}
+	out, err := m.mdRenderer.Render(content)
+	if err != nil {
+		return content
+	}
+	return out
 }
 
 // --- tool state helpers ----------------------------------------------------
