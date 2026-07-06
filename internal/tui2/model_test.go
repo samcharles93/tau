@@ -1094,9 +1094,15 @@ func TestStartOrQueueTurnSendsWhenIdle(t *testing.T) {
 	if len(rt.sent) != 1 {
 		t.Fatalf("expected 1 command sent, got %d", len(rt.sent))
 	}
-	_, ok := rt.sent[0].(tauchat.SubmitChatPromptCommand)
+	sent, ok := rt.sent[0].(tauchat.SubmitChatPromptCommand)
 	if !ok {
 		t.Fatalf("expected SubmitChatPromptCommand, got %T", rt.sent[0])
+	}
+	// RequestID is mandatory server-side (ChatSessionState.BeginTurn rejects
+	// an empty one with "request id is required") — this exact regression
+	// shipped once because no test asserted it was actually populated.
+	if sent.RequestID == "" {
+		t.Fatal("expected a non-empty RequestID")
 	}
 }
 
@@ -1187,9 +1193,12 @@ func TestHandleSteerWithText(t *testing.T) {
 	if len(rt.sent) != 1 {
 		t.Fatalf("expected 1 SteerChatPromptCommand, got %d", len(rt.sent))
 	}
-	_, ok := rt.sent[0].(tauchat.SteerChatPromptCommand)
+	sent, ok := rt.sent[0].(tauchat.SteerChatPromptCommand)
 	if !ok {
 		t.Fatalf("expected SteerChatPromptCommand, got %T", rt.sent[0])
+	}
+	if sent.RequestID == "" {
+		t.Fatal("expected a non-empty RequestID")
 	}
 }
 
@@ -1943,6 +1952,36 @@ func TestUpdateWindowSizeMsg(t *testing.T) {
 	}
 	if m.height != 30 {
 		t.Fatalf("height = %d, want 30", m.height)
+	}
+}
+
+// TestViewShrinksViewportToShortContent guards against a real bug: tui2
+// runs inline (no alt-screen), so a viewport fixed at maxViewportHeight
+// every frame left a large blank gap between a short conversation and the
+// input whenever the terminal was taller than the actual content.
+func TestViewShrinksViewportToShortContent(t *testing.T) {
+	m := newTestModel(&fakeRuntime{}, nil)
+	m.Update(tea.WindowSizeMsg{Width: 100, Height: 40})
+	m.appendMessage("user", "hi")
+
+	m.View()
+
+	if got := m.viewport.Height(); got != 1 {
+		t.Fatalf("viewport height = %d, want 1 (one rendered line for one short message)", got)
+	}
+}
+
+func TestViewCapsViewportAtMaxHeightForLongContent(t *testing.T) {
+	m := newTestModel(&fakeRuntime{}, nil)
+	m.Update(tea.WindowSizeMsg{Width: 100, Height: 40})
+	for range 100 {
+		m.appendMessage("user", "line")
+	}
+
+	m.View()
+
+	if got := m.viewport.Height(); got != m.maxViewportHeight {
+		t.Fatalf("viewport height = %d, want maxViewportHeight (%d) when content overflows", got, m.maxViewportHeight)
 	}
 }
 

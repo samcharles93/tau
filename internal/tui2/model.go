@@ -37,6 +37,14 @@ type model struct {
 	width  int
 	height int
 
+	// maxViewportHeight is the most the message viewport may grow to (leaving
+	// room for the header/streaming/separator/input/status bar) — the actual
+	// per-frame height is shrunk to fit shorter content in View(), so short
+	// conversations don't leave a blank gap between the last message and the
+	// input (tui2 runs inline, not alt-screen, so unused viewport height is
+	// just wasted vertical space, not a fixed full-screen canvas).
+	maxViewportHeight int
+
 	// Conversation state — stored as raw content string fed to the viewport.
 	viewport   viewport.Model
 	streaming  string // current streaming text delta
@@ -201,9 +209,11 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.height = msg.Height
 		m.viewport.SetWidth(msg.Width)
 		// Reserve space for header (~3 lines), streaming text, separator,
-		// input line, and status bar (~5 lines total).
-		vpHeight := max(msg.Height-5, 4)
-		m.viewport.SetHeight(vpHeight)
+		// input line, and status bar (~5 lines total). View() shrinks the
+		// actual per-frame height to fit shorter content — see
+		// maxViewportHeight's doc comment.
+		m.maxViewportHeight = max(msg.Height-5, 4)
+		m.viewport.SetHeight(m.maxViewportHeight)
 		return m, nil
 
 	case tea.PasteMsg:
@@ -313,7 +323,14 @@ func (m *model) View() tea.View {
 		sb.WriteString("\n\n")
 	}
 
-	// Messages — rendered through the viewport (scrollable, no cap).
+	// Messages — rendered through the viewport (scrollable, no cap). Shrunk
+	// to the actual content height (capped at maxViewportHeight) each frame
+	// so a short conversation doesn't pad out with blank lines down to the
+	// input — TotalLineCount only depends on content+width, not the
+	// currently-set Height, so this is safe to query before resizing.
+	if m.maxViewportHeight > 0 {
+		m.viewport.SetHeight(max(min(m.viewport.TotalLineCount(), m.maxViewportHeight), 1))
+	}
 	sb.WriteString(m.viewport.View())
 
 	// Streaming text (in-progress assistant response).
@@ -838,8 +855,10 @@ func (m *model) startOrQueueTurn(text string) tea.Cmd {
 	m.steering = false
 
 	return sendCommand(m.runtime, tauchat.SubmitChatPromptCommand{
-		SessionID: m.sessionID,
-		Prompt:    text,
+		SessionID:   m.sessionID,
+		RequestID:   newRequestID(),
+		Prompt:      text,
+		SubmittedAt: time.Now().UTC(),
 	})
 }
 
@@ -872,8 +891,10 @@ func (m *model) handleSteer() tea.Cmd {
 	}
 	m.steering = true
 	return sendCommand(m.runtime, tauchat.SteerChatPromptCommand{
-		SessionID: m.sessionID,
-		Prompt:    text,
+		SessionID:   m.sessionID,
+		RequestID:   newRequestID(),
+		Prompt:      text,
+		SubmittedAt: time.Now().UTC(),
 	})
 }
 
@@ -986,7 +1007,7 @@ func (m *model) handleChatEvent(evt tauchat.ChatEvent) tea.Cmd {
 		}
 		m.setToolStatus(e.CallID, status)
 		if e.ResultSummary != "" {
-			m.setToolResult(e.CallID, e.ResultSummary)
+			m.finalizeToolResult(e.CallID, e.ResultSummary)
 		}
 		if m.bashCallID != "" && e.CallID == m.bashCallID {
 			m.bashRunning = false
@@ -1197,10 +1218,27 @@ func (m *model) setToolStatus(id, status string) {
 	}
 }
 
+// setToolResult appends a streamed output chunk (ChatToolOutputEvent) to a
+// tool's live-peek result.
 func (m *model) setToolResult(id, result string) {
 	for i := range m.tools {
 		if m.tools[i].id == id {
 			m.tools[i].result += result
+			return
+		}
+	}
+}
+
+// finalizeToolResult replaces a tool's result with its final summary
+// (ChatToolExecutionCompletedEvent.ResultSummary) rather than appending —
+// the summary is the authoritative final output, not an increment on top of
+// whatever ChatToolOutputEvent chunks streamed in beforehand. Mirrors
+// internal/tui/inline_events.go discarding the streamed tail before setting
+// the resolved row's label from ResultSummary alone.
+func (m *model) finalizeToolResult(id, result string) {
+	for i := range m.tools {
+		if m.tools[i].id == id {
+			m.tools[i].result = result
 			return
 		}
 	}
