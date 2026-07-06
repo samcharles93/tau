@@ -39,11 +39,11 @@ type model struct {
 	height int
 
 	// maxViewportHeight is the most the message viewport may grow to (leaving
-	// room for the header/streaming/separator/input/status bar) — the actual
-	// per-frame height is shrunk to fit shorter content in View(), so short
-	// conversations don't leave a blank gap between the last message and the
-	// input (tui2 runs inline, not alt-screen, so unused viewport height is
-	// just wasted vertical space, not a fixed full-screen canvas).
+	// room for the header/separator/input/status bar) — tui2 now owns the
+	// full terminal via alt-screen, so the viewport fills whatever vertical
+	// space remains after reserving fixed UI chrome (header ~2, separator 1,
+	// input ~1+N, status 1). View() still shrinks the per-frame height to
+	// fit shorter content so short conversations don't pad with blank lines.
 	maxViewportHeight int
 
 	// Conversation state — stored as raw content string fed to the viewport.
@@ -69,6 +69,12 @@ type model struct {
 	// Defaults to true so a terminal that never reports focus (no
 	// ReportFocus support) doesn't spuriously suppress notifications.
 	focused bool
+
+	// mouseClick{X,Y} records the last left-click coordinates for tool-box
+	// hit-testing; Worker 2 consumes these during View rendering to decide
+	// which tool row needs an expansion or selection highlight.
+	mouseClickX int
+	mouseClickY int
 
 	// Completion dropdown state. compToken is the last token the dropdown was
 	// computed against — when it changes (the user typed/deleted a
@@ -119,6 +125,13 @@ type model struct {
 	lastSubmit   time.Time
 	spinnerFrame int // frame index for working indicator animation
 
+	// turnStartedAt is when the current response began
+	// (ChatResponseStartedEvent), driving the live elapsed clock in the
+	// working indicator; turnSeed varies the opening thinking-verb per turn so
+	// two consecutive turns don't repeat the same word.
+	turnStartedAt time.Time
+	turnSeed      int64
+
 	// Markdown rendering (P3 enhancement) — reusable glamour term renderer
 	// that converts assistant messages from markdown to ANSI-styled output
 	// with syntax-highlighted code blocks. Only applied on finalized messages
@@ -144,6 +157,11 @@ type model struct {
 	// Bash mode.
 	bashRunning bool
 	bashCallID  string
+
+	// Phase 1: tool focus/expansion navigation.
+	focusedTool int    // index into m.tools for keyboard nav (-1 = none)
+	expandedID  string // tool ID currently expanded ("" = none)
+	lastClickY  int    // Y coordinate of last mouse click for hit-testing
 }
 
 type toolState struct {
@@ -152,6 +170,20 @@ type toolState struct {
 	args   string
 	result string
 	status string // "pending", "running", "done", "error"
+
+	// startedAt is when the call first appeared, and elapsed is frozen at
+	// completion so a settled row keeps showing how long it took rather than
+	// ticking on (or dropping to zero) after the turn ends.
+	startedAt time.Time
+	elapsed   time.Duration
+
+	// Phase 1: live output streaming, per-tool spinner, hold-before-commit,
+	// and expand/collapse interaction.
+	tailLines  []string  // live output streaming, max tailCap lines
+	tailCap    int       // max tail lines to show (default 6)
+	holdUntil  time.Time // when to move this completed tool to viewport (zero = not holding)
+	spinnerIdx int       // per-tool spinner animation frame (bumped on tickMsg)
+	expanded   bool      // user has clicked Enter to expand this tool
 }
 
 type pluginPanel struct {
@@ -196,6 +228,7 @@ func newModel(
 		viewport:          vp,
 		historyIdx:        -1,
 		focused:           true,
+		focusedTool:       -1,
 		availableModels:   availableModels,
 		refresh:           refresh,
 		usage:             usage,
@@ -241,15 +274,34 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.width = msg.Width
 		m.height = msg.Height
 		m.viewport.SetWidth(msg.Width)
-		// Reserve space for header (~3 lines), streaming text, separator,
-		// input line, and status bar (~5 lines total). View() shrinks the
-		// actual per-frame height to fit shorter content — see
-		// maxViewportHeight's doc comment.
-		m.maxViewportHeight = max(msg.Height-5, 4)
+		// Alt-screen layout: viewport fills the full terminal minus a fixed
+		// chrome reservation: header (~2 lines) + separator (1) + input
+		// (~N, minimum 1) + status bar (1). The live area (streaming text,
+		// tool boxes, completions, notifications) shares space with the
+		// viewport inside the remaining height — View() dynamically shrinks
+		// the per-frame viewport to fit shorter content.
+		inputLines := max(strings.Count(m.input, "\n")+1, 1)
+		reserved := 2 + 1 + inputLines + 1 // header + separator + input + status
+		m.maxViewportHeight = max(msg.Height-reserved, 4)
 		m.viewport.SetHeight(m.maxViewportHeight)
 		// Rebuild the glamour renderer with the new terminal width so
 		// subsequent finalized messages don't wrap at a stale column.
 		m.rebuildMDRenderer(msg.Width)
+		return m, nil
+
+	case tea.MouseMsg:
+		mev := msg.Mouse()
+		switch mev.Button {
+		case tea.MouseWheelUp:
+			m.viewport.ScrollUp(3)
+		case tea.MouseWheelDown:
+			m.viewport.ScrollDown(3)
+		case tea.MouseLeft:
+			if _, ok := msg.(tea.MouseClickMsg); ok {
+				m.mouseClickX = mev.X
+				m.mouseClickY = mev.Y
+			}
+		}
 		return m, nil
 
 	case tea.PasteMsg:
@@ -333,7 +385,16 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case tickMsg:
 		m.spinnerFrame++
-		if m.inResponse {
+		// Phase 1: per-tool spinner animation — bump spinnerIdx for every
+		// running tool so each tool row animates independently.
+		for i := range m.tools {
+			if m.tools[i].status == "running" {
+				m.tools[i].spinnerIdx++
+			}
+		}
+		// Phase 1: commit completed tools to viewport after hold-state expires.
+		m.commitExpiredTools()
+		if m.inResponse || m.hasHoldingTools() {
 			return m, spinTick()
 		}
 		return m, nil
@@ -350,6 +411,7 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 }
 
 func (m *model) View() tea.View {
+	_ = m.lastClickY // reserved for future mouse hit-testing (Phase 1)
 	var sb strings.Builder
 
 	// Header.
@@ -376,17 +438,20 @@ func (m *model) View() tea.View {
 	}
 	sb.WriteString(m.viewport.View())
 
-	// Spinner / working indicator — shown when a turn is running but no
-	// streaming text or tool calls are visible yet (model warm-up).
-	// The spinner cycles through a frame array on each tea.Tick (80ms);
-	// see ChatResponseStartedEvent handler.
-	if m.inResponse && len(m.tools) == 0 && m.streaming == "" && m.reasoning == "" {
-		sb.WriteString(spinnerStyle.Render(spinnerFrames[m.spinnerFrame%len(spinnerFrames)] + " thinking…"))
+	// Living working indicator — shown during model warm-up, before any
+	// streaming text, visible reasoning, or tool call has appeared. Instead of
+	// a frozen "thinking…" it shimmers a rotating personality verb with a live
+	// elapsed clock; see workingIndicator (animation.go). Both the shimmer
+	// phase and the clock advance on each 80ms tea.Tick (ChatResponseStartedEvent
+	// kicks the tick loop off).
+	visibleReasoning := m.reasoning != "" && m.showReasoning
+	if m.inResponse && len(m.tools) == 0 && m.streaming == "" && !visibleReasoning {
+		sb.WriteString(m.workingIndicator())
 		sb.WriteString("\n")
 	}
 
-	// Streaming text (in-progress assistant response).
-	if m.reasoning != "" && m.showReasoning {
+	// Streaming reasoning (in-progress "thinking" trace).
+	if visibleReasoning {
 		sb.WriteString(reasoningStyle.Render("Thinking: " + m.reasoning))
 		sb.WriteString("\n")
 	}
@@ -394,10 +459,16 @@ func (m *model) View() tea.View {
 		sb.WriteString(streamStyle.Render(m.streaming))
 	}
 
-	// Tool calls.
-	for _, t := range m.tools {
+	// Tool calls — Phase 1: background-colored boxes with live output.
+	for i, t := range m.tools {
 		sb.WriteString("\n")
-		sb.WriteString(renderTool(t))
+		expanded := m.expandedID != "" && m.expandedID == t.id
+		if expanded {
+			// Reset focusedTool when a tool is expanded so keyboard events
+			// target the expanded view rather than tabbing away.
+			m.focusedTool = i
+		}
+		sb.WriteString(m.renderToolBox(t, expanded, len(m.tools)))
 	}
 	if len(m.tools) > 0 {
 		sb.WriteString("\n")
@@ -456,6 +527,9 @@ func (m *model) View() tea.View {
 	}
 
 	v := tea.NewView(sb.String())
+	// AltScreen owns the full terminal so we can use guaranteed screen real
+	// estate for tool boxes, expansion panels, and flicker-free output.
+	v.AltScreen = true
 	// Requests terminal focus reporting so we only fire a desktop
 	// notification (see handleChatEvent's ChatResponseCompletedEvent case)
 	// when the user has actually looked away — matches the legacy
@@ -529,6 +603,16 @@ func (m *model) dispatchKey(msg tea.KeyPressMsg) tea.Cmd {
 		if m.bashRunning {
 			return m.cancelBash()
 		}
+		// Phase 1: collapse expanded tool or clear tool focus before
+		// clearing input, so Esc steps out of tool interaction first.
+		if m.expandedID != "" {
+			m.expandedID = ""
+			return nil
+		}
+		if m.focusedTool >= 0 {
+			m.focusedTool = -1
+			return nil
+		}
 		if m.input != "" {
 			m.clearInput()
 			return nil
@@ -538,15 +622,26 @@ func (m *model) dispatchKey(msg tea.KeyPressMsg) tea.Cmd {
 	// Up/Down recall history from the first/last logical line, and move the
 	// cursor vertically within a multi-line buffer otherwise — matching
 	// pkg/taui/lineinput.go's atFirstLineStart/atLastLineEnd gate.
+	// Phase 1: when input is empty and history is exhausted, Up/Down navigate
+	// tool focus among completed tools.
 	case "up":
 		if m.atFirstLineStart() {
-			return m.recallHistory(-1)
+			m.recallHistory(-1)
+			// No history to recall — navigate tool focus.
+			if m.shouldNavigateTools() {
+				m.focusNextTool(-1)
+			}
+			return nil
 		}
 		m.moveCursorVert(-1)
 		return nil
 	case "down":
 		if m.atLastLineEnd() {
-			return m.recallHistory(1)
+			m.recallHistory(1)
+			if m.shouldNavigateTools() {
+				m.focusNextTool(1)
+			}
+			return nil
 		}
 		m.moveCursorVert(1)
 		return nil
@@ -590,9 +685,25 @@ func (m *model) dispatchKey(msg tea.KeyPressMsg) tea.Cmd {
 		// (handleCompletionKey, checked before this switch, handles that
 		// case) — matches taui, where a bare Tab with no dropdown showing is
 		// a no-op (LineInput has no binding for it).
+		// Phase 1: when not in response, no prompt, and input empty, Tab
+		// navigates tool focus among completed tools.
+		if m.shouldNavigateTools() {
+			m.focusNextTool(1)
+		}
+		return nil
+
+	case "shift+tab":
+		// Phase 1: reverse tool focus navigation.
+		if m.shouldNavigateTools() {
+			m.focusNextTool(-1)
+		}
 		return nil
 
 	case "enter":
+		// Phase 1: toggle tool expansion when a tool is focused.
+		if m.focusedTool >= 0 && m.input == "" && !m.inResponse && m.activePrompt == nil {
+			return m.toggleToolExpansion()
+		}
 		return m.submitInput()
 
 	case "backspace":
@@ -1080,6 +1191,11 @@ func (m *model) handleChatEvent(evt tauchat.ChatEvent) tea.Cmd {
 		m.tools = nil
 		m.inResponse = true
 		m.spinnerFrame = 0
+		m.turnStartedAt = time.Now()
+		// Seed the verb rotation from the turn's start so each turn opens on a
+		// different word; the low bits of the nanosecond clock are plenty of
+		// spread for a cosmetic choice.
+		m.turnSeed = m.turnStartedAt.UnixNano()
 		return spinTick()
 
 	case tauchat.ChatResponseDeltaEvent:
@@ -1103,6 +1219,8 @@ func (m *model) handleChatEvent(evt tauchat.ChatEvent) tea.Cmd {
 		if e.ResultSummary != "" {
 			m.finalizeToolResult(e.CallID, e.ResultSummary)
 		}
+		// Phase 1: start the 450ms hold-state before committing to viewport.
+		m.setToolHoldUntil(e.CallID, time.Now().Add(450*time.Millisecond))
 		if m.bashCallID != "" && e.CallID == m.bashCallID {
 			m.bashRunning = false
 			m.bashCallID = ""
@@ -1110,6 +1228,7 @@ func (m *model) handleChatEvent(evt tauchat.ChatEvent) tea.Cmd {
 
 	case tauchat.ChatToolOutputEvent:
 		m.setToolResult(e.CallID, e.Chunk)
+		m.appendToolTail(e.CallID, e.Chunk)
 
 	case tauchat.ChatResponseCompletedEvent:
 		content := m.finalizeResponse()
@@ -1362,10 +1481,11 @@ func (m *model) upsertToolCall(callID, toolName, argumentsSummary string) {
 		}
 	}
 	m.tools = append(m.tools, toolState{
-		id:     callID,
-		name:   toolName,
-		args:   argumentsSummary,
-		status: "pending",
+		id:        callID,
+		name:      toolName,
+		args:      argumentsSummary,
+		status:    "pending",
+		startedAt: time.Now(),
 	})
 }
 
@@ -1373,6 +1493,12 @@ func (m *model) setToolStatus(id, status string) {
 	for i := range m.tools {
 		if m.tools[i].id == id {
 			m.tools[i].status = status
+			// Freeze the elapsed clock the moment a row settles so it reports
+			// how long the call actually took, rather than continuing to tick
+			// (or resetting) once the turn ends and the frame stops advancing.
+			if status == "done" || status == "error" {
+				m.tools[i].elapsed = time.Since(m.tools[i].startedAt)
+			}
 			return
 		}
 	}
@@ -1402,6 +1528,145 @@ func (m *model) finalizeToolResult(id, result string) {
 			return
 		}
 	}
+}
+
+// appendToolTail appends a streamed output chunk to a tool's live tail buffer
+// (Phase 1). Lines are split by newline and capped at tailCap (default 6)
+// using a ring-buffer approach that discards the oldest lines.
+func (m *model) appendToolTail(id, chunk string) {
+	for i := range m.tools {
+		if m.tools[i].id == id {
+			t := &m.tools[i]
+			if t.tailCap <= 0 {
+				t.tailCap = 6
+			}
+			for line := range strings.SplitSeq(chunk, "\n") {
+				if line == "" {
+					continue
+				}
+				t.tailLines = append(t.tailLines, line)
+				// Ring-buffer: discard oldest when over cap.
+				if len(t.tailLines) > t.tailCap {
+					t.tailLines = t.tailLines[len(t.tailLines)-t.tailCap:]
+				}
+			}
+			return
+		}
+	}
+}
+
+// setToolHoldUntil sets the hold-until time for a completed tool (Phase 1).
+func (m *model) setToolHoldUntil(id string, until time.Time) {
+	for i := range m.tools {
+		if m.tools[i].id == id {
+			m.tools[i].holdUntil = until
+			return
+		}
+	}
+}
+
+// findToolIndex returns the index of the tool with the given id, or -1.
+func (m *model) findToolIndex(id string) int {
+	for i := range m.tools {
+		if m.tools[i].id == id {
+			return i
+		}
+	}
+	return -1
+}
+
+// hasHoldingTools returns true when any tool is in its hold-state (Phase 1).
+func (m *model) hasHoldingTools() bool {
+	for i := range m.tools {
+		if !m.tools[i].holdUntil.IsZero() && time.Now().Before(m.tools[i].holdUntil) {
+			return true
+		}
+	}
+	return false
+}
+
+// commitExpiredTools commits tools whose holdUntil has passed to the viewport
+// and removes them from the live tools list (Phase 1).
+func (m *model) commitExpiredTools() {
+	now := time.Now()
+	var remaining []toolState
+	for _, t := range m.tools {
+		if !t.holdUntil.IsZero() && now.After(t.holdUntil) {
+			// Format the final tool box and append to viewport.
+			box := m.renderToolBox(t, false, len(m.tools))
+			m.appendMessage("tool", box)
+		} else {
+			remaining = append(remaining, t)
+		}
+	}
+	m.tools = remaining
+	// Adjust focusedTool if committed tools shifted indices.
+	if m.focusedTool >= len(m.tools) {
+		m.focusedTool = -1
+	}
+	if m.expandedID != "" && m.findToolIndex(m.expandedID) < 0 {
+		m.expandedID = ""
+	}
+}
+
+// shouldNavigateTools returns true when tool focus navigation is appropriate:
+// not in a running response, no active prompt, and input is empty (Phase 1).
+func (m *model) shouldNavigateTools() bool {
+	return !m.inResponse && m.activePrompt == nil && m.input == ""
+}
+
+// focusNextTool moves focusedTool to the next (delta=1) or previous (delta=-1)
+// completed tool (status "done" or "error"). Wraps around when at the edges.
+// Only considers tools that are not in the hold-state (holdUntil is zero or
+// already expired).
+func (m *model) focusNextTool(delta int) {
+	// Collect indices of eligible tools.
+	var eligible []int
+	now := time.Now()
+	for i, t := range m.tools {
+		if t.status == "done" || t.status == "error" {
+			// Skip tools still in hold-state.
+			if !t.holdUntil.IsZero() && now.Before(t.holdUntil) {
+				continue
+			}
+			eligible = append(eligible, i)
+		}
+	}
+	if len(eligible) == 0 {
+		m.focusedTool = -1
+		return
+	}
+
+	// Find current position in eligible list and advance by delta.
+	cur := -1
+	for ei, ti := range eligible {
+		if ti == m.focusedTool {
+			cur = ei
+			break
+		}
+	}
+	newIdx := (cur + delta) % len(eligible)
+	if newIdx < 0 {
+		newIdx += len(eligible)
+	}
+	m.focusedTool = eligible[newIdx]
+}
+
+// toggleToolExpansion toggles the expanded state for the currently focused
+// tool. Returns a tea.Cmd (always nil for now) to match dispatchKey's
+// return signature.
+func (m *model) toggleToolExpansion() tea.Cmd {
+	if m.focusedTool < 0 || m.focusedTool >= len(m.tools) {
+		return nil
+	}
+	t := &m.tools[m.focusedTool]
+	if m.expandedID == t.id {
+		m.expandedID = ""
+	} else {
+		m.expandedID = t.id
+		t.expanded = true
+	}
+	return nil
 }
 
 // --- notification helper ---------------------------------------------------
@@ -1488,7 +1753,7 @@ func renderLine(role, content string) string {
 	}
 }
 
-func renderTool(t toolState) string {
+func renderTool(t toolState, frame int) string {
 	style := toolStyleForStatus(t.name, t.status)
 
 	// Build the label: tool name, or for skill tool, parse JSON args for
@@ -1498,18 +1763,134 @@ func renderTool(t toolState) string {
 		label = skillLabelFromArgs(t.args)
 	}
 
-	line := fmt.Sprintf("  %s", label)
+	// Lead with a lifecycle glyph — use per-tool spinnerIdx (Phase 1) when
+	// available, falling back to the shared frame for backward compatibility.
+	spIdx := t.spinnerIdx
+	if spIdx == 0 {
+		spIdx = frame
+	}
+	line := toolGlyph(t.status, spIdx) + " " + label
 
-	// N11: render a short result summary when available.
-	const resultLimit = 60
-	if t.result != "" {
-		summary := strings.ReplaceAll(t.result, "\n", " ")
-		if len(summary) > resultLimit {
-			summary = summary[:resultLimit] + "…"
+	switch t.status {
+	case "pending", "running":
+		// A running row shows how long it's been going; a frozen number would
+		// read as stuck, so this ticks with the frame.
+		if !t.startedAt.IsZero() {
+			line += toolMetaStyle.Render("  (" + formatElapsed(time.Since(t.startedAt)) + ")")
 		}
-		line += " — " + summary
+	default:
+		// N11: render a short result summary when available.
+		const resultLimit = 60
+		if t.result != "" {
+			summary := strings.ReplaceAll(t.result, "\n", " ")
+			if len(summary) > resultLimit {
+				summary = summary[:resultLimit] + "…"
+			}
+			line += " — " + summary
+		}
+		if t.elapsed > 0 {
+			line += toolMetaStyle.Render("  (" + formatElapsed(t.elapsed) + ")")
+		}
 	}
 	return style.Render(line)
+}
+
+// renderToolBox renders a complete background-colored tool box with borders,
+// glyph, status, elapsed clock, live tail output, and full result when
+// expanded (Phase 1).
+func (m *model) renderToolBox(t toolState, expanded bool, _ int) string {
+	label := t.name
+	if t.name == "skill" {
+		label = skillLabelFromArgs(t.args)
+	}
+
+	glyph := toolGlyph(t.status, t.spinnerIdx)
+	var elapsed time.Duration
+	if t.status == "pending" || t.status == "running" {
+		elapsed = time.Since(t.startedAt)
+	} else {
+		elapsed = t.elapsed
+	}
+
+	elapsedStr := ""
+	if !t.startedAt.IsZero() || elapsed > 0 {
+		elapsedStr = " (" + formatElapsed(elapsed) + ")"
+	}
+
+	// Title line content: glyph + name + status + elapsed.
+	title := glyph + " " + label + " " + t.status + elapsedStr
+
+	// Pick the style based on status.
+	boxStyle := toolBoxStyleForStatus(t.name, t.status)
+	if expanded {
+		boxStyle = toolBoxExpandedStyle
+	}
+	focused := m.focusedTool >= 0 && m.focusedTool < len(m.tools) && m.tools[m.focusedTool].id == t.id
+	if focused {
+		boxStyle = boxStyle.BorderForeground(themeHex(theme.CommandFG)).Bold(true)
+	}
+
+	width := m.width
+	if width < 20 {
+		width = 80
+	}
+	boxStyle = boxStyle.Width(width).Padding(0, 1)
+
+	// Build body lines.
+	var bodyLines []string
+
+	if expanded {
+		// Expanded mode: show full result content in an inner box.
+		bodyLines = append(bodyLines, "")
+		resultLines := strings.Split(t.result, "\n")
+		innerWidth := max(
+			// inner box narrower than outer
+			width-8, 10,
+		)
+		innerStyle := lipgloss.NewStyle().
+			Border(lipgloss.RoundedBorder()).
+			BorderForeground(themeHex(theme.ToneMuted)).
+			Width(innerWidth).
+			Padding(0, 1)
+		innerTitle := "Full output"
+		if len(resultLines) == 0 || (len(resultLines) == 1 && resultLines[0] == "") {
+			innerTitle = "No output"
+		}
+		var innerContent strings.Builder
+		innerContent.WriteString(innerTitle + "\n")
+		for _, line := range resultLines {
+			innerContent.WriteString(line + "\n")
+		}
+		// Render inner box and append each line to body.
+		innerRendered := innerStyle.Render(strings.TrimRight(innerContent.String(), "\n"))
+		for line := range strings.SplitSeq(innerRendered, "\n") {
+			bodyLines = append(bodyLines, line)
+		}
+		bodyLines = append(bodyLines, toolMetaStyle.Render("Press Enter to collapse"))
+	} else {
+		// Compact mode: show first tail line if any, otherwise truncated result summary.
+		detail := ""
+		if len(t.tailLines) > 0 && (t.status == "pending" || t.status == "running") {
+			detail = t.tailLines[len(t.tailLines)-1]
+		} else if t.result != "" {
+			const resultLimit = 60
+			summary := strings.ReplaceAll(t.result, "\n", " ")
+			if len(summary) > resultLimit {
+				summary = summary[:resultLimit] + "…"
+			}
+			detail = summary
+		}
+		if detail != "" {
+			bodyLines = append(bodyLines, detail)
+		}
+	}
+
+	// Build content: title on first line, body on subsequent lines.
+	content := title
+	if len(bodyLines) > 0 {
+		content += "\n" + strings.Join(bodyLines, "\n")
+	}
+	return boxStyle.Render(content)
 }
 
 // toolStyleForStatus returns the lipgloss style for a tool's current lifecycle
@@ -1536,6 +1917,29 @@ func toolStyleForStatus(toolName, status string) lipgloss.Style {
 	}
 }
 
+// toolBoxStyleForStatus returns the lipgloss style for a tool box (Phase 1)
+// with background color, rounded border, and per-status coloring.
+func toolBoxStyleForStatus(toolName, status string) lipgloss.Style {
+	skill := toolName == "skill"
+	switch status {
+	case "done":
+		if skill {
+			return toolBoxSkillSuccessStyle
+		}
+		return toolBoxSuccessStyle
+	case "error":
+		if skill {
+			return toolBoxSkillFailedStyle
+		}
+		return toolBoxErrorStyle
+	default: // pending, running
+		if skill {
+			return toolBoxSkillRunningStyle
+		}
+		return toolBoxRunningStyle
+	}
+}
+
 // skillLabelFromArgs extracts a human-readable skill name from tool arguments
 // (JSON object with a "name": key). Falls back to "skill" when unparseable.
 func skillLabelFromArgs(args string) string {
@@ -1544,10 +1948,10 @@ func skillLabelFromArgs(args string) string {
 	key := `","name":"`
 	// Also try at the start of the object, right after the opening brace.
 	for _, prefix := range []string{`{"name":"`, key} {
-		if i := strings.Index(args, prefix); i >= 0 {
-			rest := args[i+len(prefix):]
-			if j := strings.IndexByte(rest, '"'); j >= 0 {
-				return "skill: " + rest[:j]
+		if _, after, ok := strings.Cut(args, prefix); ok {
+			rest := after
+			if before, _, ok := strings.Cut(rest, "\""); ok {
+				return "skill: " + before
 			}
 		}
 	}
@@ -2051,7 +2455,12 @@ var (
 	compDescStyle        = lipgloss.NewStyle().Foreground(themeHex(theme.ToneMuted))
 	compMoreStyle        = lipgloss.NewStyle().Foreground(themeHex(theme.ToneMuted)).Italic(true)
 	panelStyle           = lipgloss.NewStyle().Foreground(themeHex(theme.CommandFG))
-	spinnerStyle         = lipgloss.NewStyle().Foreground(themeHex(theme.ToneWarn)).Italic(true)
+
+	// Muted trailing metadata — the elapsed clock and interrupt hint on the
+	// working indicator, and the per-tool elapsed suffix. Kept dim so the
+	// verb / tool name stays the focus and the timing reads as ambient.
+	workingMetaStyle = lipgloss.NewStyle().Foreground(themeHex(theme.ToneMuted))
+	toolMetaStyle    = lipgloss.NewStyle().Foreground(themeHex(theme.ToneMuted))
 
 	// Tool status styles — per-state foreground colors for tool call rows.
 	// Use theme colors matching legacy's inline_chat.go tool box backgrounds.
@@ -2062,4 +2471,50 @@ var (
 	skillRunningStyle = lipgloss.NewStyle().Foreground(themeHex(theme.SkillRunning.FG))
 	skillSuccessStyle = lipgloss.NewStyle().Foreground(themeHex(theme.SkillSuccess.FG))
 	skillFailedStyle  = lipgloss.NewStyle().Foreground(themeHex(theme.SkillFailed.FG))
+
+	// Phase 1: tool box styles — background-colored bordered boxes for each
+	// lifecycle state. Width is set dynamically at render time via .Width().
+	toolBoxRunningStyle = lipgloss.NewStyle().
+				Border(lipgloss.RoundedBorder()).
+				BorderForeground(themeHex(theme.ToolRunning.FG)).
+				Background(themeHex(theme.ToolRunning.BG)).
+				Foreground(themeHex(theme.ToolRunning.FG)).
+				Padding(0, 1)
+	toolBoxSuccessStyle = lipgloss.NewStyle().
+				Border(lipgloss.RoundedBorder()).
+				BorderForeground(themeHex(theme.ToolSuccess.FG)).
+				Background(themeHex(theme.ToolSuccess.BG)).
+				Foreground(themeHex(theme.ToolSuccess.FG)).
+				Padding(0, 1)
+	toolBoxErrorStyle = lipgloss.NewStyle().
+				Border(lipgloss.RoundedBorder()).
+				BorderForeground(themeHex(theme.ToolFailed.FG)).
+				Background(themeHex(theme.ToolFailed.BG)).
+				Foreground(themeHex(theme.ToolFailed.FG)).
+				Padding(0, 1)
+	// Skill tool gets lilac variants.
+	toolBoxSkillRunningStyle = lipgloss.NewStyle().
+					Border(lipgloss.RoundedBorder()).
+					BorderForeground(themeHex(theme.SkillRunning.FG)).
+					Background(themeHex(theme.SkillRunning.BG)).
+					Foreground(themeHex(theme.SkillRunning.FG)).
+					Padding(0, 1)
+	toolBoxSkillSuccessStyle = lipgloss.NewStyle().
+					Border(lipgloss.RoundedBorder()).
+					BorderForeground(themeHex(theme.SkillSuccess.FG)).
+					Background(themeHex(theme.SkillSuccess.BG)).
+					Foreground(themeHex(theme.SkillSuccess.FG)).
+					Padding(0, 1)
+	toolBoxSkillFailedStyle = lipgloss.NewStyle().
+				Border(lipgloss.RoundedBorder()).
+				BorderForeground(themeHex(theme.SkillFailed.FG)).
+				Background(themeHex(theme.SkillFailed.BG)).
+				Foreground(themeHex(theme.SkillFailed.FG)).
+				Padding(0, 1)
+
+	// toolBoxExpandedStyle is the style for an expanded tool box (subtle border).
+	toolBoxExpandedStyle = lipgloss.NewStyle().
+				Border(lipgloss.RoundedBorder(), false, false, false, true).
+				BorderForeground(themeHex(theme.ToneMuted)).
+				Padding(0, 1)
 )

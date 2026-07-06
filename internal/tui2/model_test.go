@@ -2106,7 +2106,7 @@ func TestFinalizeResponseEmptyWithNoTools(t *testing.T) {
 
 func TestRenderToolWithResult(t *testing.T) {
 	tool := toolState{name: "read", result: "file contents", status: "done"}
-	out := stripANSI(renderTool(tool))
+	out := stripANSI(renderTool(tool, 0))
 	if !strings.Contains(out, "read") {
 		t.Fatalf("tool output = %q, want 'read'", out)
 	}
@@ -2118,7 +2118,7 @@ func TestRenderToolWithResult(t *testing.T) {
 func TestRenderToolLongResultTruncated(t *testing.T) {
 	longResult := strings.Repeat("x", 100)
 	tool := toolState{name: "search", result: longResult, status: "done"}
-	out := stripANSI(renderTool(tool))
+	out := stripANSI(renderTool(tool, 0))
 	if len(out) > 80 {
 		t.Fatalf("tool output too long: %d chars", len(out))
 	}
@@ -2129,7 +2129,7 @@ func TestRenderToolLongResultTruncated(t *testing.T) {
 
 func TestRenderToolWithoutResult(t *testing.T) {
 	tool := toolState{name: "think", status: "running"}
-	out := stripANSI(renderTool(tool))
+	out := stripANSI(renderTool(tool, 0))
 	if !strings.Contains(out, "think") {
 		t.Fatalf("tool output = %q, want 'think'", out)
 	}

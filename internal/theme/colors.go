@@ -13,6 +13,14 @@ type ToolStatus struct {
 	FG termkit.Color
 }
 
+// ToolBoxStyle combines background, foreground, and border colors for a
+// tool or skill's visual container in the TUI.
+type ToolBoxStyle struct {
+	BG     termkit.Color
+	FG     termkit.Color
+	Border termkit.Color
+}
+
 var (
 	// ToolRunning is the warm peach state shown while a tool is executing.
 	ToolRunning = ToolStatus{
@@ -32,6 +40,13 @@ var (
 	ToolFailed = ToolStatus{
 		BG: termkit.Color{48, 11, 11},
 		FG: termkit.Color{255, 160, 160},
+	}
+
+	// ToolPending is a muted grey-blue state for tools that have been
+	// announced but haven't started executing yet.
+	ToolPending = ToolStatus{
+		BG: termkit.Color{64, 64, 72},
+		FG: termkit.Color{160, 165, 175},
 	}
 
 	// SteeringFG is the navy blue foreground used for the steering indicator
@@ -62,11 +77,11 @@ var (
 		FG: termkit.Color{215, 195, 245},
 	}
 
-	// SkillSuccess is the dark lilac state shown when the Skill tool activates
-	// a skill cleanly.
+	// SkillSuccess is the dark teal-green state shown when the Skill tool
+	// activates a skill cleanly, distinct from the lilac running state.
 	SkillSuccess = ToolStatus{
-		BG: termkit.Color{68, 50, 100},
-		FG: termkit.Color{215, 195, 245},
+		BG: termkit.Color{20, 60, 40},
+		FG: termkit.Color{160, 235, 185},
 	}
 
 	// SkillFailed is the dark mauve state shown when the Skill tool errors
@@ -75,6 +90,27 @@ var (
 		BG: termkit.Color{90, 40, 70},
 		FG: termkit.Color{255, 190, 210},
 	}
+
+	// Tool box border colors — lighter companion colors for tool/skill
+	// container borders, chosen so borders read clearly against the
+	// background without overwhelming the foreground text.
+	ToolRunningBorder  = termkit.Color{230, 170, 130}
+	ToolSuccessBorder  = termkit.Color{100, 200, 100}
+	ToolFailedBorder   = termkit.Color{240, 120, 120}
+	ToolPendingBorder  = termkit.Color{130, 135, 145}
+	SkillRunningBorder = termkit.Color{180, 160, 210}
+	SkillSuccessBorder = termkit.Color{120, 200, 160}
+	SkillFailedBorder  = termkit.Color{240, 140, 180}
+
+	// ShimmerBase and ShimmerHighlight are the two stops of the "current"
+	// gradient swept across the live working indicator (see
+	// internal/tui2/animation.go). ShimmerBase is tau's brand violet — the
+	// resting colour of the text — and ShimmerHighlight is the electric cyan
+	// band of light that travels through it, tying the motion to the same cyan
+	// accent used for the input caret. The pair reads as "computation flowing
+	// through the τ mark" rather than a decorative rainbow.
+	ShimmerBase      = termkit.Color{123, 47, 190}
+	ShimmerHighlight = termkit.Color{127, 219, 255}
 
 	// ToneInfo, ToneSuccess, ToneWarn, ToneError, and ToneMuted are the
 	// foreground colors for plugin-rendered widgets' semantic Style.Tone,
@@ -86,3 +122,13 @@ var (
 	ToneError   = termkit.Color{255, 160, 160}
 	ToneMuted   = termkit.Color{128, 134, 150}
 )
+
+// ToolBox returns a ToolBoxStyle combining the background and foreground
+// colors of the supplied ToolStatus with a lighter companion border color.
+func ToolBox(ts ToolStatus, borderColor termkit.Color) ToolBoxStyle {
+	return ToolBoxStyle{
+		BG:     ts.BG,
+		FG:     ts.FG,
+		Border: borderColor,
+	}
+}
