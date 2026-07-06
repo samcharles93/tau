@@ -175,7 +175,7 @@ func (m *model) computeStatusBar() string {
 		totals := m.usage.Snapshot(m.sessionID)
 		if totals != nil && totals.TotalTokens > 0 {
 			right = append(right, statusSeg{
-				text: humanizeTokens(totals.TotalTokens) + " tok",
+				text: humanizeTokens(totals.TotalTokens) + " session tok",
 				prio: prioTokens,
 			})
 			if totals.Cost > 0 {
@@ -185,7 +185,7 @@ func (m *model) computeStatusBar() string {
 				})
 			}
 			// Context window %.
-			if pct := contextPct(totals.PromptTokens, m.ctxWindow); pct >= 0 {
+			if pct := contextPct(totals.LastPromptTokens, m.ctxWindow); pct >= 0 {
 				s := statusSeg{
 					text:  fmt.Sprintf("ctx %d%%", pct),
 					style: contextStyle(pct),

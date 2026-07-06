@@ -15,6 +15,7 @@ import (
 
 	tauchat "github.com/samcharles93/tau/internal/chat"
 	"github.com/samcharles93/tau/internal/eventbus"
+	"github.com/samcharles93/tau/internal/metrics"
 	"github.com/samcharles93/tau/internal/tui/notify"
 )
 
@@ -2718,6 +2719,81 @@ func TestComputeStatusBarEffort(t *testing.T) {
 	}
 }
 
+func TestComputeStatusBarLabelsSessionTokenTotals(t *testing.T) {
+	bus := eventbus.New()
+	t.Cleanup(bus.Close)
+	tracker := metrics.NewUsageTracker(bus.Client("usage"))
+	t.Cleanup(tracker.Close)
+	pub := eventbus.Publish[tauchat.MetricEvent](bus.Client("coordinator"))
+
+	pub.Publish(tauchat.MetricEvent{
+		Category: tauchat.MetricCategoryLLM,
+		Name:     "llm.response",
+		Value:    20_000,
+		Labels: map[string]string{
+			"prompt_tokens":     "19000",
+			"completion_tokens": "1000",
+		},
+		SessionID: "sess",
+	})
+	for range 100 {
+		if totals := tracker.Snapshot("sess"); totals != nil && totals.TotalTokens == 20_000 {
+			break
+		}
+		time.Sleep(time.Millisecond)
+	}
+
+	m := newTestModel(&fakeRuntime{}, nil)
+	m.usage = tracker
+	m.ctxWindow = 200_000
+	m.width = 120
+
+	plain := stripANSI(m.computeStatusBar())
+	if !strings.Contains(plain, "20.0k session tok") {
+		t.Fatalf("status bar = %q, want session token label", plain)
+	}
+}
+
+func TestComputeStatusBarContextUsesLatestPromptTokens(t *testing.T) {
+	bus := eventbus.New()
+	t.Cleanup(bus.Close)
+	tracker := metrics.NewUsageTracker(bus.Client("usage"))
+	t.Cleanup(tracker.Close)
+	pub := eventbus.Publish[tauchat.MetricEvent](bus.Client("coordinator"))
+
+	for _, prompt := range []string{"500", "100"} {
+		pub.Publish(tauchat.MetricEvent{
+			Category: tauchat.MetricCategoryLLM,
+			Name:     "llm.response",
+			Value:    1000,
+			Labels: map[string]string{
+				"prompt_tokens":     prompt,
+				"completion_tokens": "500",
+			},
+			SessionID: "sess",
+		})
+	}
+	for range 100 {
+		if totals := tracker.Snapshot("sess"); totals != nil && totals.TurnCount == 2 {
+			break
+		}
+		time.Sleep(time.Millisecond)
+	}
+
+	m := newTestModel(&fakeRuntime{}, nil)
+	m.usage = tracker
+	m.ctxWindow = 1000
+	m.width = 120
+
+	plain := stripANSI(m.computeStatusBar())
+	if !strings.Contains(plain, "ctx 10%") {
+		t.Fatalf("status bar = %q, want latest prompt context percentage", plain)
+	}
+	if strings.Contains(plain, "ctx 60%") {
+		t.Fatalf("status bar = %q, used cumulative prompt tokens for context", plain)
+	}
+}
+
 // --- toolState tests ---
 
 func TestToolStateDefaultValues(t *testing.T) {
@@ -2739,6 +2815,22 @@ func TestAppendMessageMultiLine(t *testing.T) {
 
 	if len(m.renderedLines) != 2 {
 		t.Fatalf("expected 2 rendered lines, got %d", len(m.renderedLines))
+	}
+}
+
+func TestAppendMessageMultiLineUserContinuationKeepsUserStyle(t *testing.T) {
+	m := newTestModel(&fakeRuntime{}, nil)
+
+	m.appendMessage("user", "line one\nline two")
+
+	if len(m.renderedLines) != 2 {
+		t.Fatalf("expected 2 rendered lines, got %d", len(m.renderedLines))
+	}
+	if !strings.Contains(m.renderedLines[1], "38;2;120;170;255") {
+		t.Fatalf("continuation line = %q, want user foreground style", m.renderedLines[1])
+	}
+	if strings.Contains(m.renderedLines[1], "38;2;128;134;150") {
+		t.Fatalf("continuation line = %q, should not use muted metadata style", m.renderedLines[1])
 	}
 }
 

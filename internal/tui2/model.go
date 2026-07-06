@@ -1486,7 +1486,7 @@ func (m *model) applySnapshot(e tauchat.ChatSessionSnapshotEvent) {
 			if i == 0 {
 				m.renderedLines = append(m.renderedLines, renderLine(role, l))
 			} else {
-				m.renderedLines = append(m.renderedLines, continuationStyle.Render(l))
+				m.renderedLines = append(m.renderedLines, renderContinuationLine(role, l))
 			}
 		}
 	}
@@ -1829,7 +1829,7 @@ func (m *model) appendMessage(role, content string) {
 		if i == 0 {
 			m.renderedLines = append(m.renderedLines, renderLine(role, l))
 		} else {
-			m.renderedLines = append(m.renderedLines, continuationStyle.Render(l))
+			m.renderedLines = append(m.renderedLines, renderContinuationLine(role, l))
 		}
 	}
 	m.viewport.SetContentLines(m.renderedLines)
@@ -1855,6 +1855,17 @@ func renderLine(role, content string) string {
 		return assistantStyle.Render(content)
 	default:
 		return content
+	}
+}
+
+func renderContinuationLine(role, content string) string {
+	switch role {
+	case "user":
+		return userContinuationStyle.Render(content)
+	case "assistant":
+		return assistantContinuationStyle.Render(content)
+	default:
+		return continuationStyle.Render(content)
 	}
 }
 
@@ -2578,13 +2589,16 @@ var (
 	notifyColor    = themeHex(theme.ToolFailed.FG)
 	inputColor     = lipgloss.Color("#7FDBFF") // no theme equivalent
 
-	userStyle         = lipgloss.NewStyle().Foreground(userColor)
-	assistantStyle    = lipgloss.NewStyle().Foreground(assistantColor)
-	reasoningStyle    = lipgloss.NewStyle().Foreground(reasoningColor).Italic(true)
-	streamStyle       = lipgloss.NewStyle().Foreground(streamColor)
-	notifyStyle       = lipgloss.NewStyle().Foreground(notifyColor).Bold(true)
-	inputStyle        = lipgloss.NewStyle().Foreground(inputColor)
-	continuationStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("#555555")).PaddingLeft(6)
+	userStyle      = lipgloss.NewStyle().Foreground(userColor)
+	assistantStyle = lipgloss.NewStyle().Foreground(assistantColor)
+	reasoningStyle = lipgloss.NewStyle().Foreground(reasoningColor).Italic(true)
+	streamStyle    = lipgloss.NewStyle().Foreground(streamColor)
+	notifyStyle    = lipgloss.NewStyle().Foreground(notifyColor).Bold(true)
+	inputStyle     = lipgloss.NewStyle().Foreground(inputColor)
+
+	userContinuationStyle      = lipgloss.NewStyle().Foreground(userColor).PaddingLeft(6)
+	assistantContinuationStyle = lipgloss.NewStyle().Foreground(assistantColor).PaddingLeft(6)
+	continuationStyle          = lipgloss.NewStyle().Foreground(themeHex(theme.ToneMuted)).PaddingLeft(6)
 
 	// inputCursorStyle is the block-cursor background — matches the default
 	// mid-grey pkg/taui/lineinput.go uses (\x1b[48;2;128;134;150m).
