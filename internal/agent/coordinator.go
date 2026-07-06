@@ -452,7 +452,8 @@ func (c *Coordinator) handleSubmit(cmd chat.SubmitChatPromptCommand) {
 		StartedAt: now,
 	})
 
-	c.loggerWithTurn(cmd.SessionID, cmd.RequestID).Debug("turn started",
+	c.loggerWithTurn(cmd.SessionID, cmd.RequestID).Debug(
+		"turn started",
 		"provider", turnState.ProviderName,
 		"model", turnState.Model.ID,
 		"msg_count", len(turnState.Messages),
@@ -1293,14 +1294,16 @@ func (c *Coordinator) runTurn(ctx context.Context, state chat.ChatSessionState) 
 
 	bearerToken, err := c.tokenSource(ctx, state.Provider)
 	if err != nil {
-		c.loggerWithTurn(sessionID, requestID).Debug("turn failed — token source error",
+		c.loggerWithTurn(sessionID, requestID).Debug(
+			"turn failed — token source error",
 			"err", err,
 		)
 		c.failTurn(sessionID, requestID, err, now)
 		return
 	}
 
-	c.loggerWithTurn(sessionID, requestID).Debug("turn loop begin",
+	c.loggerWithTurn(sessionID, requestID).Debug(
+		"turn loop begin",
 		"provider", state.ProviderName,
 		"model", state.Model.ID,
 	)
@@ -1369,7 +1372,8 @@ func (c *Coordinator) runTurn(ctx context.Context, state chat.ChatSessionState) 
 			}
 		}
 
-		c.loggerWithTurn(sessionID, requestID).Debug("llm call start",
+		c.loggerWithTurn(sessionID, requestID).Debug(
+			"llm call start",
 			"iteration", iteration,
 			"model", state.Model.ID,
 			"provider", state.ProviderName,
@@ -1412,14 +1416,16 @@ func (c *Coordinator) runTurn(ctx context.Context, state chat.ChatSessionState) 
 			state.SystemPrompt = originalSystemPrompt
 			state.Model.ID = originalModelID
 			if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) || errors.Is(ctx.Err(), context.Canceled) {
-				c.loggerWithTurn(sessionID, requestID).Debug("llm call cancelled",
+				c.loggerWithTurn(sessionID, requestID).Debug(
+					"llm call cancelled",
 					"iteration", iteration,
 					"err", err,
 				)
 				c.cancelTurn(sessionID, requestID, time.Now().UTC())
 				return
 			}
-			c.loggerWithTurn(sessionID, requestID).Warn("llm call failed",
+			c.loggerWithTurn(sessionID, requestID).Warn(
+				"llm call failed",
 				"iteration", iteration,
 				"err", err,
 			)
@@ -1444,7 +1450,8 @@ func (c *Coordinator) runTurn(ctx context.Context, state chat.ChatSessionState) 
 			},
 		})
 
-		c.loggerWithTurn(sessionID, requestID).Debug("llm call complete",
+		c.loggerWithTurn(sessionID, requestID).Debug(
+			"llm call complete",
 			"iteration", iteration,
 			"finish_reason", result.FinishReason,
 			"input_tokens", result.Usage.PromptTokens,
@@ -1466,7 +1473,8 @@ func (c *Coordinator) runTurn(ctx context.Context, state chat.ChatSessionState) 
 		for i, tc := range result.ToolCalls {
 			toolNames[i] = tc.Function.Name
 		}
-		c.loggerWithTurn(sessionID, requestID).Debug("tool calls detected",
+		c.loggerWithTurn(sessionID, requestID).Debug(
+			"tool calls detected",
 			"iteration", iteration,
 			"count", len(result.ToolCalls),
 			"tools", toolNames,
@@ -1517,7 +1525,8 @@ func (c *Coordinator) executeToolsParallel(ctx context.Context, sessionID, reque
 	for i, tc := range calls {
 		toolNames[i] = tc.Function.Name
 	}
-	c.loggerWithTurn(sessionID, requestID).Debug("executing tools",
+	c.loggerWithTurn(sessionID, requestID).Debug(
+		"executing tools",
 		"count", len(calls),
 		"tools", toolNames,
 		"parallel", c.parallelToolCalls,
@@ -1644,7 +1653,8 @@ func (c *Coordinator) executeToolsParallel(ctx context.Context, sessionID, reque
 		result.Content = tr.Content
 
 		results[i] = result
-		c.loggerWithTurn(sessionID, requestID).Debug("tool executed",
+		c.loggerWithTurn(sessionID, requestID).Debug(
+			"tool executed",
 			"tool", tc.Function.Name,
 			"call_id", tc.ID,
 			"is_error", result.IsError,
@@ -1771,7 +1781,13 @@ func mergeToolCallDelta(calls []chat.ChatToolCall, delta chat.ChatToolCallDelta)
 		tc.Type = delta.Type
 	}
 	if delta.Function.Name != "" {
-		tc.Function.Name += delta.Function.Name
+		// The function name arrives whole in a single delta for every provider
+		// observed so far (unlike Arguments, which streams token-by-token) —
+		// some providers (e.g. deepseek) resend the full name on every
+		// subsequent delta for the same call rather than sending it once, so
+		// this must replace, not accumulate, or the name duplicates once per
+		// delta (e.g. "shell" -> "shellshellshell...").
+		tc.Function.Name = delta.Function.Name
 	}
 	if delta.Function.Arguments != "" {
 		tc.Function.Arguments += delta.Function.Arguments
@@ -1990,7 +2006,8 @@ func (c *Coordinator) completeTurn(sessionID, requestID string, result chat.Comp
 	snapshot := chat.CloneChatSessionState(session.state)
 	c.mu.Unlock()
 
-	c.loggerWithTurn(sessionID, requestID).Debug("turn completed",
+	c.loggerWithTurn(sessionID, requestID).Debug(
+		"turn completed",
 		"finish_reason", result.FinishReason,
 		"total_tokens", result.Usage.TotalTokens,
 		"duration_ms", time.Since(turnStartedAt).Milliseconds(),
@@ -2081,7 +2098,8 @@ func (c *Coordinator) cancelTurn(sessionID, requestID string, at time.Time) {
 	snapshot := chat.CloneChatSessionState(session.state)
 	c.mu.Unlock()
 
-	c.loggerWithTurn(sessionID, requestID).Debug("turn cancelled",
+	c.loggerWithTurn(sessionID, requestID).Debug(
+		"turn cancelled",
 		"provider", snapshot.Provider.Name,
 		"model", snapshot.Model.ID,
 	)
@@ -2118,7 +2136,8 @@ func (c *Coordinator) failTurn(sessionID, requestID string, err error, at time.T
 	snapshot := chat.CloneChatSessionState(session.state)
 	c.mu.Unlock()
 
-	c.loggerWithTurn(sessionID, requestID).Warn("turn failed",
+	c.loggerWithTurn(sessionID, requestID).Warn(
+		"turn failed",
 		"provider", snapshot.Provider.Name,
 		"model", snapshot.Model.ID,
 		"err", err,
@@ -2150,19 +2169,18 @@ func (c *Coordinator) failTurn(sessionID, requestID string, err error, at time.T
 
 func (c *Coordinator) cancelAllSessions() {
 	c.mu.Lock()
-	sessions := make([]*coordinatorSession, 0, len(c.sessions))
+	states := make([]chat.ChatSessionState, 0, len(c.sessions))
 	sessionIDs := make([]string, 0, len(c.sessions))
 	for id, session := range c.sessions {
 		if session.cancel != nil {
 			session.cancel()
 		}
-		sessions = append(sessions, session)
+		states = append(states, chat.CloneChatSessionState(session.state))
 		sessionIDs = append(sessionIDs, id)
 	}
 	c.mu.Unlock()
 
-	for _, session := range sessions {
-		state := chat.CloneChatSessionState(session.state)
+	for _, state := range states {
 		sessionID := state.SessionID
 		// Dedup shutdown events (preserving existing dedup logic).
 		c.mu.Lock()
@@ -2229,7 +2247,8 @@ func (c *Coordinator) applyPluginMessageModifications(state *chat.ChatSessionSta
 	for _, raw := range resp.GetInjectMessages() {
 		var msg chat.ChatMessage
 		if err := json.Unmarshal([]byte(raw), &msg); err != nil {
-			c.loggerWith(state.SessionID).Warn("failed to decode injected message",
+			c.loggerWith(state.SessionID).Warn(
+				"failed to decode injected message",
 				"err", err,
 			)
 			continue
@@ -2470,7 +2489,8 @@ func (c *Coordinator) persistSession(state chat.ChatSessionState, duration time.
 		return
 	}
 
-	c.loggerWith(state.SessionID).Debug("session persisted",
+	c.loggerWith(state.SessionID).Debug(
+		"session persisted",
 		"msg_count", len(state.Messages),
 		"duration_ms", duration.Milliseconds(),
 	)
