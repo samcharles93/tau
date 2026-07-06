@@ -344,6 +344,9 @@ func (m *model) cmdRefresh(_ string) tea.Cmd {
 	}
 }
 
+// cmdCost prints a full usage breakdown (tokens, turns, cost, tools, context
+// %, model) to the scrollback. Mirrors
+// internal/tui/inline_commands.go's handleCostCommand.
 func (m *model) cmdCost(_ string) tea.Cmd {
 	if m.usage == nil {
 		return m.setNotification("no usage recorded yet")
@@ -352,11 +355,30 @@ func (m *model) cmdCost(_ string) tea.Cmd {
 	if totals == nil || totals.TotalTokens == 0 {
 		return m.setNotification("no usage recorded yet")
 	}
-	msg := fmt.Sprintf(
-		"Prompt: %d  Completion: %d  Total: %d  Cost: $%.4f",
-		totals.PromptTokens, totals.CompletionTokens, totals.TotalTokens, totals.Cost,
-	)
-	return m.setNotification(msg)
+
+	ctxWindow := m.currentModelRef().Config.ContextWindow
+
+	var b strings.Builder
+	b.WriteString("Usage:")
+	fmt.Fprintf(&b, "\n  %-12s %s", "tokens",
+		fmt.Sprintf("↑%d in · ↓%d out · %d total", totals.PromptTokens, totals.CompletionTokens, totals.TotalTokens))
+	fmt.Fprintf(&b, "\n  %-12s %d", "turns", totals.TurnCount)
+	fmt.Fprintf(&b, "\n  %-12s %s", "cost", formatCost(totals.Cost))
+	fmt.Fprintf(&b, "\n  %-12s %s", "tools",
+		fmt.Sprintf("%d calls · %d errors", totals.ToolCalls, totals.ToolErrors))
+	if pct := formatContextPct(totals.LastPromptTokens, ctxWindow); pct != "" {
+		fmt.Fprintf(&b, "\n  %-12s %s", "context",
+			fmt.Sprintf("%s (%d / %d)", pct, totals.LastPromptTokens, ctxWindow))
+	}
+	if totals.LastModel != "" {
+		model := totals.LastModel
+		if totals.LastProvider != "" {
+			model += " (" + totals.LastProvider + ")"
+		}
+		fmt.Fprintf(&b, "\n  %-12s %s", "model", model)
+	}
+	m.appendMessage("system", b.String())
+	return nil
 }
 
 func (m *model) cmdCopy(_ string) tea.Cmd {
@@ -555,8 +577,18 @@ func (m *model) cmdSession(args string) tea.Cmd {
 	switch {
 	case args == "" || args == "list":
 		return sendCommand(m.runtime, tauchat.ListSessionsCommand{})
-	case args == "info":
-		return m.setNotification(fmt.Sprintf("session: %s  model: %s @ %s", m.sessionID, m.modelName, m.provider))
+	case args == "info" || strings.HasPrefix(args, "info "):
+		id := strings.TrimSpace(strings.TrimPrefix(args, "info"))
+		if id == "" {
+			return m.setNotification("usage: /session info <id>")
+		}
+		for _, s := range m.sessionSummaries {
+			if s.ID == id {
+				m.appendMessage("system", sessionInfoText(s))
+				return nil
+			}
+		}
+		return m.setNotification("session not found: " + id + " (try /session list first)")
 	case strings.HasPrefix(args, "export"):
 		id := strings.TrimSpace(strings.TrimPrefix(args, "export"))
 		if id == "" {

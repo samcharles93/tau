@@ -25,3 +25,6 @@ examples/plugins/*/tau-plugin-*
 .playwright-mcp/
 /tool-stats
 .pi-subagents/
+
+# Local script/tool outputs and artefacts (e.g. scripts/tui-parity.sh screenshots)
+/.local/

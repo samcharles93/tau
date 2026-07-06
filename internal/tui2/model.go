@@ -798,6 +798,24 @@ func (m *model) recallHistory(delta int) tea.Cmd {
 	return nil
 }
 
+// seedHistoryFromMessages seeds the input history (Up/Down recall) from a
+// loaded session's user messages — mirrors
+// internal/tui/inline_chat.go's function of the same name. Leaves the
+// current history untouched when the session had no user messages, rather
+// than clearing it.
+func (m *model) seedHistoryFromMessages(messages []tauchat.ChatMessage) {
+	var prompts []string
+	for _, msg := range messages {
+		if msg.Role == tauchat.ChatRoleUser && strings.TrimSpace(msg.Content) != "" {
+			prompts = append(prompts, msg.Content)
+		}
+	}
+	if len(prompts) > 0 {
+		m.history = prompts
+		m.historyIdx = -1
+	}
+}
+
 func (m *model) submitInput() tea.Cmd {
 	// Interactive prompt active: handle prompt input.
 	if m.activePrompt != nil {
@@ -824,9 +842,11 @@ func (m *model) submitInput() tea.Cmd {
 		return m.handleSlashCommand(text)
 	}
 
-	// Bash mode: !command runs outside the LLM turn loop.
-	if after, ok := strings.CutPrefix(text, "!"); ok {
-		return m.handleBashCommand(after)
+	// Bash mode: !command (or !!command, excluded from what the model sees)
+	// runs outside the LLM turn loop. handleBashCommand does its own
+	// bang-stripping on the full text, not just a single "!".
+	if strings.HasPrefix(text, "!") {
+		return m.handleBashCommand(text)
 	}
 
 	// Debounce guard: 300ms between submits (P2 #27).
@@ -876,12 +896,21 @@ func (m *model) drainTurnQueue() tea.Cmd {
 // non-nil Cmd even when there's nothing to schedule.
 var noopCmd tea.Cmd = func() tea.Msg { return nil }
 
-// handleSteer sends a steering command mid-turn.
+// handleSteer sends a steering command mid-turn, or — while idle — falls
+// through to a normal submit rather than rejecting the keystroke, so
+// whatever the user typed is never silently lost. Mirrors
+// internal/tui/inline_chat.go's onSteer.
 func (m *model) handleSteer() tea.Cmd {
-	if !m.inResponse {
-		return m.setNotification("no active response to steer")
-	}
 	text := strings.TrimSpace(m.input)
+
+	if !m.inResponse {
+		if text == "" {
+			return nil
+		}
+		m.clearInput()
+		return m.startOrQueueTurn(text)
+	}
+
 	m.clearInput()
 	if text == "" {
 		// No visible feedback needed here — the status bar already shows a
@@ -898,20 +927,31 @@ func (m *model) handleSteer() tea.Cmd {
 	})
 }
 
-// handleBashCommand runs a shell command outside the LLM turn loop. The
-// CallID is generated here (not by the coordinator) and recorded in
-// m.bashCallID before the command is sent, so the matching
+// handleBashCommand runs a "!" (or "!!") bash-mode command. trimmed is the
+// full submitted text, bang(s) included — "!!" (or "!!!", "!!!!", ...) marks
+// the command as Exclude: true, meaning it's hidden from what the model
+// sees in the conversation history. Every leading "!" is stripped, not just
+// one or two, so "!!!ls" doesn't leave a literal "!" glued onto the front
+// of the command. The CallID is generated here (not by the coordinator) and
+// recorded in m.bashCallID before the command is sent, so the matching
 // ChatToolExecutionCompletedEvent can be recognised as "ours" and clear
-// bashRunning — mirroring the legacy inline_chat.go behaviour.
-func (m *model) handleBashCommand(cmd string) tea.Cmd {
+// bashRunning. Mirrors internal/tui/inline_chat.go's handleBashCommand.
+func (m *model) handleBashCommand(trimmed string) tea.Cmd {
+	exclude := strings.HasPrefix(trimmed, "!!")
+	command := strings.TrimSpace(strings.TrimLeft(trimmed, "!"))
+	if command == "" {
+		return nil
+	}
+
 	callID := "bash-" + newRequestID()
 	m.bashRunning = true
 	m.bashCallID = callID
-	m.appendMessage("user", "!"+cmd)
+	m.appendMessage("user", trimmed)
 	return sendBashCommand(m.runtime, tauchat.RunBashCommand{
 		SessionID:   m.sessionID,
 		CallID:      callID,
-		Command:     cmd,
+		Command:     command,
+		Exclude:     exclude,
 		RequestedAt: time.Now().UTC(),
 	})
 }
@@ -1039,8 +1079,26 @@ func (m *model) handleChatEvent(evt tauchat.ChatEvent) tea.Cmd {
 		return m.drainTurnQueue()
 
 	case tauchat.ChatRuntimeErrorEvent:
+		// Abandons the in-flight turn's UI state entirely (matches legacy's
+		// clearTurnLocked) — an error means there's nothing left to stream
+		// into, so the streaming/reasoning/tools buffers would otherwise
+		// linger as stale leftovers from the failed turn.
+		m.steering = false
 		m.inResponse = false
-		return m.setNotification(fmt.Sprintf("error: %s", e.Message))
+		m.streaming = ""
+		m.reasoning = ""
+		m.tools = nil
+		// Pushed through notifyQ (not setNotification) at error level with
+		// Duration 0 (persists until dismissed) to match how
+		// ChatNotificationEvent below reports errors, and also printed to
+		// the scrollback so it isn't lost if overtaken by a later notice.
+		m.notifyQ.Push(notify.Notification{
+			Message:  e.Message,
+			Level:    notify.LevelError,
+			Duration: 0,
+		})
+		m.appendMessage("system", "✗ "+e.Message)
+		return nil
 
 	case tauchat.ChatNotificationEvent:
 		m.notifyQ.Push(notify.Notification{
@@ -1063,7 +1121,13 @@ func (m *model) handleChatEvent(evt tauchat.ChatEvent) tea.Cmd {
 		return nil
 
 	case tauchat.SessionLoadedEvent:
-		return m.setNotification("session loaded: " + e.State.SessionID)
+		// Reuses the same state-sync + message-replay logic as an initial
+		// snapshot — mirrors internal/tui/inline_chat.go's syncState +
+		// printMessage-per-message replay, so a loaded session's history is
+		// actually visible instead of just a notification.
+		m.applySnapshot(tauchat.ChatSessionSnapshotEvent(e))
+		m.seedHistoryFromMessages(e.State.Messages)
+		return m.setNotification(fmt.Sprintf("Session %s loaded (%d messages)", e.State.SessionID, len(e.State.Messages)))
 
 	case tauchat.SessionDeletedEvent:
 		return m.setNotification("session deleted: " + e.SessionID)
@@ -1114,7 +1178,8 @@ func (m *model) handleChatEvent(evt tauchat.ChatEvent) tea.Cmd {
 
 	// Skills events.
 	case tauchat.SkillsChangedEvent:
-		return m.setNotification(fmt.Sprintf("skills: %d available", len(e.Skills)))
+		m.appendMessage("system", skillsChangedText(e.Skills))
+		return nil
 
 	default:
 		return nil
@@ -1124,6 +1189,9 @@ func (m *model) handleChatEvent(evt tauchat.ChatEvent) tea.Cmd {
 
 func (m *model) applySnapshot(e tauchat.ChatSessionSnapshotEvent) {
 	state := e.State
+	if state.SessionID != "" {
+		m.sessionID = state.SessionID
+	}
 	if state.Model.ID != "" {
 		m.modelName = state.Model.ID
 	}
@@ -1358,6 +1426,53 @@ func sessionSummariesText(summaries []tauchat.SessionSummary, nextCursor string)
 	}
 	if nextCursor != "" {
 		b.WriteString("\nMore sessions available.")
+	}
+	return b.String()
+}
+
+// sessionInfoText renders full detail for a single session (/session info
+// <id>) — mirrors internal/tui/inline_events.go's printSessionInfo.
+func sessionInfoText(s tauchat.SessionSummary) string {
+	var b strings.Builder
+	fmt.Fprintf(&b, "Session %s\n", s.ID)
+	fmt.Fprintf(&b, "Model: %s\n", s.ModelID)
+	fmt.Fprintf(&b, "Provider: %s\n", s.Provider)
+	fmt.Fprintf(&b, "Messages: %d", s.MessageCount)
+	if s.TotalTokens > 0 {
+		fmt.Fprintf(&b, "\nTokens: ↑%s ↓%s (total %s)",
+			humanizeTokens(s.InputTokens), humanizeTokens(s.OutputTokens), humanizeTokens(s.TotalTokens))
+	}
+	if s.Cost > 0 {
+		fmt.Fprintf(&b, "\nCost: %s", formatCost(s.Cost))
+	}
+	if s.DurationMs > 0 {
+		fmt.Fprintf(&b, "\nDuration: %s", formatDurationCompact(s.DurationMs))
+	}
+	if s.ToolCalls > 0 {
+		fmt.Fprintf(&b, "\nTool calls: %d", s.ToolCalls)
+		if s.ToolErrors > 0 {
+			fmt.Fprintf(&b, " (%d errors)", s.ToolErrors)
+		}
+	}
+	fmt.Fprintf(&b, "\nCreated: %s", s.CreatedAt.Format(time.RFC3339))
+	fmt.Fprintf(&b, "\nUpdated: %s", s.UpdatedAt.Format(time.RFC3339))
+	return b.String()
+}
+
+// skillsChangedText renders the formatted skill catalog (name, description,
+// scope) shown on SkillsChangedEvent — mirrors
+// internal/tui/inline_events.go's handleSkillsChanged.
+func skillsChangedText(skills []tauchat.SkillInfo) string {
+	if len(skills) == 0 {
+		return "no skills available"
+	}
+	var b strings.Builder
+	b.WriteString("Available Skills:")
+	for _, skill := range skills {
+		fmt.Fprintf(&b, "\n  %-20s %s", skill.Name, skill.Description)
+		if skill.Scope != "" {
+			fmt.Fprintf(&b, " (%s)", skill.Scope)
+		}
 	}
 	return b.String()
 }

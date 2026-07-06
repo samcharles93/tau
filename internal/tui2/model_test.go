@@ -13,6 +13,7 @@ import (
 
 	tauchat "github.com/samcharles93/tau/internal/chat"
 	"github.com/samcharles93/tau/internal/eventbus"
+	"github.com/samcharles93/tau/internal/tui/notify"
 )
 
 // fakeRuntime is a tauchat.ChatRuntime that records every command sent to it,
@@ -393,17 +394,18 @@ func TestDispatchCtrlSWithActiveResponse(t *testing.T) {
 	}
 }
 
-func TestDispatchCtrlSWithoutActiveResponse(t *testing.T) {
+func TestDispatchCtrlSWithoutActiveResponseAndNoInputIsNoop(t *testing.T) {
 	m := newTestModel(&fakeRuntime{}, nil)
 	m.inResponse = false
 
 	cmd := m.dispatchKey(key('s', tea.ModCtrl))
-	// Should notify "no active response".
-	if cmd == nil {
-		t.Fatal("expected a Cmd from Ctrl+S even without active response")
+	// Matches legacy: Ctrl+S with nothing typed and nothing in flight is a
+	// silent no-op, not an error notification.
+	if cmd != nil {
+		t.Fatal("expected nil Cmd from idle Ctrl+S with no text typed")
 	}
-	if m.notification == "" {
-		t.Fatal("expected notification about no active response")
+	if m.notification != "" {
+		t.Fatalf("expected no notification, got %q", m.notification)
 	}
 }
 
@@ -724,14 +726,28 @@ func TestHandleChatEventResponseCancelled(t *testing.T) {
 func TestHandleChatEventRuntimeError(t *testing.T) {
 	m := newTestModel(&fakeRuntime{}, nil)
 	m.inResponse = true
+	m.steering = true
+	m.streaming = "partial"
+	m.reasoning = "thinking"
+	m.tools = []toolState{{id: "t1"}}
 
 	m.handleChatEvent(tauchat.ChatRuntimeErrorEvent{Message: "API error"})
 
 	if m.inResponse {
 		t.Fatal("inResponse should be false after runtime error")
 	}
-	if m.notification == "" {
-		t.Fatal("expected notification after runtime error")
+	if m.steering {
+		t.Fatal("steering should be false after runtime error")
+	}
+	if m.streaming != "" || m.reasoning != "" || m.tools != nil {
+		t.Fatal("expected the in-flight turn's streaming/reasoning/tools state cleared")
+	}
+	if n := m.notifyQ.Current(); n == nil || n.Level != notify.LevelError {
+		t.Fatalf("expected an error-level notification in notifyQ, got %+v", n)
+	}
+	joined := strings.Join(m.renderedLines, "\n")
+	if !strings.Contains(joined, "API error") {
+		t.Fatalf("expected the error to be printed to scrollback, got %q", joined)
 	}
 }
 
@@ -848,6 +864,63 @@ func TestHandleChatEventSessionLoaded(t *testing.T) {
 	}
 }
 
+func TestHandleChatEventSessionLoadedReplaysMessagesAndSeedsHistory(t *testing.T) {
+	m := newTestModel(&fakeRuntime{}, nil)
+	m.sessionID = "old-session"
+	m.history = []string{"stale entry"}
+
+	m.handleChatEvent(tauchat.SessionLoadedEvent{
+		State: tauchat.ChatSessionState{
+			SessionID: "sess-loaded",
+			Messages: []tauchat.ChatMessage{
+				{Role: tauchat.ChatRoleUser, Content: "first prompt"},
+				{Role: tauchat.ChatRoleAssistant, Content: "first reply"},
+				{Role: tauchat.ChatRoleUser, Content: "second prompt"},
+			},
+		},
+	})
+
+	if m.sessionID != "sess-loaded" {
+		t.Fatalf("sessionID = %q, want %q", m.sessionID, "sess-loaded")
+	}
+	joined := strings.Join(m.renderedLines, "\n")
+	for _, want := range []string{"first prompt", "first reply", "second prompt"} {
+		if !strings.Contains(stripANSI(joined), want) {
+			t.Fatalf("renderedLines missing %q, got %q", want, joined)
+		}
+	}
+	if len(m.history) != 2 || m.history[0] != "first prompt" || m.history[1] != "second prompt" {
+		t.Fatalf("history = %v, want [first prompt, second prompt]", m.history)
+	}
+}
+
+func TestSeedHistoryFromMessagesIgnoresEmptyContentAndNonUserRoles(t *testing.T) {
+	m := newTestModel(&fakeRuntime{}, nil)
+
+	m.seedHistoryFromMessages([]tauchat.ChatMessage{
+		{Role: tauchat.ChatRoleUser, Content: "  "},
+		{Role: tauchat.ChatRoleAssistant, Content: "assistant text"},
+		{Role: tauchat.ChatRoleUser, Content: "real prompt"},
+	})
+
+	if len(m.history) != 1 || m.history[0] != "real prompt" {
+		t.Fatalf("history = %v, want [real prompt]", m.history)
+	}
+}
+
+func TestSeedHistoryFromMessagesKeepsExistingWhenNoUserMessages(t *testing.T) {
+	m := newTestModel(&fakeRuntime{}, nil)
+	m.history = []string{"keep me"}
+
+	m.seedHistoryFromMessages([]tauchat.ChatMessage{
+		{Role: tauchat.ChatRoleAssistant, Content: "assistant only"},
+	})
+
+	if len(m.history) != 1 || m.history[0] != "keep me" {
+		t.Fatalf("history = %v, want unchanged [keep me]", m.history)
+	}
+}
+
 func TestHandleChatEventSessionDeleted(t *testing.T) {
 	m := newTestModel(&fakeRuntime{}, nil)
 
@@ -949,12 +1022,15 @@ func TestHandleChatEventSkillsChanged(t *testing.T) {
 	m := newTestModel(&fakeRuntime{}, nil)
 
 	m.handleChatEvent(tauchat.SkillsChangedEvent{Skills: []tauchat.SkillInfo{
-		{Name: "python"},
-		{Name: "go"},
+		{Name: "python", Description: "Python helper", Scope: "project"},
+		{Name: "go", Description: "Go helper"},
 	}})
 
-	if m.notification == "" {
-		t.Fatal("expected notification about skills change")
+	joined := strings.Join(m.renderedLines, "\n")
+	for _, want := range []string{"Available Skills:", "python", "Python helper", "(project)", "go", "Go helper"} {
+		if !strings.Contains(stripANSI(joined), want) {
+			t.Fatalf("rendered skills list missing %q, got %q", want, joined)
+		}
 	}
 }
 
@@ -1018,6 +1094,22 @@ func TestSubmitInputBashCommand(t *testing.T) {
 	}
 	if !m.bashRunning {
 		t.Fatal("bashRunning should be true after !command")
+	}
+}
+
+func TestSubmitInputDoubleBangBashCommand(t *testing.T) {
+	rt := &fakeRuntime{}
+	m := newTestModel(rt, nil)
+	m.input = "!!ls -la"
+
+	drainCmd(m.submitInput())
+
+	sent, ok := rt.sent[0].(tauchat.RunBashCommand)
+	if !ok {
+		t.Fatalf("expected RunBashCommand, got %T", rt.sent[0])
+	}
+	if sent.Command != "ls -la" || !sent.Exclude {
+		t.Fatalf("got Command=%q Exclude=%v, want Command=%q Exclude=true", sent.Command, sent.Exclude, "ls -la")
 	}
 }
 
@@ -1146,14 +1238,48 @@ func TestDrainTurnQueuePopsAndSends(t *testing.T) {
 
 // --- handleSteer ---
 
-func TestHandleSteerNoActiveResponse(t *testing.T) {
+// TestHandleSteerNoActiveResponseWithEmptyInputIsNoop matches legacy's
+// onSteer exactly: Ctrl+S with nothing typed and nothing in flight is a
+// silent no-op (onSteer's own empty-prompt check returns before ever
+// looking at the working/idle state).
+func TestHandleSteerNoActiveResponseWithEmptyInputIsNoop(t *testing.T) {
 	m := newTestModel(&fakeRuntime{}, nil)
 	m.inResponse = false
+	m.input = ""
 
-	m.handleSteer()
+	cmd := m.handleSteer()
 
-	if m.notification == "" {
-		t.Fatal("expected notification with no active response")
+	if cmd != nil {
+		t.Fatal("expected nil Cmd for idle Ctrl+S with no text typed")
+	}
+	if m.notification != "" {
+		t.Fatalf("expected no notification, got %q", m.notification)
+	}
+}
+
+// TestHandleSteerIdleWithTextSubmitsInstead guards against a real bug:
+// legacy falls through to a normal submit when idle so the user's typed
+// text is never lost; tui2 used to show an error notification and drop it.
+func TestHandleSteerIdleWithTextSubmitsInstead(t *testing.T) {
+	rt := &fakeRuntime{}
+	m := newTestModel(rt, nil)
+	m.inResponse = false
+	m.input = "hello while idle"
+
+	drainCmd(m.handleSteer())
+
+	if m.input != "" {
+		t.Fatalf("input = %q, want cleared", m.input)
+	}
+	if len(rt.sent) != 1 {
+		t.Fatalf("expected 1 command sent, got %d", len(rt.sent))
+	}
+	sent, ok := rt.sent[0].(tauchat.SubmitChatPromptCommand)
+	if !ok {
+		t.Fatalf("expected SubmitChatPromptCommand, got %T", rt.sent[0])
+	}
+	if sent.Prompt != "hello while idle" {
+		t.Fatalf("Prompt = %q, want %q", sent.Prompt, "hello while idle")
 	}
 }
 
@@ -1224,6 +1350,84 @@ func TestHandleBashCommandAppendsUserMessage(t *testing.T) {
 
 	if len(m.renderedLines) == 0 {
 		t.Fatal("expected bash echo to append a user message")
+	}
+}
+
+func TestHandleBashCommandDoubleBangSetsExclude(t *testing.T) {
+	rt := &fakeRuntime{}
+	m := newTestModel(rt, nil)
+
+	drainCmd(m.handleBashCommand("!!secret-cmd"))
+
+	sent, ok := rt.sent[0].(tauchat.RunBashCommand)
+	if !ok {
+		t.Fatalf("expected RunBashCommand, got %T", rt.sent[0])
+	}
+	if sent.Command != "secret-cmd" {
+		t.Fatalf("Command = %q, want %q (bangs stripped)", sent.Command, "secret-cmd")
+	}
+	if !sent.Exclude {
+		t.Fatal("expected Exclude=true for a !! command")
+	}
+}
+
+func TestHandleBashCommandSingleBangDoesNotExclude(t *testing.T) {
+	rt := &fakeRuntime{}
+	m := newTestModel(rt, nil)
+
+	drainCmd(m.handleBashCommand("!ls"))
+
+	sent, ok := rt.sent[0].(tauchat.RunBashCommand)
+	if !ok {
+		t.Fatalf("expected RunBashCommand, got %T", rt.sent[0])
+	}
+	if sent.Command != "ls" {
+		t.Fatalf("Command = %q, want %q", sent.Command, "ls")
+	}
+	if sent.Exclude {
+		t.Fatal("expected Exclude=false for a single ! command")
+	}
+}
+
+func TestHandleBashCommandTripleBangStripsAll(t *testing.T) {
+	rt := &fakeRuntime{}
+	m := newTestModel(rt, nil)
+
+	drainCmd(m.handleBashCommand("!!!ls"))
+
+	sent, ok := rt.sent[0].(tauchat.RunBashCommand)
+	if !ok {
+		t.Fatalf("expected RunBashCommand, got %T", rt.sent[0])
+	}
+	if sent.Command != "ls" {
+		t.Fatalf("Command = %q, want %q (no leftover '!' glued to the front)", sent.Command, "ls")
+	}
+	if !sent.Exclude {
+		t.Fatal("expected Exclude=true for 3+ bangs")
+	}
+}
+
+func TestHandleBashCommandEmptyAfterStrippingIsNoop(t *testing.T) {
+	m := newTestModel(&fakeRuntime{}, nil)
+
+	cmd := m.handleBashCommand("!!")
+
+	if cmd != nil {
+		t.Fatal("expected nil Cmd when nothing but bangs was typed")
+	}
+	if m.bashRunning {
+		t.Fatal("bashRunning should stay false for an empty bash command")
+	}
+}
+
+func TestHandleBashCommandEchoesFullBangPrefix(t *testing.T) {
+	m := newTestModel(&fakeRuntime{}, nil)
+
+	m.handleBashCommand("!!secret-cmd")
+
+	joined := strings.Join(m.renderedLines, "\n")
+	if !strings.Contains(stripANSI(joined), "!!secret-cmd") {
+		t.Fatalf("expected echo to include both bangs, got %q", joined)
 	}
 }
 
@@ -1829,6 +2033,9 @@ func TestApplySnapshotRebuildsViewport(t *testing.T) {
 		},
 	})
 
+	if m.sessionID != "sess-1" {
+		t.Fatalf("sessionID = %q, want %q", m.sessionID, "sess-1")
+	}
 	if m.modelName != "claude-3" {
 		t.Fatalf("modelName = %q, want %q", m.modelName, "claude-3")
 	}
@@ -1845,6 +2052,34 @@ func TestApplySnapshotRebuildsViewport(t *testing.T) {
 	}
 	if !found {
 		t.Error("expected 'hi' to appear in renderedLines after snapshot")
+	}
+}
+
+// TestApplySnapshotUpdatesStaleSessionID guards against a real bug: without
+// updating m.sessionID here, every command sent after /clear, /session <id>,
+// or /resume kept targeting the OLD session — the UI would show the new
+// session's messages while silently writing into the wrong one server-side.
+func TestApplySnapshotUpdatesStaleSessionID(t *testing.T) {
+	m := newTestModel(&fakeRuntime{}, nil)
+	m.sessionID = "old-session"
+
+	m.applySnapshot(tauchat.ChatSessionSnapshotEvent{
+		State: tauchat.ChatSessionState{SessionID: "new-session"},
+	})
+
+	if m.sessionID != "new-session" {
+		t.Fatalf("sessionID = %q, want %q", m.sessionID, "new-session")
+	}
+}
+
+func TestApplySnapshotEmptySessionIDKeepsCurrent(t *testing.T) {
+	m := newTestModel(&fakeRuntime{}, nil)
+	m.sessionID = "keep-me"
+
+	m.applySnapshot(tauchat.ChatSessionSnapshotEvent{State: tauchat.ChatSessionState{}})
+
+	if m.sessionID != "keep-me" {
+		t.Fatalf("sessionID = %q, want unchanged %q", m.sessionID, "keep-me")
 	}
 }
 
@@ -2201,8 +2436,9 @@ func TestHandleChatEventSkillsChangedWithEmptyList(t *testing.T) {
 
 	m.handleChatEvent(tauchat.SkillsChangedEvent{Skills: nil})
 
-	if m.notification == "" {
-		t.Fatal("expected notification even with empty skills list")
+	joined := strings.Join(m.renderedLines, "\n")
+	if !strings.Contains(joined, "no skills available") {
+		t.Fatalf("expected 'no skills available' message, got %q", joined)
 	}
 }
 

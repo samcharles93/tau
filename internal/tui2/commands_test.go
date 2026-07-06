@@ -5,6 +5,7 @@ import (
 	"errors"
 	"strings"
 	"testing"
+	"time"
 
 	tauchat "github.com/samcharles93/tau/internal/chat"
 	"github.com/samcharles93/tau/internal/config"
@@ -432,18 +433,59 @@ func TestCmdSessionListExplicit(t *testing.T) {
 	}
 }
 
-func TestCmdSessionInfo(t *testing.T) {
+func TestCmdSessionInfoRequiresID(t *testing.T) {
 	m := newTestModel(&fakeRuntime{}, nil)
-	m.sessionID = "sess-abc"
-	m.modelName = "gpt-4"
-	m.provider = "openai"
 
 	drainCmd(m.cmdSession("info"))
-	if m.notification == "" {
-		t.Error("expected notification with session info")
+	if !strings.Contains(m.notification, "usage") {
+		t.Errorf("notification = %q, want a usage hint", m.notification)
 	}
-	if !strings.Contains(m.notification, "sess-abc") {
-		t.Errorf("notification = %q, should contain session ID", m.notification)
+}
+
+func TestCmdSessionInfoNotFound(t *testing.T) {
+	m := newTestModel(&fakeRuntime{}, nil)
+
+	drainCmd(m.cmdSession("info sess-missing"))
+	if !strings.Contains(m.notification, "sess-missing") || !strings.Contains(m.notification, "not found") {
+		t.Errorf("notification = %q, want a 'not found' hint mentioning the id", m.notification)
+	}
+}
+
+func TestCmdSessionInfoFound(t *testing.T) {
+	m := newTestModel(&fakeRuntime{}, nil)
+	m.sessionSummaries = []tauchat.SessionSummary{
+		{ID: "sess-abc", ModelID: "gpt-4", Provider: "openai", MessageCount: 3},
+	}
+
+	cmd := m.cmdSession("info sess-abc")
+	if cmd != nil {
+		t.Error("expected nil Cmd — session detail is appended directly, not via notification")
+	}
+	joined := strings.Join(m.renderedLines, "\n")
+	for _, want := range []string{"sess-abc", "gpt-4", "openai", "3"} {
+		if !strings.Contains(joined, want) {
+			t.Fatalf("rendered session info missing %q, got %q", want, joined)
+		}
+	}
+}
+
+func TestSessionInfoTextIncludesOptionalFields(t *testing.T) {
+	now := time.Now()
+	s := tauchat.SessionSummary{
+		ID: "sess-1", ModelID: "gpt-4", Provider: "openai", MessageCount: 5,
+		InputTokens: 100, OutputTokens: 50, TotalTokens: 150, Cost: 0.02,
+		DurationMs: 2500, ToolCalls: 3, ToolErrors: 1,
+		CreatedAt: now, UpdatedAt: now,
+	}
+	out := sessionInfoText(s)
+	for _, want := range []string{
+		"Session sess-1", "Model: gpt-4", "Provider: openai", "Messages: 5",
+		"↑100", "↓50", "total 150", "$0.0200", "2s", "Tool calls: 3", "(1 errors)",
+		"Created:", "Updated:",
+	} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("sessionInfoText missing %q, got %q", want, out)
+		}
 	}
 }
 
