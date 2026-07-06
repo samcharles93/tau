@@ -22,9 +22,47 @@ type slashEntry struct {
 	name        string
 	aliases     []string
 	usage       string
+	displayName string
 	description string
 	isAgent     bool
 	run         func(m *model, args string) tea.Cmd
+}
+
+func (e slashEntry) modeLabel() string {
+	if e.displayName != "" {
+		return e.displayName
+	}
+	if e.name == "" {
+		return "agent"
+	}
+	return strings.ToUpper(e.name[:1]) + e.name[1:]
+}
+
+type inputMode struct {
+	command string
+}
+
+func inputModes() []inputMode {
+	modes := []inputMode{{}}
+	for i := range slashTable {
+		entry := slashTable[i]
+		if !entry.isAgent {
+			continue
+		}
+		modes = append(modes, inputMode{
+			command: entry.name,
+		})
+	}
+	return modes
+}
+
+func slashNameAndArgs(text string) (name, args string) {
+	text = strings.TrimSpace(strings.TrimPrefix(text, "/"))
+	if text == "" {
+		return "", ""
+	}
+	name, args, _ = strings.Cut(text, " ")
+	return strings.ToLower(strings.TrimSpace(name)), strings.TrimSpace(args)
 }
 
 // slashCommandsB is the tui2 command table, populated in init().
@@ -120,6 +158,7 @@ func init() {
 			slashTable = append(slashTable, slashEntry{
 				name:        name,
 				usage:       usage,
+				displayName: def.DisplayName,
 				description: def.Description,
 				isAgent:     true,
 				run: func(m *model, args string) tea.Cmd {
@@ -231,6 +270,7 @@ func (m *model) cmdHelp(_ string) tea.Cmd {
 	fmt.Fprintf(&b, "\n  %-38s %s", "Ctrl+K", "delete from cursor to end of line")
 	fmt.Fprintf(&b, "\n  %-38s %s", "Ctrl+W / Ctrl+Backspace", "delete word before cursor")
 	fmt.Fprintf(&b, "\n  %-38s %s", "Shift+Enter / Ctrl+J", "insert newline (multi-line input)")
+	fmt.Fprintf(&b, "\n  %-38s %s", "Shift+Tab", "cycle chat and agent modes")
 	fmt.Fprintf(&b, "\n  %-38s %s", "Up / Down", "recall history (at first / last line)")
 	fmt.Fprintf(&b, "\n  %-38s %s", "Ctrl+D", "quit (when input is empty)")
 
@@ -240,7 +280,7 @@ func (m *model) cmdHelp(_ string) tea.Cmd {
 	fmt.Fprintf(&b, "\n  %-38s %s", "!", "run a shell command prefixed with ! (!! to hide from model)")
 
 	b.WriteString("\nTool interaction:")
-	fmt.Fprintf(&b, "\n  %-38s %s", "Tab / Shift+Tab", "navigate focus through completed tools")
+	fmt.Fprintf(&b, "\n  %-38s %s", "Tab", "navigate focus through completed tools")
 	fmt.Fprintf(&b, "\n  %-38s %s", "Enter", "expand/collapse the focused tool's full output")
 	fmt.Fprintf(&b, "\n  %-38s %s", "Esc", "collapse tool → clear focus → clear input")
 	fmt.Fprintf(&b, "\n  %-38s %s", "Up / Down", "navigate tool focus (input empty, no history)")

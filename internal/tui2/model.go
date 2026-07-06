@@ -544,6 +544,10 @@ func (m *model) View() tea.View {
 	// when the user has actually looked away — matches the legacy
 	// engine.Focused() gate in internal/tui/inline_events.go.
 	v.ReportFocus = true
+	// Enable click, release, and wheel events. Update already maps wheel
+	// messages to viewport scrolling; without this mode the terminal never
+	// sends those events to Bubble Tea.
+	v.MouseMode = tea.MouseModeCellMotion
 	return v
 }
 
@@ -710,10 +714,7 @@ func (m *model) dispatchKey(msg tea.KeyPressMsg) tea.Cmd {
 		return nil
 
 	case "shift+tab":
-		// Phase 1: reverse tool focus navigation.
-		if m.shouldNavigateTools() {
-			m.focusNextTool(-1)
-		}
+		m.cycleInputMode()
 		return nil
 
 	case "enter":
@@ -944,7 +945,8 @@ func (m *model) renderInputArea() string {
 		}
 	}
 
-	res := renderInputBox(m.width, "input", body, "")
+	title := m.inputModeTitle()
+	res := renderInputBox(m.width, title, body, "")
 	if m.inResponse {
 		ctrlC := lipgloss.NewStyle().Foreground(themeHex(theme.ToneError)).Bold(true).Render("Ctrl+C")
 		enter := lipgloss.NewStyle().Foreground(themeHex(theme.CommandFG)).Bold(true).Render("Enter")
@@ -954,6 +956,67 @@ func (m *model) renderInputArea() string {
 		res = renderInputBox(m.width, "steer", body, hint)
 	}
 	return res
+}
+
+func (m *model) inputModeTitle() string {
+	if m.inResponse {
+		return "steer"
+	}
+	text := strings.TrimSpace(m.input)
+	switch {
+	case strings.HasPrefix(text, "!!"):
+		return "shell local"
+	case strings.HasPrefix(text, "!"):
+		return "shell"
+	case strings.HasPrefix(text, "/"):
+		name, _ := slashNameAndArgs(text)
+		if entry, ok := slashIndex[name]; ok {
+			if entry.isAgent {
+				return entry.modeLabel()
+			}
+			return "command"
+		}
+		return "command"
+	default:
+		return "chat"
+	}
+}
+
+func (m *model) cycleInputMode() {
+	if m.inResponse || m.activePrompt != nil || m.bashRunning {
+		return
+	}
+	modes := inputModes()
+	if len(modes) == 0 {
+		return
+	}
+
+	current, args := m.currentInputModeIndex(modes)
+	next := (current + 1) % len(modes)
+	mode := modes[next]
+
+	if mode.command == "" {
+		m.input = args
+	} else if args == "" {
+		m.input = "/" + mode.command + " "
+	} else {
+		m.input = "/" + mode.command + " " + args
+	}
+	m.inputCursor = utf8.RuneCountInString(m.input)
+}
+
+func (m *model) currentInputModeIndex(modes []inputMode) (int, string) {
+	text := strings.TrimSpace(m.input)
+	if strings.HasPrefix(text, "/") {
+		name, args := slashNameAndArgs(text)
+		for i, mode := range modes {
+			if mode.command == name {
+				return i, args
+			}
+		}
+		return 0, strings.TrimSpace(strings.TrimPrefix(text, "/"))
+	}
+	return 0, text
 }
 
 func (m *model) viewportLinesForView(visibleReasoning bool) []string {
@@ -1825,6 +1888,12 @@ func (m *model) appendMessage(role, content string) {
 		m.lastAssistantText = content
 	}
 	lines := strings.Split(content, "\n")
+	if role == "tool" {
+		m.renderedLines = append(m.renderedLines, lines...)
+		m.viewport.SetContentLines(m.renderedLines)
+		m.viewport.GotoBottom()
+		return
+	}
 	for i, l := range lines {
 		if i == 0 {
 			m.renderedLines = append(m.renderedLines, renderLine(role, l))

@@ -2,6 +2,7 @@ package tui2
 
 import (
 	"reflect"
+	"strings"
 	"testing"
 
 	tea "charm.land/bubbletea/v2"
@@ -143,6 +144,54 @@ func TestShiftEnterInsertsNewlineInsteadOfSubmitting(t *testing.T) {
 	}
 	if m.inResponse {
 		t.Error("shift+enter must not start a turn")
+	}
+}
+
+func TestShiftTabCyclesInputModeAndPreservesDraft(t *testing.T) {
+	m := newTestModel(&fakeRuntime{}, nil)
+	m.input = "add auth flow"
+	m.inputCursor = len([]rune(m.input))
+
+	m.handleKey(key(tea.KeyTab, tea.ModShift))
+
+	if !strings.HasPrefix(m.input, "/") {
+		t.Fatalf("input = %q, want an agent command prefix", m.input)
+	}
+	if !strings.Contains(m.input, "add auth flow") {
+		t.Fatalf("input = %q, want draft text preserved", m.input)
+	}
+	if m.inputCursor != len([]rune(m.input)) {
+		t.Fatalf("cursor = %d, want end %d", m.inputCursor, len([]rune(m.input)))
+	}
+}
+
+func TestShiftTabCyclesAgentModeBackToChat(t *testing.T) {
+	m := newTestModel(&fakeRuntime{}, nil)
+
+	m.input = "/plan add auth flow"
+	m.inputCursor = len([]rune(m.input))
+
+	for range len(inputModes()) {
+		m.handleKey(key(tea.KeyTab, tea.ModShift))
+		if !strings.HasPrefix(m.input, "/") {
+			break
+		}
+	}
+
+	if m.input != "add auth flow" {
+		t.Fatalf("input = %q, want chat draft without agent prefix", m.input)
+	}
+}
+
+func TestInputAreaTitleReflectsAgentMode(t *testing.T) {
+	m := newTestModel(&fakeRuntime{}, nil)
+	m.width = 60
+	m.input = "/plan add auth flow"
+	m.inputCursor = len([]rune(m.input))
+
+	plain := stripANSI(m.renderInputArea())
+	if !strings.Contains(plain, "╭ Planning ") {
+		t.Fatalf("input area = %q, want Planning title", plain)
 	}
 }
 

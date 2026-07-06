@@ -2232,7 +2232,7 @@ func TestViewPinsInputAreaToBottomInAltScreen(t *testing.T) {
 		t.Fatalf("rendered view = %d lines, want 40 (fill terminal)", len(lines))
 	}
 	plain := stripANSI(view.Content)
-	for _, want := range []string{"⏎ hi", "╭ input", "╰"} {
+	for _, want := range []string{"⏎ hi", "╭ chat", "╰"} {
 		if !strings.Contains(plain, want) {
 			t.Fatalf("rendered view missing %q:\n%s", want, plain)
 		}
@@ -2369,6 +2369,18 @@ func TestViewClampsIdleViewportAfterChromeShrinks(t *testing.T) {
 	}
 	if lineContaining(strings.Split(view.Content, "\n"), "line 80") < 0 {
 		t.Fatalf("latest line should remain visible after clamping to bottom:\n%s", stripANSI(view.Content))
+	}
+}
+
+func TestViewEnablesMouseWheelEvents(t *testing.T) {
+	m := newTestModel(&fakeRuntime{}, nil)
+	m.Update(tea.WindowSizeMsg{Width: 80, Height: 24})
+	m.appendMessage("user", "hello")
+
+	view := m.View()
+
+	if view.MouseMode != tea.MouseModeCellMotion {
+		t.Fatalf("MouseMode = %v, want MouseModeCellMotion", view.MouseMode)
 	}
 }
 
@@ -2524,8 +2536,8 @@ func TestRenderInputAreaEmpty(t *testing.T) {
 		t.Fatal("expected non-empty input area even for empty input")
 	}
 	plain := stripANSI(area)
-	if !strings.Contains(plain, "╭ input") {
-		t.Fatalf("input area = %q, want input box title", plain)
+	if !strings.Contains(plain, "╭ chat") {
+		t.Fatalf("input area = %q, want chat mode title", plain)
 	}
 	if !strings.Contains(plain, ">") {
 		t.Fatalf("input area = %q, want '>' prompt", plain)
@@ -2831,6 +2843,23 @@ func TestAppendMessageMultiLineUserContinuationKeepsUserStyle(t *testing.T) {
 	}
 	if strings.Contains(m.renderedLines[1], "38;2;128;134;150") {
 		t.Fatalf("continuation line = %q, should not use muted metadata style", m.renderedLines[1])
+	}
+}
+
+func TestAppendMessageToolPreservesRenderedBlockLines(t *testing.T) {
+	m := newTestModel(&fakeRuntime{}, nil)
+
+	m.appendMessage("tool", "╭────╮\n│ ok │\n╰────╯")
+
+	if len(m.renderedLines) != 3 {
+		t.Fatalf("expected 3 rendered lines, got %d", len(m.renderedLines))
+	}
+	if got := stripANSI(m.renderedLines[1]); got != "│ ok │" {
+		t.Fatalf("middle line = %q, want unindented tool border line", got)
+	}
+	if strings.Contains(m.renderedLines[1], "38;2;120;170;255") ||
+		strings.Contains(m.renderedLines[1], "38;2;128;134;150") {
+		t.Fatalf("tool block line = %q, should not be restyled as chat continuation", m.renderedLines[1])
 	}
 }
 
