@@ -422,14 +422,7 @@ func (m *model) View() tea.View {
 		sb.WriteString("\n\n")
 	}
 
-	// Messages — rendered through the viewport (scrollable, no cap). Shrunk
-	// to the actual content height (capped at maxViewportHeight) each frame
-	// so a short conversation doesn't pad out with blank lines down to the
-	// input — TotalLineCount only depends on content+width, not the
-	// currently-set Height, so this is safe to query before resizing.
-	if m.maxViewportHeight > 0 {
-		m.viewport.SetHeight(max(min(m.viewport.TotalLineCount(), m.maxViewportHeight), 1))
-	}
+	// Messages — rendered through the viewport (scrollable, no cap).
 	sb.WriteString(m.viewport.View())
 
 	// Living working indicator — shown during model warm-up, before any
