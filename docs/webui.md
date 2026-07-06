@@ -292,23 +292,13 @@ The SPA is built with Vite into `internal/spa/dist/` and embedded in the Go bina
 var distDir embed.FS
 ```
 
-The Taskfile includes a `build:webui` task:
+The `all` task builds the SPA and the Go binary in one step:
 
-```yaml
-build:webui:
-  desc: Build the Tau Web UI SPA
-  cmds:
-    - pnpm run -C internal/webui build
-  sources:
-    - internal/webui/src/**/*.vue
-    - internal/webui/src/**/*.ts
-    - internal/webui/src/**/*.css
-    - internal/webui/index.html
-    - internal/webui/vite.config.ts
-    - internal/webui/package.json
-  generates:
-    - internal/spa/dist/index.html
+```bash
+task all  # pnpm install + pnpm build + go build -o tau
 ```
+
+See `Taskfile.yaml` in the project root for the exact build commands.
 
 ## Development
 

@@ -61,7 +61,7 @@ Thin HTTP server:
 ### `internal/spa`
 
 `//go:embed dist/*` bakes the built SPA into the binary. After any frontend
-change, run `task webui` before rebuilding the binary.
+change, run `task all` to rebuild the SPA and embed it in a new binary.
 
 ### `internal/app/web.go`
 
@@ -194,12 +194,11 @@ session on the old provider regardless of which model is selected.
 ## Building
 
 ```bash
-task webui       # pnpm install + pnpm build → internal/spa/dist/
-task             # webui + go build (default)
+task all         # pnpm install + pnpm build + go build
 ```
 
 The SPA build output is embedded in the Go binary at compile time. Any
-Vue/TypeScript change requires `task webui` before `go build` to take effect.
+Vue/TypeScript change requires `task all` to rebuild everything in one step.
 
 ## Development Workflow
 

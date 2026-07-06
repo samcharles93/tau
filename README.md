@@ -40,7 +40,7 @@ go install github.com/samcharles93/tau/cmd/tau@latest
 
 ```bash
 sh -c "$(curl --location https://taskfile.dev/install.sh)" -- -d   # install Task
-task                                                                # build web UI + binary
+task                                                                # build Go binary
 ```
 
 ## Quick start
@@ -138,7 +138,8 @@ fit together before making structural changes.
 ## Development
 
 ```bash
-task           # build the Web UI SPA + Go binary
+task           # build the Go binary
+task all       # build web UI SPA + Go binary (full build)
 task check     # gofumpt, go vet, go fix, golangci-lint, go test — run before every commit
 task test:race # run the test suite with the race detector
 task build:all # cross-compile all release targets

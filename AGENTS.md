@@ -868,10 +868,10 @@ The Pinia store is the single source of truth for all client-side state. Key flo
 ### Building the Web UI
 
 ```bash
-task webui                          # pnpm install + pnpm build → internal/spa/dist/
+task all                            # pnpm install + pnpm build + go build
 ```
 
-The SPA bundle is embedded in the binary at build time via `internal/spa/spa.go`. After any Vue/TS change you **must** run `task webui` before rebuilding the Go binary for the change to take effect in the served UI. Running `task` (default) builds the web UI then the binary in one step.
+The SPA bundle is embedded in the binary at build time via `internal/spa/spa.go`. After any Vue/TS change, run `task all` to rebuild the web UI and Go binary in one step. `task` (default) only builds the Go binary.
 
 ### Bridge (`internal/bridge/`)
 

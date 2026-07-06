@@ -12,9 +12,7 @@ vars:
 
 tasks:
   default:
-    desc: Build the web UI and the binary
-    deps:
-      - webui
+    desc: Build the Go binary
     cmds:
       - go build -ldflags "-s -w -X main.version={{.VERSION}} -X main.commit={{.COMMIT}} -X main.date={{.DATE}}" -o {{.BINARY}}{{exeExt}} {{.CMD}}
     sources:
@@ -24,22 +22,25 @@ tasks:
     generates:
       - "{{.BINARY}}{{exeExt}}"
 
-  webui:
-    desc: Build the Tau Web UI SPA into internal/spa/dist
-    dir: internal/webui
+  all:
+    desc: Build the web UI SPA and the Go binary (full build)
     cmds:
-      - pnpm install --prefer-offline
-      - pnpm build
+      - cd internal/webui && pnpm install --prefer-offline && pnpm build
+      - go build -ldflags "-s -w -X main.version={{.VERSION}} -X main.commit={{.COMMIT}} -X main.date={{.DATE}}" -o {{.BINARY}}{{exeExt}} {{.CMD}}
     sources:
-      - "src/**/*.vue"
-      - "src/**/*.ts"
-      - "src/**/*.css"
-      - index.html
-      - vite.config.ts
-      - tsconfig.json
-      - package.json
+      - "**/*.go"
+      - go.mod
+      - go.sum
+      - internal/webui/src/**/*.vue
+      - internal/webui/src/**/*.ts
+      - internal/webui/src/**/*.css
+      - internal/webui/index.html
+      - internal/webui/vite.config.ts
+      - internal/webui/tsconfig.json
+      - internal/webui/package.json
     generates:
-      - ../spa/dist/index.html
+      - "{{.BINARY}}{{exeExt}}"
+      - internal/spa/dist/index.html
 
   test:webui:
     desc: Run the Web UI unit tests (Vitest)
