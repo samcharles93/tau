@@ -132,11 +132,13 @@ type model struct {
 	turnStartedAt time.Time
 	turnSeed      int64
 
-	// Markdown rendering (P3 enhancement) — reusable glamour term renderer
-	// that converts assistant messages from markdown to ANSI-styled output
-	// with syntax-highlighted code blocks. Only applied on finalized messages
-	// (ChatResponseCompletedEvent), never during streaming.
-	mdRenderer *glamour.TermRenderer
+	// Markdown rendering (P3 enhancement) — reusable glamour term renderers
+	// keyed by terminal width so resize doesn't allocate a new renderer for
+	// the same width. Each converts assistant messages from markdown to
+	// ANSI-styled output with syntax-highlighted code blocks. Only applied
+	// on finalized messages (ChatResponseCompletedEvent), never during
+	// streaming — mid-token markdown re-parsing is unsafe.
+	mdCache map[int]*glamour.TermRenderer
 
 	// pendingQuit is the time of the last unanswered Ctrl+C (idle, nothing to
 	// cancel) — a second Ctrl+C within quitConfirmWindow confirms the quit,
@@ -208,15 +210,11 @@ func newModel(
 	vp := viewport.New(viewport.WithWidth(80), viewport.WithHeight(20))
 	vp.SoftWrap = true
 
-	// Glamour markdown renderer with word wrap at default 80 columns —
-	// updated on WindowSizeMsg to match the actual terminal width.
-	md, err := glamour.NewTermRenderer(
-		glamour.WithWordWrap(80),
-		glamour.WithStylePath("dark"),
-	)
-	if err != nil {
-		md = nil // fall back to plain-text rendering
-	}
+	// Glamour markdown renderer cache, keyed by terminal width.
+	mdCache := map[int]*glamour.TermRenderer{}
+	// Pre-populate the default width so the first finalized message can
+	// render immediately without a WindowSizeMsg having arrived yet.
+	ensureMDRenderer(mdCache, 80)
 
 	return &model{
 		ctx:               ctx,
@@ -237,7 +235,7 @@ func newModel(
 		notifyQ:           notify.NewQueue(),
 		extensionCommands: make(map[string]tauchat.ExtensionCommand),
 		panels:            make(map[string]pluginPanel),
-		mdRenderer:        md,
+		mdCache:           mdCache,
 	}
 }
 
@@ -286,7 +284,7 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.viewport.SetHeight(m.maxViewportHeight)
 		// Rebuild the glamour renderer with the new terminal width so
 		// subsequent finalized messages don't wrap at a stale column.
-		m.rebuildMDRenderer(msg.Width)
+		ensureMDRenderer(m.mdCache, msg.Width)
 		return m, nil
 
 	case tea.MouseMsg:
@@ -1436,30 +1434,36 @@ func (m *model) finalizeResponse() string {
 	return content
 }
 
-// rebuildMDRenderer creates a new glamour TermRenderer at the given width.
-// Called on WindowSizeMsg so finalized message wrapping stays current.
-func (m *model) rebuildMDRenderer(width int) {
+// ensureMDRenderer creates a glamour TermRenderer for the given width in
+// the cache if one doesn't already exist. Uses the "dark" bundled style;
+// a custom glamour theme (glamour.WithStyles) would give full visual
+// control over code blocks and headings, matching tau's theme palette.
+func ensureMDRenderer(cache map[int]*glamour.TermRenderer, width int) {
 	if width < 20 {
 		width = 20
+	}
+	if _, ok := cache[width]; ok {
+		return
 	}
 	r, err := glamour.NewTermRenderer(
 		glamour.WithWordWrap(width),
 		glamour.WithStylePath("dark"),
 	)
 	if err != nil {
-		return // keep the old renderer
+		return
 	}
-	m.mdRenderer = r
+	cache[width] = r
 }
 
 // renderMarkdown converts raw markdown to ANSI-styled terminal output using
-// glamour. Falls back to plain text when the renderer is unavailable (e.g.
-// because the terminal doesn't support ANSI or glamour init failed).
+// a glamour renderer memoized for the current terminal width. Falls back
+// to plain text when no renderer exists for the current width.
 func (m *model) renderMarkdown(content string) string {
-	if m.mdRenderer == nil {
+	r, ok := m.mdCache[m.width]
+	if !ok || r == nil {
 		return content
 	}
-	out, err := m.mdRenderer.Render(content)
+	out, err := r.Render(content)
 	if err != nil {
 		return content
 	}
@@ -1671,14 +1675,20 @@ func (m *model) toggleToolExpansion() tea.Cmd {
 
 // --- notification helper ---------------------------------------------------
 
+// notificationClearDelay is the auto-dismiss duration for transient
+// notifications set via setNotification. Exported as a package variable
+// so tests can set it to time.Millisecond (via TestMain) and avoid a
+// real 4-second sleep per test through drainCmd.
+var notificationClearDelay = 4 * time.Second
+
 // setNotification sets m.notification and returns a tea.Cmd that clears it
-// after 4 seconds, using a generation counter so a newer notification is not
-// clobbered by an older timer that fires late (N1).
+// after notificationClearDelay, using a generation counter so a newer
+// notification is not clobbered by an older timer that fires late (N1).
 func (m *model) setNotification(text string) tea.Cmd {
 	m.notificationGen++
 	m.notification = text
 	gen := m.notificationGen
-	return tea.Tick(4*time.Second, func(t time.Time) tea.Msg {
+	return tea.Tick(notificationClearDelay, func(t time.Time) tea.Msg {
 		return clearNotificationMsg{gen: gen}
 	})
 }
@@ -1753,6 +1763,10 @@ func renderLine(role, content string) string {
 	}
 }
 
+// renderTool renders a single-line tool call summary for the inline tool
+// list shown during a running turn. Full markdown-rendered tool output
+// (including glamour-rendered code blocks and diffs) is handled by
+// renderToolBox, which has access to the model's glamour renderer cache.
 func renderTool(t toolState, frame int) string {
 	style := toolStyleForStatus(t.name, t.status)
 
@@ -1841,8 +1855,9 @@ func (m *model) renderToolBox(t toolState, expanded bool, _ int) string {
 
 	if expanded {
 		// Expanded mode: show full result content in an inner box.
+		// When the output looks like markdown (code blocks, lists,
+		// tables), render it through glamour for syntax highlight.
 		bodyLines = append(bodyLines, "")
-		resultLines := strings.Split(t.result, "\n")
 		innerWidth := max(
 			// inner box narrower than outer
 			width-8, 10,
@@ -1853,11 +1868,34 @@ func (m *model) renderToolBox(t toolState, expanded bool, _ int) string {
 			Width(innerWidth).
 			Padding(0, 1)
 		innerTitle := "Full output"
-		if len(resultLines) == 0 || (len(resultLines) == 1 && resultLines[0] == "") {
+		if len(t.result) == 0 {
 			innerTitle = "No output"
 		}
 		var innerContent strings.Builder
 		innerContent.WriteString(innerTitle + "\n")
+
+		if looksLikeMarkdown(t.result) {
+			// Wrap as a fenced markdown block and render through
+			// the width-memoized glamour cache for syntax highlight.
+			md := "```result.md\n" + t.result + "\n```"
+			if r, ok := m.mdCache[innerWidth]; ok && r != nil {
+				if out, err := r.Render(md); err == nil {
+					for line := range strings.SplitSeq(out, "\n") {
+						innerContent.WriteString(line + "\n")
+					}
+					innerRendered := innerStyle.Render(strings.TrimRight(innerContent.String(), "\n"))
+					for line := range strings.SplitSeq(innerRendered, "\n") {
+						bodyLines = append(bodyLines, line)
+					}
+					bodyLines = append(bodyLines, toolMetaStyle.Render("Press Enter to collapse"))
+					content := title + "\n" + strings.Join(bodyLines, "\n")
+					return boxStyle.Render(content)
+				}
+			}
+			// Fall through to plain-text rendering if glamour failed.
+		}
+
+		resultLines := strings.Split(t.result, "\n")
 		for _, line := range resultLines {
 			innerContent.WriteString(line + "\n")
 		}
@@ -1891,6 +1929,24 @@ func (m *model) renderToolBox(t toolState, expanded bool, _ int) string {
 		content += "\n" + strings.Join(bodyLines, "\n")
 	}
 	return boxStyle.Render(content)
+}
+
+// looksLikeMarkdown reports whether content contains markdown syntax markers
+// that glamour would meaningfully render. A lightweight heuristic — false
+// positives are harmless (empty glamour render), false negatives leave
+// plain text which is already the default.
+func looksLikeMarkdown(content string) bool {
+	patterns := []string{
+		"# ", "## ", "**", "```", // headings, bold, code fences
+		"- ", "1. ", "> ", // lists, blockquotes
+		"---", "***", // horizontal rules
+	}
+	for _, p := range patterns {
+		if strings.Contains(content, p) {
+			return true
+		}
+	}
+	return false
 }
 
 // toolStyleForStatus returns the lipgloss style for a tool's current lifecycle

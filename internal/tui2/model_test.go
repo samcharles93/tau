@@ -3,6 +3,7 @@ package tui2
 import (
 	"context"
 	"errors"
+	"os"
 	"reflect"
 	"strings"
 	"sync"
@@ -15,6 +16,11 @@ import (
 	"github.com/samcharles93/tau/internal/eventbus"
 	"github.com/samcharles93/tau/internal/tui/notify"
 )
+
+func TestMain(m *testing.M) {
+	notificationClearDelay = time.Millisecond
+	os.Exit(m.Run())
+}
 
 // fakeRuntime is a tauchat.ChatRuntime that records every command sent to it,
 // optionally failing every Send with a fixed error.
