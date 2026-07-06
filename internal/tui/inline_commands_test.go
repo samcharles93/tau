@@ -6,14 +6,16 @@ import (
 )
 
 // TestCommandTableIsSingleSourceOfTruth guards that dispatch (slashByName),
-// name completion (commandMatches), and /help all derive from the same table,
+// name completion (commandGroups), and /help all derive from the same table,
 // so they can't drift the way the old three separate lists did.
 func TestCommandTableIsSingleSourceOfTruth(t *testing.T) {
 	c, _ := newTestChat(t)
 
 	completed := map[string]bool{}
-	for _, m := range c.commandMatches() {
-		completed[m.Word] = true
+	for _, g := range c.commandGroups("/") {
+		for _, m := range g.Matches {
+			completed[m.Word] = true
+		}
 	}
 
 	for i := range slashCommands {

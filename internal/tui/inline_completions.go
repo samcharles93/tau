@@ -195,17 +195,6 @@ func (c *inlineChat) commandGroups(token string) []taui.MatchGroup {
 	return groups
 }
 
-// commandMatches flattens commandGroups into a single list, for callers (and
-// tests) that don't care about the category split.
-func (c *inlineChat) commandMatches() []taui.Match {
-	groups := c.commandGroups("/")
-	var out []taui.Match
-	for _, g := range groups {
-		out = append(out, g.Matches...)
-	}
-	return out
-}
-
 // extensionSubcommandMatches lists the sub-actions of an extension command
 // group (e.g. `list`, `reconnect`, `reload` for `/mcp`), used when completing
 // the first argument slot after a group name. Returns no matches when the named
