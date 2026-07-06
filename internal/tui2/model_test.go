@@ -60,7 +60,7 @@ func drainCmd(cmd tea.Cmd) []tea.Msg {
 }
 
 func newTestModel(rt tauchat.ChatRuntime, sub *eventbus.Subscriber[tauchat.ChatEvent]) *model {
-	return newModel(context.Background(), rt, sub, "sess", "gpt", "openai", nil, nil, nil, "", false)
+	return newModel(context.Background(), rt, sub, "sess", "gpt", "openai", nil, nil, true, "medium", nil, "", false)
 }
 
 // --- bash mode: CallID tracking (real bug found in commit 585874f) --------

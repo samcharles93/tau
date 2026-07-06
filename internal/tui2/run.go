@@ -10,8 +10,10 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"os"
 
 	tea "charm.land/bubbletea/v2"
+	"github.com/charmbracelet/colorprofile"
 
 	tauchat "github.com/samcharles93/tau/internal/chat"
 	tauconfig "github.com/samcharles93/tau/internal/config"
@@ -34,6 +36,8 @@ func Run(
 	metricsCfg tauconfig.MetricsConfig,
 	availableModels []tauchat.ChatModelRef,
 	refresh func(context.Context) ([]tauchat.ChatModelRef, error),
+	showReasoning bool,
+	reasoningEffort string,
 	webURL string,
 	debug bool,
 ) error {
@@ -76,11 +80,22 @@ func Run(
 		onReady()
 	}
 
-	m := newModel(ctx, runtime, chatSub, sessionID, modelName, provider, availableModels, refresh, tracker, webURL, debug)
+	m := newModel(ctx, runtime, chatSub, sessionID, modelName, provider, availableModels, refresh, showReasoning, reasoningEffort, tracker, webURL, debug)
+
+	// Derive the colour profile from the environment rather than letting Bubble
+	// Tea auto-detect it with OSC 10/11 queries. Those query responses can leak
+	// into the captured output when stdin/stdout are not a real terminal. Falls
+	// back to TrueColor because tau's theme already emits 24-bit RGB escapes.
+	profile := colorprofile.Env(os.Environ())
+	if profile == colorprofile.Unknown {
+		profile = colorprofile.TrueColor
+	}
+
 	p := tea.NewProgram(
 		m,
 		tea.WithContext(ctx),
 		tea.WithoutSignalHandler(), // tau manages signals at the app layer
+		tea.WithColorProfile(profile),
 	)
 
 	if _, err := p.Run(); err != nil {

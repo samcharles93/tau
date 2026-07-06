@@ -203,6 +203,8 @@ func newModel(
 	sessionID, modelName, provider string,
 	availableModels []tauchat.ChatModelRef,
 	refresh func(context.Context) ([]tauchat.ChatModelRef, error),
+	showReasoning bool,
+	reasoningEffort string,
 	usage *metrics.UsageTracker,
 	webURL string,
 	debug bool,
@@ -229,6 +231,8 @@ func newModel(
 		focusedTool:       -1,
 		availableModels:   availableModels,
 		refresh:           refresh,
+		showReasoning:     showReasoning,
+		reasoningEffort:   reasoningEffort,
 		usage:             usage,
 		webURL:            webURL,
 		debug:             debug,
@@ -412,104 +416,135 @@ func (m *model) View() tea.View {
 	_ = m.lastClickY // reserved for future mouse hit-testing (Phase 1)
 	var sb strings.Builder
 
-	// Plugin panel (if active).
+	// Pre-render non-viewport segments so we can measure their exact heights
+	// using lipgloss.Height() and dynamically shrink the viewport to fit.
+	// This guarantees that the input area and status bar are always pinned to
+	// the very bottom of the alt-screen without being pushed off-screen
+	// by completions, panels, or tools.
+
+	// 1. Plugin panel.
+	var activePanelStr string
 	if p := m.activePanel(); p != nil {
-		sb.WriteString(panelStyle.Render("┌─ " + p.title + " ─┐"))
-		sb.WriteString("\n")
-		sb.WriteString(p.content)
-		sb.WriteString("\n")
-		sb.WriteString(panelStyle.Render("└" + strings.Repeat("─", min(m.width, 40)) + "┘"))
-		sb.WriteString("\n\n")
+		var psb strings.Builder
+		psb.WriteString(panelStyle.Render("┌─ " + p.title + " ─┐"))
+		psb.WriteString("\n")
+		psb.WriteString(p.content)
+		psb.WriteString("\n")
+		psb.WriteString(panelStyle.Render("└" + strings.Repeat("─", min(m.width, 40)) + "┘"))
+		psb.WriteString("\n\n")
+		activePanelStr = psb.String()
 	}
 
-	// Messages — rendered through the viewport (scrollable, no cap).
-	sb.WriteString(m.viewport.View())
-
-	// Living working indicator — shown during model warm-up, before any
-	// streaming text, visible reasoning, or tool call has appeared. Instead of
-	// a frozen "thinking…" it shimmers a rotating personality verb with a live
-	// elapsed clock; see workingIndicator (animation.go). Both the shimmer
-	// phase and the clock advance on each 80ms tea.Tick (ChatResponseStartedEvent
-	// kicks the tick loop off).
+	// 2. Working indicator / streaming content.
+	var streamStr string
 	visibleReasoning := m.reasoning != "" && m.showReasoning
 	if m.inResponse && len(m.tools) == 0 && m.streaming == "" && !visibleReasoning {
-		sb.WriteString(m.workingIndicator())
-		sb.WriteString("\n")
-	}
-
-	// Streaming reasoning (in-progress "thinking" trace).
-	if visibleReasoning {
-		sb.WriteString(reasoningStyle.Render("Thinking: " + m.reasoning))
-		sb.WriteString("\n")
-	}
-	if m.streaming != "" {
-		sb.WriteString(streamStyle.Render(m.streaming))
-	}
-
-	// Tool calls — Phase 1: background-colored boxes with live output.
-	for i, t := range m.tools {
-		sb.WriteString("\n")
-		expanded := m.expandedID != "" && m.expandedID == t.id
-		if expanded {
-			// Reset focusedTool when a tool is expanded so keyboard events
-			// target the expanded view rather than tabbing away.
-			m.focusedTool = i
+		streamStr = m.workingIndicator() + "\n"
+	} else {
+		var ssb strings.Builder
+		if visibleReasoning {
+			ssb.WriteString(reasoningStyle.Render("Thinking: " + m.reasoning))
+			ssb.WriteString("\n")
 		}
-		sb.WriteString(m.renderToolBox(t, expanded, len(m.tools)))
+		if m.streaming != "" {
+			ssb.WriteString(streamStyle.Render(m.streaming))
+		}
+		streamStr = ssb.String()
 	}
+
+	// 3. Tool calls.
+	var toolsStr string
 	if len(m.tools) > 0 {
-		sb.WriteString("\n")
+		var tsb strings.Builder
+		for i, t := range m.tools {
+			tsb.WriteString("\n")
+			expanded := m.expandedID != "" && m.expandedID == t.id
+			if expanded {
+				m.focusedTool = i
+			}
+			tsb.WriteString(m.renderToolBox(t, expanded, len(m.tools)))
+		}
+		tsb.WriteString("\n")
+		toolsStr = tsb.String()
 	}
 
-	// Interactive prompt (modal).
+	// 4. Interactive prompt (modal).
+	var promptStr string
 	if m.activePrompt != nil {
-		sb.WriteString("\n")
-		sb.WriteString(renderPrompt(m.activePrompt, m.promptConfirmYes))
-		sb.WriteString("\n")
+		promptStr = "\n" + renderPrompt(m.activePrompt, m.promptConfirmYes) + "\n"
 	}
 
-	// Completion dropdown.
+	// 5. Completion dropdown.
+	var compStr string
 	if rows, _ := m.completionRows(); len(rows) > 0 {
-		sb.WriteString("\n")
 		selected := m.compSelected
 		if selected < 0 || selected >= len(rows) {
 			selected = 0
 		}
-		sb.WriteString(renderCompletions(rows, selected, m.width))
+		compStr = "\n" + renderCompletions(rows, selected, m.width)
 	}
 
-	// Notification (Phase 1 compat).
+	// 6. Notification.
+	var notifyStr string
 	if m.notification != "" {
-		sb.WriteString("\n")
-		sb.WriteString(notifyStyle.Render(m.notification))
+		notifyStr = "\n" + notifyStyle.Render(m.notification)
 	}
 
-	sb.WriteString("\n")
-
-	// Separator before input area.
+	// 7. Divider and input area.
 	sepWidth := m.width
 	if sepWidth <= 0 {
 		sepWidth = 80
 	}
-	sb.WriteString(separatorStyle.Render(strings.Repeat("─", sepWidth)))
-	sb.WriteString("\n")
+	sepStr := separatorStyle.Render(strings.Repeat("─", sepWidth)) + "\n"
+	inputStr := m.renderInputArea() + "\n"
 
-	// Input area.
-	if m.activePrompt != nil {
-		if m.activePrompt.Kind == "confirm" {
-			// Nothing — input is blocked
-		} else {
-			sb.WriteString(m.renderInputArea())
-		}
-	} else {
-		sb.WriteString(m.renderInputArea())
-	}
-	sb.WriteString("\n")
-
-	// Status bar — rich, segmented.
+	// 8. Status bar.
+	var statusStr string
 	if m.width > 0 {
-		sb.WriteString(m.computeStatusBar())
+		statusStr = m.computeStatusBar()
 	}
+
+	// 9. Calculate total height occupied by all non-viewport elements.
+	reservedHeight := lipgloss.Height(activePanelStr) +
+		lipgloss.Height(streamStr) +
+		lipgloss.Height(toolsStr) +
+		lipgloss.Height(promptStr) +
+		lipgloss.Height(compStr) +
+		lipgloss.Height(notifyStr) +
+		lipgloss.Height(sepStr) +
+		lipgloss.Height(inputStr) +
+		lipgloss.Height(statusStr)
+
+	// 10. Adjust viewport height to exactly fill the remaining terminal height.
+	vh := m.height - reservedHeight
+	if vh < 4 {
+		vh = 4
+	}
+	m.viewport.SetHeight(vh)
+
+	// Assemble final view in strict top-to-bottom layout order.
+	if activePanelStr != "" {
+		sb.WriteString(activePanelStr)
+	}
+	sb.WriteString(m.viewport.View())
+	if streamStr != "" {
+		sb.WriteString(streamStr)
+	}
+	if toolsStr != "" {
+		sb.WriteString(toolsStr)
+	}
+	if promptStr != "" {
+		sb.WriteString(promptStr)
+	}
+	if compStr != "" {
+		sb.WriteString(compStr)
+	}
+	if notifyStr != "" {
+		sb.WriteString(notifyStr)
+	}
+	sb.WriteString(sepStr)
+	sb.WriteString(inputStr)
+	sb.WriteString(statusStr)
 
 	v := tea.NewView(sb.String())
 	// AltScreen owns the full terminal so we can use guaranteed screen real
