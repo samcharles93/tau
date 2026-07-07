@@ -106,20 +106,26 @@ func (p *MCPPlugin) Metadata() (string, []*pluginapi.Command) {
 }
 
 // RunCommand executes a slash command. The host passes the full space-joined
-// action path as name, e.g. "mcp list"; a bare "mcp" prints the sub-action help.
-func (p *MCPPlugin) RunCommand(ctx context.Context, name, args string) (string, error) {
+// action path as name, e.g. "mcp list"; a bare "mcp" prints the sub-action
+// help. The mcp plugin renders no panels, so view is always nil.
+func (p *MCPPlugin) RunCommand(ctx context.Context, name, args string) (string, *pluginapi.View, error) {
+	var (
+		output string
+		err    error
+	)
 	switch name {
 	case "mcp", "mcp help":
-		return p.cmdHelp(), nil
+		output = p.cmdHelp()
 	case "mcp list":
-		return p.cmdList()
+		output, err = p.cmdList()
 	case "mcp reconnect":
-		return p.cmdReconnect(ctx, strings.TrimSpace(args))
+		output, err = p.cmdReconnect(ctx, strings.TrimSpace(args))
 	case "mcp reload":
-		return p.cmdReload(ctx)
+		output, err = p.cmdReload(ctx)
 	default:
-		return "", fmt.Errorf("tau-plugin-mcp: unknown command %q (try /mcp help)", name)
+		err = fmt.Errorf("tau-plugin-mcp: unknown command %q (try /mcp help)", name)
 	}
+	return output, nil, err
 }
 
 // cmdHelp lists the available /mcp sub-actions.
