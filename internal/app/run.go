@@ -224,8 +224,21 @@ func RunChat(ctx context.Context, opts ChatOptions) error {
 		return err
 	}
 
-	// If --resume is set, load the session and use its ID/properties.
+	// StartChatSessionCommand/LoadSessionCommand are sent from chatSessionOnReady
+	// (below, run via TUIConfig.OnReady) rather than eagerly here — Coordinator.Send
+	// just enqueues onto an internal channel processed by a background goroutine, so
+	// sending immediately races the TUI's own bus subscription (which happens inside
+	// tui.Run, called well after this point). On --resume this race is real and
+	// visible: SessionLoadedEvent can be published and dropped before anything is
+	// listening, so the loaded history never renders until the next unrelated
+	// snapshot (e.g. after the user's first submitted prompt) rebuilds it. Deferring
+	// to OnReady mirrors pluginOnReady's identical fix for the identical race.
+	//
+	// Because OnReady has no error return, a failed Send() here can no longer abort
+	// startup the way an eager Send() could — surfaced as a notification instead,
+	// same as pluginOnReady's own failure handling below.
 	resumeSummary := "" // printed on exit
+	var chatSessionOnReady func()
 	if opts.ResumeSessionID != "" && sessionManager != nil {
 		resumeID := opts.ResumeSessionID
 		if resumeID == "latest" {
@@ -252,22 +265,42 @@ func RunChat(ctx context.Context, opts ChatOptions) error {
 			}
 			model = loadedModel
 		}
-		// Start the session, then load the messages via LoadSessionCommand.
 		config := buildSessionConfig(opts, model, systemPrompt)
 		config.SystemPrompt = loaded.SystemPrompt
-		if err := coordinator.Send(tauchat.StartChatSessionCommand{SessionID: sessionID, Config: config}); err != nil {
-			return err
-		}
-		// Load the message history into the running session.
-		if err := coordinator.Send(tauchat.LoadSessionCommand{SessionID: sessionID}); err != nil {
-			return err
+		messageCount := len(loaded.Messages)
+		chatSessionOnReady = func() {
+			if err := coordinator.Send(tauchat.StartChatSessionCommand{SessionID: sessionID, Config: config}); err != nil {
+				slog.Warn("start chat session failed", "err", err)
+				eventPub.Publish(tauchat.ChatNotificationEvent{
+					Message:    "Failed to start session: " + err.Error(),
+					Level:      tauchat.ChatNotificationError,
+					OccurredAt: time.Now().UTC(),
+				})
+				return
+			}
+			// Load the message history into the running session.
+			if err := coordinator.Send(tauchat.LoadSessionCommand{SessionID: sessionID}); err != nil {
+				slog.Warn("load session failed", "err", err)
+				eventPub.Publish(tauchat.ChatNotificationEvent{
+					Message:    "Failed to load session: " + err.Error(),
+					Level:      tauchat.ChatNotificationError,
+					OccurredAt: time.Now().UTC(),
+				})
+			}
 		}
 		resumeSummary = fmt.Sprintf("Session %s resumed (%d messages). Exit: save + resume with: tau --resume %s",
-			sessionID, len(loaded.Messages), sessionID)
+			sessionID, messageCount, sessionID)
 	} else {
 		config := buildSessionConfig(opts, model, systemPrompt)
-		if err := coordinator.Send(tauchat.StartChatSessionCommand{SessionID: sessionID, Config: config}); err != nil {
-			return err
+		chatSessionOnReady = func() {
+			if err := coordinator.Send(tauchat.StartChatSessionCommand{SessionID: sessionID, Config: config}); err != nil {
+				slog.Warn("start chat session failed", "err", err)
+				eventPub.Publish(tauchat.ChatNotificationEvent{
+					Message:    "Failed to start session: " + err.Error(),
+					Level:      tauchat.ChatNotificationError,
+					OccurredAt: time.Now().UTC(),
+				})
+			}
 		}
 	}
 
@@ -301,6 +334,16 @@ func RunChat(ctx context.Context, opts ChatOptions) error {
 		}
 	}
 
+	// Start the chat session (and load its history, on --resume) before
+	// loading plugins — both run only once the TUI has subscribed to bus
+	// events (see chatSessionOnReady's own comment for why).
+	onReady := func() {
+		chatSessionOnReady()
+		if pluginOnReady != nil {
+			pluginOnReady()
+		}
+	}
+
 	tuiCfg := tui.TUIConfig{
 		SessionID:          sessionID,
 		ModelName:          model.ID,
@@ -314,7 +357,7 @@ func RunChat(ctx context.Context, opts ChatOptions) error {
 		ReasoningEffort:    opts.ReasoningEffort,
 		Debug:              isDevel(opts.Version, opts.Config),
 		WebURL:             webURL,
-		OnReady:            pluginOnReady,
+		OnReady:            onReady,
 		MetricsConfig:      opts.Config.Metrics,
 		NewTUI:             opts.NewTUI,
 	}
