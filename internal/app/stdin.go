@@ -109,6 +109,7 @@ func RunStdIn(ctx context.Context, opts ChatOptions, prompt string) error {
 		Streamer:              streamer,
 		SkillsManager:         skillsMgr,
 		SkillsDiscoveryConfig: skillDiscoveryCfg,
+		MetricsConfig:         opts.Config.Metrics,
 	})
 	if err != nil {
 		if sessionManager != nil {

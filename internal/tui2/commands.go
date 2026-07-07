@@ -25,6 +25,7 @@ type slashEntry struct {
 	displayName string
 	description string
 	isAgent     bool
+	modeSwitch  bool
 	run         func(m *model, args string) tea.Cmd
 }
 
@@ -46,7 +47,7 @@ func inputModes() []inputMode {
 	modes := []inputMode{{}}
 	for i := range slashTable {
 		entry := slashTable[i]
-		if !entry.isAgent {
+		if !entry.isAgent || !entry.modeSwitch {
 			continue
 		}
 		modes = append(modes, inputMode{
@@ -161,6 +162,7 @@ func init() {
 				displayName: def.DisplayName,
 				description: def.Description,
 				isAgent:     true,
+				modeSwitch:  def.ModeSwitcher,
 				run: func(m *model, args string) tea.Cmd {
 					return m.runAgentCommand(name, args)
 				},

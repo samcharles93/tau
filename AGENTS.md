@@ -238,7 +238,7 @@ Use this section to quickly find the right files for a given change.
 - `internal/agent/prompt.go` — System prompt construction: `PromptConfig`, `BuildSystemPrompt()`, `DiscoverContextFiles()`, `RenderAgentPrompt()` (renders a built-in agent command's template)
 - `internal/agent/ui_bridge.go` — `coordinatorUIBridge` implementing `tools.UIBridge` (Confirm, Select, Input, Notify)
 - `internal/agent/templates/agent.md.tpl` — the base system prompt, a Go text/template
-- `internal/agent/spec/` (package `spec`) — declarative built-in agent commands (`/plan`, `/research`, etc.), one `*.agent.md` frontmatter+template file per command in `internal/agent/spec/templates/`. A dependency-free leaf package (no import of `agent` or `registry`) so both the coordinator and the command registry can consume `spec.Builtins()`/`spec.Lookup()` without a cycle.
+- `internal/agent/spec/` (package `spec`) — declarative built-in agent commands (`/plan`, `/research`, etc.), one `*.agent.md` frontmatter+template file per command in `internal/agent/spec/templates/`. A dependency-free leaf package (no import of `agent` or `registry`) so both the coordinator and the command registry can consume `spec.Builtins()`/`spec.Lookup()` without a cycle. Frontmatter supports `user-invocable` (slash command exposure) separately from `mode-switcher` (Shift-Tab input-mode cycle exposure), so utility agents like `/compact` can remain runnable without cluttering mode cycling.
 
 ### Changing the Tool Registry / Adding Tools
 
@@ -312,11 +312,12 @@ Use this section to quickly find the right files for a given change.
 
 ### Changing Configuration
 
-- `internal/config/config.go` — `Config` struct, `ProviderConfig`, `AuthConfig`, `ModelConfig`, `UIConfig`:
+- `internal/config/config.go` — `Config` struct, `ProviderConfig`, `AuthConfig`, `ModelConfig`, `UIConfig`, `AutoCompactConfig`:
   - **Loading**: `LoadConfig()`, `LoadConfigFrom()`, `mergeConfigs()`, `Validate()`
   - **Paths**: `Dir()`, `GlobalPath()`, `LocalPath()`, `SessionsDir()`, `SessionsDBPath()`
   - **Selection**: `ResolveProvider()`, `ProviderNames()`
   - **YAML unmarshaling**: Supports both kebab-case and camelCase variants for all fields
+  - **Auto-compaction**: `auto_compact.enabled`, `threshold_ratio`, `target_ratio`, and optional `model` configure coordinator-level history compaction before LLM calls.
 - Config file: `~/.config/tau/config.yaml` (global), `.tau.yaml` (project-local)
 
 ### Changing the Event Bus

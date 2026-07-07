@@ -1,6 +1,7 @@
 ---
 name: compact
 description: Compact conversation to preserve context
+mode-switcher: false
 disable-model-invocation: true
 metadata:
   category: context

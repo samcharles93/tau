@@ -713,6 +713,7 @@ func buildCoordinator(ctx context.Context, cfg coordinatorConfig) (*agent.Coordi
 			return nil
 		},
 		MetricsConfig: cfg.MetricsConfig,
+		AutoCompact:   cfg.ChatOptions.Config.AutoCompact,
 	})
 	if err != nil {
 		return nil, nil, nil, err

@@ -80,6 +80,7 @@ type Coordinator struct {
 	commandRegistry   *commandreg.Registry
 	lastSkillsConfig  skills.DiscoveryConfig
 	allowedTools      map[string]bool
+	autoCompact       tauconfig.AutoCompactConfig
 
 	mu       sync.Mutex
 	sessions map[string]*coordinatorSession
@@ -175,6 +176,11 @@ type CoordinatorConfig struct {
 	// MetricsConfig controls observability export. Session tracking is
 	// always on; Dir enables file export when non-empty.
 	MetricsConfig tauconfig.MetricsConfig
+
+	// AutoCompact controls automatic conversation-history compaction before
+	// LLM requests when the current request approaches the model context
+	// window.
+	AutoCompact tauconfig.AutoCompactConfig
 }
 
 // NewCoordinator creates and starts the agent coordinator.
@@ -236,6 +242,7 @@ func NewCoordinator(ctx context.Context, cfg CoordinatorConfig) (*Coordinator, e
 		skillsMgr:         cfg.SkillsManager,
 		commandRegistry:   cfg.CommandRegistry,
 		lastSkillsConfig:  cfg.SkillsDiscoveryConfig,
+		autoCompact:       cfg.AutoCompact,
 		allowedTools:      nil,
 		sessions:          make(map[string]*coordinatorSession),
 		shutdown:          make(map[string]struct{}),
@@ -1351,6 +1358,23 @@ func (c *Coordinator) runTurn(ctx context.Context, state chat.ChatSessionState) 
 				s.state.Messages = state.Messages
 			}
 			c.mu.Unlock()
+		}
+
+		if iteration == 0 {
+			compactedState, compacted, compactErr := c.maybeAutoCompact(ctx, state, bearerToken)
+			if compactErr != nil {
+				c.loggerWithTurn(sessionID, requestID).Warn(
+					"auto-compaction failed",
+					"err", compactErr,
+				)
+				c.emit(chat.ChatNotificationEvent{
+					Message:    "auto-compaction failed: " + compactErr.Error(),
+					Level:      chat.ChatNotificationWarn,
+					OccurredAt: time.Now().UTC(),
+				})
+			} else if compacted {
+				state = compactedState
+			}
 		}
 
 		pluginResp := c.dispatchPluginRequestResponse("before_llm_call", sessionID, &api.EventPayload{

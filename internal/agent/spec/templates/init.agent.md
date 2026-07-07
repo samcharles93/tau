@@ -2,6 +2,7 @@
 name: init
 description: Generate an AGENTS.md for the current project
 tools: [read, find, grep, write]
+mode-switcher: false
 disable-model-invocation: true
 metadata:
   category: documentation

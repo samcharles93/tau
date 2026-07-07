@@ -2,6 +2,7 @@ package tui2
 
 import (
 	"reflect"
+	"slices"
 	"strings"
 	"testing"
 
@@ -162,6 +163,23 @@ func TestShiftTabCyclesInputModeAndPreservesDraft(t *testing.T) {
 	}
 	if m.inputCursor != len([]rune(m.input)) {
 		t.Fatalf("cursor = %d, want end %d", m.inputCursor, len([]rune(m.input)))
+	}
+}
+
+func TestInputModesExcludeAgentsHiddenFromModeSwitcher(t *testing.T) {
+	var names []string
+	for _, mode := range inputModes() {
+		if mode.command != "" {
+			names = append(names, mode.command)
+		}
+	}
+	if !slices.Contains(names, "plan") {
+		t.Fatalf("input modes = %v, want plan", names)
+	}
+	for _, hidden := range []string{"compact", "summarise", "init"} {
+		if slices.Contains(names, hidden) {
+			t.Fatalf("input modes = %v, did not want %s", names, hidden)
+		}
 	}
 }
 

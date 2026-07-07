@@ -23,6 +23,7 @@ func TestBuiltins_ParsesAllDefinitions(t *testing.T) {
 	task, ok := names["task"]
 	require.True(t, ok)
 	require.False(t, task.UserInvocable)
+	require.False(t, task.ModeSwitcher)
 
 	// Everything else defaults (or is explicitly set) to user-invocable.
 	for _, def := range defs {
@@ -38,6 +39,12 @@ func TestBuiltins_ParsesAllDefinitions(t *testing.T) {
 	require.NotContains(t, plan.Tools, "write", "plan should not be able to write files")
 	require.Equal(t, "Planning", plan.DisplayName)
 	require.Equal(t, "134", plan.Color)
+	require.True(t, plan.ModeSwitcher)
+
+	compact, ok := names["compact"]
+	require.True(t, ok)
+	require.True(t, compact.UserInvocable)
+	require.False(t, compact.ModeSwitcher)
 
 	// Agents without an explicit display-name still get one, defaulted from
 	// the command name, so every agent's input-mode indicator has a label.
@@ -72,6 +79,21 @@ func TestParse_UserInvocableDefaultsTrue(t *testing.T) {
 	def, err = Parse([]byte("---\nname: x\ndescription: y\nuser-invocable: false\n---\nbody"))
 	require.NoError(t, err)
 	require.False(t, def.UserInvocable)
+}
+
+func TestParse_ModeSwitcherDefaultsToUserInvocable(t *testing.T) {
+	def, err := Parse([]byte("---\nname: x\ndescription: y\n---\nbody"))
+	require.NoError(t, err)
+	require.True(t, def.ModeSwitcher)
+
+	def, err = Parse([]byte("---\nname: x\ndescription: y\nuser-invocable: false\n---\nbody"))
+	require.NoError(t, err)
+	require.False(t, def.ModeSwitcher)
+
+	def, err = Parse([]byte("---\nname: x\ndescription: y\nmode-switcher: false\n---\nbody"))
+	require.NoError(t, err)
+	require.True(t, def.UserInvocable)
+	require.False(t, def.ModeSwitcher)
 }
 
 // TestParse_DisplayNameDefaultsToTitleCase guards against a regression where

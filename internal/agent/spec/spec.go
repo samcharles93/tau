@@ -56,6 +56,11 @@ type Definition struct {
 	// command. Defaults to true.
 	UserInvocable bool
 
+	// ModeSwitcher controls whether the agent appears in the Shift-Tab mode
+	// cycle. Defaults to UserInvocable so ordinary user-facing agents remain
+	// available unless they explicitly opt out.
+	ModeSwitcher bool
+
 	// ArgumentHint is shown next to the command name in /help, e.g. "<prompt>".
 	ArgumentHint string
 
@@ -86,6 +91,7 @@ type frontmatter struct {
 	Model                  string            `yaml:"model,omitempty"`
 	DisableModelInvocation bool              `yaml:"disable-model-invocation,omitempty"`
 	UserInvocable          *bool             `yaml:"user-invocable,omitempty"`
+	ModeSwitcher           *bool             `yaml:"mode-switcher,omitempty"`
 	ArgumentHint           string            `yaml:"argument-hint,omitempty"`
 	DisplayName            string            `yaml:"display-name,omitempty"`
 	Color                  string            `yaml:"color,omitempty"`
@@ -130,6 +136,10 @@ func Parse(content []byte) (*Definition, error) {
 	if parsed.UserInvocable != nil {
 		userInvocable = *parsed.UserInvocable
 	}
+	modeSwitcher := userInvocable
+	if parsed.ModeSwitcher != nil {
+		modeSwitcher = *parsed.ModeSwitcher
+	}
 
 	displayName := strings.TrimSpace(parsed.DisplayName)
 	if displayName == "" {
@@ -143,6 +153,7 @@ func Parse(content []byte) (*Definition, error) {
 		Model:                  strings.TrimSpace(parsed.Model),
 		DisableModelInvocation: parsed.DisableModelInvocation,
 		UserInvocable:          userInvocable,
+		ModeSwitcher:           modeSwitcher,
 		ArgumentHint:           strings.TrimSpace(parsed.ArgumentHint),
 		DisplayName:            displayName,
 		Color:                  strings.TrimSpace(parsed.Color),

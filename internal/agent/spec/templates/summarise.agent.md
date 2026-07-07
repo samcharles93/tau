@@ -1,6 +1,7 @@
 ---
 name: summarise
 description: Summarize conversation for later continuation
+mode-switcher: false
 disable-model-invocation: true
 metadata:
   category: context
