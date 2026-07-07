@@ -79,6 +79,15 @@ type model struct {
 	// Viewport content — rendered lines, built incrementally.
 	renderedLines []string
 
+	// messageRanges records which span of renderedLines each ChatMessage's
+	// rendered lines occupy, so a click can be resolved to "which message"
+	// (see messageAtRow) rather than just "which line" — mirrors
+	// committedToolGroup's lineIdx/lineCount, for whole messages instead of
+	// tool boxes. Only messages with a real ID (see chat.ChatMessage.ID)
+	// get an entry; entries must be kept in sync by anything that mutates
+	// renderedLines in place (see spliceCommittedGroup).
+	messageRanges []messageLineRange
+
 	// lastAssistantText is the raw (unstyled) content of the most recent
 	// assistant message, kept separately from renderedLines because those
 	// are lipgloss-styled — the ANSI escape codes wrapping the content mean
@@ -344,6 +353,18 @@ type toolBoxGeometry struct {
 	id     string
 	startY int
 	endY   int
+}
+
+// messageLineRange records the [startLine, endLine) span (half-open,
+// indices into m.renderedLines at the time of recording) that one
+// ChatMessage's rendered lines occupy. Unlike toolBoxGeometry, this indexes
+// m.renderedLines directly rather than final screen rows — logicalLineAtRow
+// already maps a screen row to a renderedLines index, so no separate
+// box-relative-to-absolute translation is needed in computeLayout.
+type messageLineRange struct {
+	id        string
+	startLine int
+	endLine   int
 }
 
 // --- constructor -----------------------------------------------------------
@@ -1865,7 +1886,7 @@ func (m *model) handleChatEvent(evt tauchat.ChatEvent) tea.Cmd {
 		m.appendToolTail(e.CallID, e.Chunk)
 
 	case tauchat.ChatResponseCompletedEvent:
-		content := m.finalizeResponse()
+		content := m.finalizeResponse(lastAssistantMessageID(e.State))
 		// noopCmd guarantees a non-nil Batch even when there's no queued turn
 		// to drain and no desktop notification to fire.
 		cmds := []tea.Cmd{noopCmd, m.drainTurnQueue()}
@@ -2038,6 +2059,7 @@ func (m *model) applySnapshot(e tauchat.ChatSessionSnapshotEvent) {
 	}
 
 	m.renderedLines = m.renderedLines[:0]
+	m.messageRanges = m.messageRanges[:0]
 	m.viewportSel.clear()
 	for idx, msg := range state.Messages {
 		switch msg.Role {
@@ -2057,6 +2079,7 @@ func (m *model) applySnapshot(e tauchat.ChatSessionSnapshotEvent) {
 				continue
 			}
 			flushPendingTools()
+			start := len(m.renderedLines)
 			lines := strings.Split(msg.Content, "\n")
 			for i, l := range lines {
 				if i == 0 {
@@ -2065,12 +2088,19 @@ func (m *model) applySnapshot(e tauchat.ChatSessionSnapshotEvent) {
 					m.renderedLines = append(m.renderedLines, renderContinuationLine("user", l))
 				}
 			}
+			if msg.ID != "" {
+				m.messageRanges = append(m.messageRanges, messageLineRange{id: msg.ID, startLine: start, endLine: len(m.renderedLines)})
+			}
 		case tauchat.ChatRoleAssistant:
 			if msg.Content != "" {
 				flushPendingTools()
+				start := len(m.renderedLines)
 				m.lastAssistantText = msg.Content
 				rendered := m.renderMarkdown(msg.Content)
 				m.renderedLines = append(m.renderedLines, strings.Split(rendered, "\n")...)
+				if msg.ID != "" {
+					m.messageRanges = append(m.messageRanges, messageLineRange{id: msg.ID, startLine: start, endLine: len(m.renderedLines)})
+				}
 			}
 			for _, tc := range msg.ToolCalls {
 				toolCallsByID[tc.ID] = tc
@@ -2093,8 +2123,12 @@ func (m *model) applySnapshot(e tauchat.ChatSessionSnapshotEvent) {
 }
 
 // finalizeResponse returns the finalized assistant text (empty if none) so
-// the caller can decide whether to fire a desktop notification.
-func (m *model) finalizeResponse() string {
+// the caller can decide whether to fire a desktop notification. id, if
+// non-empty, is the just-completed assistant ChatMessage's ID (see
+// lastAssistantMessageID) — recorded into messageRanges the same way
+// applySnapshot records every other message's range, so this message is
+// immediately right-clickable without waiting for the next snapshot rebuild.
+func (m *model) finalizeResponse(id string) string {
 	// A turn that ends purely on tool calls (no trailing text) still needs
 	// its tools committed to scrollback — flushToolGroup renders the real
 	// group instead of a synthetic placeholder, so the user sees exactly
@@ -2112,14 +2146,28 @@ func (m *model) finalizeResponse() string {
 		// Render through glamour (markdown → ANSI) and append to viewport.
 		// Glamour output is already fully styled, so each line goes
 		// directly into renderedLines without passing through renderLine().
+		start := len(m.renderedLines)
 		rendered := m.renderMarkdown(content)
 		m.renderedLines = append(m.renderedLines, strings.Split(rendered, "\n")...)
+		if id != "" {
+			m.messageRanges = append(m.messageRanges, messageLineRange{id: id, startLine: start, endLine: len(m.renderedLines)})
+		}
 		m.viewport.SetContentLines(m.renderedLines)
 	}
 	m.streaming = ""
 	m.reasoning = ""
 	m.inResponse = false
 	return content
+}
+
+// lastAssistantMessageID returns the ID of state's final message if it's the
+// assistant turn CompleteTurnWithReasoning just appended, or "" if that turn
+// ended purely on tool calls (no trailing assistant text message).
+func lastAssistantMessageID(state tauchat.ChatSessionState) string {
+	if n := len(state.Messages); n > 0 && state.Messages[n-1].Role == tauchat.ChatRoleAssistant {
+		return state.Messages[n-1].ID
+	}
+	return ""
 }
 
 // ensureMDRenderer creates a glamour TermRenderer for the given width in
@@ -2649,8 +2697,12 @@ func (m *model) toggleCommittedToolAtLine(idx int) bool {
 // spliceCommittedGroup re-renders g after toggleCommittedToolAtLine folded,
 // unfolded, or expanded/collapsed one of its rows, and splices the result
 // into m.renderedLines in place of its previous lines — shifting every
-// other committed group that comes after it by the resulting line-count
-// delta so their recorded positions stay accurate for the next click.
+// other committed group AND every recorded messageRange that comes after it
+// by the resulting line-count delta so their recorded positions stay
+// accurate for the next click. This is the only place that mutates
+// renderedLines in place after initial construction (every other write is a
+// pure trailing append) — anything else added to renderedLines' bookkeeping
+// in the future needs the same shift treatment here.
 func (m *model) spliceCommittedGroup(g *committedToolGroup) {
 	rendered := m.renderCommittedGroup(g)
 	newLines := strings.Split(rendered, "\n")
@@ -2664,6 +2716,12 @@ func (m *model) spliceCommittedGroup(g *committedToolGroup) {
 	for _, other := range m.committedGroups {
 		if other != g && other.lineIdx > g.lineIdx {
 			other.lineIdx += delta
+		}
+	}
+	for i := range m.messageRanges {
+		if m.messageRanges[i].startLine > g.lineIdx {
+			m.messageRanges[i].startLine += delta
+			m.messageRanges[i].endLine += delta
 		}
 	}
 	m.viewport.SetContentLines(m.renderedLines)
@@ -2864,6 +2922,23 @@ func (m *model) logicalLineAtRow(targetRow int) (int, bool) {
 		row += h
 	}
 	return 0, false
+}
+
+// messageAtRow maps an absolute wrapped-row offset (see logicalLineAtRow) to
+// the id of the message whose recorded range contains it, if any. Used to
+// resolve a right-click in the viewport to "which message" rather than just
+// "which renderedLines index."
+func (m *model) messageAtRow(row int) (string, bool) {
+	idx, ok := m.logicalLineAtRow(row)
+	if !ok {
+		return "", false
+	}
+	for _, r := range m.messageRanges {
+		if idx >= r.startLine && idx < r.endLine {
+			return r.id, true
+		}
+	}
+	return "", false
 }
 
 // toggleToolExpansion toggles the expanded state for the currently focused

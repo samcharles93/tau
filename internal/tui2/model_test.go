@@ -927,6 +927,150 @@ func TestApplySnapshotPreservesCommittedGroupExpandState(t *testing.T) {
 	}
 }
 
+// --- messageRanges ---
+
+// TestMessageRangesRecordedOnApplySnapshot verifies applySnapshot records a
+// messageLineRange for every message with a real ID, keyed to the exact
+// renderedLines span that message's own append produced.
+func TestMessageRangesRecordedOnApplySnapshot(t *testing.T) {
+	m := newTestModel(&fakeRuntime{}, nil)
+	m.width = 80
+
+	messages := []tauchat.ChatMessage{
+		{ID: "u1", Role: tauchat.ChatRoleUser, Content: "hello"},
+		{ID: "a1", Role: tauchat.ChatRoleAssistant, Content: "hi there"},
+	}
+	m.applySnapshot(tauchat.ChatSessionSnapshotEvent{State: tauchat.ChatSessionState{Messages: messages}})
+
+	if len(m.messageRanges) != 2 {
+		t.Fatalf("expected 2 message ranges, got %d: %+v", len(m.messageRanges), m.messageRanges)
+	}
+	u1, a1 := m.messageRanges[0], m.messageRanges[1]
+	if u1.id != "u1" || u1.startLine != 0 {
+		t.Fatalf("u1 range = %+v, want id=u1 startLine=0", u1)
+	}
+	if a1.id != "a1" || a1.startLine != u1.endLine {
+		t.Fatalf("a1 range = %+v, want id=a1 startLine=%d (u1.endLine)", a1, u1.endLine)
+	}
+	if a1.endLine != len(m.renderedLines) {
+		t.Fatalf("a1.endLine = %d, want %d (len(renderedLines))", a1.endLine, len(m.renderedLines))
+	}
+}
+
+// TestMessageRangesSkipMessagesWithoutID verifies a message with no ID (e.g.
+// a pre-migration session loaded before per-message IDs existed) gets no
+// range recorded — right-clicking it should simply find nothing, not panic
+// or record a bogus entry.
+func TestMessageRangesSkipMessagesWithoutID(t *testing.T) {
+	m := newTestModel(&fakeRuntime{}, nil)
+	m.width = 80
+
+	messages := []tauchat.ChatMessage{
+		{Role: tauchat.ChatRoleUser, Content: "no id here"},
+	}
+	m.applySnapshot(tauchat.ChatSessionSnapshotEvent{State: tauchat.ChatSessionState{Messages: messages}})
+
+	if len(m.messageRanges) != 0 {
+		t.Fatalf("expected no message ranges for an ID-less message, got %+v", m.messageRanges)
+	}
+}
+
+// TestMessageRangesRebuiltOnApplySnapshotRerun verifies a second snapshot
+// fully replaces messageRanges rather than appending to stale entries from
+// the first rebuild — mirrors renderedLines' own m.renderedLines[:0] reset.
+func TestMessageRangesRebuiltOnApplySnapshotRerun(t *testing.T) {
+	m := newTestModel(&fakeRuntime{}, nil)
+	m.width = 80
+
+	first := []tauchat.ChatMessage{{ID: "u1", Role: tauchat.ChatRoleUser, Content: "hello"}}
+	m.applySnapshot(tauchat.ChatSessionSnapshotEvent{State: tauchat.ChatSessionState{Messages: first}})
+	if len(m.messageRanges) != 1 {
+		t.Fatalf("expected 1 message range after first snapshot, got %d", len(m.messageRanges))
+	}
+
+	second := []tauchat.ChatMessage{
+		{ID: "u1", Role: tauchat.ChatRoleUser, Content: "hello"},
+		{ID: "a1", Role: tauchat.ChatRoleAssistant, Content: "hi there"},
+	}
+	m.applySnapshot(tauchat.ChatSessionSnapshotEvent{State: tauchat.ChatSessionState{Messages: second}})
+	if len(m.messageRanges) != 2 {
+		t.Fatalf("expected messageRanges rebuilt to exactly 2 entries after second snapshot, got %d: %+v", len(m.messageRanges), m.messageRanges)
+	}
+}
+
+// TestMessageRangesShiftAfterCommittedGroupToggle guards the highest-risk
+// part of per-message geometry: spliceCommittedGroup mutates renderedLines
+// in place (the only site that does, besides pure trailing appends) when a
+// committed tool group folds/unfolds, and must shift every messageRange
+// that comes after it by the same delta it already applies to other
+// committedGroups' lineIdx — otherwise a message after the toggled group
+// silently desyncs and a later right-click resolves to the wrong message.
+func TestMessageRangesShiftAfterCommittedGroupToggle(t *testing.T) {
+	m := newTestModel(&fakeRuntime{}, nil)
+	m.width = 80
+
+	messages := []tauchat.ChatMessage{
+		{ID: "u1", Role: tauchat.ChatRoleUser, Content: "hello"},
+		{
+			Role: tauchat.ChatRoleAssistant,
+			ToolCalls: []tauchat.ChatToolCall{
+				{ID: "call-1", Function: tauchat.ChatFunctionCall{Name: "read"}},
+				{ID: "call-2", Function: tauchat.ChatFunctionCall{Name: "read"}},
+			},
+		},
+		{Role: tauchat.ChatRoleTool, ToolCallID: "call-1", Content: "a"},
+		{Role: tauchat.ChatRoleTool, ToolCallID: "call-2", Content: "b"},
+		{ID: "a1", Role: tauchat.ChatRoleAssistant, Content: "done"},
+	}
+	m.applySnapshot(tauchat.ChatSessionSnapshotEvent{State: tauchat.ChatSessionState{Messages: messages}})
+
+	if len(m.committedGroups) != 1 {
+		t.Fatalf("expected 1 committed group, got %d", len(m.committedGroups))
+	}
+	g := m.committedGroups[0]
+
+	var before messageLineRange
+	for _, r := range m.messageRanges {
+		if r.id == "a1" {
+			before = r
+		}
+	}
+	if before.id == "" {
+		t.Fatalf("expected a1's range to exist before toggling, ranges: %+v", m.messageRanges)
+	}
+	if before.startLine <= g.lineIdx {
+		t.Fatalf("test setup invalid: a1 (startLine=%d) must come after the group (lineIdx=%d)", before.startLine, g.lineIdx)
+	}
+
+	oldLineCount := g.lineCount
+	if !m.toggleCommittedToolAtLine(g.lineIdx) {
+		t.Fatal("expected the header click to be handled")
+	}
+	delta := g.lineCount - oldLineCount
+	if delta == 0 {
+		t.Fatal("test setup invalid: unfolding a 2-tool group must change its line count")
+	}
+
+	var after messageLineRange
+	for _, r := range m.messageRanges {
+		if r.id == "a1" {
+			after = r
+		}
+	}
+	if after.startLine != before.startLine+delta || after.endLine != before.endLine+delta {
+		t.Fatalf("a1 range after toggle = %+v, want startLine=%d endLine=%d (before %+v shifted by delta=%d)",
+			after, before.startLine+delta, before.endLine+delta, before, delta)
+	}
+
+	// messageAtRow must still resolve to a1 at its new (shifted) position —
+	// these test messages are short enough (width 80) that no line
+	// soft-wraps, so a renderedLines index and a screen-row offset coincide.
+	id, ok := m.messageAtRow(after.startLine)
+	if !ok || id != "a1" {
+		t.Fatalf("messageAtRow(%d) = (%q, %v), want (a1, true)", after.startLine, id, ok)
+	}
+}
+
 // TestScrollUpDuringResponseIsNotUndoneByRender guards against a real bug:
 // computeLayout forced the viewport back to the bottom on every render while
 // m.inResponse was true, so a manual scroll-up made during a live turn got
@@ -2547,7 +2691,7 @@ func TestFinalizeResponseEmptyWithNoTools(t *testing.T) {
 	m.reasoning = ""
 	m.inResponse = true
 
-	content := m.finalizeResponse()
+	content := m.finalizeResponse("")
 
 	if content != "" {
 		t.Fatalf("content = %q, want empty", content)
