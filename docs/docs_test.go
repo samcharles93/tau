@@ -11,6 +11,8 @@ func TestEmbeddedFS(t *testing.T) {
 	var foundConfigExample bool
 	var foundReadme bool
 	var foundPlugins bool
+	var foundMCPExample bool
+	var foundWebUISpec bool
 
 	err := fs.WalkDir(FS, ".", func(path string, d fs.DirEntry, err error) error {
 		if err != nil {
@@ -31,6 +33,13 @@ func TestEmbeddedFS(t *testing.T) {
 			t.Errorf("found embedded internal file or directory: %s", path)
 		}
 
+		// Validate: the VitePress site's own directories (config, static
+		// assets) never gets swept into the FS the docs tool serves.
+		if path == ".vitepress" || strings.HasPrefix(path, ".vitepress/") ||
+			path == "public" || strings.HasPrefix(path, "public/") {
+			t.Errorf("found unwanted VitePress scaffolding embedded in FS: %s", path)
+		}
+
 		if path == "config-example.yaml" {
 			foundConfigExample = true
 		}
@@ -39,6 +48,12 @@ func TestEmbeddedFS(t *testing.T) {
 		}
 		if path == "plugins.md" {
 			foundPlugins = true
+		}
+		if path == "examples/mcp-plugin.md" {
+			foundMCPExample = true
+		}
+		if path == "specs/web-ui.md" {
+			foundWebUISpec = true
 		}
 
 		return nil
@@ -56,6 +71,15 @@ func TestEmbeddedFS(t *testing.T) {
 	}
 	if !foundPlugins {
 		t.Error("expected plugins.md to be embedded in FS, but it was not")
+	}
+	// Validate: per-plugin walkthroughs under examples/ and specs/ are
+	// embedded too, so the docs tool can actually answer questions about
+	// them (previously only top-level *.md/*.yaml were embedded).
+	if !foundMCPExample {
+		t.Error("expected examples/mcp-plugin.md to be embedded in FS, but it was not")
+	}
+	if !foundWebUISpec {
+		t.Error("expected specs/web-ui.md to be embedded in FS, but it was not")
 	}
 }
 
