@@ -1,5 +1,65 @@
 # Changelog
 
+## [0.15.0](https://github.com/samcharles93/tau/compare/v0.14.0...v0.15.0) (2026-07-07)
+
+
+### Features
+
+* add auto-compact and mode-switcher ([4b411d0](https://github.com/samcharles93/tau/commit/4b411d084269d533a78802cac2c81753afa9a8d8))
+* add auto-compact config for conversation history compaction ([db8fc83](https://github.com/samcharles93/tau/commit/db8fc83d0dbf5e0ad3e9ae81b4371fb6101f541d))
+* add bash commands, config sync, TAU_LOG_LEVEL ([cc93350](https://github.com/samcharles93/tau/commit/cc933507bd818d205fb2fff4a516c05f21abdfed))
+* add mode dividers and focus tracking ([b20cffb](https://github.com/samcharles93/tau/commit/b20cffbc43019360189d0c908c740f85d0b07d2e))
+* add scripts/tui-parity.sh for visual parity sign-off ([6ccc8f8](https://github.com/samcharles93/tau/commit/6ccc8f81baaf672413201cb068a4b022b7bac379))
+* allow folding of single-tool committed groups ([63773fe](https://github.com/samcharles93/tau/commit/63773fea0256ebe352ddf1db8c7599c40bdfab0f))
+* **chat:** add stable ChatMessage.ID, shared by TUI and WebUI ([788438d](https://github.com/samcharles93/tau/commit/788438d0257221ef88ed6d8873d9d31b908c8125))
+* implement bash commands and mode indicators ([99e3c48](https://github.com/samcharles93/tau/commit/99e3c48074c3328e424779723ef00babad27ce82))
+* **plugin:** let plugins expose their own docs via a Documented interface ([641a0ef](https://github.com/samcharles93/tau/commit/641a0efd40df2830fefc12f34988c9e516bb3c0c))
+* **tool-stats:** add report drilldowns ([9d57c91](https://github.com/samcharles93/tau/commit/9d57c91c344deefb32c3248eadf2f97a0d717cc3))
+* **tui2:** add animation primitives for living working indicator ([1b41e49](https://github.com/samcharles93/tau/commit/1b41e493a56ad2d5d2e3bee9338f1658df7e6e65))
+* **tui2:** add full keyboard shortcut reference to /help ([a0f671f](https://github.com/samcharles93/tau/commit/a0f671f66803f913be49fb3aa0204dc30e7a80f8))
+* **tui2:** add spinner animation and animated steering indicator ([416b561](https://github.com/samcharles93/tau/commit/416b56158ff0c236992604c2c25345b0818f998c))
+* **tui2:** alt-screen rendering, tool box overhaul, and expand/collapse interaction ([1740f8a](https://github.com/samcharles93/tau/commit/1740f8ab43f29fb2d31adbe3149b9cb129639dfe))
+* **tui2:** enhanced /cost breakdown, /session info, !! double-bang bash, session load replay ([0ccc34d](https://github.com/samcharles93/tau/commit/0ccc34da6dd857a1b9fbd86b1446d10ceae8e7c2))
+* **tui2:** extend the context menu to chat messages ([2b0b0a2](https://github.com/samcharles93/tau/commit/2b0b0a2e6ab8d2fb2e51d0981b7613d25dd64373))
+* **tui2:** improve scrolling, make input visible during turn, support inline steering ([5fb2a3a](https://github.com/samcharles93/tau/commit/5fb2a3af078dbcd4a7e3771b3aaea6ee5cca2aad))
+* **tui2:** integrate Glamour for markdown rendering on finalized messages ([53503ae](https://github.com/samcharles93/tau/commit/53503aea04d8859b0fe66ac5c1a0b954aeb364d9))
+* **tui2:** mouse drag-to-select text, fixed-height notification area ([3bfcb4f](https://github.com/samcharles93/tau/commit/3bfcb4f0ddc817571785b01afa0d24f95e733a67))
+* **tui2:** Phase 2 critical-gap sweep — Ctrl+C guard, plugin views, /provider, session listing ([bda0d60](https://github.com/samcharles93/tau/commit/bda0d607900b1e9d3136864680290dd04384e2cc))
+* **tui2:** Phase 2 feature-parity sweep — commands, completions, status bar, prompts ([585874f](https://github.com/samcharles93/tau/commit/585874fb544d4d3b67614bb9a79e4e9d8d6da0f6))
+* **tui2:** pin input area and status bar to bottom of screen in alt-screen ([282cd50](https://github.com/samcharles93/tau/commit/282cd5098f4b84316cac05f0bd252b418d5555a5))
+* **tui2:** render the context menu as a floating overlay ([e20fcc0](https://github.com/samcharles93/tau/commit/e20fcc0f436152f97d299f2e83ca7aafa444161a))
+* **tui2:** right-click context menu for tool calls (no rendering yet) ([e467634](https://github.com/samcharles93/tau/commit/e467634edf0d0768b8ae5b6cb436f3f8ed66a4f7))
+* **tui2:** track per-message line ranges in the scrollback buffer ([fc1bc42](https://github.com/samcharles93/tau/commit/fc1bc420f255c9faa027d5965fa4d6f4b70cb9ef))
+* **tui2:** wire up reasoning config, fix completion menu viewport clipping ([4f5209a](https://github.com/samcharles93/tau/commit/4f5209a07d5bbeab4a8caf5870102220adfa4cf5))
+* **tui:** add experimental Bubbletea v2 TUI behind --new-tui flag ([199be58](https://github.com/samcharles93/tau/commit/199be583a32e6b9e9735e8517c81e8f71382bb30))
+* **tui:** improve selection and tool history UX ([fc38304](https://github.com/samcharles93/tau/commit/fc383043fb7313fa2ca29bee8602881df692ce7f))
+
+
+### Bug Fixes
+
+* **agent:** merge consecutive user messages, clear stale steering queue ([d62ad87](https://github.com/samcharles93/tau/commit/d62ad878ff4b06c2cc65a7665a26e99182c8926d))
+* **agent:** off-by-one in toolLoopSoftThreshold and combine double JSON unmarshal ([dfba635](https://github.com/samcharles93/tau/commit/dfba63521d6122c88c0536ed4564a4656814afb0))
+* **agent:** replace function name in mergeToolCallDelta, not accumulate ([c230961](https://github.com/samcharles93/tau/commit/c2309614b45f77f02913121d8d5cdf942feb6406))
+* **app:** defer session start/load until the TUI has subscribed ([e246914](https://github.com/samcharles93/tau/commit/e24691408dba42284ec0b0be0e30249f5b568e8a))
+* **config:** heal missing metrics export config and its lost UnmarshalYAML field ([d22ea98](https://github.com/samcharles93/tau/commit/d22ea983ddf00225af2498fe6732e9b1ded2ec93))
+* **docs:** embed per-plugin walkthroughs under examples/ and specs/ ([b4d836b](https://github.com/samcharles93/tau/commit/b4d836b01e65af2a3ab27a20917214c1557f6df6))
+* **plugins/mcp:** match RunCommand to the panels/views Extension interface ([10c40a8](https://github.com/samcharles93/tau/commit/10c40a87cc006d5bf3a96623bdb369ae73a8778f))
+* **tui2:** drop context menu background fill ([025e386](https://github.com/samcharles93/tau/commit/025e38682da533e9780403ee2116446b80872073))
+* **tui2:** fix tool-call ordering/scroll-lock, group tool calls per batch ([b5a72f0](https://github.com/samcharles93/tau/commit/b5a72f068fd65fcef34ebfd7142130b0346a457b))
+* **tui2:** gate alias completions behind typed prefix ([d07cec7](https://github.com/samcharles93/tau/commit/d07cec7f36133352b8926d941d8cdcc6d165902c))
+* **tui2:** match typed-out command aliases in the completions dropdown ([da244fb](https://github.com/samcharles93/tau/commit/da244fb9d6630225a76fb694e2975a4214a200a5))
+* **tui2:** missing RequestID on chat commands, viewport padding gap ([46a0339](https://github.com/samcharles93/tau/commit/46a033962627864a25610ec08b8933e10558e53e))
+* **tui:** clamp idle viewport scrollback ([b2a5e11](https://github.com/samcharles93/tau/commit/b2a5e112ddf3c27b259c14452208469796b56f6d))
+* **tui:** clarify multiline messages and token status ([4d76c52](https://github.com/samcharles93/tau/commit/4d76c52e6834b1599b7b7f1f168a07565d346f2a))
+* **tui:** improve input modes and tool display ([e56e01e](https://github.com/samcharles93/tau/commit/e56e01e225318779f3baf7c712b99ad65e433bdb))
+* **tui:** improve input rendering and shell output ([dd2c4fb](https://github.com/samcharles93/tau/commit/dd2c4fb2fda226a66fd45da7664558809a9a81d1))
+* **tui:** stabilize streaming viewport layout ([778c28b](https://github.com/samcharles93/tau/commit/778c28b9e0f0c27ea1fb05d6b81c776ad35e7281))
+
+
+### Performance Improvements
+
+* **tui2:** memoize glamour renderers per width, markdown tool output, and fix test timeout ([69a30b2](https://github.com/samcharles93/tau/commit/69a30b25863dcc96d3e670547aa60163645757e4))
+
 ## [0.14.0](https://github.com/samcharles93/tau/compare/v0.13.0...v0.14.0) (2026-07-04)
 
 
