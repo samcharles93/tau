@@ -4528,17 +4528,15 @@ var (
 				Padding(0, 1)
 
 	// Context menu — a floating overlay composited on top of arbitrary
-	// already-rendered content (see compositeContextMenu), so unlike the
-	// prompt/completions boxes (which sit in dedicated blank chrome rows)
-	// it needs an opaque background to read clearly as "on top," matching
-	// the tool-box bordered-box family rather than the prompt/completions
-	// hand-drawn foreground-only family. No dedicated neutral "surface"
-	// color exists in the palette, so this reuses ToolPending's muted
-	// grey-blue background — the closest existing tone to a neutral panel.
+	// already-rendered content (see compositeContextMenu). No Background():
+	// a terminal's "rounded" border is only rounded in the corner glyphs —
+	// the cell grid underneath is always a hard rectangle, so an explicit
+	// fill just makes that rectangle's edge obvious as a harsh square
+	// around the border. Foreground-only (like the prompt/completions
+	// family) reads as a cleaner floating outline instead.
 	contextMenuStyle = lipgloss.NewStyle().
 				Border(lipgloss.RoundedBorder()).
 				BorderForeground(themeHex(theme.ToneMuted)).
-				Background(themeHex(theme.ToolPending.BG)).
 				Foreground(themeHex(theme.ToneBody)).
 				Padding(0, 1)
 	// Selected-item highlight follows the completions dropdown's convention:
