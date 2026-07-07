@@ -846,6 +846,43 @@ func TestCommittedToolGroupUnfoldsRefoldsAndExpandsRow(t *testing.T) {
 	}
 }
 
+func TestCommittedSingleToolOpensAndCloses(t *testing.T) {
+	m := newTestModel(&fakeRuntime{}, nil)
+	m.width = 80
+	m.commitToolGroup([]toolState{
+		{id: "t0", name: "read", status: "done", result: "single output"},
+	}, nil)
+
+	if len(m.committedGroups) != 1 {
+		t.Fatalf("expected 1 committed group, got %d", len(m.committedGroups))
+	}
+	g := m.committedGroups[0]
+	if g.expanded {
+		t.Fatal("expected a freshly committed single tool to start collapsed")
+	}
+	if strings.Contains(stripANSI(strings.Join(m.renderedLines, "\n")), "Press Enter to collapse") {
+		t.Fatal("expected collapsed single tool to hide its expanded controls")
+	}
+
+	if !m.toggleCommittedToolAtLine(g.lineIdx) {
+		t.Fatal("expected a click on the single tool box to be handled")
+	}
+	if !g.expanded {
+		t.Fatal("expected single tool to expand on click")
+	}
+	joined := stripANSI(strings.Join(m.renderedLines, "\n"))
+	if !strings.Contains(joined, "single output") || !strings.Contains(joined, "Press Enter to collapse") {
+		t.Fatalf("expected expanded single tool to show output and expanded controls, got %q", joined)
+	}
+
+	if !m.toggleCommittedToolAtLine(g.lineIdx) {
+		t.Fatal("expected a second click on the single tool box to be handled")
+	}
+	if g.expanded {
+		t.Fatal("expected single tool to collapse on second click")
+	}
+}
+
 // TestApplySnapshotPreservesCommittedGroupExpandState guards the other half
 // of the same fix: applySnapshot fully rebuilds m.renderedLines from scratch
 // on every snapshot (which fires after every submitted prompt), so without

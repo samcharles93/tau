@@ -2339,11 +2339,14 @@ func renderCommittedToolsSummary(tools []toolState) string {
 	return toolMetaStyle.Render(summary)
 }
 
-// renderCommittedGroup renders a committedToolGroup as it currently stands —
-// folded to its one-line summary, or unfolded into the same per-tool-row
-// accordion the live group uses (see renderToolGroupBox), depending on
-// g.expanded/g.expandedID.
+// renderCommittedGroup renders a committedToolGroup as it currently stands.
+// Single tools use the ordinary tool box collapsed/expanded states; multi-tool
+// groups fold to a one-line summary or unfold into the same per-tool-row
+// accordion the live group uses (see renderToolGroupBox).
 func (m *model) renderCommittedGroup(g *committedToolGroup) string {
+	if len(g.tools) == 1 {
+		return m.renderToolBox(g.tools[0], g.expanded, 1)
+	}
 	if !g.expanded {
 		return renderCommittedToolsSummary(g.tools)
 	}
@@ -2351,10 +2354,9 @@ func (m *model) renderCommittedGroup(g *committedToolGroup) string {
 	return box
 }
 
-// commitToolGroup appends tools to scrollback as permanent content and, for
-// a real multi-call batch, registers a committedToolGroup so it can still be
-// unfolded after commit (see toggleCommittedToolAtLine) — a lone tool call
-// is already a full, permanently-detailed box with nothing left to toggle.
+// commitToolGroup appends tools to scrollback as permanent content and
+// registers a committedToolGroup so it can still be unfolded after commit (see
+// toggleCommittedToolAtLine).
 // restore carries over fold/row-expand state from before a full
 // applySnapshot rebuild, keyed by committedGroupKey (nil for a brand-new
 // live-turn commit via flushToolGroup, which always starts folded).
@@ -2364,19 +2366,14 @@ func (m *model) commitToolGroup(tools []toolState, restore map[string]*committed
 	}
 	lineIdx := len(m.renderedLines)
 
-	var rendered string
-	if len(tools) == 1 {
-		rendered = m.renderToolBox(tools[0], false, 1)
-	} else {
-		g := &committedToolGroup{tools: append([]toolState(nil), tools...)}
-		if old, ok := restore[committedGroupKey(tools)]; ok {
-			g.expanded, g.expandedID = old.expanded, old.expandedID
-		}
-		rendered = m.renderCommittedGroup(g)
-		g.lineIdx = lineIdx
-		g.lineCount = visualLineCount(rendered)
-		m.committedGroups = append(m.committedGroups, g)
+	g := &committedToolGroup{tools: append([]toolState(nil), tools...)}
+	if old, ok := restore[committedGroupKey(tools)]; ok {
+		g.expanded, g.expandedID = old.expanded, old.expandedID
 	}
+	rendered := m.renderCommittedGroup(g)
+	g.lineIdx = lineIdx
+	g.lineCount = visualLineCount(rendered)
+	m.committedGroups = append(m.committedGroups, g)
 	m.renderedLines = append(m.renderedLines, strings.Split(rendered, "\n")...)
 }
 
@@ -2605,6 +2602,11 @@ func (m *model) toggleCommittedToolAtLine(idx int) bool {
 		}
 		if !g.expanded {
 			g.expanded = true
+			m.spliceCommittedGroup(g)
+			return true
+		}
+		if len(g.tools) == 1 {
+			g.expanded = false
 			m.spliceCommittedGroup(g)
 			return true
 		}
