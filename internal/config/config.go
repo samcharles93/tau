@@ -32,7 +32,8 @@ type Config struct {
 	// SkillPaths lists additional directories to scan for skills.
 	SkillPaths []string `yaml:"skill_paths,omitempty"`
 	// Metrics configures observability export and tracking.
-	Metrics MetricsConfig `yaml:"metrics"`
+	Metrics     MetricsConfig     `yaml:"metrics"`
+	AutoCompact AutoCompactConfig `yaml:"auto_compact"`
 }
 
 // MetricsConfig controls observability export and session cost tracking.
@@ -47,6 +48,40 @@ type MetricsConfig struct {
 	Session bool `yaml:"session"`
 	// TUI enables the TUI cost status bar widget. Ignored in headless mode.
 	TUI bool `yaml:"tui"`
+}
+
+// AutoCompactConfig controls automatic conversation-history compaction before
+// an LLM request when the active session approaches the model context window.
+type AutoCompactConfig struct {
+	Enabled        bool    `yaml:"enabled"`
+	ThresholdRatio float64 `yaml:"threshold_ratio,omitempty"`
+	TargetRatio    float64 `yaml:"target_ratio,omitempty"`
+	Model          string  `yaml:"model,omitempty"`
+
+	enabledSet bool
+}
+
+func (c *AutoCompactConfig) UnmarshalYAML(value *yaml.Node) error {
+	type rawAutoCompactConfig struct {
+		Enabled             *bool   `yaml:"enabled"`
+		ThresholdRatio      float64 `yaml:"threshold_ratio"`
+		ThresholdRatioCamel float64 `yaml:"thresholdRatio"`
+		TargetRatio         float64 `yaml:"target_ratio"`
+		TargetRatioCamel    float64 `yaml:"targetRatio"`
+		Model               string  `yaml:"model"`
+	}
+	var raw rawAutoCompactConfig
+	if err := value.Decode(&raw); err != nil {
+		return err
+	}
+	if raw.Enabled != nil {
+		c.Enabled = *raw.Enabled
+		c.enabledSet = true
+	}
+	c.ThresholdRatio = firstNonZeroFloat(raw.ThresholdRatio, raw.ThresholdRatioCamel)
+	c.TargetRatio = firstNonZeroFloat(raw.TargetRatio, raw.TargetRatioCamel)
+	c.Model = strings.TrimSpace(raw.Model)
+	return nil
 }
 
 // RegistryConfig configures the plugin registry connection.
@@ -67,6 +102,7 @@ func (c *Config) UnmarshalYAML(value *yaml.Node) error {
 		DisabledSkills  []string                  `yaml:"disabled_skills"`
 		SkillPaths      []string                  `yaml:"skill_paths"`
 		Metrics         MetricsConfig             `yaml:"metrics"`
+		AutoCompact     AutoCompactConfig         `yaml:"auto_compact"`
 	}
 	var raw rawConfig
 	if err := value.Decode(&raw); err != nil {
@@ -81,6 +117,7 @@ func (c *Config) UnmarshalYAML(value *yaml.Node) error {
 	c.DisabledSkills = raw.DisabledSkills
 	c.SkillPaths = raw.SkillPaths
 	c.Metrics = raw.Metrics
+	c.AutoCompact = raw.AutoCompact
 	if raw.Providers.Kind != 0 {
 		providers, err := decodeProviders(raw.Providers)
 		if err != nil {
@@ -811,6 +848,26 @@ func mergeMetricsConfigs(globalCfg, localCfg MetricsConfig) MetricsConfig {
 	return merged
 }
 
+// mergeAutoCompactConfigs merges project-local auto-compaction config over
+// global config, preserving false as an explicit override for enabled.
+func mergeAutoCompactConfigs(globalCfg, localCfg AutoCompactConfig) AutoCompactConfig {
+	merged := globalCfg
+	if localCfg.enabledSet {
+		merged.Enabled = localCfg.Enabled
+		merged.enabledSet = true
+	}
+	if localCfg.ThresholdRatio > 0 {
+		merged.ThresholdRatio = localCfg.ThresholdRatio
+	}
+	if localCfg.TargetRatio > 0 {
+		merged.TargetRatio = localCfg.TargetRatio
+	}
+	if strings.TrimSpace(localCfg.Model) != "" {
+		merged.Model = localCfg.Model
+	}
+	return merged
+}
+
 // mergeStringSlices combines two slices, deduplicating entries. Local
 // entries are appended after global entries; duplicates are dropped so the
 // local config can add to the global list without repeating items.
@@ -861,6 +918,7 @@ func mergeConfigs(globalCfg, localCfg Config) Config {
 	}
 	merged.Debug = globalCfg.Debug || localCfg.Debug
 	merged.Metrics = mergeMetricsConfigs(merged.Metrics, localCfg.Metrics)
+	merged.AutoCompact = mergeAutoCompactConfigs(merged.AutoCompact, localCfg.AutoCompact)
 
 	// Local registry config overrides global (URL and token).
 	if strings.TrimSpace(localCfg.Registry.URL) != "" {

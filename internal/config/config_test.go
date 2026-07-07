@@ -42,6 +42,72 @@ metrics:
 	}
 }
 
+func TestConfigUnmarshalYAMLPopulatesAutoCompact(t *testing.T) {
+	var cfg Config
+	err := yaml.Unmarshal([]byte(`
+providers:
+  - name: acme
+    base_url: https://acme.example
+    auth:
+      type: none
+auto_compact:
+  enabled: true
+  threshold_ratio: 0.8
+  targetRatio: 0.25
+  model: compact-model
+`), &cfg)
+	if err != nil {
+		t.Fatalf("Unmarshal() error = %v", err)
+	}
+	if !cfg.AutoCompact.Enabled {
+		t.Fatal("AutoCompact.Enabled = false, want true")
+	}
+	if cfg.AutoCompact.ThresholdRatio != 0.8 {
+		t.Fatalf("AutoCompact.ThresholdRatio = %v, want 0.8", cfg.AutoCompact.ThresholdRatio)
+	}
+	if cfg.AutoCompact.TargetRatio != 0.25 {
+		t.Fatalf("AutoCompact.TargetRatio = %v, want 0.25", cfg.AutoCompact.TargetRatio)
+	}
+	if cfg.AutoCompact.Model != "compact-model" {
+		t.Fatalf("AutoCompact.Model = %q, want compact-model", cfg.AutoCompact.Model)
+	}
+}
+
+func TestLoadConfigAutoCompactLocalCanDisableGlobal(t *testing.T) {
+	configDir := t.TempDir()
+	projectDir := t.TempDir()
+	t.Setenv("TAU_CONFIG_DIR", configDir)
+
+	writeFile(t, filepath.Join(configDir, "config.yaml"), `default_provider: acme
+providers:
+  - name: acme
+    base_url: https://acme.example
+    auth:
+      type: none
+auto_compact:
+  enabled: true
+  threshold_ratio: 0.8
+`)
+	writeFile(t, filepath.Join(projectDir, ".tau.yaml"), `auto_compact:
+  enabled: false
+  target_ratio: 0.25
+`)
+
+	cfg, err := LoadConfigFrom(projectDir)
+	if err != nil {
+		t.Fatalf("LoadConfigFrom() error = %v", err)
+	}
+	if cfg.AutoCompact.Enabled {
+		t.Fatal("AutoCompact.Enabled = true, want local false override")
+	}
+	if cfg.AutoCompact.ThresholdRatio != 0.8 {
+		t.Fatalf("AutoCompact.ThresholdRatio = %v, want inherited 0.8", cfg.AutoCompact.ThresholdRatio)
+	}
+	if cfg.AutoCompact.TargetRatio != 0.25 {
+		t.Fatalf("AutoCompact.TargetRatio = %v, want local 0.25", cfg.AutoCompact.TargetRatio)
+	}
+}
+
 func TestLoadConfigMergesGlobalAndLocal(t *testing.T) {
 	configDir := t.TempDir()
 	projectDir := t.TempDir()
@@ -381,6 +447,8 @@ ui:
 registry:
   url: https://registry.example
   token: ""
+auto_compact:
+  enabled: false
 metrics:
   dir: /custom/metrics/path
   session: false
