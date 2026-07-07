@@ -6,7 +6,6 @@ import (
 
 	"charm.land/lipgloss/v2"
 	"github.com/samcharles93/tau/internal/theme"
-	"github.com/samcharles93/tau/internal/tui/notify"
 )
 
 // --- renderStatusBar --------------------------------------------------------
@@ -239,29 +238,6 @@ func TestContextStyle(t *testing.T) {
 		if tc.pct < 75 && style != nil {
 			t.Errorf("contextStyle(%d) = non-nil, wanted nil for %s", tc.pct, tc.name)
 		}
-	}
-}
-
-// --- notifyLevelStyle -------------------------------------------------------
-
-func TestNotifyLevelStyleWarn(t *testing.T) {
-	style := notifyLevelStyle(notify.LevelWarn)
-	if style == nil {
-		t.Fatal("expected a style for warn level")
-	}
-}
-
-func TestNotifyLevelStyleError(t *testing.T) {
-	style := notifyLevelStyle(notify.LevelError)
-	if style == nil {
-		t.Fatal("expected a style for error level")
-	}
-}
-
-func TestNotifyLevelStyleInfo(t *testing.T) {
-	style := notifyLevelStyle(notify.LevelInfo)
-	if style != nil {
-		t.Fatal("expected nil style for info level")
 	}
 }
 

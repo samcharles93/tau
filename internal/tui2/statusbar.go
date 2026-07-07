@@ -8,7 +8,6 @@ import (
 	"time"
 
 	"charm.land/lipgloss/v2"
-	"github.com/samcharles93/tau/internal/tui/notify"
 	"github.com/samcharles93/tau/pkg/taui/termkit"
 )
 
@@ -161,15 +160,6 @@ func (m *model) computeStatusBar() string {
 	// Right group: metrics.
 	var right []statusSeg
 
-	// Notification (transient).
-	if n := m.notifyQ.Current(); n != nil {
-		right = append(right, statusSeg{
-			text:  n.Message,
-			style: notifyLevelStyle(n.Level),
-			prio:  prioTransient,
-		})
-	}
-
 	// Token usage.
 	if m.usage != nil {
 		totals := m.usage.Snapshot(m.sessionID)
@@ -248,17 +238,6 @@ func contextStyle(pct int) func(string) string {
 		return func(s string) string { return termkit.FgOnly(s, termkit.ColorRed) }
 	case pct >= 75:
 		return func(s string) string { return termkit.FgOnly(s, termkit.ColorAmber) }
-	default:
-		return nil
-	}
-}
-
-func notifyLevelStyle(lv notify.Level) func(string) string {
-	switch lv {
-	case notify.LevelWarn:
-		return func(s string) string { return termkit.FgOnly(s, termkit.ColorAmber) }
-	case notify.LevelError:
-		return func(s string) string { return termkit.FgOnly(s, termkit.ColorRed) }
 	default:
 		return nil
 	}

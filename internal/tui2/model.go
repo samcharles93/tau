@@ -87,10 +87,10 @@ type model struct {
 	lastAssistantText string
 
 	// Status / transient.
-	statusText      string // one-line status bar (model @ provider only)
-	notification    string // transient notification (Phase 1 compat)
-	notificationGen int    // bumped every time notification is set; guards clear race
-	notifyQ         *notify.Queue
+	statusText        string       // one-line status bar (model @ provider only)
+	notification      string       // transient notification banner, shown above the input area
+	notificationLevel notify.Level // drives the banner's color (info/warn/error)
+	notificationGen   int          // bumped every time notification is set; guards clear race
 
 	// Model / provider state (populated by run.go).
 	availableModels []tauchat.ChatModelRef
@@ -161,6 +161,96 @@ type model struct {
 	// history), and restored once they scroll back to the bottom or submit
 	// a new prompt.
 	autoFollow bool
+
+	// Mouse drag text selection (see handleMousePress/Drag/Release, and
+	// selectionState below). Built from scratch on raw press/motion/release
+	// events — bubbletea v2 and bubbles have no selection primitive to
+	// reuse (verified against clipboard.go/mouse.go). Three regions each
+	// get their own selectionState — viewport (whole logical lines, since
+	// that's scrollback you only ever copy from), input box (rune-precise,
+	// since it's an editable field you also cut/replace within), and status
+	// bar (column-precise, select+copy only, see highlightSelection) — but
+	// share one state machine and one finalize/copy path (finalizeSelection)
+	// rather than three hand-rolled ones.
+	viewportSel selectionState
+	inputSel    selectionState
+	statusSel   selectionState
+
+	// dragRegion records which UI region a mouse gesture started in, so a
+	// drag/release that moves outside that region (or outside the terminal
+	// entirely, on emulators that clamp coordinates) still routes to the
+	// right selection — press decides the region once; drag/release just
+	// follow it.
+	dragRegion dragRegion
+}
+
+// dragRegion identifies which UI region a mouse press/drag/release is
+// operating on, so a single input event stream can drive three independent
+// selectionStates (viewport, input box, status bar) without them
+// interfering.
+type dragRegion int
+
+const (
+	dragNone dragRegion = iota
+	dragViewport
+	dragInput
+	dragStatus
+)
+
+// selectionState is a press→drag→release text-selection gesture over some
+// region's content, addressed by a single ordered integer position — a
+// line index, a rune index, a column, whatever that region's own
+// coordinate space is. Any UI region gets full drag-to-select-and-copy
+// behavior (via finalizeSelection) just by driving one of these plus a
+// small position-mapping function and a text-extraction function, instead
+// of hand-rolling its own anchor/cursor/dragging fields and copy logic —
+// see viewportSel/inputSel/statusSel for the three current regions.
+type selectionState struct {
+	anchor   int // -1 = no selection
+	cursor   int
+	dragging bool
+}
+
+func newSelectionState() selectionState {
+	return selectionState{anchor: -1, cursor: -1}
+}
+
+// clear drops any in-progress or finalized selection.
+func (s *selectionState) clear() {
+	s.anchor, s.cursor, s.dragging = -1, -1, false
+}
+
+// armed reports whether a press has staked an anchor (regardless of
+// whether a real drag has extended it yet).
+func (s *selectionState) armed() bool {
+	return s.anchor >= 0
+}
+
+// press arms the anchor at pos, ready to become a drag.
+func (s *selectionState) press(pos int) {
+	s.anchor, s.cursor, s.dragging = pos, pos, false
+}
+
+// drag extends the selection to pos and marks the gesture as a real drag
+// (as opposed to a plain click with no movement).
+func (s *selectionState) drag(pos int) {
+	s.dragging = true
+	s.cursor = pos
+}
+
+// bounds returns the ordered [lo,hi] range, and false if there's no
+// selection at all. Callers interpret lo/hi in their own domain — the
+// viewport treats them as inclusive line indices, input/status as a
+// half-open position range — selectionState itself is domain-agnostic.
+func (s *selectionState) bounds() (lo, hi int, ok bool) {
+	if s.anchor < 0 || s.cursor < 0 {
+		return 0, 0, false
+	}
+	lo, hi = s.anchor, s.cursor
+	if lo > hi {
+		lo, hi = hi, lo
+	}
+	return lo, hi, true
 }
 
 type toolState struct {
@@ -192,8 +282,8 @@ type pluginPanel struct {
 
 // layoutGeometry records where interactive regions land in the final
 // rendered view. computeLayout is the single source of truth for both
-// View()'s rendering and handleMouseClick's hit-testing, so the two can
-// never drift apart.
+// View()'s rendering and handleMousePress/Drag's hit-testing, so the two
+// can never drift apart.
 type layoutGeometry struct {
 	chromeStr   string
 	panelSepStr string
@@ -202,6 +292,10 @@ type layoutGeometry struct {
 	viewportStartY int
 	viewportEndY   int
 	toolBoxes      []toolBoxGeometry
+
+	inputStartY int
+	inputEndY   int
+	statusY     int
 }
 
 // toolBoxGeometry is the inclusive [startY, endY] row range (0-based, in
@@ -248,6 +342,9 @@ func newModel(
 		focused:           true,
 		focusedTool:       -1,
 		autoFollow:        true,
+		viewportSel:       newSelectionState(),
+		inputSel:          newSelectionState(),
+		statusSel:         newSelectionState(),
 		availableModels:   availableModels,
 		refresh:           refresh,
 		showReasoning:     showReasoning,
@@ -255,7 +352,6 @@ func newModel(
 		usage:             usage,
 		webURL:            webURL,
 		debug:             debug,
-		notifyQ:           notify.NewQueue(),
 		extensionCommands: make(map[string]tauchat.ExtensionCommand),
 		panels:            make(map[string]pluginPanel),
 		mdCache:           mdCache,
@@ -320,8 +416,13 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.autoFollow = true
 			}
 		case tea.MouseLeft:
-			if _, ok := msg.(tea.MouseClickMsg); ok {
-				m.handleMouseClick(mev.Y)
+			switch msg.(type) {
+			case tea.MouseClickMsg:
+				m.handleMousePress(mev.X, mev.Y)
+			case tea.MouseMotionMsg:
+				m.handleMouseDrag(mev.X, mev.Y)
+			case tea.MouseReleaseMsg:
+				return m, m.handleMouseRelease()
 			}
 		}
 		return m, nil
@@ -366,6 +467,7 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case clearNotificationMsg:
 		if msg.gen == m.notificationGen {
 			m.notification = ""
+			m.notificationLevel = notify.LevelInfo
 		}
 		return m, nil
 
@@ -463,8 +565,8 @@ func (m *model) View() tea.View {
 // computeLayout renders every non-viewport UI region, decides how much
 // vertical space the viewport gets, and records the on-screen row range of
 // each tool box. It is called once by View() (for rendering) and again by
-// handleMouseClick (for hit-testing) — keeping both derived from the same
-// function is what guarantees they never disagree.
+// handleMousePress/handleMouseDrag (for hit-testing) — keeping both derived
+// from the same function is what guarantees they never disagree.
 func (m *model) computeLayout() layoutGeometry {
 	var g layoutGeometry
 
@@ -508,11 +610,26 @@ func (m *model) computeLayout() layoutGeometry {
 		compStr = renderCompletions(rows, selected, m.width)
 	}
 
-	// 6. Notification.
-	var notifyStr string
-	if m.notification != "" {
-		notifyStr = notifyStyle.Render(m.notification)
+	// 6. Notification banner — a fixed notifyReservedLines-tall area is
+	// always reserved directly above the separator/input, even when
+	// there's nothing to show, matching how Claude Code's own status area
+	// never resizes. Previously this only occupied space while
+	// m.notification was non-empty, so the viewport visibly grew and
+	// shrank by that height every time a notification appeared or cleared
+	// ("pushing text up and dropping it back down"). Width-wrapped via
+	// lipgloss (so a message that needs it still gets multiple lines, up
+	// to the reserved height — see notifyStyleForLevel's caller), then
+	// padded/clipped to exactly notifyReservedLines so the reserved height
+	// truly never varies.
+	notifyWidth := m.width
+	if notifyWidth <= 0 {
+		notifyWidth = 80
 	}
+	var notifyRendered string
+	if m.notification != "" {
+		notifyRendered = notifyStyleForLevel(m.notificationLevel).Width(notifyWidth).Render(m.notification)
+	}
+	notifyStr := padOrClipLines(notifyRendered, notifyReservedLines)
 
 	// 7. Divider and input area.
 	sepWidth := m.width
@@ -542,10 +659,10 @@ func (m *model) computeLayout() layoutGeometry {
 	if compStr != "" {
 		chromeParts = append(chromeParts, compStr)
 	}
-	if notifyStr != "" {
-		chromeParts = append(chromeParts, notifyStr)
-	}
-	chromeParts = append(chromeParts, sepStr, inputStr, statusStr)
+	// notifyStr is always present (padOrClipLines guarantees
+	// notifyReservedLines rows even when there's no message) — see its
+	// comment above for why that fixed reservation matters.
+	chromeParts = append(chromeParts, notifyStr, sepStr, inputStr, statusStr)
 
 	chromeStr := strings.Join(chromeParts, "\n")
 	chromeHeight := visualLineCount(chromeStr)
@@ -589,7 +706,20 @@ func (m *model) computeLayout() layoutGeometry {
 		for i, tr := range toolRows {
 			g.toolBoxes[i] = toolBoxGeometry{id: tr.id, startY: row + tr.startY, endY: row + tr.endY}
 		}
+		row += visualLineCount(toolsStr) + 1
 	}
+	if promptStr != "" {
+		row += visualLineCount(promptStr) + 1
+	}
+	if compStr != "" {
+		row += visualLineCount(compStr) + 1
+	}
+	row += visualLineCount(notifyStr) + 1 // notifyStr is always present
+	row += visualLineCount(sepStr) + 1    // separator is always present
+	g.inputStartY = row
+	inputHeight := visualLineCount(inputStr)
+	g.inputEndY = row + inputHeight - 1
+	g.statusY = g.inputEndY + 1
 
 	return g
 }
@@ -624,6 +754,18 @@ func (m *model) dispatchKey(msg tea.KeyPressMsg) tea.Cmd {
 	// Interactive prompt active: route keys to prompt handler.
 	if m.activePrompt != nil {
 		return m.handlePromptKey(msg)
+	}
+
+	// Pure cursor-movement keys don't edit the buffer, so they'd otherwise
+	// leave a stale selection highlighted while the cursor visibly moves
+	// away from it. Insert/backspace/delete consume the selection
+	// themselves (deleteInputSelection) and must NOT be cleared here first.
+	if m.inputSel.armed() {
+		switch msg.String() {
+		case "up", "down", "left", "right", "home", "end",
+			"ctrl+a", "ctrl+e", "ctrl+left", "ctrl+right", "alt+left", "alt+right":
+			m.inputSel.clear()
+		}
 	}
 
 	// The completions dropdown gets first refusal on every keystroke while
@@ -670,6 +812,10 @@ func (m *model) dispatchKey(msg tea.KeyPressMsg) tea.Cmd {
 	case "esc":
 		if m.bashRunning {
 			return m.cancelBash()
+		}
+		if m.viewportSel.armed() || m.inputSel.armed() || m.statusSel.armed() {
+			m.clearAllSelections()
+			return nil
 		}
 		// Phase 1: collapse expanded tool or clear tool focus before
 		// clearing input, so Esc steps out of tool interaction first.
@@ -806,6 +952,7 @@ func (m *model) dispatchKey(msg tea.KeyPressMsg) tea.Cmd {
 func (m *model) clearInput() {
 	m.input = ""
 	m.inputCursor = 0
+	m.inputSel.clear()
 }
 
 // clearScreen wipes the visible scrollback (Ctrl+L) without touching the
@@ -818,6 +965,7 @@ func (m *model) clearScreen() {
 	m.renderedLines = m.renderedLines[:0]
 	m.viewport.SetContentLines(m.renderedLines)
 	m.autoFollow = true
+	m.viewportSel.clear()
 	m.viewport.GotoBottom()
 }
 
@@ -831,7 +979,30 @@ func (m *model) clearScreen() {
 // everything else (history, slash-command parsing, tab completion) that
 // still treats it as a plain string.
 
+// deleteInputSelection removes the currently selected input range (if any),
+// moves the cursor to where the selection started, and clears it. Reports
+// whether there was a selection to consume, so insertAtCursor/backspaceAt-
+// Cursor/deleteAtCursor can fall back to their normal single-character
+// behavior when there wasn't one — this is what makes typing/backspace/
+// delete replace or remove a mouse-dragged selection, exactly like any
+// normal text field.
+func (m *model) deleteInputSelection() bool {
+	lo, hi, ok := m.inputSel.bounds()
+	if !ok {
+		return false
+	}
+	rs := []rune(m.input)
+	lo = max(min(lo, len(rs)), 0)
+	hi = max(min(hi, len(rs)), 0)
+	rs = append(rs[:lo], rs[hi:]...)
+	m.input = string(rs)
+	m.inputCursor = lo
+	m.inputSel.clear()
+	return true
+}
+
 func (m *model) insertAtCursor(s string) {
+	m.deleteInputSelection()
 	rs := []rune(m.input)
 	ins := []rune(s)
 	nr := make([]rune, 0, len(rs)+len(ins))
@@ -843,6 +1014,9 @@ func (m *model) insertAtCursor(s string) {
 }
 
 func (m *model) backspaceAtCursor() {
+	if m.deleteInputSelection() {
+		return
+	}
 	if m.inputCursor <= 0 {
 		return
 	}
@@ -853,6 +1027,9 @@ func (m *model) backspaceAtCursor() {
 }
 
 func (m *model) deleteAtCursor() {
+	if m.deleteInputSelection() {
+		return
+	}
 	rs := []rune(m.input)
 	if m.inputCursor >= len(rs) {
 		return
@@ -985,6 +1162,7 @@ func (m *model) moveCursorVert(dir int) {
 func (m *model) renderInputArea() string {
 	lines := m.splitInputLines()
 	curLine, curCol := m.cursorLineCol(lines)
+	selLoAbs, selHiAbs, hasSel := m.inputSel.bounds()
 
 	boxWidth := m.width
 	if boxWidth <= 0 {
@@ -1000,6 +1178,18 @@ func (m *model) renderInputArea() string {
 		prefixWidth := visibleWidth(stripANSI(prefix))
 		contentWidth := max(innerWidth-prefixWidth, 1)
 		continuationPrefix := strings.Repeat(" ", prefixWidth)
+
+		// Selection bounds are absolute rune positions into m.input; convert
+		// to this line's own local rune range so per-chunk rendering below
+		// can treat them the same way it already treats curCol.
+		lineStartAbs := linePos(lines, i, 0)
+		selLo, selHi, lineHasSel := 0, 0, false
+		if hasSel {
+			lo := max(selLoAbs-lineStartAbs, 0)
+			hi := min(selHiAbs-lineStartAbs, len(ln))
+			lineHasSel = lo < hi
+			selLo, selHi = lo, hi
+		}
 
 		chunks := wrapInputLine(ln, contentWidth)
 		if i == curLine && curCol == len(ln) && len(chunks) > 0 {
@@ -1018,10 +1208,11 @@ func (m *model) renderInputArea() string {
 			if i == curLine && curCol == len(ln) && j == len(chunks)-1 {
 				hasCursor = true
 			}
-			if hasCursor {
-				body = append(body, rowPrefix+renderLineWithCursor(ln[chunk.start:chunk.end], curCol-chunk.start))
-			} else {
+			switch {
+			case !hasCursor && !lineHasSel:
 				body = append(body, rowPrefix+inputStyle.Render(string(ln[chunk.start:chunk.end])))
+			default:
+				body = append(body, rowPrefix+renderInputChunk(ln, chunk.start, chunk.end, hasCursor, curCol, lineHasSel, selLo, selHi))
 			}
 		}
 	}
@@ -1044,6 +1235,86 @@ func (m *model) renderInputArea() string {
 		res = renderInputBox(m.width, "steer", body, hint)
 	}
 	return res
+}
+
+// inputPositionAt maps a (row, col) coordinate within the rendered input
+// box's text area — row 0 is the box's first body row (i.e. right below
+// its top border and hint row, see the bodyRowOffset constant below); col 0
+// is the first column after the left border and the "> "/"(steer) > "
+// prefix (or the matching blank indent on a continuation row) — to a rune
+// index into m.input. This is the inverse of renderInputArea's own layout
+// math (same wrapInputLine/linePos calls), so a click positions the cursor
+// at exactly the character under the mouse.
+//
+// It does not replicate renderInputArea's one edge case where an extra
+// trailing empty chunk is inserted when the *current* cursor sits exactly
+// at a wrap boundary (that tweak depends on where the cursor already is,
+// not on the click being mapped) — a click landing on that extra row in
+// that narrow case can be off by one row. Acceptable: it only affects a
+// click's target position, never what gets copied once selected, and it's
+// a rare edge case (cursor exactly at a wrap boundary on a wrapped line).
+func (m *model) inputPositionAt(row, col int) int {
+	const bodyRowOffset = 2 // top border + hint row precede body rows
+
+	lines := m.splitInputLines()
+	bodyRow := row - bodyRowOffset
+	if bodyRow < 0 {
+		return 0
+	}
+
+	prefix := inputPromptStyle.Render("> ")
+	if m.inResponse {
+		prefix = inputSteerPromptStyle.Render("(steer) > ")
+	}
+	prefixWidth := visibleWidth(stripANSI(prefix))
+	boxWidth := m.width
+	if boxWidth <= 0 {
+		boxWidth = 80
+	}
+	innerWidth := max(boxWidth-2, 1)
+	contentWidth := max(innerWidth-prefixWidth, 1)
+	textCol := max(col-1-prefixWidth, 0) // -1 for the left border column
+
+	renderedRow := 0
+	for i, ln := range lines {
+		for _, chunk := range wrapInputLine(ln, contentWidth) {
+			if renderedRow == bodyRow {
+				rel := min(textCol, chunk.end-chunk.start)
+				return linePos(lines, i, chunk.start+rel)
+			}
+			renderedRow++
+		}
+	}
+	// Past all rendered lines (e.g. the placeholder row, or below the
+	// content) — snap to the very end of the buffer.
+	return utf8.RuneCountInString(m.input)
+}
+
+// inputSelectionText returns the substring of m.input between rune
+// positions lo and hi (half-open — these are cursor positions, not
+// inclusive line indices like the viewport's), for finalizeSelection.
+func (m *model) inputSelectionText(lo, hi int) string {
+	runes := []rune(m.input)
+	lo = max(min(lo, len(runes)), 0)
+	hi = max(min(hi, len(runes)), 0)
+	if lo >= hi {
+		return ""
+	}
+	return string(runes[lo:hi])
+}
+
+// statusSelectionText returns the substring of the status bar's plain
+// (ANSI-stripped) text between columns lo and hi (half-open), for
+// finalizeSelection. The status bar has no left border/prefix, so a screen
+// column maps directly to a column in its plain text.
+func (m *model) statusSelectionText(lo, hi int) string {
+	runes := []rune(stripANSI(m.computeStatusBar()))
+	lo = max(min(lo, len(runes)), 0)
+	hi = max(min(hi, len(runes)), 0)
+	if lo >= hi {
+		return ""
+	}
+	return string(runes[lo:hi])
 }
 
 type inputLineChunk struct {
@@ -1118,6 +1389,7 @@ func (m *model) cycleInputMode() {
 	if m.inResponse || m.activePrompt != nil || m.bashRunning {
 		return
 	}
+	m.inputSel.clear()
 	modes := inputModes()
 	if len(modes) == 0 {
 		return
@@ -1154,6 +1426,7 @@ func (m *model) currentInputModeIndex(modes []inputMode) (int, string) {
 func (m *model) viewportLinesForView(visibleReasoning bool) []string {
 	lines := make([]string, 0, len(m.renderedLines)+4)
 	lines = append(lines, m.renderedLines...)
+	m.highlightSelection(lines)
 
 	if m.inResponse && len(m.tools) == 0 && m.streaming == "" && !visibleReasoning {
 		lines = append(lines, m.workingIndicator())
@@ -1207,18 +1480,30 @@ func renderInputBoxLine(innerWidth int, line string) string {
 	return inputBoxStyle.Render("│") + line + padding + inputBoxStyle.Render("│")
 }
 
-// renderLineWithCursor renders one logical line with a highlighted cell at
-// column col. A cursor at or past the line end highlights a trailing blank
-// cell so it's never invisible.
-func renderLineWithCursor(ln []rune, col int) string {
-	col = min(col, len(ln))
-	before := inputStyle.Render(string(ln[:col]))
-	if col == len(ln) {
-		return before + inputCursorStyle.Render(" ")
+// renderInputChunk renders ln[chunkStart:chunkEnd], applying the block
+// cursor (if hasCursor and cursorCol falls within this chunk, or sits
+// exactly at chunkEnd — a cursor past the chunk's last rune still
+// highlights a trailing blank cell so it's never invisible) and/or a
+// reverse-video selection highlight for [selLo,selHi) — both absolute rune
+// indices into the full ln, matching curCol's own convention. The cursor's
+// own highlight takes visual priority over selection for the one rune it
+// lands on.
+func renderInputChunk(ln []rune, chunkStart, chunkEnd int, hasCursor bool, cursorCol int, hasSel bool, selLo, selHi int) string {
+	var b strings.Builder
+	for p := chunkStart; p < chunkEnd; p++ {
+		switch {
+		case hasCursor && p == cursorCol:
+			b.WriteString(inputCursorStyle.Render(string(ln[p])))
+		case hasSel && p >= selLo && p < selHi:
+			b.WriteString("\x1b[7m" + inputStyle.Render(string(ln[p])) + "\x1b[27m")
+		default:
+			b.WriteString(inputStyle.Render(string(ln[p])))
+		}
 	}
-	cursor := inputCursorStyle.Render(string(ln[col]))
-	after := inputStyle.Render(string(ln[col+1:]))
-	return before + cursor + after
+	if hasCursor && cursorCol == chunkEnd && cursorCol >= chunkStart {
+		b.WriteString(inputCursorStyle.Render(" "))
+	}
+	return b.String()
 }
 
 func (m *model) recallHistory(delta int) tea.Cmd {
@@ -1562,28 +1847,20 @@ func (m *model) handleChatEvent(evt tauchat.ChatEvent) tea.Cmd {
 		m.streaming = ""
 		m.reasoning = ""
 		m.tools = nil
-		// Pushed through notifyQ (not setNotification) at error level with
-		// Duration 0 (persists until dismissed) to match how
-		// ChatNotificationEvent below reports errors, and also printed to
-		// the scrollback so it isn't lost if overtaken by a later notice.
-		m.notifyQ.Push(notify.Notification{
-			Message:  e.Message,
-			Level:    notify.LevelError,
-			Duration: 0,
-		})
+		// Shown via the notification banner (above the input area) at error
+		// level with duration 0 (persists until dismissed rather than
+		// silently expiring), and also printed to the scrollback so it
+		// isn't lost if overtaken by a later notice.
+		cmd := m.setNotificationWithLevel(e.Message, notify.LevelError, 0)
 		m.appendMessage("system", "✗ "+e.Message)
-		return nil
+		return cmd
 
 	case tauchat.ChatNotificationEvent:
-		m.notifyQ.Push(notify.Notification{
-			Message:  e.Message,
-			Level:    notifyLevelFromChat(e.Level),
-			Duration: notifyDurationFromChat(e.Level),
-		})
+		cmd := m.setNotificationWithLevel(e.Message, notifyLevelFromChat(e.Level), notifyDurationFromChat(e.Level))
 		if e.Level == tauchat.ChatNotificationError {
 			m.appendMessage("system", e.Message)
 		}
-		return nil
+		return cmd
 
 	case tauchat.InteractivePromptRequestedEvent:
 		return m.enqueuePrompt(e)
@@ -1703,6 +1980,7 @@ func (m *model) applySnapshot(e tauchat.ChatSessionSnapshotEvent) {
 	}
 
 	m.renderedLines = m.renderedLines[:0]
+	m.viewportSel.clear()
 	for _, msg := range state.Messages {
 		switch msg.Role {
 		case tauchat.ChatRoleUser:
@@ -2014,12 +2292,15 @@ func (m *model) focusNextTool(delta int) {
 	m.focusedTool = eligible[newIdx]
 }
 
-// handleMouseClick maps a left-click's terminal row to a UI action: clicking
-// a tool box focuses and toggles its expansion; clicking elsewhere in the
-// viewport clears tool focus. Recomputing the layout here (rather than
-// caching View()'s geometry) keeps hit-testing correct even if a click
-// arrives before the next render — cheap enough since it only runs per click.
-func (m *model) handleMouseClick(y int) {
+// handleMousePress maps a left-button-down terminal position to a UI
+// action: pressing on a tool box focuses and toggles its expansion;
+// pressing in the viewport, input box, or status bar arms that region's
+// text selection anchor, in case the press turns into a drag (see
+// dragRegion). Recomputing the layout here (rather than caching View()'s
+// geometry) keeps hit-testing correct even if the event arrives before the
+// next render — cheap enough since it only runs per mouse event, not per
+// frame.
+func (m *model) handleMousePress(x, y int) {
 	geom := m.computeLayout()
 
 	for i, tb := range geom.toolBoxes {
@@ -2033,13 +2314,229 @@ func (m *model) handleMouseClick(y int) {
 			m.expandedID = tb.id
 			m.tools[i].expanded = true
 		}
+		m.clearAllSelections()
 		return
 	}
 
-	if y >= geom.viewportStartY && y <= geom.viewportEndY {
+	switch {
+	case y >= geom.viewportStartY && y <= geom.viewportEndY:
+		m.clearAllSelections()
 		m.focusedTool = -1
 		m.expandedID = ""
+		m.dragRegion = dragViewport
+		row := m.viewport.YOffset() + (y - geom.viewportStartY)
+		if idx, ok := m.logicalLineAtRow(row); ok {
+			m.viewportSel.press(idx)
+		}
+
+	case y >= geom.inputStartY && y <= geom.inputEndY:
+		m.clearAllSelections()
+		m.dragRegion = dragInput
+		pos := m.inputPositionAt(y-geom.inputStartY, x)
+		m.inputCursor = pos
+		m.inputSel.press(pos)
+
+	case y == geom.statusY:
+		m.clearAllSelections()
+		m.dragRegion = dragStatus
+		m.statusSel.press(x)
+
+	default:
+		m.clearAllSelections()
 	}
+	// The region's selectionState.dragging stays false until
+	// handleMouseDrag actually sees motion — a plain click (press+release,
+	// no movement) must not leave a stray highlight or copy anything.
+}
+
+// handleMouseDrag extends whichever selection dragRegion says is active to
+// the position under the mouse. For the viewport, it also auto-scrolls when
+// the drag reaches the top/bottom edge — the whole point of building
+// selection ourselves rather than relying on the terminal's native
+// (single-screen, can't-scroll) selection: a selection can now extend
+// across content beyond one screen. For the input box, the drag is clamped
+// to its own rows even if the mouse leaves them, matching ordinary GUI
+// text-field behavior (you can't drag-select out of the field you're in).
+func (m *model) handleMouseDrag(x, y int) {
+	switch m.dragRegion {
+	case dragViewport:
+		if !m.viewportSel.armed() {
+			return
+		}
+		geom := m.computeLayout()
+		switch {
+		case y <= geom.viewportStartY:
+			m.viewport.ScrollUp(1)
+			m.autoFollow = false
+		case y >= geom.viewportEndY:
+			m.viewport.ScrollDown(1)
+			if m.viewport.AtBottom() {
+				m.autoFollow = true
+			}
+		}
+		rowInViewport := max(min(y-geom.viewportStartY, geom.viewportEndY-geom.viewportStartY), 0)
+		row := m.viewport.YOffset() + rowInViewport
+		if idx, ok := m.logicalLineAtRow(row); ok {
+			m.viewportSel.drag(idx)
+		}
+
+	case dragInput:
+		if !m.inputSel.armed() {
+			return
+		}
+		geom := m.computeLayout()
+		row := max(min(y, geom.inputEndY), geom.inputStartY) - geom.inputStartY
+		pos := m.inputPositionAt(row, x)
+		m.inputSel.drag(pos)
+		m.inputCursor = pos
+
+	case dragStatus:
+		if !m.statusSel.armed() {
+			return
+		}
+		m.statusSel.drag(x)
+	}
+}
+
+// handleMouseRelease finalizes whichever selection dragRegion says was
+// active via the shared finalizeSelection path.
+func (m *model) handleMouseRelease() tea.Cmd {
+	defer func() { m.dragRegion = dragNone }()
+
+	switch m.dragRegion {
+	case dragViewport:
+		return m.finalizeSelection(&m.viewportSel, m.viewportSelectionText, "line")
+	case dragInput:
+		return m.finalizeSelection(&m.inputSel, m.inputSelectionText, "")
+	case dragStatus:
+		return m.finalizeSelection(&m.statusSel, m.statusSelectionText, "")
+	}
+	return nil
+}
+
+// clearAllSelections drops every region's selection — used whenever an
+// interaction (a new press, a tool-box click) makes all of them stale.
+func (m *model) clearAllSelections() {
+	m.viewportSel.clear()
+	m.inputSel.clear()
+	m.statusSel.clear()
+}
+
+// finalizeSelection is the shared "mouse released" behavior for any
+// selectionState: a real drag extracts the selected range's text (via
+// extract, in the region's own domain — see viewportSelectionText et al),
+// copies it to the clipboard, and shows a notification; a plain click (no
+// drag) clears the selection instead of leaving a stray highlight behind.
+// The OSC 52 size guard mirrors legacy taui's /copy — tea.SetClipboard
+// itself has no such guard, and many terminals silently drop or corrupt
+// oversized payloads rather than truncating. unit names what was selected
+// for the notification ("line" -> "copied 3 lines"); pass "" for a region
+// where a count isn't meaningful ("copied selection").
+func (m *model) finalizeSelection(s *selectionState, extract func(lo, hi int) string, unit string) tea.Cmd {
+	dragging := s.dragging
+	s.dragging = false
+	if !dragging {
+		s.clear()
+		return nil
+	}
+	lo, hi, ok := s.bounds()
+	if !ok {
+		return nil
+	}
+	text := extract(lo, hi)
+	if text == "" {
+		return nil
+	}
+
+	if _, ok := termkit.OSC52Copy(text); !ok {
+		return m.setNotification(fmt.Sprintf("selection too large to copy (over %d chars)", termkit.OSC52MaxBytes))
+	}
+	notice := "copied selection"
+	if unit != "" {
+		n := hi - lo + 1
+		u := unit
+		if n != 1 {
+			u += "s"
+		}
+		notice = fmt.Sprintf("copied %d %s", n, u)
+	}
+	return tea.Batch(tea.SetClipboard(text), m.setNotification(notice))
+}
+
+// highlightSelection wraps the selected range of lines (indices 0..
+// len(m.renderedLines)-1 of lines, which viewportLinesForView builds from
+// m.renderedLines first and unconditionally) in reverse-video SGR codes, in
+// place. Reverse video composes with whatever foreground/background colors
+// are already set in the styled line rather than requiring us to parse and
+// re-inject them, so the line's normal styling still shows through,
+// visually inverted. This only affects rendering — viewportSelectionText
+// reads the unmodified m.renderedLines, so highlight quirks on complex
+// multi-segment lines (rare — see comment there) never affect what gets
+// copied.
+func (m *model) highlightSelection(lines []string) {
+	lo, hi, ok := m.viewportSel.bounds()
+	if !ok {
+		return
+	}
+	for i := lo; i <= hi && i < len(lines); i++ {
+		lines[i] = "\x1b[7m" + lines[i] + "\x1b[27m"
+	}
+}
+
+// viewportSelectionText returns the plain (ANSI-stripped) text of
+// m.renderedLines[lo..hi] inclusive, for finalizeSelection.
+func (m *model) viewportSelectionText(lo, hi int) string {
+	if lo < 0 || hi >= len(m.renderedLines) {
+		return ""
+	}
+	lines := make([]string, 0, hi-lo+1)
+	for i := lo; i <= hi; i++ {
+		lines = append(lines, stripANSI(m.renderedLines[i]))
+	}
+	return strings.Join(lines, "\n")
+}
+
+// wrappedRowCount estimates how many visual rows a styled line occupies
+// once soft-wrapped to width, matching (approximately) how bubbles/viewport
+// wraps it. This is character-width-based, not word-boundary-based like the
+// viewport's actual wrap, so it can be off by a row for a long line that
+// wraps near a word boundary. That only affects which whole line a
+// click/drag lands on (logicalLineAtRow), never what gets copied once a
+// line is selected, and most renderedLines entries are already pre-wrapped
+// to width (glamour output, tool boxes) — the risk is concentrated in a
+// long single-line, unwrapped user/system message.
+func wrappedRowCount(line string, width int) int {
+	if width < 1 {
+		return 1
+	}
+	w := visibleWidth(stripANSI(line))
+	if w == 0 {
+		return 1
+	}
+	return (w + width - 1) / width
+}
+
+// logicalLineAtRow maps an absolute wrapped-row offset (0 = the viewport's
+// first content row — the same coordinate space as m.viewport.YOffset()) to
+// an index into m.renderedLines, accounting for lines that soft-wrap across
+// more than one visual row (see wrappedRowCount's caveat).
+func (m *model) logicalLineAtRow(targetRow int) (int, bool) {
+	if targetRow < 0 {
+		return 0, false
+	}
+	width := m.width
+	if width <= 0 {
+		width = 80
+	}
+	row := 0
+	for i, line := range m.renderedLines {
+		h := wrappedRowCount(line, width)
+		if targetRow < row+h {
+			return i, true
+		}
+		row += h
+	}
+	return 0, false
 }
 
 // toggleToolExpansion toggles the expanded state for the currently focused
@@ -2067,14 +2564,29 @@ func (m *model) toggleToolExpansion() tea.Cmd {
 // real 4-second sleep per test through drainCmd.
 var notificationClearDelay = 4 * time.Second
 
-// setNotification sets m.notification and returns a tea.Cmd that clears it
-// after notificationClearDelay, using a generation counter so a newer
-// notification is not clobbered by an older timer that fires late (N1).
+// setNotification sets an info-level notification that auto-clears after
+// notificationClearDelay. For a level (drives its color) or a custom
+// duration — e.g. an error that should persist until superseded rather than
+// silently vanish after a few seconds — use setNotificationWithLevel.
 func (m *model) setNotification(text string) tea.Cmd {
+	return m.setNotificationWithLevel(text, notify.LevelInfo, notificationClearDelay)
+}
+
+// setNotificationWithLevel sets the notification banner (rendered above the
+// input area, wrapping to as many lines as it needs — see computeLayout)
+// with an explicit level and auto-clear duration, using a generation counter
+// so a newer notification is not clobbered by an older timer that fires
+// late (N1). duration <= 0 means the notification persists until replaced,
+// rather than auto-clearing — used for errors.
+func (m *model) setNotificationWithLevel(text string, level notify.Level, duration time.Duration) tea.Cmd {
 	m.notificationGen++
 	m.notification = text
+	m.notificationLevel = level
+	if duration <= 0 {
+		return nil
+	}
 	gen := m.notificationGen
-	return tea.Tick(notificationClearDelay, func(t time.Time) tea.Msg {
+	return tea.Tick(duration, func(t time.Time) tea.Msg {
 		return clearNotificationMsg{gen: gen}
 	})
 }
@@ -2095,14 +2607,63 @@ func notifyLevelFromChat(level tauchat.ChatNotificationLevel) notify.Level {
 // notifyDurationFromChat returns the auto-dismiss duration for a level.
 // Errors persist (0); warnings get 8s; info gets 5s. Matches
 // internal/tui/inline_events.go's notifyDurationFromChat.
+// notifyWarnDuration/notifyInfoDuration are package variables (not literals
+// inline in notifyDurationFromChat) so tests can shrink them the same way
+// TestMain shrinks notificationClearDelay — otherwise a test that drives a
+// ChatNotificationEvent through Update actually waits out the real
+// tea.Tick duration now that it schedules a genuine auto-clear Cmd instead
+// of being handed to the old (never-rendered) notifyQ.
+var (
+	notifyWarnDuration = 8 * time.Second
+	notifyInfoDuration = 5 * time.Second
+)
+
 func notifyDurationFromChat(level tauchat.ChatNotificationLevel) time.Duration {
 	switch level {
 	case tauchat.ChatNotificationError:
 		return 0
 	case tauchat.ChatNotificationWarn:
-		return 8 * time.Second
+		return notifyWarnDuration
 	default:
-		return 5 * time.Second
+		return notifyInfoDuration
+	}
+}
+
+// notifyReservedLines is how many rows the notification banner always
+// occupies (see padOrClipLines) — enough for most messages to show in
+// full without wrapping past it.
+const notifyReservedLines = 2
+
+// padOrClipLines pads or clips s to exactly n lines, so a fixed-height
+// chrome region's reserved space never changes based on whether there's
+// currently anything to show in it — that's what stops the viewport from
+// visibly growing/shrinking every time a notification appears or clears.
+// A message that doesn't fit within n lines is clipped, not wrapped
+// further; that's rare (most notifications are one line) and preferable to
+// letting the reserved height vary. Padding lines are a single space rather
+// than empty, since visualLineCount trims trailing blank lines when
+// measuring height and a single space is visually indistinguishable from
+// truly empty in a terminal.
+func padOrClipLines(s string, n int) string {
+	lines := strings.Split(s, "\n")
+	if len(lines) > n {
+		lines = lines[:n]
+	}
+	for len(lines) < n {
+		lines = append(lines, " ")
+	}
+	return strings.Join(lines, "\n")
+}
+
+// notifyStyleForLevel returns the notification banner's color for a level.
+func notifyStyleForLevel(level notify.Level) lipgloss.Style {
+	switch level {
+	case notify.LevelError:
+		return lipgloss.NewStyle().Foreground(themeHex(theme.ToneError)).Bold(true)
+	case notify.LevelWarn:
+		return lipgloss.NewStyle().Foreground(themeHex(theme.ToneWarn)).Bold(true)
+	default:
+		return lipgloss.NewStyle().Foreground(themeHex(theme.ToneInfo)).Bold(true)
 	}
 }
 
@@ -2946,14 +3507,12 @@ var (
 	assistantColor = themeHex(theme.ToolSuccess.FG)
 	reasoningColor = themeHex(theme.ToneWarn)
 	streamColor    = themeHex(theme.TonePrimary)
-	notifyColor    = themeHex(theme.ToolFailed.FG)
 	inputColor     = themeHex(theme.ShimmerHighlight)
 
 	userStyle      = lipgloss.NewStyle().Foreground(userColor)
 	assistantStyle = lipgloss.NewStyle().Foreground(assistantColor)
 	reasoningStyle = lipgloss.NewStyle().Foreground(reasoningColor).Italic(true)
 	streamStyle    = lipgloss.NewStyle().Foreground(streamColor)
-	notifyStyle    = lipgloss.NewStyle().Foreground(notifyColor).Bold(true)
 	inputStyle     = lipgloss.NewStyle().Foreground(inputColor)
 
 	userContinuationStyle      = lipgloss.NewStyle().Foreground(userColor).PaddingLeft(6)

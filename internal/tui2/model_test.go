@@ -17,10 +17,13 @@ import (
 	"github.com/samcharles93/tau/internal/eventbus"
 	"github.com/samcharles93/tau/internal/metrics"
 	"github.com/samcharles93/tau/internal/tui/notify"
+	"github.com/samcharles93/tau/pkg/taui/termkit"
 )
 
 func TestMain(m *testing.M) {
 	notificationClearDelay = time.Millisecond
+	notifyWarnDuration = time.Millisecond
+	notifyInfoDuration = time.Millisecond
 	os.Exit(m.Run())
 }
 
@@ -877,8 +880,8 @@ func TestHandleChatEventRuntimeError(t *testing.T) {
 	if m.streaming != "" || m.reasoning != "" || m.tools != nil {
 		t.Fatal("expected the in-flight turn's streaming/reasoning/tools state cleared")
 	}
-	if n := m.notifyQ.Current(); n == nil || n.Level != notify.LevelError {
-		t.Fatalf("expected an error-level notification in notifyQ, got %+v", n)
+	if m.notification != "API error" || m.notificationLevel != notify.LevelError {
+		t.Fatalf("expected an error-level notification banner, got %q level=%v", m.notification, m.notificationLevel)
 	}
 	joined := strings.Join(m.renderedLines, "\n")
 	if !strings.Contains(joined, "API error") {
@@ -891,9 +894,8 @@ func TestHandleChatEventNotification(t *testing.T) {
 
 	m.handleChatEvent(tauchat.ChatNotificationEvent{Message: "hello"})
 
-	// Notification should be pushed to the queue.
-	if m.notifyQ == nil {
-		t.Fatal("notifyQ should exist")
+	if m.notification != "hello" {
+		t.Fatalf("expected the notification banner to show %q, got %q", "hello", m.notification)
 	}
 }
 
@@ -2547,9 +2549,10 @@ func TestViewCapsViewportAtMaxHeightForLongContent(t *testing.T) {
 	m.View()
 
 	// 100 lines overflow the available region; the viewport should expand to
-	// fill the terminal minus separator, padded input block, and status.
-	if got := m.viewport.Height(); got != 33 {
-		t.Fatalf("viewport height = %d, want 33 (fill terminal minus chrome)", got)
+	// fill the terminal minus the (always-reserved, 2-line) notification
+	// area, separator, padded input block, and status.
+	if got := m.viewport.Height(); got != 31 {
+		t.Fatalf("viewport height = %d, want 31 (fill terminal minus chrome)", got)
 	}
 }
 
@@ -2597,6 +2600,102 @@ func TestViewClampsIdleViewportAfterChromeShrinks(t *testing.T) {
 	}
 	if lineContaining(strings.Split(view.Content, "\n"), "line 80") < 0 {
 		t.Fatalf("latest line should remain visible after clamping to bottom:\n%s", stripANSI(view.Content))
+	}
+}
+
+// TestNotificationWrapsInsteadOfTruncating guards against a real bug: chat
+// runtime errors/notifications were previously squeezed into a single-line
+// status-bar segment that hard-truncated with "…" once the message didn't
+// fit — the notification banner (rendered above the input area) must instead
+// wrap across as many lines as it needs.
+// TestNotificationWrapsWithinReservedLines verifies a notification that
+// fits within notifyReservedLines wraps in full (no mid-word ellipsis
+// truncation — the original bug this banner replaced, where a long
+// chat-runtime error got squeezed into a single-line status-bar segment
+// and hard-truncated there).
+func TestNotificationWrapsWithinReservedLines(t *testing.T) {
+	m := newTestModel(&fakeRuntime{}, nil)
+	m.Update(tea.WindowSizeMsg{Width: 40, Height: 24})
+	msg := "short notice that fits in two lines"
+	m.notification = msg
+	m.notificationLevel = notify.LevelError
+
+	geom := m.computeLayout()
+	plain := stripANSI(geom.chromeStr)
+
+	if strings.Contains(plain, "…") {
+		t.Fatalf("notification should wrap, not truncate with an ellipsis:\n%s", plain)
+	}
+	for word := range strings.FieldsSeq(msg) {
+		if !strings.Contains(plain, word) {
+			t.Fatalf("expected word %q to survive in the rendered chrome, got:\n%s", word, plain)
+		}
+	}
+}
+
+// TestNotificationAreaHasFixedHeight guards against a real UX bug: the
+// notification banner only occupied space while m.notification was
+// non-empty, so the viewport visibly grew and shrank by that height every
+// time a notification appeared or cleared ("pushing text up and dropping
+// it back down"). The reserved area must now be exactly notifyReservedLines
+// tall regardless of whether there's currently a message — verified here
+// by checking the viewport gets the same height either way.
+func TestNotificationAreaHasFixedHeight(t *testing.T) {
+	m := newTestModel(&fakeRuntime{}, nil)
+	m.Update(tea.WindowSizeMsg{Width: 80, Height: 24})
+	for range 40 {
+		m.appendMessage("user", "line")
+	}
+
+	m.View()
+	emptyHeight := m.viewport.Height()
+
+	m.notification = "a notice"
+	m.View()
+	withNoticeHeight := m.viewport.Height()
+
+	if emptyHeight != withNoticeHeight {
+		t.Fatalf("viewport height changed when a notification appeared: %d -> %d, want unchanged", emptyHeight, withNoticeHeight)
+	}
+}
+
+// TestNotificationLongerThanReservedLinesIsClipped documents the accepted
+// trade-off of a fixed-height reserved area: a message that doesn't fit
+// within notifyReservedLines is clipped rather than growing the area (and
+// therefore resizing the whole layout) to fit it.
+func TestNotificationLongerThanReservedLinesIsClipped(t *testing.T) {
+	m := newTestModel(&fakeRuntime{}, nil)
+	m.Update(tea.WindowSizeMsg{Width: 20, Height: 24})
+	m.notification = "this message is deliberately far too long to fit within just two narrow lines of text"
+
+	geom := m.computeLayout()
+	notifyLines := strings.Split(stripANSI(geom.chromeStr), "\n")[:notifyReservedLines]
+	if len(notifyLines) != notifyReservedLines {
+		t.Fatalf("expected exactly %d reserved notification lines, got %d", notifyReservedLines, len(notifyLines))
+	}
+}
+
+// TestNotificationRendersAboveInput verifies positioning: the notification
+// banner must appear before the separator/input in the rendered chrome, not
+// buried in the status bar below the input.
+func TestNotificationRendersAboveInput(t *testing.T) {
+	m := newTestModel(&fakeRuntime{}, nil)
+	m.Update(tea.WindowSizeMsg{Width: 80, Height: 24})
+	m.notification = "distinctive-marker-text"
+
+	geom := m.computeLayout()
+	plain := stripANSI(geom.chromeStr)
+
+	notifyIdx := strings.Index(plain, "distinctive-marker-text")
+	sepIdx := strings.Index(plain, strings.Repeat("─", 10))
+	if notifyIdx < 0 {
+		t.Fatal("expected the notification text to appear in the chrome")
+	}
+	if sepIdx < 0 {
+		t.Fatal("expected to find the separator line in the chrome")
+	}
+	if notifyIdx > sepIdx {
+		t.Fatalf("expected notification (at %d) to render above the separator/input (at %d)", notifyIdx, sepIdx)
 	}
 }
 
@@ -2660,6 +2759,179 @@ func TestMouseClickFocusesAndExpandsTool(t *testing.T) {
 	m.Update(tea.MouseClickMsg{Button: tea.MouseLeft, Y: geom.viewportStartY})
 	if m.focusedTool != -1 {
 		t.Fatalf("focusedTool = %d, want -1 after clicking viewport", m.focusedTool)
+	}
+}
+
+// --- mouse drag text selection ---------------------------------------------
+
+func TestMousePressStartsSelectionInViewport(t *testing.T) {
+	m := newTestModel(&fakeRuntime{}, nil)
+	m.Update(tea.WindowSizeMsg{Width: 80, Height: 24})
+	for i := 1; i <= 5; i++ {
+		m.appendMessage("user", fmt.Sprintf("line %d", i))
+	}
+	m.View()
+
+	geom := m.computeLayout()
+	m.Update(tea.MouseClickMsg{Button: tea.MouseLeft, Y: geom.viewportStartY})
+
+	if !m.viewportSel.armed() || m.viewportSel.anchor != m.viewportSel.cursor {
+		t.Fatalf("expected a single-line selection anchor after press, got anchor=%d cursor=%d", m.viewportSel.anchor, m.viewportSel.cursor)
+	}
+	if m.viewportSel.dragging {
+		t.Fatal("dragging should be false right after a press, before any motion")
+	}
+}
+
+func TestMouseDragExtendsSelectionAndCopiesOnRelease(t *testing.T) {
+	m := newTestModel(&fakeRuntime{}, nil)
+	m.Update(tea.WindowSizeMsg{Width: 80, Height: 24})
+	for i := 1; i <= 5; i++ {
+		m.appendMessage("user", fmt.Sprintf("line %d", i))
+	}
+	m.View()
+
+	geom := m.computeLayout()
+	startY := geom.viewportStartY
+	m.Update(tea.MouseClickMsg{Button: tea.MouseLeft, Y: startY})
+	anchor := m.viewportSel.anchor
+
+	m.Update(tea.MouseMotionMsg{Button: tea.MouseLeft, Y: startY + 2})
+	if !m.viewportSel.dragging {
+		t.Fatal("expected dragging to become true once motion is seen")
+	}
+	if m.viewportSel.cursor == anchor {
+		t.Fatalf("expected cursor to move away from anchor %d after drag, got %d", anchor, m.viewportSel.cursor)
+	}
+
+	_, cmd := m.Update(tea.MouseReleaseMsg{Button: tea.MouseLeft, Y: startY + 2})
+	if cmd == nil {
+		t.Fatal("expected a Cmd (clipboard copy + notification) after releasing a real drag")
+	}
+	drainCmd(cmd)
+	if !strings.Contains(m.notification, "copied") {
+		t.Fatalf("expected a 'copied N lines' notification, got %q", m.notification)
+	}
+	if !m.viewportSel.armed() {
+		t.Fatal("expected the highlight to remain after release so the user can see what was copied")
+	}
+}
+
+func TestMouseClickWithoutDragClearsSelection(t *testing.T) {
+	m := newTestModel(&fakeRuntime{}, nil)
+	m.Update(tea.WindowSizeMsg{Width: 80, Height: 24})
+	for i := 1; i <= 5; i++ {
+		m.appendMessage("user", fmt.Sprintf("line %d", i))
+	}
+	m.View()
+
+	geom := m.computeLayout()
+	m.Update(tea.MouseClickMsg{Button: tea.MouseLeft, Y: geom.viewportStartY})
+	_, cmd := m.Update(tea.MouseReleaseMsg{Button: tea.MouseLeft, Y: geom.viewportStartY})
+
+	if cmd != nil {
+		t.Fatal("a plain click (no drag) should not trigger a clipboard copy")
+	}
+	if m.viewportSel.armed() {
+		t.Fatalf("expected selection cleared after a no-drag release, got anchor=%d", m.viewportSel.anchor)
+	}
+}
+
+func TestMousePressOnToolBoxClearsSelection(t *testing.T) {
+	m := newTestModel(&fakeRuntime{}, nil)
+	m.Update(tea.WindowSizeMsg{Width: 80, Height: 24})
+	m.viewportSel.anchor, m.viewportSel.cursor = 0, 2
+	m.tools = []toolState{{id: "t1", name: "read", status: "done"}}
+
+	geom := m.computeLayout()
+	m.Update(tea.MouseClickMsg{Button: tea.MouseLeft, Y: geom.toolBoxes[0].startY})
+
+	if m.viewportSel.armed() {
+		t.Fatalf("expected pressing a tool box to clear any active text selection, got anchor=%d", m.viewportSel.anchor)
+	}
+}
+
+func TestHighlightSelectionWrapsSelectedRange(t *testing.T) {
+	m := newTestModel(&fakeRuntime{}, nil)
+	m.renderedLines = []string{"alpha", "bravo", "charlie"}
+	m.viewportSel.anchor, m.viewportSel.cursor = 1, 2
+
+	lines := append([]string{}, m.renderedLines...)
+	m.highlightSelection(lines)
+
+	if !strings.Contains(lines[1], "\x1b[7m") || !strings.Contains(lines[1], "\x1b[27m") {
+		t.Fatalf("expected line 1 wrapped in reverse video, got %q", lines[1])
+	}
+	if !strings.Contains(lines[2], "\x1b[7m") {
+		t.Fatalf("expected line 2 wrapped in reverse video, got %q", lines[2])
+	}
+	if strings.Contains(lines[0], "\x1b[7m") {
+		t.Fatalf("line 0 is outside the selection and must not be highlighted, got %q", lines[0])
+	}
+}
+
+func TestCopySelectionTooLargeShowsNotificationInsteadOfCopying(t *testing.T) {
+	m := newTestModel(&fakeRuntime{}, nil)
+	huge := strings.Repeat("x", termkit.OSC52MaxBytes+1)
+	m.renderedLines = []string{huge}
+	m.viewportSel.anchor, m.viewportSel.cursor, m.viewportSel.dragging = 0, 0, true
+
+	drainCmd(m.finalizeSelection(&m.viewportSel, m.viewportSelectionText, "line"))
+
+	if !strings.Contains(m.notification, "too large to copy") {
+		t.Fatalf("expected an oversized-selection notification, got %q", m.notification)
+	}
+}
+
+func TestEscClearsActiveSelection(t *testing.T) {
+	m := newTestModel(&fakeRuntime{}, nil)
+	m.viewportSel.anchor, m.viewportSel.cursor = 0, 1
+
+	m.dispatchKey(tea.KeyPressMsg{Code: tea.KeyEscape})
+
+	if m.viewportSel.armed() {
+		t.Fatalf("expected Esc to clear the selection, got anchor=%d", m.viewportSel.anchor)
+	}
+}
+
+func TestWrappedRowCount(t *testing.T) {
+	if got := wrappedRowCount("short", 80); got != 1 {
+		t.Fatalf("wrappedRowCount(short) = %d, want 1", got)
+	}
+	long := strings.Repeat("x", 200)
+	if got := wrappedRowCount(long, 80); got != 3 { // ceil(200/80)
+		t.Fatalf("wrappedRowCount(long) = %d, want 3", got)
+	}
+}
+
+func TestLogicalLineAtRowAcrossWrappedLines(t *testing.T) {
+	m := newTestModel(&fakeRuntime{}, nil)
+	m.width = 10
+	m.renderedLines = []string{
+		"short",                 // 1 row  -> row 0
+		strings.Repeat("x", 25), // 3 rows -> rows 1-3 (ceil(25/10))
+		"end",                   // 1 row  -> row 4
+	}
+
+	tests := []struct {
+		row     int
+		wantIdx int
+	}{
+		{0, 0},
+		{1, 1},
+		{2, 1},
+		{3, 1},
+		{4, 2},
+	}
+	for _, tc := range tests {
+		idx, ok := m.logicalLineAtRow(tc.row)
+		if !ok || idx != tc.wantIdx {
+			t.Fatalf("logicalLineAtRow(%d) = (%d, %v), want (%d, true)", tc.row, idx, ok, tc.wantIdx)
+		}
+	}
+
+	if _, ok := m.logicalLineAtRow(99); ok {
+		t.Fatal("expected logicalLineAtRow to report not-ok for a row past all content")
 	}
 }
 
@@ -2897,30 +3169,196 @@ func TestRenderInputAreaWrapsCursorOntoContinuationLine(t *testing.T) {
 	}
 }
 
-func TestRenderLineWithCursor(t *testing.T) {
+func TestRenderInputChunkCursorOverCharacter(t *testing.T) {
 	ln := []rune("hello")
-	col := 2
-	out := stripANSI(renderLineWithCursor(ln, col))
+	out := stripANSI(renderInputChunk(ln, 0, len(ln), true, 2, false, 0, 0))
 	if out != "hello" {
 		t.Fatalf("cursor over character = %q, want %q", out, "hello")
 	}
 }
 
-func TestRenderLineWithCursorAtEnd(t *testing.T) {
+func TestRenderInputChunkCursorAtEnd(t *testing.T) {
 	ln := []rune("hi")
-	col := 2
-	out := stripANSI(renderLineWithCursor(ln, col))
+	out := stripANSI(renderInputChunk(ln, 0, len(ln), true, 2, false, 0, 0))
 	if out != "hi " {
 		t.Fatalf("cursor at end = %q, want 'hi '", out)
 	}
 }
 
-func TestRenderLineWithCursorAtStart(t *testing.T) {
+func TestRenderInputChunkCursorAtStart(t *testing.T) {
 	ln := []rune("abc")
-	col := 0
-	out := stripANSI(renderLineWithCursor(ln, col))
+	out := stripANSI(renderInputChunk(ln, 0, len(ln), true, 0, false, 0, 0))
 	if out != "abc" {
 		t.Fatalf("cursor at start = %q, want 'abc'", out)
+	}
+}
+
+func TestRenderInputChunkWithSelectionKeepsPlainText(t *testing.T) {
+	ln := []rune("hello world")
+	out := stripANSI(renderInputChunk(ln, 0, len(ln), false, -1, true, 2, 7))
+	if out != "hello world" {
+		t.Fatalf("selected text = %q, want unchanged plain text %q", out, "hello world")
+	}
+	styled := renderInputChunk(ln, 0, len(ln), false, -1, true, 2, 7)
+	if !strings.Contains(styled, "\x1b[7m") {
+		t.Fatalf("expected the selected range to carry reverse video, got %q", styled)
+	}
+}
+
+// --- input box mouse selection ----------------------------------------------
+
+// promptPrefixWidth mirrors renderInputArea's own prefixWidth computation
+// for the non-steering "> " prompt, so tests can compute expected click
+// columns without hardcoding a width that would silently drift if the
+// prefix ever changes.
+func promptPrefixWidth() int {
+	return visibleWidth(stripANSI(inputPromptStyle.Render("> ")))
+}
+
+func TestInputPositionAtMapsClickToRunePosition(t *testing.T) {
+	m := newTestModel(&fakeRuntime{}, nil)
+	m.width = 80
+	m.input = "hello world"
+
+	textStartCol := 1 + promptPrefixWidth() // 1 for the left border
+	const bodyRow = 2                       // top border + hint row precede body rows
+
+	if got := m.inputPositionAt(bodyRow, textStartCol); got != 0 {
+		t.Fatalf("click at text start = %d, want 0", got)
+	}
+	if got := m.inputPositionAt(bodyRow, textStartCol+5); got != 5 {
+		t.Fatalf("click 5 cols in = %d, want 5", got)
+	}
+	if got := m.inputPositionAt(bodyRow, textStartCol+100); got != len([]rune(m.input)) {
+		t.Fatalf("click past the end = %d, want %d", got, len([]rune(m.input)))
+	}
+}
+
+func TestMousePressInInputPositionsCursorAndArmsSelection(t *testing.T) {
+	m := newTestModel(&fakeRuntime{}, nil)
+	m.Update(tea.WindowSizeMsg{Width: 80, Height: 24})
+	m.input = "hello world"
+	m.View()
+
+	geom := m.computeLayout()
+	textStartCol := 1 + promptPrefixWidth()
+	m.Update(tea.MouseClickMsg{Button: tea.MouseLeft, X: textStartCol + 5, Y: geom.inputStartY + 2})
+
+	if m.inputCursor != 5 {
+		t.Fatalf("inputCursor = %d, want 5", m.inputCursor)
+	}
+	if !m.inputSel.armed() || m.inputSel.anchor != 5 {
+		t.Fatalf("expected input selection armed at 5, got anchor=%d", m.inputSel.anchor)
+	}
+}
+
+func TestMouseDragInInputCopiesSelectedSubstring(t *testing.T) {
+	m := newTestModel(&fakeRuntime{}, nil)
+	m.Update(tea.WindowSizeMsg{Width: 80, Height: 24})
+	m.input = "hello world"
+	m.View()
+
+	geom := m.computeLayout()
+	row := geom.inputStartY + 2
+	textStartCol := 1 + promptPrefixWidth()
+
+	m.Update(tea.MouseClickMsg{Button: tea.MouseLeft, X: textStartCol, Y: row})
+	m.Update(tea.MouseMotionMsg{Button: tea.MouseLeft, X: textStartCol + 5, Y: row})
+	_, cmd := m.Update(tea.MouseReleaseMsg{Button: tea.MouseLeft, X: textStartCol + 5, Y: row})
+
+	if cmd == nil {
+		t.Fatal("expected a Cmd (clipboard copy + notification) after releasing a real drag")
+	}
+	drainCmd(cmd)
+	if !strings.Contains(m.notification, "copied selection") {
+		t.Fatalf("expected a 'copied selection' notification, got %q", m.notification)
+	}
+	if got := m.inputSelectionText(0, 5); got != "hello" {
+		t.Fatalf("selected text = %q, want %q", got, "hello")
+	}
+}
+
+func TestTypingReplacesActiveInputSelection(t *testing.T) {
+	m := newTestModel(&fakeRuntime{}, nil)
+	m.input = "hello world"
+	m.inputSel.anchor, m.inputSel.cursor = 0, 5 // "hello" selected
+	m.inputCursor = 5
+
+	m.insertAtCursor("X")
+
+	if m.input != "X world" {
+		t.Fatalf("input = %q, want %q", m.input, "X world")
+	}
+	if m.inputSel.armed() {
+		t.Fatal("expected the selection to be consumed by typing")
+	}
+}
+
+func TestBackspaceConsumesActiveInputSelection(t *testing.T) {
+	m := newTestModel(&fakeRuntime{}, nil)
+	m.input = "hello world"
+	m.inputSel.anchor, m.inputSel.cursor = 0, 5 // "hello" selected
+	m.inputCursor = 5
+
+	m.backspaceAtCursor()
+
+	if m.input != " world" {
+		t.Fatalf("input = %q, want %q (whole selection removed, not just one char)", m.input, " world")
+	}
+	if m.inputCursor != 0 {
+		t.Fatalf("inputCursor = %d, want 0", m.inputCursor)
+	}
+}
+
+func TestDeleteConsumesActiveInputSelection(t *testing.T) {
+	m := newTestModel(&fakeRuntime{}, nil)
+	m.input = "hello world"
+	m.inputSel.anchor, m.inputSel.cursor = 6, 11 // "world" selected
+	m.inputCursor = 6
+
+	m.deleteAtCursor()
+
+	if m.input != "hello " {
+		t.Fatalf("input = %q, want %q", m.input, "hello ")
+	}
+}
+
+func TestArrowKeyClearsInputSelection(t *testing.T) {
+	m := newTestModel(&fakeRuntime{}, nil)
+	m.input = "hello world"
+	m.inputCursor = 5
+	m.inputSel.anchor, m.inputSel.cursor = 0, 5
+
+	m.dispatchKey(tea.KeyPressMsg{Code: tea.KeyLeft})
+
+	if m.inputSel.armed() {
+		t.Fatal("expected an arrow key to clear a stale input selection")
+	}
+}
+
+// --- status bar mouse selection ----------------------------------------------
+
+func TestMouseDragInStatusBarCopiesSubstring(t *testing.T) {
+	m := newTestModel(&fakeRuntime{}, nil)
+	m.Update(tea.WindowSizeMsg{Width: 80, Height: 24})
+	m.View()
+
+	geom := m.computeLayout()
+	plain := stripANSI(m.computeStatusBar())
+	if len(plain) < 5 {
+		t.Skip("status bar text too short in this test model to exercise a substring drag")
+	}
+
+	m.Update(tea.MouseClickMsg{Button: tea.MouseLeft, X: 0, Y: geom.statusY})
+	m.Update(tea.MouseMotionMsg{Button: tea.MouseLeft, X: 3, Y: geom.statusY})
+	_, cmd := m.Update(tea.MouseReleaseMsg{Button: tea.MouseLeft, X: 3, Y: geom.statusY})
+
+	if cmd == nil {
+		t.Fatal("expected a Cmd (clipboard copy + notification) after releasing a real drag")
+	}
+	drainCmd(cmd)
+	if !strings.Contains(m.notification, "copied selection") {
+		t.Fatalf("expected a 'copied selection' notification, got %q", m.notification)
 	}
 }
 
