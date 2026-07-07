@@ -59,17 +59,18 @@ var errorPatterns = []*regexp.Regexp{
 }
 
 type toolStat struct {
-	Name      string  `json:"name"`
-	Calls     int     `json:"calls"`
-	Results   int     `json:"results"`
-	Errors    int     `json:"errors"`
-	Tokens    int     `json:"estimatedTokens"`
-	Samples   []int   `json:"-"`
-	Histogram []int   `json:"histogram"`
-	ErrRate   float64 `json:"errorRate"`
-	Median    int     `json:"median"`
-	P90       int     `json:"p90"`
-	Max       int     `json:"max"`
+	Name      string   `json:"name"`
+	Aliases   []string `json:"aliases,omitempty"`
+	Calls     int      `json:"calls"`
+	Results   int      `json:"results"`
+	Errors    int      `json:"errors"`
+	Tokens    int      `json:"estimatedTokens"`
+	Samples   []int    `json:"-"`
+	Histogram []int    `json:"histogram"`
+	ErrRate   float64  `json:"errorRate"`
+	Median    int      `json:"median"`
+	P90       int      `json:"p90"`
+	Max       int      `json:"max"`
 	// ErrorSamples holds up to three distinct error messages for the report.
 	ErrorSamples []string `json:"errorSamples,omitempty"`
 
@@ -84,6 +85,7 @@ type toolStat struct {
 	DurationMax    int     `json:"durationMaxMs,omitempty"`
 
 	durations []int
+	aliases   map[string]bool
 }
 
 type reportData struct {
@@ -96,10 +98,53 @@ type reportData struct {
 	TotalTokens int    `json:"totalTokens"`
 	// MetricsSkipped counts metric events for sessions not present in the
 	// sessions dir (excluded so both sources describe the same population).
-	MetricsSkipped int         `json:"metricsSkipped,omitempty"`
-	Buckets        []string    `json:"bucketLabels"`
-	Tools          []*toolStat `json:"tools"`
-	Shell          []*toolStat `json:"shellCommands"`
+	MetricsSkipped int            `json:"metricsSkipped,omitempty"`
+	Buckets        []string       `json:"bucketLabels"`
+	Tools          []*toolStat    `json:"tools"`
+	Shell          []*toolStat    `json:"shellCommands"`
+	Outliers       []toolOutlier  `json:"outliers,omitempty"`
+	RepeatedReads  []repeatedRead `json:"repeatedReads,omitempty"`
+	ErrorBreakdown []errorBucket  `json:"errorBreakdown,omitempty"`
+}
+
+type toolOutlier struct {
+	SessionID string `json:"sessionId"`
+	File      string `json:"file"`
+	Tool      string `json:"tool"`
+	Tokens    int    `json:"tokens"`
+	Args      string `json:"args,omitempty"`
+	Result    string `json:"result,omitempty"`
+	ErrorKind string `json:"errorKind,omitempty"`
+}
+
+type repeatedRead struct {
+	SessionID string `json:"sessionId"`
+	File      string `json:"file"`
+	Path      string `json:"path"`
+	Calls     int    `json:"calls"`
+	Tokens    int    `json:"tokens"`
+}
+
+type errorBucket struct {
+	Tool    string   `json:"tool"`
+	Kind    string   `json:"kind"`
+	Count   int      `json:"count"`
+	Samples []string `json:"samples,omitempty"`
+}
+
+type pendingCall struct {
+	stat      *toolStat
+	tool      string
+	args      string
+	readPath  string
+	sessionID string
+	file      string
+	primary   bool
+}
+
+type readUse struct {
+	calls  int
+	tokens int
 }
 
 // sessionMessage is the subset of a persisted chat message the script needs.
@@ -204,6 +249,14 @@ func analyse(dir, metricsDir string) (*reportData, error) {
 			if t.MetricCalls > 0 {
 				t.MetricErrRate = float64(t.MetricErrors) / float64(t.MetricCalls)
 			}
+			if len(t.aliases) > 0 {
+				for alias := range t.aliases {
+					if alias != t.Name {
+						t.Aliases = append(t.Aliases, alias)
+					}
+				}
+				sort.Strings(t.Aliases)
+			}
 			out = append(out, t)
 		}
 		sort.Slice(out, func(i, j int) bool { return out[i].Calls > out[j].Calls })
@@ -216,6 +269,20 @@ func analyse(dir, metricsDir string) (*reportData, error) {
 		data.TotalCalls += t.Calls
 		data.TotalTokens += t.Tokens
 	}
+	sort.Slice(data.Outliers, func(i, j int) bool { return data.Outliers[i].Tokens > data.Outliers[j].Tokens })
+	if len(data.Outliers) > 30 {
+		data.Outliers = data.Outliers[:30]
+	}
+	sort.Slice(data.RepeatedReads, func(i, j int) bool {
+		if data.RepeatedReads[i].Tokens == data.RepeatedReads[j].Tokens {
+			return data.RepeatedReads[i].Calls > data.RepeatedReads[j].Calls
+		}
+		return data.RepeatedReads[i].Tokens > data.RepeatedReads[j].Tokens
+	})
+	if len(data.RepeatedReads) > 30 {
+		data.RepeatedReads = data.RepeatedReads[:30]
+	}
+	sort.Slice(data.ErrorBreakdown, func(i, j int) bool { return data.ErrorBreakdown[i].Count > data.ErrorBreakdown[j].Count })
 	return data, nil
 }
 
@@ -257,10 +324,11 @@ func joinMetrics(path string, sessionIDs map[string]bool, tools map[string]*tool
 		if e.Category != chat.MetricCategoryTool || !strings.HasSuffix(e.Name, ".duration") {
 			continue
 		}
-		toolName := e.Labels["tool"]
-		if toolName == "" {
+		rawToolName := e.Labels["tool"]
+		if rawToolName == "" {
 			continue
 		}
+		toolName := normalizeToolName(rawToolName)
 		if !sessionIDs[e.SessionID] {
 			data.MetricsSkipped++
 			continue
@@ -270,6 +338,12 @@ func joinMetrics(path string, sessionIDs map[string]bool, tools map[string]*tool
 		if !ok {
 			t = &toolStat{Name: toolName}
 			tools[toolName] = t
+		}
+		if rawToolName != toolName {
+			if t.aliases == nil {
+				t.aliases = map[string]bool{}
+			}
+			t.aliases[rawToolName] = true
 		}
 		t.MetricCalls++
 		if e.Labels["status"] == "error" {
@@ -289,14 +363,28 @@ func analyseFile(path string, tools, shell map[string]*toolStat, data *reportDat
 	}
 	defer f.Close()
 
-	// callID → tool stat entry the result should be attributed to.
-	pending := map[string]*toolStat{}
+	fileName := filepath.Base(path)
+	sessionID := sessionIDFromFilename(fileName)
 
-	get := func(m map[string]*toolStat, name string) *toolStat {
+	// callID → tool call metadata the result should be attributed to.
+	pending := map[string]pendingCall{}
+	readUses := map[string]readUse{}
+	errorBuckets := map[string]*errorBucket{}
+
+	get := func(m map[string]*toolStat, name string, rawAliases ...string) *toolStat {
 		t, ok := m[name]
 		if !ok {
 			t = &toolStat{Name: name}
 			m[name] = t
+		}
+		for _, raw := range rawAliases {
+			if raw == "" || raw == name {
+				continue
+			}
+			if t.aliases == nil {
+				t.aliases = map[string]bool{}
+			}
+			t.aliases[raw] = true
 		}
 		return t
 	}
@@ -317,43 +405,105 @@ func analyseFile(path string, tools, shell map[string]*toolStat, data *reportDat
 		switch msg.Role {
 		case "assistant":
 			for _, tc := range msg.ToolCalls {
-				t := get(tools, tc.Function.Name)
+				toolName := normalizeToolName(tc.Function.Name)
+				t := get(tools, toolName, tc.Function.Name)
 				t.Calls++
-				pending[tc.ID] = t
+				args := summarizeArgs(tc.Function.Arguments)
+				pending[tc.ID] = pendingCall{
+					stat:      t,
+					tool:      toolName,
+					args:      args,
+					readPath:  readPathArg(tc.Function.Arguments),
+					sessionID: sessionID,
+					file:      fileName,
+					primary:   true,
+				}
 
-				if tc.Function.Name == "shell" {
+				if toolName == "shell" {
 					var args struct {
 						Command string `json:"command"`
 					}
 					if json.Unmarshal([]byte(tc.Function.Arguments), &args) == nil && args.Command != "" {
 						s := get(shell, shellLabel(args.Command))
 						s.Calls++
-						pending[tc.ID+"\x00shell"] = s
+						pending[tc.ID+"\x00shell"] = pendingCall{
+							stat:      s,
+							tool:      s.Name,
+							args:      firstLine(args.Command, 180),
+							sessionID: sessionID,
+							file:      fileName,
+						}
 					}
 				}
 			}
 		case "tool":
-			record := func(t *toolStat) {
+			record := func(call pendingCall) {
+				t := call.stat
 				t.Results++
 				tokens := (len(msg.Content) + 3) / 4
 				t.Tokens += tokens
 				t.Samples = append(t.Samples, tokens)
-				if isErrorContent(msg.Content) {
+				errKind := classifyErrorContent(msg.Content)
+				if errKind != "" {
 					t.Errors++
 					if len(t.ErrorSamples) < 3 {
 						t.ErrorSamples = append(t.ErrorSamples, firstLine(msg.Content, 160))
 					}
+					if call.primary {
+						key := call.tool + "\x00" + errKind
+						b := errorBuckets[key]
+						if b == nil {
+							b = &errorBucket{Tool: call.tool, Kind: errKind}
+							errorBuckets[key] = b
+						}
+						b.Count++
+						if len(b.Samples) < 3 {
+							b.Samples = append(b.Samples, firstLine(msg.Content, 140))
+						}
+					}
+				}
+				if call.primary && call.tool == "read" && call.readPath != "" {
+					use := readUses[call.readPath]
+					use.calls++
+					use.tokens += tokens
+					readUses[call.readPath] = use
+				}
+				if call.primary {
+					data.Outliers = append(data.Outliers, toolOutlier{
+						SessionID: call.sessionID,
+						File:      call.file,
+						Tool:      call.tool,
+						Tokens:    tokens,
+						Args:      call.args,
+						Result:    firstLine(msg.Content, 180),
+						ErrorKind: errKind,
+					})
 				}
 			}
-			if t, ok := pending[msg.ToolCallID]; ok {
-				record(t)
+			if call, ok := pending[msg.ToolCallID]; ok {
+				record(call)
 				delete(pending, msg.ToolCallID)
 			}
-			if s, ok := pending[msg.ToolCallID+"\x00shell"]; ok {
-				record(s)
+			if call, ok := pending[msg.ToolCallID+"\x00shell"]; ok {
+				record(call)
 				delete(pending, msg.ToolCallID+"\x00shell")
 			}
 		}
+	}
+	for p, use := range readUses {
+		if use.calls <= 1 {
+			continue
+		}
+		data.RepeatedReads = append(data.RepeatedReads, repeatedRead{
+			SessionID: sessionID,
+			File:      fileName,
+			Path:      p,
+			Calls:     use.calls,
+			Tokens:    use.tokens,
+		})
+	}
+	for _, b := range errorBuckets {
+		data.ErrorBreakdown = append(data.ErrorBreakdown, *b)
 	}
 	return sc.Err()
 }
@@ -406,17 +556,84 @@ func shellLabel(command string) string {
 	return "(complex)"
 }
 
-func isErrorContent(content string) bool {
+func normalizeToolName(name string) string {
+	n := strings.TrimSpace(name)
+	switch strings.ToLower(n) {
+	case "skill":
+		return "skill"
+	case "bash", "shell":
+		return "shell"
+	}
+	if strings.HasPrefix(n, "tau-plugin-mcp") {
+		for strings.Contains(n, "__") {
+			n = strings.ReplaceAll(n, "__", "_")
+		}
+	}
+	return n
+}
+
+func summarizeArgs(raw string) string {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return ""
+	}
+	var v any
+	if json.Unmarshal([]byte(raw), &v) != nil {
+		return firstLine(raw, 220)
+	}
+	blob, err := json.Marshal(v)
+	if err != nil {
+		return firstLine(raw, 220)
+	}
+	return firstLine(string(blob), 220)
+}
+
+func readPathArg(raw string) string {
+	var args struct {
+		Path string `json:"path"`
+		File string `json:"file"`
+	}
+	if json.Unmarshal([]byte(raw), &args) != nil {
+		return ""
+	}
+	if args.Path != "" {
+		return args.Path
+	}
+	return args.File
+}
+
+func classifyErrorContent(content string) string {
 	head := content
 	if len(head) > 200 {
 		head = head[:200]
 	}
+	lower := strings.ToLower(head)
+	switch {
+	case strings.HasPrefix(head, "[exit code:"):
+		return "shell_exit"
+	case strings.HasPrefix(head, "[timeout after"):
+		return "timeout"
+	case strings.Contains(lower, "old_text not found"):
+		return "stale_edit"
+	case strings.Contains(lower, "no such file or directory"), strings.Contains(lower, "not found"):
+		return "not_found"
+	case strings.Contains(lower, "regex parse error"), strings.Contains(lower, "invalid regex"):
+		return "bad_regex"
+	case strings.Contains(lower, "required"), strings.Contains(lower, "cannot be empty"):
+		return "invalid_args"
+	case strings.Contains(lower, "escapes working directory"), strings.Contains(lower, "escaping docs sandbox"):
+		return "sandbox_escape"
+	case strings.Contains(lower, "is a directory"), strings.Contains(lower, "must be a directory"):
+		return "wrong_path_type"
+	case strings.Contains(lower, "too large"), strings.Contains(lower, "appears to be binary"):
+		return "unsupported_file"
+	}
 	for _, re := range errorPatterns {
 		if re.MatchString(head) {
-			return true
+			return "tool_error"
 		}
 	}
-	return false
+	return ""
 }
 
 func firstLine(s string, maxChars int) string {
@@ -458,7 +675,7 @@ func printSummary(data *reportData) {
 	fmt.Printf("\n%-24s %7s %6s %6s %10s %6s %8s %8s %9s",
 		"tool", "calls", "call%", "err%", "tokens", "tok%", "median", "p90", "max")
 	if withMetrics {
-		fmt.Printf(" %8s %7s %8s %8s", "m.calls", "m.err%", "dur p50", "dur p90")
+		fmt.Printf(" %8s %7s %7s %8s %8s", "m.calls", "m.cov", "m.err%", "dur p50", "dur p90")
 	}
 	fmt.Println()
 	for _, t := range data.Tools {
@@ -469,12 +686,33 @@ func printSummary(data *reportData) {
 			t.Median, t.P90, t.Max)
 		if withMetrics {
 			if t.MetricCalls > 0 {
-				fmt.Printf(" %8d %6.1f%% %7dms %7dms", t.MetricCalls, t.MetricErrRate*100, t.DurationMedian, t.DurationP90)
+				fmt.Printf(" %8d %6.1f%% %6.1f%% %7dms %7dms",
+					t.MetricCalls, pct(t.MetricCalls, t.Calls), t.MetricErrRate*100, t.DurationMedian, t.DurationP90)
 			} else {
-				fmt.Printf(" %8s %7s %8s %8s", "-", "-", "-", "-")
+				fmt.Printf(" %8s %7s %7s %8s %8s", "-", "-", "-", "-", "-")
 			}
 		}
 		fmt.Println()
+	}
+
+	if len(data.Outliers) > 0 {
+		fmt.Printf("\ntop result outliers:\n")
+		for i, o := range data.Outliers {
+			if i >= 8 {
+				break
+			}
+			fmt.Printf("%-16s %8s tokens  %-80s  %s\n", o.Tool, formatCount(o.Tokens), o.Args, o.SessionID)
+		}
+	}
+
+	if len(data.RepeatedReads) > 0 {
+		fmt.Printf("\nrepeated reads:\n")
+		for i, r := range data.RepeatedReads {
+			if i >= 8 {
+				break
+			}
+			fmt.Printf("%3dx %8s tokens  %-90s %s\n", r.Calls, formatCount(r.Tokens), r.Path, r.SessionID)
+		}
 	}
 
 	fmt.Printf("\ntop shell commands:\n")
@@ -519,16 +757,28 @@ var htmlTemplate = template.Must(template.New("report").Parse(`<!doctype html>
   th, td { text-align: right; padding: 6px 10px; border-bottom: 1px solid #27272a; }
   th:first-child, td:first-child { text-align: left; }
   th { color: #a1a1aa; font-weight: 500; font-size: 12px; text-transform: uppercase; }
-  .err { color: #f87171; } .warn { color: #fbbf24; }
-  .errmsg { color: #a1a1aa; font-size: 12px; text-align: left; }
-  .charts { display: grid; grid-template-columns: 1fr 1fr; gap: 24px; margin-top: 16px; }
-  .card { background: #18181b; border-radius: 8px; padding: 16px; }
+	.err { color: #f87171; } .warn { color: #fbbf24; }
+	.errmsg { color: #a1a1aa; font-size: 12px; text-align: left; }
+  .muted { color: #a1a1aa; font-size: 12px; }
+  .path { max-width: 520px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+	.charts { display: grid; grid-template-columns: 1fr 1fr; gap: 24px; margin-top: 16px; }
+	.card { background: #18181b; border-radius: 8px; padding: 16px; }
+  .cards { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; margin-top: 16px; }
+  .stat { background: #18181b; border-radius: 8px; padding: 12px; }
+  .stat b { display: block; font-size: 20px; }
 </style>
 </head>
 <body>
 <main>
   <h1>Tau Tool Stats</h1>
   <p class="meta" id="meta">Generated {{.GeneratedAt}} · {{.SessionsDir}} · {{.Files}} session files · {{.ParseErrors}} parse errors</p>
+
+  <div class="cards">
+    <div class="stat"><span class="muted">Tool calls</span><b id="total-calls"></b></div>
+    <div class="stat"><span class="muted">Result tokens</span><b id="total-tokens"></b></div>
+    <div class="stat"><span class="muted">Read token share</span><b id="read-share"></b></div>
+    <div class="stat"><span class="muted">Metric coverage</span><b id="metric-coverage"></b></div>
+  </div>
 
   <div class="charts">
     <div class="card"><canvas id="calls"></canvas></div>
@@ -537,7 +787,22 @@ var htmlTemplate = template.Must(template.New("report").Parse(`<!doctype html>
 
   <h2>Tools</h2>
   <table id="tools-table">
-    <tr id="tools-head"><th>Tool</th><th>Calls</th><th>Call %</th><th>Errors</th><th>Err %</th><th>Est. tokens</th><th>Tok %</th><th>Median</th><th>P90</th><th>Max</th></tr>
+    <tr id="tools-head"><th>Tool</th><th>Aliases</th><th>Calls</th><th>Call %</th><th>Errors</th><th>Err %</th><th>Est. tokens</th><th>Tok %</th><th>Median</th><th>P90</th><th>Max</th></tr>
+  </table>
+
+  <h2>Outlier tool results</h2>
+  <table id="outliers-table">
+    <tr><th>Tool</th><th>Tokens</th><th class="path">Args</th><th class="path">Result/error preview</th><th>Session</th></tr>
+  </table>
+
+  <h2>Repeated reads</h2>
+  <table id="repeated-reads-table">
+    <tr><th class="path">Path</th><th>Calls</th><th>Est. tokens</th><th>Session</th></tr>
+  </table>
+
+  <h2>Error breakdown</h2>
+  <table id="error-breakdown-table">
+    <tr><th>Tool</th><th>Kind</th><th>Count</th><th class="errmsg">Samples</th></tr>
   </table>
 
   <h2>Error samples</h2>
@@ -554,36 +819,72 @@ var htmlTemplate = template.Must(template.New("report").Parse(`<!doctype html>
 const data = {{.JSON}};
 const fmtPct = (x) => (100 * x).toFixed(1) + "%";
 const fmtN = (n) => n >= 1e6 ? (n / 1e6).toFixed(1) + "M" : n >= 1e3 ? (n / 1e3).toFixed(1) + "k" : String(n);
+const text = (value) => value == null ? "" : String(value);
+const esc = (value) => text(value).replace(/[&<>"']/g, (ch) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[ch]));
 const totalCalls = data.totalCalls, totalTokens = data.totalTokens;
+const metricCalls = data.tools.reduce((sum, t) => sum + (t.metricCalls || 0), 0);
+const readTool = data.tools.find((t) => t.name === "read");
+
+document.getElementById("total-calls").textContent = fmtN(totalCalls);
+document.getElementById("total-tokens").textContent = fmtN(totalTokens);
+document.getElementById("read-share").textContent = readTool ? fmtPct(readTool.estimatedTokens / Math.max(totalTokens, 1)) : "0.0%";
+document.getElementById("metric-coverage").textContent = fmtPct(metricCalls / Math.max(totalCalls, 1));
 
 const withMetrics = Boolean(data.metricsPath);
 const meta = document.getElementById("meta");
 meta.textContent += withMetrics
-  ? " · metrics join: " + data.metricsPath + " (m.* columns are ground truth; " + (data.metricsSkipped || 0) + " events outside sessions dir skipped)"
+  ? " · metrics join: " + data.metricsPath + " (m.* columns are ground truth only where covered; " + (data.metricsSkipped || 0) + " events outside sessions dir skipped)"
   : " · error detection is heuristic (no metrics.jsonl found; set metrics.dir in the tau config for ground truth)";
 
 const toolsTable = document.getElementById("tools-table");
 if (withMetrics) {
   document.getElementById("tools-head").innerHTML +=
-    "<th>M. calls</th><th>M. err %</th><th>Dur p50</th><th>Dur p90</th><th>Dur max</th>";
+    "<th>M. calls</th><th>M. cov</th><th>M. err %</th><th>Dur p50</th><th>Dur p90</th><th>Dur max</th>";
 }
 for (const t of data.tools) {
   const tr = document.createElement("tr");
   const errClass = t.errorRate >= 0.15 ? "err" : t.errorRate >= 0.05 ? "warn" : "";
-  tr.innerHTML = "<td>" + t.name + "</td><td>" + t.calls + "</td><td>" + fmtPct(t.calls / totalCalls) +
+  const aliases = (t.aliases || []).join(", ");
+  tr.innerHTML = "<td>" + esc(t.name) + '</td><td class="muted">' + esc(aliases) + "</td><td>" + t.calls + "</td><td>" + fmtPct(t.calls / totalCalls) +
     "</td><td>" + t.errors + '</td><td class="' + errClass + '">' + fmtPct(t.errorRate) +
     "</td><td>" + fmtN(t.estimatedTokens) + "</td><td>" + fmtPct(t.estimatedTokens / Math.max(totalTokens, 1)) +
     "</td><td>" + t.median + "</td><td>" + t.p90 + "</td><td>" + t.max + "</td>";
   if (withMetrics) {
     if (t.metricCalls > 0) {
       const mErrClass = t.metricErrorRate >= 0.15 ? "err" : t.metricErrorRate >= 0.05 ? "warn" : "";
-      tr.innerHTML += "<td>" + t.metricCalls + '</td><td class="' + mErrClass + '">' + fmtPct(t.metricErrorRate || 0) +
+      tr.innerHTML += "<td>" + t.metricCalls + "</td><td>" + fmtPct(t.metricCalls / Math.max(t.calls, 1)) +
+        '</td><td class="' + mErrClass + '">' + fmtPct(t.metricErrorRate || 0) +
         "</td><td>" + (t.durationMedianMs || 0) + "ms</td><td>" + (t.durationP90Ms || 0) + "ms</td><td>" + (t.durationMaxMs || 0) + "ms</td>";
     } else {
-      tr.innerHTML += "<td>-</td><td>-</td><td>-</td><td>-</td><td>-</td>";
+      tr.innerHTML += "<td>-</td><td>-</td><td>-</td><td>-</td><td>-</td><td>-</td>";
     }
   }
   toolsTable.appendChild(tr);
+}
+
+const outliersTable = document.getElementById("outliers-table");
+for (const o of (data.outliers || []).slice(0, 30)) {
+  const tr = document.createElement("tr");
+  tr.innerHTML = "<td>" + esc(o.tool) + "</td><td>" + fmtN(o.tokens || 0) + '</td><td class="path" title="' + esc(o.args) + '">' + esc(o.args) +
+    '</td><td class="path" title="' + esc(o.result) + '">' + esc(o.errorKind ? "[" + o.errorKind + "] " : "") + esc(o.result) +
+    '</td><td class="muted">' + esc(text(o.sessionId).slice(0, 12)) + "</td>";
+  outliersTable.appendChild(tr);
+}
+
+const repeatedReadsTable = document.getElementById("repeated-reads-table");
+for (const r of (data.repeatedReads || []).slice(0, 30)) {
+  const tr = document.createElement("tr");
+  tr.innerHTML = '<td class="path" title="' + esc(r.path) + '">' + esc(r.path) + "</td><td>" + r.calls +
+    "</td><td>" + fmtN(r.tokens || 0) + '</td><td class="muted">' + esc(text(r.sessionId).slice(0, 12)) + "</td>";
+  repeatedReadsTable.appendChild(tr);
+}
+
+const errorBreakdownTable = document.getElementById("error-breakdown-table");
+for (const b of (data.errorBreakdown || []).slice(0, 30)) {
+  const tr = document.createElement("tr");
+  tr.innerHTML = "<td>" + esc(b.tool) + "</td><td>" + esc(b.kind) + "</td><td>" + b.count +
+    '</td><td class="errmsg">' + esc((b.samples || []).join("  ·  ")) + "</td>";
+  errorBreakdownTable.appendChild(tr);
 }
 
 const errorsTable = document.getElementById("errors-table");
