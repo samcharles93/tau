@@ -3391,6 +3391,65 @@ func TestOpenContextMenuOnCommittedToolGroupRowRightClick(t *testing.T) {
 	}
 }
 
+func TestOpenContextMenuOnMessageRightClick(t *testing.T) {
+	m := newTestModel(&fakeRuntime{}, nil)
+	m.Update(tea.WindowSizeMsg{Width: 80, Height: 24})
+	m.applySnapshot(tauchat.ChatSessionSnapshotEvent{State: tauchat.ChatSessionState{
+		Messages: []tauchat.ChatMessage{
+			{ID: "u1", Role: tauchat.ChatRoleUser, Content: "hello there"},
+		},
+	}})
+	m.View()
+
+	geom := m.computeLayout()
+	m.Update(tea.MouseClickMsg{Button: tea.MouseRight, Y: geom.viewportStartY})
+
+	if m.contextMenu == nil {
+		t.Fatal("expected right-click on a message to open a context menu")
+	}
+	if m.contextMenu.target != contextMenuTargetMessage || m.contextMenu.targetID != "u1" {
+		t.Fatalf("contextMenu = %+v, want target=contextMenuTargetMessage targetID=u1", m.contextMenu)
+	}
+	if len(m.contextMenu.items) != 1 || m.contextMenu.items[0].label != "Copy" {
+		t.Fatalf("items = %+v, want [Copy]", m.contextMenu.items)
+	}
+}
+
+func TestContextMenuCopyMessage(t *testing.T) {
+	m := newTestModel(&fakeRuntime{}, nil)
+	m.messageRanges = []messageLineRange{{id: "u1", content: "raw message text", startLine: 0, endLine: 1}}
+
+	cmd := m.activateMessageContextAction("u1", contextMenuActionCopy)
+	drainCmd(cmd)
+
+	if !strings.Contains(m.notification, "copied") {
+		t.Fatalf("expected a copied notification, got %q", m.notification)
+	}
+}
+
+func TestContextMenuMessageCopyUsesRawContentNotStyledLines(t *testing.T) {
+	m := newTestModel(&fakeRuntime{}, nil)
+	m.Update(tea.WindowSizeMsg{Width: 80, Height: 24})
+	m.applySnapshot(tauchat.ChatSessionSnapshotEvent{State: tauchat.ChatSessionState{
+		Messages: []tauchat.ChatMessage{
+			{ID: "a1", Role: tauchat.ChatRoleAssistant, Content: "**bold** markdown"},
+		},
+	}})
+
+	// renderedLines holds glamour-rendered (ANSI-styled) output, not the
+	// raw "**bold** markdown" — Copy must read messageRanges' stored raw
+	// content instead, the same reason lastAssistantText exists.
+	var content string
+	for _, r := range m.messageRanges {
+		if r.id == "a1" {
+			content = r.content
+		}
+	}
+	if content != "**bold** markdown" {
+		t.Fatalf("stored content = %q, want raw markdown %q", content, "**bold** markdown")
+	}
+}
+
 // TestCompositeContextMenuPreservesBaseContentOutsideMenu is a regression
 // test for a real bug: composing bare Layers directly onto a Canvas (rather
 // than through a Compositor) ignores each Layer's X/Y and draws every layer

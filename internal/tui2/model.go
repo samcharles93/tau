@@ -412,6 +412,7 @@ type toolBoxGeometry struct {
 // box-relative-to-absolute translation is needed in computeLayout.
 type messageLineRange struct {
 	id        string
+	content   string // raw (unstyled) message content, for Copy — renderedLines is lipgloss-styled, same reason lastAssistantText is kept separately
 	startLine int
 	endLine   int
 }
@@ -2235,7 +2236,7 @@ func (m *model) applySnapshot(e tauchat.ChatSessionSnapshotEvent) {
 				}
 			}
 			if msg.ID != "" {
-				m.messageRanges = append(m.messageRanges, messageLineRange{id: msg.ID, startLine: start, endLine: len(m.renderedLines)})
+				m.messageRanges = append(m.messageRanges, messageLineRange{id: msg.ID, content: msg.Content, startLine: start, endLine: len(m.renderedLines)})
 			}
 		case tauchat.ChatRoleAssistant:
 			if msg.Content != "" {
@@ -2245,7 +2246,7 @@ func (m *model) applySnapshot(e tauchat.ChatSessionSnapshotEvent) {
 				rendered := m.renderMarkdown(msg.Content)
 				m.renderedLines = append(m.renderedLines, strings.Split(rendered, "\n")...)
 				if msg.ID != "" {
-					m.messageRanges = append(m.messageRanges, messageLineRange{id: msg.ID, startLine: start, endLine: len(m.renderedLines)})
+					m.messageRanges = append(m.messageRanges, messageLineRange{id: msg.ID, content: msg.Content, startLine: start, endLine: len(m.renderedLines)})
 				}
 			}
 			for _, tc := range msg.ToolCalls {
@@ -2296,7 +2297,7 @@ func (m *model) finalizeResponse(id string) string {
 		rendered := m.renderMarkdown(content)
 		m.renderedLines = append(m.renderedLines, strings.Split(rendered, "\n")...)
 		if id != "" {
-			m.messageRanges = append(m.messageRanges, messageLineRange{id: id, startLine: start, endLine: len(m.renderedLines)})
+			m.messageRanges = append(m.messageRanges, messageLineRange{id: id, content: content, startLine: start, endLine: len(m.renderedLines)})
 		}
 		m.viewport.SetContentLines(m.renderedLines)
 	}
@@ -3871,10 +3872,26 @@ func (m *model) openContextMenuAt(x, y int) {
 			m.contextMenu = cm
 			return
 		}
-		// Message targets resolve here once messageAtRow is wired in.
+		if id, ok := m.messageAtRow(row); ok {
+			m.contextMenu = m.buildMessageContextMenu(id, x, y)
+			return
+		}
 		return
 	}
 	// input/status/empty space: no target, menu stays closed.
+}
+
+// buildMessageContextMenu builds a menu for a right-click on a chat message.
+func (m *model) buildMessageContextMenu(id string, x, y int) *contextMenu {
+	return &contextMenu{
+		target:   contextMenuTargetMessage,
+		targetID: id,
+		x:        x,
+		y:        y,
+		items: []contextMenuItem{
+			{label: "Copy", action: contextMenuActionCopy},
+		},
+	}
 }
 
 // buildLiveToolContextMenu builds a menu for a right-click on the live
@@ -4039,6 +4056,23 @@ func (m *model) activateContextMenuItem(item contextMenuItem) tea.Cmd {
 		return m.activateToolContextAction(cm.targetID, item.action)
 	case contextMenuTargetToolRow:
 		return m.activateToolRowContextAction(cm.targetID, item.action)
+	case contextMenuTargetMessage:
+		return m.activateMessageContextAction(cm.targetID, item.action)
+	}
+	return nil
+}
+
+// activateMessageContextAction performs action against the message
+// identified by id, looked up in messageRanges for its raw (unstyled)
+// content — Copy is currently the only message action.
+func (m *model) activateMessageContextAction(id string, action contextMenuAction) tea.Cmd {
+	if action != contextMenuActionCopy {
+		return nil
+	}
+	for _, r := range m.messageRanges {
+		if r.id == id {
+			return m.copyText(r.content)
+		}
 	}
 	return nil
 }
