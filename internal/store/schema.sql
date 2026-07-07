@@ -43,7 +43,9 @@ CREATE TABLE IF NOT EXISTS messages (
     tool_calls        TEXT    NOT NULL DEFAULT '',  -- JSON array, empty string if none
     tool_call_id      TEXT    NOT NULL DEFAULT '',
     created_at        TEXT    NOT NULL,  -- ISO 8601
+    client_id         TEXT    NOT NULL DEFAULT '',  -- stable app-assigned ChatMessage.ID (see chat.NewMessageID); '' for pre-migration rows
     UNIQUE(session_id, seq)
 );
 
 CREATE INDEX idx_messages_session ON messages(session_id, seq);
+CREATE INDEX idx_messages_client_id ON messages(session_id, client_id);

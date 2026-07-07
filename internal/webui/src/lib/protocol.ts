@@ -114,6 +114,7 @@ export interface ChatSessionState {
 }
 
 export interface ChatMessage {
+  id?: string
   role: 'system' | 'user' | 'assistant' | 'tool'
   content?: string
   reasoning_content?: string

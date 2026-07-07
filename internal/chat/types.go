@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/samcharles93/tau/internal/config"
 )
 
@@ -52,6 +53,14 @@ const (
 
 // ChatMessage is the canonical conversation item used for request history.
 type ChatMessage struct {
+	// ID identifies this message across the TUI, WebUI, and persisted
+	// storage — e.g. so a client can address a specific message (a
+	// right-click context menu action, a future edit/delete). It is empty
+	// for the transient system message synthesised in RequestMessages
+	// (never persisted or rendered) and for messages persisted before
+	// per-message IDs were tracked; callers must treat "" as "no stable
+	// identity available" rather than assuming it's always populated.
+	ID               string         `json:"id,omitempty"`
 	Role             ChatRole       `json:"role"`
 	Content          string         `json:"content,omitempty"`
 	ReasoningContent string         `json:"reasoning_content,omitempty"`
@@ -62,6 +71,16 @@ type ChatMessage struct {
 	// RequestMessages and for messages persisted before per-message
 	// timestamps were tracked (the store falls back to a synthesised time).
 	CreatedAt time.Time `json:"created_at,omitzero"`
+}
+
+// NewMessageID generates a UUIDv7 message ID, falling back to a
+// nanosecond-timestamp string if the random source fails — mirrors
+// internal/app's newID and internal/tui2's newRequestID.
+func NewMessageID() string {
+	if id, err := uuid.NewV7(); err == nil {
+		return id.String()
+	}
+	return fmt.Sprintf("msg-%d", time.Now().UnixNano())
 }
 
 func (m ChatMessage) Validate() error {
@@ -1056,7 +1075,7 @@ func (s *ChatSessionState) BeginTurn(requestID, prompt string, at time.Time) err
 	if prompt == "" {
 		return errors.New("prompt is required")
 	}
-	s.Messages = append(s.Messages, ChatMessage{Role: ChatRoleUser, Content: prompt, CreatedAt: normalizeChatTime(at)})
+	s.Messages = append(s.Messages, ChatMessage{ID: NewMessageID(), Role: ChatRoleUser, Content: prompt, CreatedAt: normalizeChatTime(at)})
 	s.Status = ChatSessionStreaming
 	s.ActiveRequestID = requestID
 	s.PendingAssistant = ""
@@ -1095,6 +1114,7 @@ func (s *ChatSessionState) AppendAssistantToolCallMessageWithReasoning(content, 
 		return errors.New("no active request")
 	}
 	s.Messages = append(s.Messages, ChatMessage{
+		ID:               NewMessageID(),
 		Role:             ChatRoleAssistant,
 		Content:          content,
 		ReasoningContent: reasoningContent,
@@ -1115,6 +1135,7 @@ func (s *ChatSessionState) AppendToolResultMessage(callID, content string, at ti
 		return errors.New("tool_call_id is required")
 	}
 	s.Messages = append(s.Messages, ChatMessage{
+		ID:         NewMessageID(),
 		Role:       ChatRoleTool,
 		Content:    content,
 		ToolCallID: callID,
@@ -1131,6 +1152,7 @@ func (s *ChatSessionState) AppendToolResultMessage(callID, content string, at ti
 // history for a later turn to see.
 func (s *ChatSessionState) AppendStandaloneMessage(role ChatRole, content string, at time.Time) error {
 	s.Messages = append(s.Messages, ChatMessage{
+		ID:        NewMessageID(),
 		Role:      role,
 		Content:   content,
 		CreatedAt: normalizeChatTime(at),
@@ -1172,6 +1194,7 @@ func (s *ChatSessionState) CompleteTurnWithReasoning(finishReason string, usage 
 	}
 	if strings.TrimSpace(s.PendingAssistant) != "" || reasoningContent != "" {
 		s.Messages = append(s.Messages, ChatMessage{
+			ID:               NewMessageID(),
 			Role:             ChatRoleAssistant,
 			Content:          s.PendingAssistant,
 			ReasoningContent: reasoningContent,

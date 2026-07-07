@@ -1041,6 +1041,7 @@ func (c *Coordinator) injectSteering(sessionID string) {
 
 	for _, prompt := range steers {
 		session.state.Messages = append(session.state.Messages, chat.ChatMessage{
+			ID:        chat.NewMessageID(),
 			Role:      chat.ChatRoleUser,
 			Content:   prompt,
 			CreatedAt: normalizedTime(time.Time{}),

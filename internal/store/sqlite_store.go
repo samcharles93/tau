@@ -120,8 +120,8 @@ func (s *SQLiteStore) Save(ctx context.Context, state chat.ChatSessionState, dur
 	}
 
 	ins, err := tx.PrepareContext(ctx, `
-		INSERT INTO messages (session_id, seq, role, content, reasoning_content, tool_calls, tool_call_id, created_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+		INSERT INTO messages (session_id, seq, role, content, reasoning_content, tool_calls, tool_call_id, created_at, client_id)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
 	`)
 	if err != nil {
 		return fmt.Errorf("store: prepare message insert: %w", err)
@@ -146,6 +146,7 @@ func (s *SQLiteStore) Save(ctx context.Context, state chat.ChatSessionState, dur
 			tcJSON,
 			msg.ToolCallID,
 			formatTime(msgTime),
+			msg.ID,
 		); err != nil {
 			return fmt.Errorf("store: insert message %d: %w", i, err)
 		}
@@ -181,7 +182,7 @@ func (s *SQLiteStore) Load(ctx context.Context, id string) (chat.ChatSessionStat
 	updatedAt, _ := time.Parse(time.RFC3339, row.updatedStr)
 
 	msgRows, err := s.db.QueryContext(ctx, `
-		SELECT seq, role, content, reasoning_content, tool_calls, tool_call_id, created_at
+		SELECT seq, role, content, reasoning_content, tool_calls, tool_call_id, created_at, client_id
 		FROM messages WHERE session_id = ? ORDER BY seq
 	`, id)
 	if err != nil {
@@ -192,15 +193,16 @@ func (s *SQLiteStore) Load(ctx context.Context, id string) (chat.ChatSessionStat
 	var messages []chat.ChatMessage
 	for msgRows.Next() {
 		var (
-			seq                                  int
-			role, content, reasoning             string
-			toolCallsJSON, toolCallID, createdAt string
+			seq                                            int
+			role, content, reasoning                       string
+			toolCallsJSON, toolCallID, createdAt, clientID string
 		)
-		if err := msgRows.Scan(&seq, &role, &content, &reasoning, &toolCallsJSON, &toolCallID, &createdAt); err != nil {
+		if err := msgRows.Scan(&seq, &role, &content, &reasoning, &toolCallsJSON, &toolCallID, &createdAt, &clientID); err != nil {
 			return chat.ChatSessionState{}, fmt.Errorf("store: scan message: %w", err)
 		}
 		msgCreatedAt, _ := time.Parse(time.RFC3339, createdAt)
 		msg := chat.ChatMessage{
+			ID:               clientID,
 			Role:             chat.ChatRole(role),
 			Content:          content,
 			ReasoningContent: reasoning,

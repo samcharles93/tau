@@ -136,6 +136,16 @@ components:
                         timestamps were tracked (the store falls back to a synthesised time).
                     format: date-time
                     type: string
+                id:
+                    description: |-
+                        ID identifies this message across the TUI, WebUI, and persisted
+                        storage — e.g. so a client can address a specific message (a
+                        right-click context menu action, a future edit/delete). It is empty
+                        for the transient system message synthesised in RequestMessages
+                        (never persisted or rendered) and for messages persisted before
+                        per-message IDs were tracked; callers must treat "" as "no stable
+                        identity available" rather than assuming it's always populated.
+                    type: string
                 reasoning_content:
                     type: string
                 role:

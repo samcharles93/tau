@@ -9,7 +9,7 @@ import (
 
 // currentSchemaVersion is the latest migration number. Bump this when adding
 // new migrations and append the SQL to the migrations map below.
-const currentSchemaVersion = 3
+const currentSchemaVersion = 4
 
 // Migrate runs all pending schema migrations in order. It is idempotent —
 // already-applied migrations are skipped.
@@ -29,6 +29,7 @@ func Migrate(db *sql.DB) error {
 		1: migrationV1,
 		2: migrationV2,
 		3: migrationV3,
+		4: migrationV4,
 	}
 
 	for v := current + 1; v <= currentSchemaVersion; v++ {
@@ -113,4 +114,15 @@ CREATE INDEX IF NOT EXISTS idx_sessions_parent ON sessions(parent_session_id);
 var migrationV3 = strings.TrimSpace(`
 ALTER TABLE sessions ADD COLUMN tool_calls INTEGER NOT NULL DEFAULT 0;
 ALTER TABLE sessions ADD COLUMN tool_errors INTEGER NOT NULL DEFAULT 0;
+`)
+
+// migrationV4 adds a stable, client-assigned message identity. The table's
+// existing `id INTEGER PRIMARY KEY AUTOINCREMENT` is not usable for this —
+// Save() deletes and re-inserts every message on every save, so that
+// autoincrement value is reassigned each time, not stable across saves.
+// client_id is a separate, application-generated string (see
+// chat.NewMessageID) that round-trips unchanged.
+var migrationV4 = strings.TrimSpace(`
+ALTER TABLE messages ADD COLUMN client_id TEXT NOT NULL DEFAULT '';
+CREATE INDEX IF NOT EXISTS idx_messages_client_id ON messages(session_id, client_id);
 `)
