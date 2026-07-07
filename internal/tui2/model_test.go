@@ -699,12 +699,107 @@ func TestHandleChatEventResponseCompletedToolOnly(t *testing.T) {
 
 	m.handleChatEvent(tauchat.ChatResponseCompletedEvent{})
 
-	// Should synthesize a placeholder.
-	if m.lastAssistantText == "" {
-		t.Fatal("expected placeholder text for tool-only response")
+	// A tool-only turn has no real assistant prose, so lastAssistantText
+	// (used by /copy) stays empty rather than holding a synthetic
+	// placeholder — but the tool call itself must still land in scrollback.
+	if m.lastAssistantText != "" {
+		t.Fatalf("lastAssistantText = %q, want empty for a tool-only turn", m.lastAssistantText)
 	}
-	if !strings.Contains(m.lastAssistantText, "search") {
-		t.Fatalf("placeholder = %q, should mention tool name", m.lastAssistantText)
+	if len(m.tools) != 0 {
+		t.Fatalf("expected the tool-only batch to be committed, m.tools still has %d entries", len(m.tools))
+	}
+	joined := stripANSI(strings.Join(m.renderedLines, "\n"))
+	if !strings.Contains(joined, "search") {
+		t.Fatalf("expected the tool call to be committed to scrollback, got %q", joined)
+	}
+}
+
+// TestToolCallDoesNotReorderAheadOfPrecedingText guards against a real bug:
+// commentary text the model streamed BEFORE calling a tool was rendering
+// AFTER the tool's box once it committed — because renderedLines (baked
+// history) always rendered ahead of the live m.streaming buffer, a
+// just-committed tool box would visually "jump" above text that
+// chronologically came first. upsertToolCall now flushes pending streaming
+// text into scrollback the moment a new tool call starts.
+func TestToolCallDoesNotReorderAheadOfPrecedingText(t *testing.T) {
+	m := newTestModel(&fakeRuntime{}, nil)
+	m.width = 80
+
+	m.handleChatEvent(tauchat.ChatResponseStartedEvent{})
+	m.handleChatEvent(tauchat.ChatResponseDeltaEvent{Delta: "I'll investigate the workspace."})
+	m.handleChatEvent(tauchat.ChatToolCallDeltaEvent{CallID: "t1", ToolName: "read"})
+
+	if m.streaming != "" {
+		t.Fatalf("streaming = %q, want flushed to empty once a tool call starts", m.streaming)
+	}
+	joined := stripANSI(strings.Join(m.renderedLines, "\n"))
+	if !strings.Contains(joined, "investigate the workspace") {
+		t.Fatalf("expected preceding text in scrollback, got %q", joined)
+	}
+	if len(m.tools) != 1 || m.tools[0].id != "t1" {
+		t.Fatalf("expected the tool call to still be live (not yet committed), got %+v", m.tools)
+	}
+}
+
+// TestManyToolCallsCommitAsOneGroup guards against a real bug: a turn with
+// many sequential/parallel tool calls committed one box per tool into
+// permanent scrollback, so a turn with 100+ tool calls could bury the
+// assistant text right before or after it. Multiple tool calls uninterrupted
+// by text must collapse into one compact summary once committed.
+func TestManyToolCallsCommitAsOneGroup(t *testing.T) {
+	m := newTestModel(&fakeRuntime{}, nil)
+	m.width = 80
+
+	m.handleChatEvent(tauchat.ChatResponseStartedEvent{})
+	for i := range 8 {
+		id := fmt.Sprintf("t%d", i)
+		m.handleChatEvent(tauchat.ChatToolCallDeltaEvent{CallID: id, ToolName: "read"})
+		m.handleChatEvent(tauchat.ChatToolExecutionCompletedEvent{CallID: id})
+	}
+	// Text resumes after the batch — this is the boundary that commits it.
+	m.handleChatEvent(tauchat.ChatResponseDeltaEvent{Delta: "Done reading."})
+	m.handleChatEvent(tauchat.ChatResponseCompletedEvent{})
+
+	if len(m.tools) != 0 {
+		t.Fatalf("expected the batch to be committed and cleared, m.tools has %d entries", len(m.tools))
+	}
+	groupLines := 0
+	for _, line := range m.renderedLines {
+		if strings.Contains(stripANSI(line), "8 tool calls") {
+			groupLines++
+		}
+	}
+	if groupLines != 1 {
+		t.Fatalf("expected exactly one compact '8 tool calls' summary line, found %d in %v", groupLines, m.renderedLines)
+	}
+}
+
+// TestScrollUpDuringResponseIsNotUndoneByRender guards against a real bug:
+// computeLayout forced the viewport back to the bottom on every render while
+// m.inResponse was true, so a manual scroll-up made during a live turn got
+// stomped by the very next tick-driven re-render — the user couldn't scroll
+// at all while the agent was working.
+func TestScrollUpDuringResponseIsNotUndoneByRender(t *testing.T) {
+	m := newTestModel(&fakeRuntime{}, nil)
+	m.Update(tea.WindowSizeMsg{Width: 80, Height: 24})
+	for i := 1; i <= 60; i++ {
+		m.appendMessage("user", fmt.Sprintf("line %02d", i))
+	}
+	m.inResponse = true
+	m.View()
+
+	m.Update(tea.MouseWheelMsg{Button: tea.MouseWheelUp, X: 5, Y: 5})
+	offsetAfterScroll := m.viewport.YOffset()
+	if offsetAfterScroll <= 0 {
+		t.Fatalf("expected wheel-up to move the viewport, offset stayed at %d", offsetAfterScroll)
+	}
+
+	// Simulate the next tick-driven re-render that happens continuously
+	// while a response streams in.
+	m.View()
+
+	if got := m.viewport.YOffset(); got != offsetAfterScroll {
+		t.Fatalf("YOffset = %d, want manual scroll preserved at %d during an in-flight response", got, offsetAfterScroll)
 	}
 }
 
@@ -2125,6 +2220,104 @@ func TestApplySnapshotUpdatesStaleSessionID(t *testing.T) {
 	}
 }
 
+// TestApplySnapshotRendersAssistantMarkdown guards against a real bug: a
+// ChatSessionSnapshotEvent fires routinely (not just on session load), and
+// applySnapshot used to rebuild renderedLines straight from raw message
+// content instead of routing assistant text through the glamour renderer.
+// The visible symptom was a finalized, nicely-rendered response reverting to
+// literal "**bold**"/"| table |" markdown text the next time a snapshot
+// arrived (e.g. right after submitting the next prompt).
+func TestApplySnapshotRendersAssistantMarkdown(t *testing.T) {
+	m := newTestModel(&fakeRuntime{}, nil)
+	m.width = 80 // newModel pre-populates the glamour cache for width 80
+
+	m.applySnapshot(tauchat.ChatSessionSnapshotEvent{
+		State: tauchat.ChatSessionState{
+			Messages: []tauchat.ChatMessage{
+				{Role: tauchat.ChatRoleAssistant, Content: "**bold text**"},
+			},
+		},
+	})
+
+	joined := strings.Join(m.renderedLines, "\n")
+	if strings.Contains(joined, "**bold text**") {
+		t.Fatalf("assistant markdown was not glamour-rendered, got raw content: %q", joined)
+	}
+	if !strings.Contains(stripANSI(joined), "bold text") {
+		t.Fatalf("expected rendered output to still contain the text, got %q", stripANSI(joined))
+	}
+}
+
+// TestApplySnapshotPreservesToolCalls guards against a real bug: a
+// ChatRoleTool message fell into applySnapshot's default/continue branch,
+// so every past tool call silently vanished from the viewport the next time
+// a snapshot rebuilt it (e.g. right after submitting the next prompt) —
+// the same routine-snapshot hazard as the markdown-reverting bug above.
+func TestApplySnapshotPreservesToolCalls(t *testing.T) {
+	m := newTestModel(&fakeRuntime{}, nil)
+	m.width = 80
+
+	m.applySnapshot(tauchat.ChatSessionSnapshotEvent{
+		State: tauchat.ChatSessionState{
+			Messages: []tauchat.ChatMessage{
+				{Role: tauchat.ChatRoleUser, Content: "list files"},
+				{
+					Role: tauchat.ChatRoleAssistant,
+					ToolCalls: []tauchat.ChatToolCall{
+						{ID: "call-1", Function: tauchat.ChatFunctionCall{Name: "ls", Arguments: `{"path":"."}`}},
+					},
+				},
+				{Role: tauchat.ChatRoleTool, ToolCallID: "call-1", Content: "a.go\nb.go"},
+			},
+		},
+	})
+
+	joined := stripANSI(strings.Join(m.renderedLines, "\n"))
+	if !strings.Contains(joined, "ls") {
+		t.Fatalf("expected replayed tool box to show tool name %q, got %q", "ls", joined)
+	}
+	if !strings.Contains(joined, "a.go") {
+		t.Fatalf("expected replayed tool box to show its result, got %q", joined)
+	}
+}
+
+// TestApplySnapshotGroupsConsecutiveToolCalls mirrors
+// TestManyToolCallsCommitAsOneGroup but for the session-history replay path
+// (applySnapshot) — a saved session with a burst of tool calls must replay
+// as one compact group too, not one box per call.
+func TestApplySnapshotGroupsConsecutiveToolCalls(t *testing.T) {
+	m := newTestModel(&fakeRuntime{}, nil)
+	m.width = 80
+
+	messages := []tauchat.ChatMessage{
+		{
+			Role: tauchat.ChatRoleAssistant,
+			ToolCalls: []tauchat.ChatToolCall{
+				{ID: "call-1", Function: tauchat.ChatFunctionCall{Name: "read"}},
+				{ID: "call-2", Function: tauchat.ChatFunctionCall{Name: "read"}},
+				{ID: "call-3", Function: tauchat.ChatFunctionCall{Name: "read"}},
+			},
+		},
+		{Role: tauchat.ChatRoleTool, ToolCallID: "call-1", Content: "a"},
+		{Role: tauchat.ChatRoleTool, ToolCallID: "call-2", Content: "b"},
+		{Role: tauchat.ChatRoleTool, ToolCallID: "call-3", Content: "c"},
+	}
+
+	m.applySnapshot(tauchat.ChatSessionSnapshotEvent{
+		State: tauchat.ChatSessionState{Messages: messages},
+	})
+
+	groupLines := 0
+	for _, line := range m.renderedLines {
+		if strings.Contains(stripANSI(line), "3 tool calls") {
+			groupLines++
+		}
+	}
+	if groupLines != 1 {
+		t.Fatalf("expected exactly one compact '3 tool calls' summary line, found %d in %v", groupLines, m.renderedLines)
+	}
+}
+
 func TestApplySnapshotEmptySessionIDKeepsCurrent(t *testing.T) {
 	m := newTestModel(&fakeRuntime{}, nil)
 	m.sessionID = "keep-me"
@@ -2367,7 +2560,10 @@ func TestViewPreservesIdleManualScrollback(t *testing.T) {
 		m.appendMessage("user", fmt.Sprintf("line %02d", i))
 	}
 	m.View()
-	m.viewport.ScrollUp(10)
+	// Scroll via the real key path (not m.viewport.ScrollUp directly) so
+	// autoFollow — which now gates GotoBottom instead of inResponse/
+	// PastBottom — actually clears, matching what a real manual scroll does.
+	m.dispatchKey(tea.KeyPressMsg{Code: tea.KeyPgUp})
 	offset := m.viewport.YOffset()
 
 	view := m.View()
@@ -2404,15 +2600,82 @@ func TestViewClampsIdleViewportAfterChromeShrinks(t *testing.T) {
 	}
 }
 
-func TestViewKeepsMouseTrackingDisabledForSelection(t *testing.T) {
+func TestViewEnablesMouseTracking(t *testing.T) {
 	m := newTestModel(&fakeRuntime{}, nil)
 	m.Update(tea.WindowSizeMsg{Width: 80, Height: 24})
 	m.appendMessage("user", "hello")
 
 	view := m.View()
 
-	if view.MouseMode != tea.MouseModeNone {
-		t.Fatalf("MouseMode = %v, want MouseModeNone", view.MouseMode)
+	if view.MouseMode != tea.MouseModeCellMotion {
+		t.Fatalf("MouseMode = %v, want MouseModeCellMotion", view.MouseMode)
+	}
+}
+
+func TestMouseWheelScrollsViewport(t *testing.T) {
+	m := newTestModel(&fakeRuntime{}, nil)
+	m.Update(tea.WindowSizeMsg{Width: 80, Height: 24})
+	for i := 1; i <= 40; i++ {
+		m.appendMessage("user", fmt.Sprintf("line %02d", i))
+	}
+	m.View()
+	m.viewport.GotoBottom()
+
+	m.Update(tea.MouseWheelMsg{Button: tea.MouseWheelUp, X: 10, Y: 5})
+
+	if m.viewport.YOffset() <= 0 {
+		t.Fatalf("expected viewport to scroll up on wheel-up, offset stayed at %d", m.viewport.YOffset())
+	}
+}
+
+func TestMouseClickFocusesAndExpandsTool(t *testing.T) {
+	m := newTestModel(&fakeRuntime{}, nil)
+	m.Update(tea.WindowSizeMsg{Width: 80, Height: 24})
+	m.tools = []toolState{
+		{id: "t1", name: "read", status: "done"},
+		{id: "t2", name: "search", status: "done"},
+	}
+
+	geom := m.computeLayout()
+	if len(geom.toolBoxes) != 2 {
+		t.Fatalf("toolBoxes = %d, want 2", len(geom.toolBoxes))
+	}
+
+	m.Update(tea.MouseClickMsg{Button: tea.MouseLeft, Y: geom.toolBoxes[0].startY})
+
+	if m.focusedTool != 0 {
+		t.Fatalf("focusedTool = %d, want 0", m.focusedTool)
+	}
+	if m.expandedID != "t1" {
+		t.Fatalf("expandedID = %q, want t1", m.expandedID)
+	}
+
+	// Clicking the same box again collapses it.
+	m.Update(tea.MouseClickMsg{Button: tea.MouseLeft, Y: geom.toolBoxes[0].startY})
+	if m.expandedID != "" {
+		t.Fatalf("expandedID = %q, want empty after second click", m.expandedID)
+	}
+
+	// Clicking inside the viewport (above the tool boxes) clears focus.
+	m.Update(tea.MouseClickMsg{Button: tea.MouseLeft, Y: geom.viewportStartY})
+	if m.focusedTool != -1 {
+		t.Fatalf("focusedTool = %d, want -1 after clicking viewport", m.focusedTool)
+	}
+}
+
+func TestSpaceTogglesToolExpansion(t *testing.T) {
+	m := newTestModel(&fakeRuntime{}, nil)
+	m.tools = []toolState{{id: "t1", name: "read", status: "done"}}
+	m.focusedTool = 0
+
+	m.dispatchKey(tea.KeyPressMsg{Code: tea.KeySpace, Text: " "})
+	if m.expandedID != "t1" {
+		t.Fatalf("expandedID = %q, want t1", m.expandedID)
+	}
+
+	m.dispatchKey(tea.KeyPressMsg{Code: tea.KeySpace, Text: " "})
+	if m.expandedID != "" {
+		t.Fatalf("expandedID should collapse on second space, got %q", m.expandedID)
 	}
 }
 
@@ -2627,7 +2890,7 @@ func TestRenderInputAreaWrapsCursorOntoContinuationLine(t *testing.T) {
 	if !strings.Contains(plain, "  op") {
 		t.Fatalf("expected wrapped continuation line with cursor cell, got:\n%s", plain)
 	}
-	for _, line := range strings.Split(plain, "\n") {
+	for line := range strings.SplitSeq(plain, "\n") {
 		if visibleWidth(line) > m.width {
 			t.Fatalf("input line width = %d, want <= %d: %q\n%s", visibleWidth(line), m.width, line, plain)
 		}

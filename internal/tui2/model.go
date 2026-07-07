@@ -68,12 +68,6 @@ type model struct {
 	// ReportFocus support) doesn't spuriously suppress notifications.
 	focused bool
 
-	// mouseClick{X,Y} records the last left-click coordinates for tool-box
-	// hit-testing; Worker 2 consumes these during View rendering to decide
-	// which tool row needs an expansion or selection highlight.
-	mouseClickX int
-	mouseClickY int
-
 	// Completion dropdown state. compToken is the last token the dropdown was
 	// computed against — when it changes (the user typed/deleted a
 	// character), compSelected resets to the top-ranked match rather than
@@ -158,10 +152,15 @@ type model struct {
 	bashRunning bool
 	bashCallID  string
 
-	// Phase 1: tool focus/expansion navigation.
+	// Phase 1: tool focus/expansion navigation (keyboard and mouse).
 	focusedTool int    // index into m.tools for keyboard nav (-1 = none)
 	expandedID  string // tool ID currently expanded ("" = none)
-	lastClickY  int    // Y coordinate of last mouse click for hit-testing
+
+	// autoFollow keeps the viewport pinned to the bottom as new content
+	// arrives. Cleared when the user scrolls up (they want to read
+	// history), and restored once they scroll back to the bottom or submit
+	// a new prompt.
+	autoFollow bool
 }
 
 type toolState struct {
@@ -177,19 +176,40 @@ type toolState struct {
 	startedAt time.Time
 	elapsed   time.Duration
 
-	// Phase 1: live output streaming, per-tool spinner, hold-before-commit,
-	// and expand/collapse interaction.
-	tailLines  []string  // live output streaming, max tailCap lines
-	tailCap    int       // max tail lines to show (default 6)
-	holdUntil  time.Time // when to move this completed tool to viewport (zero = not holding)
-	spinnerIdx int       // per-tool spinner animation frame (bumped on tickMsg)
-	expanded   bool      // user has clicked Enter to expand this tool
+	// Phase 1: live output streaming, per-tool spinner, and expand/collapse
+	// interaction.
+	tailLines  []string // live output streaming, max tailCap lines
+	tailCap    int      // max tail lines to show (default 6)
+	spinnerIdx int      // per-tool spinner animation frame (bumped on tickMsg)
+	expanded   bool     // user has clicked Enter to expand this tool
 }
 
 type pluginPanel struct {
 	id      string
 	title   string
 	content string
+}
+
+// layoutGeometry records where interactive regions land in the final
+// rendered view. computeLayout is the single source of truth for both
+// View()'s rendering and handleMouseClick's hit-testing, so the two can
+// never drift apart.
+type layoutGeometry struct {
+	chromeStr   string
+	panelSepStr string
+	topPadding  int
+
+	viewportStartY int
+	viewportEndY   int
+	toolBoxes      []toolBoxGeometry
+}
+
+// toolBoxGeometry is the inclusive [startY, endY] row range (0-based, in
+// final rendered-view coordinates) that a tool box occupies.
+type toolBoxGeometry struct {
+	id     string
+	startY int
+	endY   int
 }
 
 // --- constructor -----------------------------------------------------------
@@ -227,6 +247,7 @@ func newModel(
 		historyIdx:        -1,
 		focused:           true,
 		focusedTool:       -1,
+		autoFollow:        true,
 		availableModels:   availableModels,
 		refresh:           refresh,
 		showReasoning:     showReasoning,
@@ -292,12 +313,15 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		switch mev.Button {
 		case tea.MouseWheelUp:
 			m.viewport.ScrollUp(3)
+			m.autoFollow = false
 		case tea.MouseWheelDown:
 			m.viewport.ScrollDown(3)
+			if m.viewport.AtBottom() {
+				m.autoFollow = true
+			}
 		case tea.MouseLeft:
 			if _, ok := msg.(tea.MouseClickMsg); ok {
-				m.mouseClickX = mev.X
-				m.mouseClickY = mev.Y
+				m.handleMouseClick(mev.Y)
 			}
 		}
 		return m, nil
@@ -390,9 +414,7 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.tools[i].spinnerIdx++
 			}
 		}
-		// Phase 1: commit completed tools to viewport after hold-state expires.
-		m.commitExpiredTools()
-		if m.inResponse || m.hasHoldingTools() {
+		if m.inResponse {
 			return m, spinTick()
 		}
 		return m, nil
@@ -409,12 +431,42 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 }
 
 func (m *model) View() tea.View {
-	_ = m.lastClickY // reserved for future mouse hit-testing (Phase 1)
-	var sb strings.Builder
+	geom := m.computeLayout()
 
-	// Pre-render non-viewport segments so we can measure their exact heights.
-	// The viewport keeps the main pane, while the input block and status bar
-	// stay anchored at the bottom of the alt-screen.
+	var sb strings.Builder
+	if geom.panelSepStr != "" {
+		sb.WriteString(geom.panelSepStr)
+	}
+	if geom.topPadding > 0 {
+		sb.WriteString(strings.Repeat("\n", geom.topPadding))
+	}
+	sb.WriteString(m.viewport.View())
+	sb.WriteString("\n")
+	sb.WriteString(geom.chromeStr)
+
+	v := tea.NewView(sb.String())
+	// AltScreen owns the full terminal so we can use guaranteed screen real
+	// estate for tool boxes, expansion panels, and flicker-free output.
+	v.AltScreen = true
+	// Requests terminal focus reporting so we only fire a desktop
+	// notification (see handleChatEvent's ChatResponseCompletedEvent case)
+	// when the user has actually looked away — matches the legacy
+	// engine.Focused() gate in internal/tui/inline_events.go.
+	v.ReportFocus = true
+	// CellMotion enables click, release, and wheel events (plus drag) without
+	// the constant hover-motion stream AllMotion would add, and is better
+	// supported across terminals — all we need for scroll + click-to-expand.
+	v.MouseMode = tea.MouseModeCellMotion
+	return v
+}
+
+// computeLayout renders every non-viewport UI region, decides how much
+// vertical space the viewport gets, and records the on-screen row range of
+// each tool box. It is called once by View() (for rendering) and again by
+// handleMouseClick (for hit-testing) — keeping both derived from the same
+// function is what guarantees they never disagree.
+func (m *model) computeLayout() layoutGeometry {
+	var g layoutGeometry
 
 	// 1. Plugin panel.
 	var activePanelStr string
@@ -434,19 +486,11 @@ func (m *model) View() tea.View {
 	viewportLines := m.viewportLinesForView(visibleReasoning)
 	m.viewport.SetContentLines(viewportLines)
 
-	// 3. Tool calls.
-	var toolsStr string
-	if len(m.tools) > 0 {
-		toolBoxes := make([]string, len(m.tools))
-		for i, t := range m.tools {
-			expanded := m.expandedID != "" && m.expandedID == t.id
-			if expanded {
-				m.focusedTool = i
-			}
-			toolBoxes[i] = m.renderToolBox(t, expanded, len(m.tools))
-		}
-		toolsStr = strings.Join(toolBoxes, "\n\n")
-	}
+	// 3. Live tool-call group (uncommitted — see flushToolGroup). Rendered as
+	// one box: a lone tool keeps its full box, multiple concurrent/sequential
+	// calls render as a single group so a long tool-calling burst doesn't
+	// grow unbounded on screen while it's still running.
+	toolsStr, toolRows := m.renderToolGroup()
 
 	// 4. Interactive prompt (modal).
 	var promptStr string
@@ -520,35 +564,34 @@ func (m *model) View() tea.View {
 	viewportHeight := min(contentHeight, availableHeight)
 	topPadding := availableHeight - viewportHeight
 	m.viewport.SetHeight(viewportHeight)
-	if m.inResponse || m.viewport.PastBottom() {
+	if m.autoFollow {
 		m.viewport.GotoBottom()
 	}
 
-	// 12. Assemble final view in strict top-to-bottom layout order.
+	// 12. Record geometry in final rendered-view coordinates.
+	g.chromeStr = chromeStr
+	g.panelSepStr = panelSepStr
+	g.topPadding = topPadding
+
+	row := 0
 	if panelSepStr != "" {
-		sb.WriteString(panelSepStr)
+		row += visualLineCount(panelSepStr)
 	}
 	if topPadding > 0 {
-		sb.WriteString(strings.Repeat("\n", topPadding))
+		row += topPadding
 	}
-	sb.WriteString(m.viewport.View())
-	sb.WriteString("\n")
-	sb.WriteString(chromeStr)
+	g.viewportStartY = row
+	g.viewportEndY = g.viewportStartY + viewportHeight - 1
 
-	v := tea.NewView(sb.String())
-	// AltScreen owns the full terminal so we can use guaranteed screen real
-	// estate for tool boxes, expansion panels, and flicker-free output.
-	v.AltScreen = true
-	// Requests terminal focus reporting so we only fire a desktop
-	// notification (see handleChatEvent's ChatResponseCompletedEvent case)
-	// when the user has actually looked away — matches the legacy
-	// engine.Focused() gate in internal/tui/inline_events.go.
-	v.ReportFocus = true
-	// Keep terminal-native text selection available. Bubble Tea's mouse modes
-	// are global terminal tracking modes, so enabling wheel events also claims
-	// normal drag selection.
-	v.MouseMode = tea.MouseModeNone
-	return v
+	row = g.viewportEndY + 1 // "\n" boundary between viewport and chrome
+	if toolsStr != "" {
+		g.toolBoxes = make([]toolBoxGeometry, len(toolRows))
+		for i, tr := range toolRows {
+			g.toolBoxes[i] = toolBoxGeometry{id: tr.id, startY: row + tr.startY, endY: row + tr.endY}
+		}
+	}
+
+	return g
 }
 
 // --- key handling ----------------------------------------------------------
@@ -610,10 +653,14 @@ func (m *model) dispatchKey(msg tea.KeyPressMsg) tea.Cmd {
 
 	case "pgup":
 		m.viewport.HalfPageUp()
+		m.autoFollow = false
 		return nil
 
 	case "pgdown":
 		m.viewport.HalfPageDown()
+		if m.viewport.AtBottom() {
+			m.autoFollow = true
+		}
 		return nil
 
 	case "ctrl+l":
@@ -724,6 +771,15 @@ func (m *model) dispatchKey(msg tea.KeyPressMsg) tea.Cmd {
 		}
 		return m.submitInput()
 
+	case "space":
+		// Space also toggles expansion on a focused tool; otherwise it's a
+		// normal printable character handled by the default case below.
+		if m.focusedTool >= 0 && m.input == "" && !m.inResponse && m.activePrompt == nil {
+			return m.toggleToolExpansion()
+		}
+		m.insertAtCursor(" ")
+		return nil
+
 	case "backspace":
 		m.backspaceAtCursor()
 		return nil
@@ -761,6 +817,7 @@ func (m *model) clearInput() {
 func (m *model) clearScreen() {
 	m.renderedLines = m.renderedLines[:0]
 	m.viewport.SetContentLines(m.renderedLines)
+	m.autoFollow = true
 	m.viewport.GotoBottom()
 }
 
@@ -1267,7 +1324,9 @@ func (m *model) startOrQueueTurn(text string) tea.Cmd {
 		return m.setNotification("queued — will send after current response")
 	}
 
-	// Record the user message locally for immediate display.
+	// Record the user message locally for immediate display. Submitting a
+	// prompt always means "show me what happens next" — resume following.
+	m.autoFollow = true
 	m.appendMessage("user", text)
 	m.inResponse = true
 	m.steering = false
@@ -1344,6 +1403,7 @@ func (m *model) handleBashCommand(trimmed string) tea.Cmd {
 	callID := "bash-" + newRequestID()
 	m.bashRunning = true
 	m.bashCallID = callID
+	m.autoFollow = true
 	m.appendMessage("user", trimmed)
 	return sendBashCommand(m.runtime, tauchat.RunBashCommand{
 		SessionID:   m.sessionID,
@@ -1434,6 +1494,13 @@ func (m *model) handleChatEvent(evt tauchat.ChatEvent) tea.Cmd {
 		return spinTick()
 
 	case tauchat.ChatResponseDeltaEvent:
+		// New text after a tool-calling batch means that batch is over —
+		// commit it now so it lands in scrollback before (not after) this
+		// text, and so the live tool-call box doesn't linger below text that
+		// chronologically comes after it.
+		if len(m.tools) > 0 {
+			m.flushToolGroup()
+		}
 		m.streaming += e.Delta
 
 	case tauchat.ChatReasoningDeltaEvent:
@@ -1455,8 +1522,6 @@ func (m *model) handleChatEvent(evt tauchat.ChatEvent) tea.Cmd {
 		if e.ResultSummary != "" {
 			m.finalizeToolResult(e.CallID, e.ResultSummary)
 		}
-		// Phase 1: start the 450ms hold-state before committing to viewport.
-		m.setToolHoldUntil(e.CallID, time.Now().Add(450*time.Millisecond))
 		if m.bashCallID != "" && e.CallID == m.bashCallID {
 			m.bashRunning = false
 			m.bashCallID = ""
@@ -1611,49 +1676,85 @@ func (m *model) applySnapshot(e tauchat.ChatSessionSnapshotEvent) {
 	// error text here — errors go through m.notification.
 	m.statusText = fmt.Sprintf("%s @ %s", m.modelName, m.provider)
 
-	// Rebuild viewport content from session history.
+	// Rebuild viewport content from session history. Snapshots arrive
+	// routinely (not just on session load/resume) — e.g. after every
+	// submitted prompt — so this must reproduce finalizeResponse's/
+	// flushToolGroup's rendering exactly, or an already-committed message
+	// reverts to raw/unbatched form the next time a snapshot rebuilds the
+	// viewport.
+	//
+	// toolCallsByID tracks each assistant tool_call's name/arguments so a
+	// later ChatRoleTool message (which only carries the call's ID and
+	// result) can be rendered as a real tool call instead of being dropped —
+	// history has no per-call elapsed time or error flag, so replayed calls
+	// always show status "done" with no timing. pendingTools batches a run of
+	// consecutive tool results (uninterrupted by user/assistant text) so a
+	// turn with many tool calls renders as one compact group instead of
+	// burying the surrounding conversation.
+	toolCallsByID := map[string]tauchat.ChatToolCall{}
+	var pendingTools []toolState
+	flushPendingTools := func() {
+		if len(pendingTools) == 0 {
+			return
+		}
+		box := m.renderCommittedTools(pendingTools)
+		m.renderedLines = append(m.renderedLines, strings.Split(box, "\n")...)
+		pendingTools = nil
+	}
+
 	m.renderedLines = m.renderedLines[:0]
 	for _, msg := range state.Messages {
-		role := ""
 		switch msg.Role {
 		case tauchat.ChatRoleUser:
-			role = "user"
+			flushPendingTools()
+			lines := strings.Split(msg.Content, "\n")
+			for i, l := range lines {
+				if i == 0 {
+					m.renderedLines = append(m.renderedLines, renderLine("user", l))
+				} else {
+					m.renderedLines = append(m.renderedLines, renderContinuationLine("user", l))
+				}
+			}
 		case tauchat.ChatRoleAssistant:
-			role = "assistant"
-			m.lastAssistantText = msg.Content
+			if msg.Content != "" {
+				flushPendingTools()
+				m.lastAssistantText = msg.Content
+				rendered := m.renderMarkdown(msg.Content)
+				m.renderedLines = append(m.renderedLines, strings.Split(rendered, "\n")...)
+			}
+			for _, tc := range msg.ToolCalls {
+				toolCallsByID[tc.ID] = tc
+			}
+		case tauchat.ChatRoleTool:
+			tc := toolCallsByID[msg.ToolCallID]
+			pendingTools = append(pendingTools, toolState{
+				id:     msg.ToolCallID,
+				name:   tc.Function.Name,
+				args:   tc.Function.Arguments,
+				result: msg.Content,
+				status: "done",
+			})
 		default:
 			continue
 		}
-		lines := strings.Split(msg.Content, "\n")
-		for i, l := range lines {
-			if i == 0 {
-				m.renderedLines = append(m.renderedLines, renderLine(role, l))
-			} else {
-				m.renderedLines = append(m.renderedLines, renderContinuationLine(role, l))
-			}
-		}
 	}
+	flushPendingTools()
 	m.viewport.SetContentLines(m.renderedLines)
-	m.viewport.GotoBottom()
 }
 
-// N7: finalizeResponse synthesises a placeholder when a turn consisted
-// purely of tool calls with no trailing assistant text, so the user sees a
-// trace of what happened instead of nothing.
 // finalizeResponse returns the finalized assistant text (empty if none) so
 // the caller can decide whether to fire a desktop notification.
 func (m *model) finalizeResponse() string {
-	hadTools := len(m.tools) > 0
+	// A turn that ends purely on tool calls (no trailing text) still needs
+	// its tools committed to scrollback — flushToolGroup renders the real
+	// group instead of a synthetic placeholder, so the user sees exactly
+	// what ran.
+	if len(m.tools) > 0 {
+		m.flushToolGroup()
+	}
 	content := m.streaming
 	if m.reasoning != "" && content == "" {
 		content = "[reasoning only]"
-	}
-	if content == "" && hadTools {
-		var names []string
-		for _, t := range m.tools {
-			names = append(names, t.name)
-		}
-		content = fmt.Sprintf("[tools: %s]", strings.Join(names, ", "))
 	}
 	if content != "" {
 		// Store raw markdown for /copy before glamour renders it.
@@ -1664,7 +1765,6 @@ func (m *model) finalizeResponse() string {
 		rendered := m.renderMarkdown(content)
 		m.renderedLines = append(m.renderedLines, strings.Split(rendered, "\n")...)
 		m.viewport.SetContentLines(m.renderedLines)
-		m.viewport.GotoBottom()
 	}
 	m.streaming = ""
 	m.reasoning = ""
@@ -1722,6 +1822,11 @@ func (m *model) upsertToolCall(callID, toolName, argumentsSummary string) {
 			return
 		}
 	}
+	// This tool call is new — any streaming/reasoning text accumulated so
+	// far was authored before it started, so commit it now (see
+	// flushStreamingText) rather than let it render after the tool group
+	// that chronologically follows it.
+	m.flushStreamingText()
 	m.tools = append(m.tools, toolState{
 		id:        callID,
 		name:      toolName,
@@ -1797,58 +1902,80 @@ func (m *model) appendToolTail(id, chunk string) {
 	}
 }
 
-// setToolHoldUntil sets the hold-until time for a completed tool (Phase 1).
-func (m *model) setToolHoldUntil(id string, until time.Time) {
-	for i := range m.tools {
-		if m.tools[i].id == id {
-			m.tools[i].holdUntil = until
-			return
-		}
+// flushStreamingText commits any accumulated streaming text to scrollback
+// without ending the turn. Called right before a new tool call starts: that
+// text was authored before the call, so it must land in history now —
+// otherwise the tool call/group that commits later (flushToolGroup) would
+// render ahead of text that chronologically came first. Reasoning is
+// discarded rather than persisted, matching finalizeResponse.
+func (m *model) flushStreamingText() {
+	if m.streaming != "" {
+		rendered := m.renderMarkdown(m.streaming)
+		m.renderedLines = append(m.renderedLines, strings.Split(rendered, "\n")...)
+		m.viewport.SetContentLines(m.renderedLines)
 	}
+	m.streaming = ""
+	m.reasoning = ""
 }
 
-// findToolIndex returns the index of the tool with the given id, or -1.
-func (m *model) findToolIndex(id string) int {
-	for i := range m.tools {
-		if m.tools[i].id == id {
-			return i
-		}
+// flushToolGroup commits the current live tool-call batch to scrollback as
+// one group (see renderCommittedTools) and clears it from the live/chrome
+// list. Called when new streaming text resumes after a batch of tool calls,
+// and at turn end for a trailing batch with no following text — both mean
+// the batch is chronologically over.
+func (m *model) flushToolGroup() {
+	if len(m.tools) == 0 {
+		return
 	}
-	return -1
+	box := m.renderCommittedTools(m.tools)
+	m.renderedLines = append(m.renderedLines, strings.Split(box, "\n")...)
+	m.viewport.SetContentLines(m.renderedLines)
+	m.tools = nil
+	m.focusedTool = -1
+	m.expandedID = ""
 }
 
-// hasHoldingTools returns true when any tool is in its hold-state (Phase 1).
-func (m *model) hasHoldingTools() bool {
-	for i := range m.tools {
-		if !m.tools[i].holdUntil.IsZero() && time.Now().Before(m.tools[i].holdUntil) {
-			return true
-		}
+// renderCommittedTools renders a finished batch of tool calls for permanent
+// scrollback. A lone tool call keeps its full interactive-looking box (still
+// useful to read even frozen); multiple calls collapse into one compact,
+// non-interactive summary line — otherwise a turn with many tool calls would
+// bury the assistant text around it (real bug: a 100+ tool-call turn made
+// the preceding/following message unreachable in the scrollback).
+func (m *model) renderCommittedTools(tools []toolState) string {
+	if len(tools) == 0 {
+		return ""
 	}
-	return false
-}
+	if len(tools) == 1 {
+		return m.renderToolBox(tools[0], false, 1)
+	}
 
-// commitExpiredTools commits tools whose holdUntil has passed to the viewport
-// and removes them from the live tools list (Phase 1).
-func (m *model) commitExpiredTools() {
-	now := time.Now()
-	var remaining []toolState
-	for _, t := range m.tools {
-		if !t.holdUntil.IsZero() && now.After(t.holdUntil) {
-			// Format the final tool box and append to viewport.
-			box := m.renderToolBox(t, false, len(m.tools))
-			m.appendMessage("tool", box)
-		} else {
-			remaining = append(remaining, t)
+	errored := 0
+	names := make([]string, 0, len(tools))
+	seen := make(map[string]bool, len(tools))
+	for _, t := range tools {
+		if t.status == "error" {
+			errored++
+		}
+		label := t.name
+		if t.name == "skill" {
+			label = skillLabelFromArgs(t.args)
+		}
+		if !seen[label] {
+			seen[label] = true
+			names = append(names, label)
 		}
 	}
-	m.tools = remaining
-	// Adjust focusedTool if committed tools shifted indices.
-	if m.focusedTool >= len(m.tools) {
-		m.focusedTool = -1
+
+	glyph := "✓"
+	if errored > 0 {
+		glyph = "✗"
 	}
-	if m.expandedID != "" && m.findToolIndex(m.expandedID) < 0 {
-		m.expandedID = ""
+	summary := fmt.Sprintf("%s %d tool calls", glyph, len(tools))
+	if errored > 0 {
+		summary += fmt.Sprintf(" (%d error)", errored)
 	}
+	summary += " — " + strings.Join(names, ", ")
+	return toolMetaStyle.Render(summary)
 }
 
 // shouldNavigateTools returns true when tool focus navigation is appropriate:
@@ -1859,18 +1986,11 @@ func (m *model) shouldNavigateTools() bool {
 
 // focusNextTool moves focusedTool to the next (delta=1) or previous (delta=-1)
 // completed tool (status "done" or "error"). Wraps around when at the edges.
-// Only considers tools that are not in the hold-state (holdUntil is zero or
-// already expired).
 func (m *model) focusNextTool(delta int) {
 	// Collect indices of eligible tools.
 	var eligible []int
-	now := time.Now()
 	for i, t := range m.tools {
 		if t.status == "done" || t.status == "error" {
-			// Skip tools still in hold-state.
-			if !t.holdUntil.IsZero() && now.Before(t.holdUntil) {
-				continue
-			}
 			eligible = append(eligible, i)
 		}
 	}
@@ -1892,6 +2012,34 @@ func (m *model) focusNextTool(delta int) {
 		newIdx += len(eligible)
 	}
 	m.focusedTool = eligible[newIdx]
+}
+
+// handleMouseClick maps a left-click's terminal row to a UI action: clicking
+// a tool box focuses and toggles its expansion; clicking elsewhere in the
+// viewport clears tool focus. Recomputing the layout here (rather than
+// caching View()'s geometry) keeps hit-testing correct even if a click
+// arrives before the next render — cheap enough since it only runs per click.
+func (m *model) handleMouseClick(y int) {
+	geom := m.computeLayout()
+
+	for i, tb := range geom.toolBoxes {
+		if y < tb.startY || y > tb.endY {
+			continue
+		}
+		m.focusedTool = i
+		if m.expandedID == tb.id {
+			m.expandedID = ""
+		} else {
+			m.expandedID = tb.id
+			m.tools[i].expanded = true
+		}
+		return
+	}
+
+	if y >= geom.viewportStartY && y <= geom.viewportEndY {
+		m.focusedTool = -1
+		m.expandedID = ""
+	}
 }
 
 // toggleToolExpansion toggles the expanded state for the currently focused
@@ -1971,7 +2119,6 @@ func (m *model) appendMessage(role, content string) {
 	if role == "tool" {
 		m.renderedLines = append(m.renderedLines, lines...)
 		m.viewport.SetContentLines(m.renderedLines)
-		m.viewport.GotoBottom()
 		return
 	}
 	for i, l := range lines {
@@ -1982,7 +2129,6 @@ func (m *model) appendMessage(role, content string) {
 		}
 	}
 	m.viewport.SetContentLines(m.renderedLines)
-	m.viewport.GotoBottom()
 }
 
 // --- message cap -----------------------------------------------------------
@@ -2062,6 +2208,71 @@ func renderTool(t toolState, frame int) string {
 		}
 	}
 	return style.Render(line)
+}
+
+// renderToolGroup renders the current live (uncommitted) tool-call batch —
+// see flushToolGroup for when it moves to permanent scrollback. A lone tool
+// keeps its full interactive box (matches the pre-grouping look); multiple
+// tools render as one bordered group — a header summary line, then each
+// tool as a compact one-line row, except the currently-expanded tool, which
+// renders its full box in place of its row. Returns the rendered string
+// plus each tool's row range (relative to the string's own first line, i.e.
+// row 0 is the box's top border) for mouse hit-testing.
+func (m *model) renderToolGroup() (string, []toolBoxGeometry) {
+	if len(m.tools) == 0 {
+		return "", nil
+	}
+	if len(m.tools) == 1 {
+		t := m.tools[0]
+		expanded := m.expandedID != "" && m.expandedID == t.id
+		box := m.renderToolBox(t, expanded, 1)
+		return box, []toolBoxGeometry{{id: t.id, startY: 0, endY: visualLineCount(box) - 1}}
+	}
+
+	running, errored := 0, 0
+	for _, t := range m.tools {
+		switch t.status {
+		case "pending", "running":
+			running++
+		case "error":
+			errored++
+		}
+	}
+	header := fmt.Sprintf("%d tool calls", len(m.tools))
+	if running > 0 {
+		header += fmt.Sprintf(" · %d running", running)
+	}
+	if errored > 0 {
+		header += fmt.Sprintf(" · %d error", errored)
+	}
+
+	lines := []string{toolGroupHeaderStyle.Render(header)}
+	rows := make([]toolBoxGeometry, 0, len(m.tools))
+	row := 2 // top border row (0) + header row (1)
+	for i, t := range m.tools {
+		expanded := m.expandedID != "" && m.expandedID == t.id
+		var line string
+		if expanded {
+			line = m.renderToolBox(t, true, len(m.tools))
+		} else {
+			marker := "  "
+			if m.focusedTool == i {
+				marker = toolFocusMarkerStyle.Render("› ")
+			}
+			line = marker + renderTool(t, m.spinnerFrame)
+		}
+		h := visualLineCount(line)
+		rows = append(rows, toolBoxGeometry{id: t.id, startY: row, endY: row + h - 1})
+		row += h
+		lines = append(lines, line)
+	}
+
+	width := m.width
+	if width < 20 {
+		width = 80
+	}
+	box := toolGroupBoxStyle.Width(width).Padding(0, 1).Render(strings.Join(lines, "\n"))
+	return box, rows
 }
 
 // renderToolBox renders a complete background-colored tool box with borders,
@@ -2835,4 +3046,10 @@ var (
 				Border(lipgloss.RoundedBorder(), false, false, false, true).
 				BorderForeground(themeHex(theme.ToneMuted)).
 				Padding(0, 1)
+
+	// toolGroupBoxStyle wraps a live multi-tool-call batch (renderToolGroup)
+	// — neutral (not status-colored, since it holds a mix of statuses).
+	toolGroupBoxStyle    = lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).BorderForeground(themeHex(theme.ToneMuted))
+	toolGroupHeaderStyle = lipgloss.NewStyle().Foreground(themeHex(theme.ToneMuted)).Bold(true)
+	toolFocusMarkerStyle = lipgloss.NewStyle().Foreground(themeHex(theme.CommandFG)).Bold(true)
 )
