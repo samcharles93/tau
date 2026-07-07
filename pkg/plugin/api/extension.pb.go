@@ -410,6 +410,7 @@ type GetMetadataResponse struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	Name          string                 `protobuf:"bytes,1,opt,name=name,proto3" json:"name,omitempty"`
 	Commands      []*Command             `protobuf:"bytes,2,rep,name=commands,proto3" json:"commands,omitempty"`
+	Docs          string                 `protobuf:"bytes,3,opt,name=docs,proto3" json:"docs,omitempty"` // optional markdown documentation the plugin ships, see Documented
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -456,6 +457,13 @@ func (x *GetMetadataResponse) GetCommands() []*Command {
 		return x.Commands
 	}
 	return nil
+}
+
+func (x *GetMetadataResponse) GetDocs() string {
+	if x != nil {
+		return x.Docs
+	}
+	return ""
 }
 
 type RunCommandRequest struct {
@@ -4037,10 +4045,11 @@ const file_pkg_plugin_api_extension_proto_rawDesc = "" +
 	"\vFieldsEntry\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
 	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\"\x14\n" +
-	"\x12GetMetadataRequest\"U\n" +
+	"\x12GetMetadataRequest\"i\n" +
 	"\x13GetMetadataResponse\x12\x12\n" +
 	"\x04name\x18\x01 \x01(\tR\x04name\x12*\n" +
-	"\bcommands\x18\x02 \x03(\v2\x0e.proto.CommandR\bcommands\";\n" +
+	"\bcommands\x18\x02 \x03(\v2\x0e.proto.CommandR\bcommands\x12\x12\n" +
+	"\x04docs\x18\x03 \x01(\tR\x04docs\";\n" +
 	"\x11RunCommandRequest\x12\x12\n" +
 	"\x04name\x18\x01 \x01(\tR\x04name\x12\x12\n" +
 	"\x04args\x18\x02 \x01(\tR\x04args\"M\n" +

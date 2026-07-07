@@ -33,6 +33,17 @@ type Capable interface {
 	Capabilities() []string
 }
 
+// Documented is an optional interface for plugins to expose their own
+// markdown documentation to the host. Tau's docs tool has no visibility into
+// a plugin's source tree - it only knows about tau's own embedded docs - so
+// a plugin that wants to be discoverable through that tool (e.g. "how do I
+// configure the foo plugin?") must surface its docs this way. Docs is called
+// once per load via GetMetadata; a plugin that ships no documentation simply
+// omits this interface.
+type Documented interface {
+	Docs() string
+}
+
 // Extension is the interface that plugin binaries must implement.
 type Extension interface {
 	Metadata() (name string, commands []*Command)

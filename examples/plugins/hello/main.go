@@ -15,6 +15,7 @@ package main
 
 import (
 	"context"
+	"embed"
 	"encoding/json"
 	"fmt"
 	"log/slog"
@@ -29,6 +30,9 @@ import (
 	pluginapi "github.com/samcharles93/tau/pkg/plugin/api"
 )
 
+//go:embed docs.md
+var docsFS embed.FS
+
 // watchViewID is the panel id used by /hello watch and /hello close. Re-
 // rendering a view with the same id replaces its content in place, which is
 // what lets the watch goroutine push live updates without creating new panels.
@@ -36,8 +40,9 @@ const watchViewID = "watch-demo"
 
 // HelloPlugin implements pluginapi.Extension. It exposes a slash command, a
 // tool, and a demo panel so command, tool, and view usage are all
-// demonstrated. It also implements pluginapi.HostAware and pluginapi.Capable
-// to demonstrate calling back into the host and declaring capabilities.
+// demonstrated. It also implements pluginapi.HostAware, pluginapi.Capable,
+// and pluginapi.Documented to demonstrate calling back into the host,
+// declaring capabilities, and surfacing its own docs to tau's docs tool.
 type HelloPlugin struct {
 	logger *slog.Logger
 	host   pluginapi.Host
@@ -57,6 +62,16 @@ func (p *HelloPlugin) Capabilities() []string {
 		pluginapi.CapabilityEvents,
 		pluginapi.CapabilityViews,
 	}
+}
+
+// Docs implements pluginapi.Documented, surfacing docs.md through tau's
+// docs tool under the virtual path "plugins/hello.md".
+func (p *HelloPlugin) Docs() string {
+	content, err := docsFS.ReadFile("docs.md")
+	if err != nil {
+		return ""
+	}
+	return string(content)
 }
 
 func main() {

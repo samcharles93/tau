@@ -42,7 +42,11 @@ func (s *GRPCServer) GetCapabilities(ctx context.Context, req *GetCapabilitiesRe
 
 func (s *GRPCServer) GetMetadata(ctx context.Context, req *GetMetadataRequest) (*GetMetadataResponse, error) {
 	name, cmds := s.Impl.Metadata()
-	return &GetMetadataResponse{Name: name, Commands: cmds}, nil
+	var docs string
+	if d, ok := s.Impl.(Documented); ok {
+		docs = d.Docs()
+	}
+	return &GetMetadataResponse{Name: name, Commands: cmds, Docs: docs}, nil
 }
 
 func (s *GRPCServer) RunCommand(ctx context.Context, req *RunCommandRequest) (*RunCommandResponse, error) {
@@ -86,6 +90,8 @@ func (s *GRPCServer) ExecuteTool(ctx context.Context, req *ExecuteToolRequest) (
 type GRPCClient struct {
 	Client       ExtensionServiceClient
 	cmds         []chat.ExtensionCommand
+	docs         string
+	docsFetched  bool
 	hostBrokerID uint32
 }
 
@@ -132,7 +138,26 @@ func (c *GRPCClient) ExtensionCommands() []chat.ExtensionCommand {
 		return nil
 	}
 	c.cmds = protoCommandsToChat(resp.GetCommands())
+	c.docs = resp.GetDocs()
+	c.docsFetched = true
 	return c.cmds
+}
+
+// Docs returns the plugin's self-declared documentation (via the optional
+// Documented interface), or "" if it ships none. Cached alongside commands
+// after the first GetMetadata call.
+func (c *GRPCClient) Docs(ctx context.Context) string {
+	if c.docsFetched {
+		return c.docs
+	}
+	resp, err := c.Client.GetMetadata(ctx, &GetMetadataRequest{})
+	if err != nil {
+		return ""
+	}
+	c.cmds = protoCommandsToChat(resp.GetCommands())
+	c.docs = resp.GetDocs()
+	c.docsFetched = true
+	return c.docs
 }
 
 func (c *GRPCClient) RunExtensionCommand(ctx context.Context, name, args string, uiBridge any) (string, *chat.ExtensionView, error) {

@@ -68,6 +68,7 @@ type Manager struct {
 	clients      map[string]*goplugin.Client // plugin name → client
 	grpcClients  map[string]*api.GRPCClient  // plugin name → gRPC client
 	capabilities map[string][]string         // plugin name → advertised capabilities
+	docs         map[string]string           // plugin name → self-declared docs (Documented)
 	pluginOrder  []string                    // load order, deterministic iteration
 	mu           sync.RWMutex
 }
@@ -112,6 +113,7 @@ func NewManager(cfg Config) (*Manager, error) {
 		clients:      make(map[string]*goplugin.Client),
 		grpcClients:  make(map[string]*api.GRPCClient),
 		capabilities: make(map[string][]string),
+		docs:         make(map[string]string),
 	}, nil
 }
 
@@ -180,6 +182,11 @@ func (m *Manager) Load(ctx context.Context) error {
 		// Discover advertised capabilities so we skip unsupported calls.
 		if caps, err := grpcClient.Capabilities(ctx); err == nil {
 			m.capabilities[name] = caps
+		}
+
+		// Discover self-declared documentation (Documented interface), if any.
+		if docs := grpcClient.Docs(ctx); docs != "" {
+			m.docs[name] = docs
 		}
 
 		// Discover and register tools only if the plugin provides them.
@@ -409,7 +416,26 @@ func (m *Manager) Unload() {
 	}
 	m.clients = make(map[string]*goplugin.Client)
 	m.grpcClients = make(map[string]*api.GRPCClient)
+	m.capabilities = make(map[string][]string)
+	m.docs = make(map[string]string)
 	m.pluginOrder = nil
+}
+
+// PluginDocs returns the self-declared documentation (via the optional
+// Documented interface) of every currently loaded plugin, keyed by plugin
+// name. Plugins that ship no documentation are omitted. Called on-demand by
+// the docs tool so results always reflect the current plugin set, including
+// after a hot reload (/mcp-reload, plugin install/uninstall).
+func (m *Manager) PluginDocs() map[string]string {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	if len(m.docs) == 0 {
+		return nil
+	}
+	out := make(map[string]string, len(m.docs))
+	maps.Copy(out, m.docs)
+	return out
 }
 
 // registerPluginTools calls GetTools on the plugin and registers them in the

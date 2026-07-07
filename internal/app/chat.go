@@ -504,8 +504,17 @@ func buildCoordinator(ctx context.Context, cfg coordinatorConfig) (*agent.Coordi
 	if cfg.ChatOptions.Logger != nil {
 		log = cfg.ChatOptions.Logger
 	}
+	// pluginMgr is assigned below, after the docs tool is registered; the
+	// closure reads it lazily so the docs tool always sees the live plugin
+	// manager (including across hot reloads) rather than a nil snapshot.
+	var pluginMgr *plugin.Manager
 	registry := tools.NewRegistry()
-	if err := tools.RegisterBuiltins(registry, cwd); err != nil {
+	if err := tools.RegisterBuiltins(registry, cwd, func() map[string]string {
+		if pluginMgr == nil {
+			return nil
+		}
+		return pluginMgr.PluginDocs()
+	}); err != nil {
 		return nil, nil, nil, fmt.Errorf("registering built-in tools: %w", err)
 	}
 

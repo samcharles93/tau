@@ -10,7 +10,7 @@ import (
 )
 
 func TestDocsTool(t *testing.T) {
-	tool := tools.NewDocsTool()
+	tool := tools.NewDocsTool(nil)
 	ctx := context.Background()
 
 	t.Run("search", func(t *testing.T) {
@@ -97,6 +97,47 @@ func TestDocsTool(t *testing.T) {
 		}
 		if !strings.Contains(res.Content, "config-example.yaml") {
 			t.Errorf("expected listing to include 'config-example.yaml', got: %q", res.Content)
+		}
+	})
+}
+
+func TestDocsToolMergesPluginDocs(t *testing.T) {
+	provider := func() map[string]string {
+		return map[string]string{"gopls-mcp": "# gopls MCP\n\nConfigure via plugins.gopls-mcp.servers"}
+	}
+	tool := tools.NewDocsTool(provider)
+	ctx := context.Background()
+
+	t.Run("list includes plugin doc path", func(t *testing.T) {
+		res, err := tool.Execute(ctx, json.RawMessage(`{}`), nil)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if !strings.Contains(res.Content, "plugins/gopls-mcp.md") {
+			t.Errorf("expected listing to include plugin doc path, got: %q", res.Content)
+		}
+	})
+
+	t.Run("search finds content in plugin doc", func(t *testing.T) {
+		res, err := tool.Execute(ctx, json.RawMessage(`{"query": "servers"}`), nil)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if !strings.Contains(res.Content, "plugins/gopls-mcp.md") {
+			t.Errorf("expected search results to include plugin doc match, got: %q", res.Content)
+		}
+	})
+
+	t.Run("read returns plugin doc content", func(t *testing.T) {
+		res, err := tool.Execute(ctx, json.RawMessage(`{"path": "plugins/gopls-mcp.md"}`), nil)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if res.IsError {
+			t.Fatalf("unexpected error in tool output: %s", res.Content)
+		}
+		if !strings.Contains(res.Content, "plugins.gopls-mcp.servers") {
+			t.Errorf("expected plugin doc content, got: %q", res.Content)
 		}
 	})
 }

@@ -35,9 +35,25 @@ var docsSchema = Schema{
 	}`),
 }
 
+// PluginDocsProvider returns the self-declared documentation of every
+// currently loaded plugin, keyed by plugin name (see api.Documented). It is
+// called fresh on every docs tool invocation so results reflect the live
+// plugin set, including after a hot reload. A nil provider (or one that
+// returns nil) is valid and means "no plugin docs available".
+type PluginDocsProvider func() map[string]string
+
+// pluginDocPath returns the virtual docs-tool path a plugin's documentation
+// is exposed under, namespaced so it can't collide with tau's own docs.
+func pluginDocPath(pluginName string) string {
+	return "plugins/" + pluginName + ".md"
+}
+
 // NewDocsTool creates the built-in docs tool for Tau's embedded documentation.
-// It lists, searches, or reads documentation files depending on the parameters.
-func NewDocsTool() Tool {
+// It lists, searches, or reads documentation files depending on the
+// parameters. pluginDocs, if non-nil, is merged in alongside tau's own
+// embedded docs so plugins can surface their own documentation (e.g. an MCP
+// server's config format) without tau needing to know about them in advance.
+func NewDocsTool(pluginDocs PluginDocsProvider) Tool {
 	return Tool{
 		Schema: docsSchema,
 		Source: "builtin",
@@ -52,21 +68,29 @@ func NewDocsTool() Tool {
 
 			switch {
 			case strings.TrimSpace(p.Path) != "":
-				return readDoc(p.Path), nil
+				return readDoc(p.Path, pluginDocs), nil
 			case strings.TrimSpace(p.Query) != "":
-				return searchDocs(p.Query), nil
+				return searchDocs(p.Query, pluginDocs), nil
 			default:
-				return listDocs(), nil
+				return listDocs(pluginDocs), nil
 			}
 		},
 	}
 }
 
-func readDoc(path string) Result {
+func readDoc(path string, pluginDocs PluginDocsProvider) Result {
 	cleanPath := filepath.Clean(path)
 	// Prevent escaping the documentation filesystem.
 	if strings.HasPrefix(cleanPath, "..") || strings.HasPrefix(cleanPath, "/") {
 		return Result{Content: "invalid path: escaping docs sandbox", IsError: true}
+	}
+
+	if pluginDocs != nil {
+		for name, content := range pluginDocs() {
+			if pluginDocPath(name) == cleanPath {
+				return Result{Content: content}
+			}
+		}
 	}
 
 	content, err := docs.FS.ReadFile(cleanPath)
@@ -77,20 +101,27 @@ func readDoc(path string) Result {
 	return Result{Content: string(content)}
 }
 
-func searchDocs(query string) Result {
+func searchDocs(query string, pluginDocs PluginDocsProvider) Result {
 	query = strings.ToLower(strings.TrimSpace(query))
 
 	var matches []string
-	err := walkDocs(func(path string, content []byte) {
+	search := func(path string, content []byte) {
 		lines := strings.Split(string(content), "\n")
 		for idx, line := range lines {
 			if strings.Contains(strings.ToLower(line), query) {
 				matches = append(matches, fmt.Sprintf("%s:%d: %s", path, idx+1, strings.TrimSpace(line)))
 			}
 		}
-	})
+	}
+
+	err := walkDocs(search)
 	if err != nil {
 		return Result{Content: fmt.Sprintf("error walking documentation: %v", err), IsError: true}
+	}
+	if pluginDocs != nil {
+		for name, content := range pluginDocs() {
+			search(pluginDocPath(name), []byte(content))
+		}
 	}
 
 	if len(matches) == 0 {
@@ -101,13 +132,18 @@ func searchDocs(query string) Result {
 	return Result{Content: tr.Content}
 }
 
-func listDocs() Result {
+func listDocs(pluginDocs PluginDocsProvider) Result {
 	var paths []string
 	err := walkDocs(func(path string, _ []byte) {
 		paths = append(paths, path)
 	})
 	if err != nil {
 		return Result{Content: fmt.Sprintf("error walking documentation: %v", err), IsError: true}
+	}
+	if pluginDocs != nil {
+		for name := range pluginDocs() {
+			paths = append(paths, pluginDocPath(name))
+		}
 	}
 
 	tr := TruncateHead(strings.Join(paths, "\n"), DefaultMaxLines, DefaultMaxBytes)

@@ -18,17 +18,18 @@ Use `/reload` to rediscover plugins without restarting Tau.
 3. [The Extension Interface](#the-extension-interface)
 4. [Handshake & Bootstrap](#handshake--bootstrap)
 5. [Declaring Capabilities (Optional)](#declaring-capabilities-optional)
-6. [Tools (Agent-Callable Functions)](#tools-agent-callable-functions)
-7. [Slash Commands (User-Callable)](#slash-commands-user-callable)
-8. [Lifecycle Events](#lifecycle-events)
-9. [EventResponse — Modifying Runtime Behaviour](#eventresponse--modifying-runtime-behaviour)
-10. [HostService — Calling Back Into Tau](#hostservice--calling-back-into-tau)
-11. [Panels and Views — Rendering Structured UI](#panels-and-views-rendering-structured-ui)
-12. [Plugin Configuration](#plugin-configuration)
-13. [Building, Installing, and go.mod](#building-installing-and-gomod)
-14. [Complete Working Example](#complete-working-example)
-15. [API Reference](#api-reference)
-16. [Troubleshooting](#troubleshooting)
+6. [Exposing Documentation (Optional)](#exposing-documentation-optional)
+7. [Tools (Agent-Callable Functions)](#tools-agent-callable-functions)
+8. [Slash Commands (User-Callable)](#slash-commands-user-callable)
+9. [Lifecycle Events](#lifecycle-events)
+10. [EventResponse — Modifying Runtime Behaviour](#eventresponse--modifying-runtime-behaviour)
+11. [HostService — Calling Back Into Tau](#hostservice--calling-back-into-tau)
+12. [Panels and Views — Rendering Structured UI](#panels-and-views-rendering-structured-ui)
+13. [Plugin Configuration](#plugin-configuration)
+14. [Building, Installing, and go.mod](#building-installing-and-gomod)
+15. [Complete Working Example](#complete-working-example)
+16. [API Reference](#api-reference)
+17. [Troubleshooting](#troubleshooting)
 
 ---
 
@@ -206,6 +207,47 @@ func (p *MyPlugin) Capabilities() []string {
     // This plugin does NOT handle events; DispatchEvent will never be called.
 }
 ```
+
+---
+
+## Exposing Documentation (Optional)
+
+Tau's built-in `docs` tool (the one the agent calls when a user asks "how do
+I configure X") only knows about the documentation shipped inside tau
+itself — it has no visibility into a plugin's source tree, whether the
+plugin is one of tau's own examples or a third-party binary someone
+installed. A plugin that wants its own configuration/usage docs to be
+answerable through that tool must say so explicitly, by implementing
+`Documented`:
+
+```go
+type Documented interface {
+    Docs() string
+}
+```
+
+`Docs()` is called once per load (alongside `Metadata()`) and should return
+markdown content — typically a file the plugin embeds with `go:embed`:
+
+```go
+//go:embed docs.md
+var docsFS embed.FS
+
+func (p *MyPlugin) Docs() string {
+    content, err := docsFS.ReadFile("docs.md")
+    if err != nil {
+        return ""
+    }
+    return string(content)
+}
+```
+
+Tau merges the returned content into the docs tool under the virtual path
+`plugins/<plugin-name>.md`, so it shows up in listings, full-text search, and
+direct reads exactly like tau's own docs. Plugins that don't implement
+`Documented` are simply invisible to the docs tool — no error, no fallback.
+See the [hello plugin](https://github.com/samcharles93/tau/blob/main/examples/plugins/hello/main.go)
+for a working example.
 
 ---
 
@@ -1192,7 +1234,7 @@ func (p *CounterPlugin) DispatchEvent(ctx context.Context, event, sessionID stri
 
 | Package | Import Path | Contents |
 |---------|------------|----------|
-| Plugin API | `github.com/samcharles93/tau/pkg/plugin/api` | `Extension`, `ExtensionPlugin`, `Command`, `Diagnostic`, `ToolDefinition`, `EventPayload`, `EventResponse`, `View`, `Widget`, `Style`, `Host`, `HostAware`, `Capable` |
+| Plugin API | `github.com/samcharles93/tau/pkg/plugin/api` | `Extension`, `ExtensionPlugin`, `Command`, `Diagnostic`, `ToolDefinition`, `EventPayload`, `EventResponse`, `View`, `Widget`, `Style`, `Host`, `HostAware`, `Capable`, `Documented` |
 | Chat Types | `github.com/samcharles93/tau/internal/chat` | `ChatMessage`, `ChatRole`, `ChatUsage`, `ChatParameters`, `ChatSessionState`, `ChatModelRef` |
 | Config | `github.com/samcharles93/tau/internal/config` | `LoadConfig()`, `Config`, `ProviderConfig` |
 

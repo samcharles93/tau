@@ -32,6 +32,7 @@ message GetMetadataRequest {}
 message GetMetadataResponse {
   string name = 1;
   repeated Command commands = 2;
+  string docs = 3;  // optional markdown documentation the plugin ships, see Documented
 }
 
 // --- Commands ---
