@@ -249,13 +249,17 @@ func (m *model) commandGroups(token string) []compGroup {
 			add(&commands, mc)
 		}
 
+		// token is the raw field including its leading "/" (e.g. "/quit"),
+		// but aliases are bare ("quit") — strip it before comparing, or the
+		// prefix check below never matches anything once a command name is
+		// typed. Mirrors internal/tui/inline_completions.go:107,139-143.
+		cmdToken := strings.TrimPrefix(strings.ToLower(token), "/")
 		for _, alias := range e.aliases {
 			// Surface aliases as matches only when the user has typed enough
 			// to match an alias prefix, preventing aliases from cluttering the
 			// dropdown when browsing the full command list (e.g. "/?" and
 			// "/usage" should not appear until the user types "?" or "u").
-			// Mirrors internal/tui/inline_completions.go:139-143.
-			if token == "" || !strings.HasPrefix(strings.ToLower(alias), strings.ToLower(token)) {
+			if cmdToken == "" || !strings.HasPrefix(strings.ToLower(alias), cmdToken) {
 				continue
 			}
 			am := compMatch{Word: "/" + alias, Description: desc, RequiresArg: requiresArg}

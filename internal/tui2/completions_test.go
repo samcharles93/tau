@@ -63,6 +63,50 @@ func TestCompletionRowsEmptyTokenShowsAllUnfiltered(t *testing.T) {
 	}
 }
 
+// TestCompletionRowsMatchTypedOutAlias is a regression test: commandGroups
+// compared the alias-prefix token (which retains its leading "/", e.g.
+// "/quit") directly against bare alias strings ("quit"), so
+// strings.HasPrefix(alias, token) could never match once anything had been
+// typed — typing an alias fully (e.g. "/quit", an alias of "/exit") matched
+// nothing at all and the dropdown went empty, instead of surfacing the
+// alias the same way internal/tui's legacy completions already do (which
+// strips the leading "/" from the token before comparing).
+func TestCompletionRowsMatchTypedOutAlias(t *testing.T) {
+	m := newTestModel(&fakeRuntime{}, nil)
+	m.input = "/quit"
+
+	rows, token := m.completionRows()
+	if token != "/quit" {
+		t.Fatalf("token = %q, want %q", token, "/quit")
+	}
+	var found bool
+	for _, r := range rows {
+		if r.Word == "/quit" {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("expected typing out the alias %q in full to match it, got rows: %+v", "/quit", rows)
+	}
+}
+
+// TestCompletionRowsDoNotSurfaceAliasWhileBrowsingByCanonicalName guards the
+// other half of the same fix: typing towards the canonical command name
+// ("/ex") must not also surface every one of its aliases as separate rows —
+// only "/exit" itself should match; "/quit" and "/q" have nothing in common
+// with "ex" and must stay hidden until the user actually types towards them.
+func TestCompletionRowsDoNotSurfaceAliasWhileBrowsingByCanonicalName(t *testing.T) {
+	m := newTestModel(&fakeRuntime{}, nil)
+	m.input = "/ex"
+
+	rows, _ := m.completionRows()
+	for _, r := range rows {
+		if r.Word == "/quit" || r.Word == "/q" {
+			t.Fatalf("expected browsing by canonical prefix %q not to surface alias row %q", "/ex", r.Word)
+		}
+	}
+}
+
 func TestCompletionArrowKeysNavigateSelection(t *testing.T) {
 	m := modelsFor("aaa", "bbb", "ccc")
 	m.input = "/model "
