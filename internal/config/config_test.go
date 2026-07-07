@@ -10,6 +10,38 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
+// TestConfigUnmarshalYAMLPopulatesMetrics guards against a real bug:
+// Config.UnmarshalYAML's internal rawConfig struct omitted the Metrics
+// field entirely, so metrics.dir/session/tui in a user's config.yaml were
+// silently discarded on every load — cfg.Metrics always ended up as the Go
+// zero value in memory regardless of what was actually written to disk.
+func TestConfigUnmarshalYAMLPopulatesMetrics(t *testing.T) {
+	var cfg Config
+	err := yaml.Unmarshal([]byte(`
+providers:
+  - name: acme
+    base_url: https://acme.example
+    auth:
+      type: none
+metrics:
+  dir: /custom/metrics/path
+  session: true
+  tui: true
+`), &cfg)
+	if err != nil {
+		t.Fatalf("Unmarshal() error = %v", err)
+	}
+	if cfg.Metrics.Dir != "/custom/metrics/path" {
+		t.Fatalf("Metrics.Dir = %q, want %q", cfg.Metrics.Dir, "/custom/metrics/path")
+	}
+	if !cfg.Metrics.Session {
+		t.Fatal("Metrics.Session = false, want true")
+	}
+	if !cfg.Metrics.TUI {
+		t.Fatal("Metrics.TUI = false, want true")
+	}
+}
+
 func TestLoadConfigMergesGlobalAndLocal(t *testing.T) {
 	configDir := t.TempDir()
 	projectDir := t.TempDir()
@@ -335,7 +367,7 @@ ui:
 	}
 }
 
-func TestSyncConfigSchemaNoopWhenAllBlocksPresent(t *testing.T) {
+func TestSyncConfigSchemaNoopWhenAllBlocksPresentAndMetricsDirSet(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "config.yaml")
 	original := `default_provider: acme
@@ -350,7 +382,7 @@ registry:
   url: https://registry.example
   token: ""
 metrics:
-  dir: ""
+  dir: /custom/metrics/path
   session: false
   tui: false
 `
@@ -365,7 +397,57 @@ metrics:
 		t.Fatalf("ReadFile() error = %v", err)
 	}
 	if string(out) != original {
-		t.Fatalf("expected file to be left untouched, got:\n%s", out)
+		t.Fatalf("expected file to be left untouched when metrics.dir is already set, got:\n%s", out)
+	}
+}
+
+// TestSyncConfigSchemaBackfillsEmptyMetricsDir guards against a real gap: an
+// empty metrics.dir in an existing config almost always means the "metrics:"
+// block was auto-added by an earlier run of syncConfigSchema itself (back
+// when this field had no non-zero default), not a user deliberately opting
+// out of metrics export — so it must be healed to MetricsDir() rather than
+// left silently disabling every metrics.jsonl consumer forever.
+func TestSyncConfigSchemaBackfillsEmptyMetricsDir(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "config.yaml")
+	writeFile(t, path, `default_provider: acme
+providers:
+  - name: acme
+    base_url: https://acme.example
+    auth:
+      type: none
+ui:
+  show_reasoning: false
+registry:
+  url: https://registry.example
+  token: ""
+metrics:
+  dir: ""
+  session: false
+  tui: false
+`)
+
+	if err := syncConfigSchema(path); err != nil {
+		t.Fatalf("syncConfigSchema() error = %v", err)
+	}
+
+	var cfg Config
+	out, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("ReadFile() error = %v", err)
+	}
+	if err := yaml.Unmarshal(out, &cfg); err != nil {
+		t.Fatalf("Unmarshal() error = %v", err)
+	}
+	if cfg.Metrics.Dir == "" {
+		t.Fatal("expected metrics.dir to be backfilled to a non-empty default")
+	}
+	if cfg.Metrics.Dir != MetricsDir() {
+		t.Fatalf("metrics.dir = %q, want %q", cfg.Metrics.Dir, MetricsDir())
+	}
+	// Unrelated existing values must survive untouched.
+	if cfg.DefaultProvider != "acme" {
+		t.Fatalf("expected default_provider to remain acme, got %q", cfg.DefaultProvider)
 	}
 }
 
