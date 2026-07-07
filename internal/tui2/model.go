@@ -155,6 +155,10 @@ type model struct {
 	promptQueue      []tauchat.InteractivePromptRequestedEvent
 	promptConfirmYes bool // confirm-kind prompts: which option (Yes/No) is highlighted
 
+	// contextMenu is the currently open right-click menu, or nil if none is
+	// open — mirrors activePrompt's nil-sentinel idiom.
+	contextMenu *contextMenu
+
 	// Plugin views.
 	panels map[string]pluginPanel
 
@@ -262,6 +266,51 @@ func (s *selectionState) bounds() (lo, hi int, ok bool) {
 		lo, hi = hi, lo
 	}
 	return lo, hi, true
+}
+
+// contextMenuTarget identifies what kind of element a context menu was
+// opened against — tool calls have two distinct on-screen forms (see
+// contextMenuTargetTool vs contextMenuTargetToolRow), because a live,
+// uncommitted tool box and a committed group's unfolded per-tool row are
+// resolved through completely different hit-testing paths.
+type contextMenuTarget int
+
+const (
+	contextMenuTargetNone    contextMenuTarget = iota
+	contextMenuTargetTool                      // a live geom.toolBoxes entry, or a whole (folded or unfolded) committed group
+	contextMenuTargetToolRow                   // one row inside an unfolded committed group
+	contextMenuTargetMessage
+)
+
+// contextMenuAction identifies what a menu item does when activated.
+type contextMenuAction int
+
+const (
+	contextMenuActionCopy contextMenuAction = iota
+	contextMenuActionToggleExpand
+)
+
+// contextMenuItem is one selectable row in an open context menu. label is
+// computed at build time (e.g. "Expand" vs "Collapse" reflects current
+// state), not recomputed on every render, so the menu's contents stay
+// stable while it's open even if something else changes state underneath.
+type contextMenuItem struct {
+	label  string
+	action contextMenuAction
+}
+
+// contextMenu is the state of an open right-click menu. A nil *contextMenu
+// on model means no menu is open — mirrors activePrompt's nil-sentinel
+// idiom. x/y are the raw click position; positioning/clamping onto the
+// screen happens at render/hit-test time (see clampContextMenuPosition),
+// not here, so this struct stays purely "what was clicked and what can be
+// done about it."
+type contextMenu struct {
+	target   contextMenuTarget
+	targetID string
+	x, y     int
+	items    []contextMenuItem
+	selected int
 }
 
 type toolState struct {
@@ -488,7 +537,13 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 		case tea.MouseRight:
 			if _, ok := msg.(tea.MouseClickMsg); ok {
-				return m, m.copyActiveSelection()
+				// Right-click keeps its existing "copy my selection"
+				// behavior; only when nothing is selected does it fall
+				// through to opening a context menu at the click.
+				if cmd := m.copyActiveSelection(); cmd != nil {
+					return m, cmd
+				}
+				m.openContextMenuAt(mev.X, mev.Y)
 			}
 		}
 		return m, nil
@@ -822,6 +877,16 @@ func (m *model) dispatchKey(msg tea.KeyPressMsg) tea.Cmd {
 	// Interactive prompt active: route keys to prompt handler.
 	if m.activePrompt != nil {
 		return m.handlePromptKey(msg)
+	}
+
+	// Context menu open: route keys to the menu, above the completions
+	// dropdown (both use up/down/enter/esc and completions can legitimately
+	// be visible at the same time — input still has a "/slash" token while
+	// right-clicking a tool box — so completions would otherwise eat every
+	// menu keystroke), below activePrompt (a blocking host-service
+	// round-trip must win over a UI affordance the user can re-open).
+	if m.contextMenu != nil {
+		return m.handleContextMenuKey(msg)
 	}
 
 	// Pure cursor-movement keys don't edit the buffer, so they'd otherwise
@@ -1564,7 +1629,9 @@ func renderInputChunk(ln []rune, chunkStart, chunkEnd int, hasCursor bool, curso
 		case hasCursor && p == cursorCol:
 			b.WriteString(inputCursorStyle.Render(string(ln[p])))
 		case hasSel && p >= selLo && p < selHi:
-			b.WriteString("\x1b[7m" + inputStyle.Render(string(ln[p])) + "\x1b[27m")
+			b.WriteString("\x1b[7m")
+			b.WriteString(inputStyle.Render(string(ln[p])))
+			b.WriteString("\x1b[27m")
 		default:
 			b.WriteString(inputStyle.Render(string(ln[p])))
 		}
@@ -2528,6 +2595,11 @@ func (m *model) handleMousePress(x, y int) {
 // to its own rows even if the mouse leaves them, matching ordinary GUI
 // text-field behavior (you can't drag-select out of the field you're in).
 func (m *model) handleMouseDrag(x, y int) {
+	// A context menu is never a drag target — defensive guard, since a
+	// menu never sets m.dragRegion itself.
+	if m.contextMenu != nil {
+		return
+	}
 	switch m.dragRegion {
 	case dragViewport:
 		if !m.viewportSel.armed() {
@@ -3645,9 +3717,293 @@ func sendBashCommand(runtime tauchat.ChatRuntime, cmd tauchat.RunBashCommand) te
 	}
 }
 
+// --- context menu -----------------------------------------------------------
+
+// openContextMenuAt resolves the element under (x, y) — a live tool box or a
+// committed tool group/row (chat messages are added in a later change via
+// messageAtRow) — and opens a context menu for it. Mirrors handleMousePress's
+// region dispatch but queries state rather than mutating it. A click on
+// input/status/empty space, or on nothing resolvable, leaves the menu
+// closed (silent no-op), matching how right-click on those regions is
+// already a no-op today.
+func (m *model) openContextMenuAt(x, y int) {
+	geom := m.computeLayout()
+
+	if y >= geom.toolsStartY && y <= geom.toolsEndY {
+		for _, tb := range geom.toolBoxes {
+			if y < tb.startY || y > tb.endY {
+				continue
+			}
+			m.contextMenu = m.buildLiveToolContextMenu(tb.id, x, y)
+			return
+		}
+		return
+	}
+
+	if y >= geom.viewportStartY && y <= geom.viewportEndY {
+		row := m.viewport.YOffset() + (y - geom.viewportStartY)
+		idx, ok := m.logicalLineAtRow(row)
+		if !ok {
+			return
+		}
+		if cm := m.buildCommittedToolContextMenu(idx, x, y); cm != nil {
+			m.contextMenu = cm
+			return
+		}
+		// Message targets resolve here once messageAtRow is wired in.
+		return
+	}
+	// input/status/empty space: no target, menu stays closed.
+}
+
+// buildLiveToolContextMenu builds a menu for a right-click on the live
+// (uncommitted) tool batch's tool with the given id.
+func (m *model) buildLiveToolContextMenu(id string, x, y int) *contextMenu {
+	if i := m.findLiveTool(id); i < 0 {
+		return nil
+	}
+	expandLabel := "Expand"
+	if m.expandedID == id {
+		expandLabel = "Collapse"
+	}
+	return &contextMenu{
+		target:   contextMenuTargetTool,
+		targetID: id,
+		x:        x,
+		y:        y,
+		items: []contextMenuItem{
+			{label: "Copy output", action: contextMenuActionCopy},
+			{label: expandLabel, action: contextMenuActionToggleExpand},
+		},
+	}
+}
+
+// buildCommittedToolContextMenu resolves renderedLines index idx against
+// m.committedGroups and builds the appropriate menu — a single row's menu if
+// idx lands on a specific tool row within an unfolded multi-tool group, or
+// the whole group's menu otherwise. Mirrors toggleCommittedToolAtLine's same
+// fold/row-expand precedence exactly, so right-click and left-click always
+// agree on what's "under" a given line. Returns nil if idx isn't inside any
+// committed group.
+func (m *model) buildCommittedToolContextMenu(idx, x, y int) *contextMenu {
+	for _, g := range m.committedGroups {
+		if idx < g.lineIdx || idx >= g.lineIdx+g.lineCount {
+			continue
+		}
+		if g.expanded && len(g.tools) > 1 {
+			rel := idx - g.lineIdx
+			if _, rows := m.renderToolGroupBox(g.tools, g.expandedID, -1); rows != nil {
+				for _, tb := range rows {
+					if rel < tb.startY || rel > tb.endY {
+						continue
+					}
+					return m.buildToolRowContextMenu(g, tb.id, x, y)
+				}
+			}
+		}
+		return m.buildCommittedGroupContextMenu(g, x, y)
+	}
+	return nil
+}
+
+// buildToolRowContextMenu builds a menu for one tool row inside an unfolded
+// committed group.
+func (m *model) buildToolRowContextMenu(g *committedToolGroup, toolID string, x, y int) *contextMenu {
+	expandLabel := "Expand"
+	if g.expandedID == toolID {
+		expandLabel = "Collapse"
+	}
+	return &contextMenu{
+		target:   contextMenuTargetToolRow,
+		targetID: toolID,
+		x:        x,
+		y:        y,
+		items: []contextMenuItem{
+			{label: "Copy output", action: contextMenuActionCopy},
+			{label: expandLabel, action: contextMenuActionToggleExpand},
+		},
+	}
+}
+
+// buildCommittedGroupContextMenu builds a menu for a whole committed group
+// (folded, or a click that landed outside every row of an unfolded group —
+// the header/border, same as the fold trigger). Uses the group's first
+// tool's id as the menu's stable identity — findCommittedGroupWithTool
+// resolves it back to this same group at activation time. Groups always
+// have at least one tool.
+func (m *model) buildCommittedGroupContextMenu(g *committedToolGroup, x, y int) *contextMenu {
+	expandLabel := "Expand"
+	if g.expanded {
+		expandLabel = "Collapse"
+	}
+	return &contextMenu{
+		target:   contextMenuTargetTool,
+		targetID: g.tools[0].id,
+		x:        x,
+		y:        y,
+		items: []contextMenuItem{
+			{label: "Copy output", action: contextMenuActionCopy},
+			{label: expandLabel, action: contextMenuActionToggleExpand},
+		},
+	}
+}
+
+// findLiveTool returns the index of the live (uncommitted) tool with the
+// given id, or -1.
+func (m *model) findLiveTool(id string) int {
+	for i, t := range m.tools {
+		if t.id == id {
+			return i
+		}
+	}
+	return -1
+}
+
+// findCommittedGroupWithTool returns the committed group containing a tool
+// with the given id, or nil. A tool id is never simultaneously live and
+// committed — flushToolGroup/commitToolGroup always clear m.tools at the
+// same time a batch is committed — so live and committed lookups never
+// collide.
+func (m *model) findCommittedGroupWithTool(id string) *committedToolGroup {
+	for _, g := range m.committedGroups {
+		for _, t := range g.tools {
+			if t.id == id {
+				return g
+			}
+		}
+	}
+	return nil
+}
+
+// handleContextMenuKey handles keyboard input while a context menu is open.
+// Up/Down wrap (matches focusNextTool's wraparound — a menu conventionally
+// wraps, unlike the completions dropdown's clamped window). Enter activates
+// the selected item and closes the menu. Esc performs a real, unconditional
+// dismiss — unlike the completions dropdown's swallow-without-closing, this
+// is an explicit modal the user deliberately opened. Every other key is
+// swallowed while the menu is open rather than falling through to input
+// editing.
+func (m *model) handleContextMenuKey(msg tea.KeyPressMsg) tea.Cmd {
+	n := len(m.contextMenu.items)
+	if n == 0 {
+		m.contextMenu = nil
+		return nil
+	}
+	switch msg.String() {
+	case "up":
+		m.contextMenu.selected = (m.contextMenu.selected - 1 + n) % n
+	case "down":
+		m.contextMenu.selected = (m.contextMenu.selected + 1) % n
+	case "enter":
+		return m.activateContextMenuItem(m.contextMenu.items[m.contextMenu.selected])
+	case "esc":
+		m.contextMenu = nil
+	}
+	return nil
+}
+
+// activateContextMenuItem performs item's action against the menu's current
+// target and closes the menu. Re-resolves the target by id rather than
+// caching a pointer/index at open time, so an action taken a while after
+// the menu opened (or from a click, once click-to-activate lands) still
+// acts on live state.
+func (m *model) activateContextMenuItem(item contextMenuItem) tea.Cmd {
+	cm := m.contextMenu
+	m.contextMenu = nil
+	if cm == nil {
+		return nil
+	}
+	switch cm.target {
+	case contextMenuTargetTool:
+		return m.activateToolContextAction(cm.targetID, item.action)
+	case contextMenuTargetToolRow:
+		return m.activateToolRowContextAction(cm.targetID, item.action)
+	}
+	return nil
+}
+
+// activateToolContextAction performs action against either the live tool or
+// the whole committed group identified by id — whichever collection
+// currently contains it (see findLiveTool/findCommittedGroupWithTool).
+func (m *model) activateToolContextAction(id string, action contextMenuAction) tea.Cmd {
+	if i := m.findLiveTool(id); i >= 0 {
+		switch action {
+		case contextMenuActionCopy:
+			return m.copyText(m.tools[i].result)
+		case contextMenuActionToggleExpand:
+			if m.expandedID == id {
+				m.expandedID = ""
+			} else {
+				m.expandedID = id
+				m.tools[i].expanded = true
+			}
+		}
+		return nil
+	}
+	if g := m.findCommittedGroupWithTool(id); g != nil {
+		switch action {
+		case contextMenuActionCopy:
+			results := make([]string, len(g.tools))
+			for i, t := range g.tools {
+				results[i] = t.result
+			}
+			return m.copyText(strings.Join(results, "\n"))
+		case contextMenuActionToggleExpand:
+			g.expanded = !g.expanded
+			if !g.expanded {
+				g.expandedID = ""
+			}
+			m.spliceCommittedGroup(g)
+		}
+	}
+	return nil
+}
+
+// activateToolRowContextAction performs action against one tool row within
+// its committed group, identified by the row's own tool id.
+func (m *model) activateToolRowContextAction(id string, action contextMenuAction) tea.Cmd {
+	g := m.findCommittedGroupWithTool(id)
+	if g == nil {
+		return nil
+	}
+	switch action {
+	case contextMenuActionCopy:
+		for _, t := range g.tools {
+			if t.id == id {
+				return m.copyText(t.result)
+			}
+		}
+	case contextMenuActionToggleExpand:
+		if g.expandedID == id {
+			g.expandedID = ""
+		} else {
+			g.expandedID = id
+		}
+		m.spliceCommittedGroup(g)
+	}
+	return nil
+}
+
+// copyText copies text to the clipboard via OSC 52, matching copySelection's
+// size-guard and notification pattern — context-menu Copy actions have no
+// selectionState/bounds of their own to route through copySelection itself.
+func (m *model) copyText(text string) tea.Cmd {
+	if text == "" {
+		return m.setNotification("nothing to copy")
+	}
+	if _, ok := termkit.OSC52Copy(text); !ok {
+		return m.setNotification(fmt.Sprintf("selection too large to copy (over %d chars)", termkit.OSC52MaxBytes))
+	}
+	return tea.Batch(tea.SetClipboard(text), m.setNotification("copied to clipboard"))
+}
+
 // --- interactive prompt handling -------------------------------------------
 
 func (m *model) enqueuePrompt(e tauchat.InteractivePromptRequestedEvent) tea.Cmd {
+	// A prompt represents a blocking host-service round-trip and must win
+	// over a UI affordance the user can freely re-open — close any open
+	// context menu so it can't linger swallowing keys the prompt needs.
+	m.contextMenu = nil
 	if m.activePrompt != nil {
 		m.promptQueue = append(m.promptQueue, e)
 		return m.setNotification("prompt queued")

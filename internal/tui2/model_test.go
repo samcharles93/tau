@@ -3288,6 +3288,268 @@ func TestMouseDragInToolBoxSelectsLinesForRightClickCopy(t *testing.T) {
 	}
 }
 
+// --- context menu ---
+
+func TestRightClickWithActiveSelectionCopiesInsteadOfOpeningMenu(t *testing.T) {
+	m := newTestModel(&fakeRuntime{}, nil)
+	m.Update(tea.WindowSizeMsg{Width: 80, Height: 24})
+	m.tools = []toolState{{id: "t1", name: "read", status: "done", result: "alpha"}}
+	m.View()
+
+	geom := m.computeLayout()
+	m.Update(tea.MouseClickMsg{Button: tea.MouseLeft, Y: geom.toolsStartY})
+	m.Update(tea.MouseMotionMsg{Button: tea.MouseLeft, Y: geom.toolsEndY})
+	m.Update(tea.MouseReleaseMsg{Button: tea.MouseLeft, Y: geom.toolsEndY})
+	if !m.toolsSel.armed() {
+		t.Fatal("expected the drag to leave a finalized selection")
+	}
+
+	_, cmd := m.Update(tea.MouseClickMsg{Button: tea.MouseRight, Y: geom.toolsEndY})
+	if cmd == nil {
+		t.Fatal("expected right-click with an active selection to copy it")
+	}
+	if m.contextMenu != nil {
+		t.Fatal("expected right-click with an active selection not to open a context menu")
+	}
+}
+
+func TestRightClickEmptySpaceDoesNotOpenMenu(t *testing.T) {
+	m := newTestModel(&fakeRuntime{}, nil)
+	m.Update(tea.WindowSizeMsg{Width: 80, Height: 24})
+	m.View()
+
+	geom := m.computeLayout()
+	m.Update(tea.MouseClickMsg{Button: tea.MouseRight, Y: geom.statusY})
+
+	if m.contextMenu != nil {
+		t.Fatalf("expected right-click on empty/non-target space not to open a menu, got %+v", m.contextMenu)
+	}
+}
+
+func TestOpenContextMenuOnLiveToolBoxRightClick(t *testing.T) {
+	m := newTestModel(&fakeRuntime{}, nil)
+	m.Update(tea.WindowSizeMsg{Width: 80, Height: 24})
+	m.tools = []toolState{{id: "t1", name: "read", status: "done", result: "alpha"}}
+	m.View()
+
+	geom := m.computeLayout()
+	m.Update(tea.MouseClickMsg{Button: tea.MouseRight, Y: geom.toolBoxes[0].startY})
+
+	if m.contextMenu == nil {
+		t.Fatal("expected right-click on a live tool box to open a context menu")
+	}
+	if m.contextMenu.target != contextMenuTargetTool || m.contextMenu.targetID != "t1" {
+		t.Fatalf("contextMenu = %+v, want target=contextMenuTargetTool targetID=t1", m.contextMenu)
+	}
+	if len(m.contextMenu.items) != 2 || m.contextMenu.items[1].label != "Expand" {
+		t.Fatalf("items = %+v, want [Copy output, Expand]", m.contextMenu.items)
+	}
+}
+
+func TestOpenContextMenuOnCommittedToolGroupRightClick(t *testing.T) {
+	m := newTestModel(&fakeRuntime{}, nil)
+	m.width = 80
+	m.commitToolGroup([]toolState{
+		{id: "t0", name: "read", status: "done", result: "a.go"},
+		{id: "t1", name: "search", status: "done", result: "b.go"},
+	}, nil)
+	g := m.committedGroups[0]
+
+	cm := m.buildCommittedToolContextMenu(g.lineIdx, 0, 0)
+	if cm == nil {
+		t.Fatal("expected a menu for a click on the (folded) committed group")
+	}
+	if cm.target != contextMenuTargetTool || cm.targetID != "t0" {
+		t.Fatalf("contextMenu = %+v, want target=contextMenuTargetTool targetID=t0 (first tool)", cm)
+	}
+}
+
+func TestOpenContextMenuOnCommittedToolGroupRowRightClick(t *testing.T) {
+	m := newTestModel(&fakeRuntime{}, nil)
+	m.width = 80
+	m.commitToolGroup([]toolState{
+		{id: "t0", name: "read", status: "done", result: "a.go"},
+		{id: "t1", name: "search", status: "done", result: "b.go"},
+	}, nil)
+	g := m.committedGroups[0]
+
+	// Unfold the group first (mirrors TestCommittedToolGroupUnfoldsRefoldsAndExpandsRow).
+	if !m.toggleCommittedToolAtLine(g.lineIdx) {
+		t.Fatal("expected the header click to unfold the group")
+	}
+	if !g.expanded {
+		t.Fatal("expected the group to be unfolded")
+	}
+
+	// Row layout per renderToolGroupBox: border(0) + header(1) + t0's row(2) + t1's row(3).
+	cm := m.buildCommittedToolContextMenu(g.lineIdx+3, 0, 0)
+	if cm == nil {
+		t.Fatal("expected a menu for a click on t1's row")
+	}
+	if cm.target != contextMenuTargetToolRow || cm.targetID != "t1" {
+		t.Fatalf("contextMenu = %+v, want target=contextMenuTargetToolRow targetID=t1", cm)
+	}
+}
+
+func TestContextMenuUpDownWraps(t *testing.T) {
+	m := newTestModel(&fakeRuntime{}, nil)
+	m.contextMenu = &contextMenu{items: []contextMenuItem{{label: "a"}, {label: "b"}, {label: "c"}}}
+
+	m.handleContextMenuKey(key(tea.KeyUp, 0))
+	if m.contextMenu.selected != 2 {
+		t.Fatalf("selected = %d, want 2 (up from 0 wraps to last)", m.contextMenu.selected)
+	}
+	m.handleContextMenuKey(key(tea.KeyDown, 0))
+	if m.contextMenu.selected != 0 {
+		t.Fatalf("selected = %d, want 0 (down from last wraps to first)", m.contextMenu.selected)
+	}
+}
+
+func TestContextMenuEscDismissesWithoutAction(t *testing.T) {
+	m := newTestModel(&fakeRuntime{}, nil)
+	m.tools = []toolState{{id: "t1", name: "read", status: "done", result: "alpha"}}
+	m.contextMenu = &contextMenu{
+		target: contextMenuTargetTool, targetID: "t1",
+		items: []contextMenuItem{{label: "Copy output", action: contextMenuActionCopy}},
+	}
+
+	m.handleContextMenuKey(key(tea.KeyEscape, 0))
+
+	if m.contextMenu != nil {
+		t.Fatal("expected esc to close the menu")
+	}
+	if m.notification != "" {
+		t.Fatalf("expected esc to take no action, got notification %q", m.notification)
+	}
+}
+
+func TestContextMenuEnterActivatesSelectedItemAndCloses(t *testing.T) {
+	m := newTestModel(&fakeRuntime{}, nil)
+	m.tools = []toolState{{id: "t1", name: "read", status: "done", result: "alpha"}}
+	m.contextMenu = &contextMenu{
+		target: contextMenuTargetTool, targetID: "t1",
+		items: []contextMenuItem{{label: "Copy output", action: contextMenuActionCopy}},
+	}
+
+	cmd := m.handleContextMenuKey(key(tea.KeyEnter, 0))
+	drainCmd(cmd)
+
+	if m.contextMenu != nil {
+		t.Fatal("expected enter to close the menu")
+	}
+	if !strings.Contains(m.notification, "copied") {
+		t.Fatalf("expected the Copy action to fire, got notification %q", m.notification)
+	}
+}
+
+func TestContextMenuCopyToolOutputLiveTool(t *testing.T) {
+	m := newTestModel(&fakeRuntime{}, nil)
+	m.tools = []toolState{{id: "t1", name: "read", status: "done", result: "alpha output"}}
+
+	cmd := m.activateToolContextAction("t1", contextMenuActionCopy)
+	drainCmd(cmd)
+
+	if !strings.Contains(m.notification, "copied") {
+		t.Fatalf("expected a copied notification, got %q", m.notification)
+	}
+}
+
+func TestContextMenuCopyToolOutputCommittedGroupJoinsAllResults(t *testing.T) {
+	m := newTestModel(&fakeRuntime{}, nil)
+	m.width = 80
+	m.commitToolGroup([]toolState{
+		{id: "t0", name: "read", status: "done", result: "alpha"},
+		{id: "t1", name: "search", status: "done", result: "bravo"},
+	}, nil)
+
+	cmd := m.activateToolContextAction("t0", contextMenuActionCopy)
+	drainCmd(cmd)
+
+	if !strings.Contains(m.notification, "copied") {
+		t.Fatalf("expected a copied notification, got %q", m.notification)
+	}
+}
+
+func TestContextMenuExpandCollapseLabelReflectsLiveState(t *testing.T) {
+	m := newTestModel(&fakeRuntime{}, nil)
+	m.tools = []toolState{{id: "t1", name: "read", status: "done"}}
+
+	cm := m.buildLiveToolContextMenu("t1", 0, 0)
+	if cm.items[1].label != "Expand" {
+		t.Fatalf("label = %q, want Expand for a not-yet-expanded tool", cm.items[1].label)
+	}
+
+	m.expandedID = "t1"
+	cm = m.buildLiveToolContextMenu("t1", 0, 0)
+	if cm.items[1].label != "Collapse" {
+		t.Fatalf("label = %q, want Collapse for an already-expanded tool", cm.items[1].label)
+	}
+}
+
+func TestContextMenuToggleExpandLiveTool(t *testing.T) {
+	m := newTestModel(&fakeRuntime{}, nil)
+	m.tools = []toolState{{id: "t1", name: "read", status: "done"}}
+
+	m.activateToolContextAction("t1", contextMenuActionToggleExpand)
+	if m.expandedID != "t1" {
+		t.Fatalf("expandedID = %q, want t1 after toggling expand", m.expandedID)
+	}
+
+	m.activateToolContextAction("t1", contextMenuActionToggleExpand)
+	if m.expandedID != "" {
+		t.Fatalf("expandedID = %q, want empty after toggling collapse", m.expandedID)
+	}
+}
+
+func TestActivePromptTakesPriorityOverOpenContextMenu(t *testing.T) {
+	m := newTestModel(&fakeRuntime{}, nil)
+	m.tools = []toolState{{id: "t1", name: "read", status: "done", result: "alpha"}}
+	m.contextMenu = &contextMenu{
+		target: contextMenuTargetTool, targetID: "t1",
+		items: []contextMenuItem{{label: "Copy output", action: contextMenuActionCopy}},
+	}
+	m.activePrompt = &tauchat.InteractivePromptRequestedEvent{Kind: "confirm", Title: "t", Message: "m"}
+
+	m.dispatchKey(key(tea.KeyEnter, 0))
+
+	// The prompt handler ran (resolved and cleared activePrompt via
+	// resolvePrompt), not the context-menu handler — the menu must still
+	// be open since handlePromptKey never touches it.
+	if m.contextMenu == nil {
+		t.Fatal("expected the context menu to be untouched by a key routed to the prompt handler")
+	}
+}
+
+func TestEnqueuePromptClosesOpenContextMenu(t *testing.T) {
+	m := newTestModel(&fakeRuntime{}, nil)
+	m.contextMenu = &contextMenu{items: []contextMenuItem{{label: "x"}}}
+
+	m.enqueuePrompt(tauchat.InteractivePromptRequestedEvent{Kind: "confirm", Title: "t", Message: "m"})
+
+	if m.contextMenu != nil {
+		t.Fatal("expected a newly enqueued prompt to close any open context menu")
+	}
+}
+
+func TestCompletionsDoNotConsumeKeysWhileContextMenuOpen(t *testing.T) {
+	m := newTestModel(&fakeRuntime{}, nil)
+	m.tools = []toolState{{id: "t1", name: "read", status: "done", result: "alpha"}}
+	m.input = "/help"
+	m.contextMenu = &contextMenu{
+		target: contextMenuTargetTool, targetID: "t1",
+		items: []contextMenuItem{{label: "a"}, {label: "b"}},
+	}
+
+	m.dispatchKey(key(tea.KeyDown, 0))
+
+	if m.contextMenu == nil {
+		t.Fatal("expected the context menu to stay open")
+	}
+	if m.contextMenu.selected != 1 {
+		t.Fatalf("selected = %d, want 1 — the menu, not the completions dropdown, should have consumed 'down'", m.contextMenu.selected)
+	}
+}
+
 func TestHighlightSelectionWrapsSelectedRange(t *testing.T) {
 	m := newTestModel(&fakeRuntime{}, nil)
 	m.renderedLines = []string{"alpha", "bravo", "charlie"}
