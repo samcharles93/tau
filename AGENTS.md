@@ -211,6 +211,19 @@ To prevent orphaned logic, duplicate systems, and disconnected code, **all agent
 
 ---
 
+## Security: External Trigger Surfaces
+
+Any plugin or extension that lets something outside the operator's own terminal/TUI session start a session or feed input into tau (a GitHub webhook, inbound email, a cron-fired job, an HTTP endpoint — anything built on `pkg/plugin/api`) crosses a trust boundary. These rules are load-bearing for that boundary, found the hard way while working through the same gap in a comparable project:
+
+1. **Default to zero shared context for externally-triggered sessions.** A session created by a webhook/plugin event must NOT inherit `SessionStore` history, the search index (`internal/indexing`), or any other persisted state from the operator's own interactive sessions, unless the plugin explicitly opts in per-session. "Same install, same context" is the wrong default the moment anything outside the operator can originate a turn.
+2. **Signature validation proves the source, not the content.** An HMAC-verified webhook proves the request really came from GitHub (or whichever provider); it proves nothing about whether the human behind it is the operator, or whether the payload content is safe to treat as an instruction. Never conflate "authenticated request" with "trusted content."
+3. **Tag persisted state with its origin.** If session search or a memory feature ever gets built on `internal/indexing`, every indexed session/note needs an origin tag (which plugin, which external identity if known) so retrieval is scoped by default and cross-scope reads require an explicit opt-in — design this in from the start, not after real data depends on the old behavior.
+4. **Frame externally-triggered turns as untrusted input, explicitly, in the prompt.** The turn should carry an unambiguous marker that its content came from outside the operator, so the agent doesn't treat instructions embedded in that content as commands, and doesn't volunteer internal state (other sessions, tool availability, plugin config) into a reply that might be public.
+5. **Self-loop protection for any plugin that both receives and posts events on the same channel** (e.g. a bot that posts GitHub comments and also listens for comments): filter by sender identity and/or a content marker, plus a circuit breaker — a rolling count of "did this route actually do real work," not raw request volume — that auto-disables and logs loudly if it trips. A plain per-minute rate limit won't catch a logic bug that produces correct-looking repeated invocations.
+6. **Design per-route/per-plugin identity into the config schema now**, even if every plugin shares one token today. Retrofitting a distinct bot identity later, once real users depend on the existing one, is a much bigger job than reserving the field up front.
+
+---
+
 ## Where to Look (By Task)
 
 Use this section to quickly find the right files for a given change.
