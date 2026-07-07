@@ -106,6 +106,14 @@ type coordinatorSession struct {
 	// bash command runs outside the LLM turn loop and can be in flight
 	// concurrently with a turn.
 	bashCancel context.CancelFunc
+
+	// Tool-call loop breaker state — see checkToolLoop. Guarded by its own
+	// mutex (not c.mu) since it's touched from executeTool, which may run
+	// concurrently across goroutines when parallelToolCalls is true.
+	toolLoopMu      sync.Mutex
+	lastToolKey     string // normalized name+args of the last tool call
+	lastToolStreak  int    // consecutive calls matching lastToolKey
+	lastToolBlocked int    // consecutive unjustified blocks for the current streak
 }
 
 // CoordinatorConfig holds the dependencies for creating a Coordinator.
@@ -1498,11 +1506,19 @@ func (c *Coordinator) runTurn(ctx context.Context, state chat.ChatSessionState) 
 		c.commitAssistantMessage(sessionID, c.getPendingContent(sessionID), result.ReasoningContent, result.ToolCalls)
 
 		// Execute tool calls in parallel.
-		toolResults := c.executeToolsParallel(ctx, sessionID, requestID, result.ToolCalls)
+		toolResults, hardStopReason := c.executeToolsParallel(ctx, sessionID, requestID, result.ToolCalls)
 
 		// Append tool result messages to the session.
 		for i, tc := range result.ToolCalls {
 			c.appendToolResult(sessionID, tc.ID, toolResults[i].Content)
+		}
+
+		// The tool-call loop breaker tripped: a call was blocked without
+		// ever being justified toolLoopHardBlockLimit times in a row. End
+		// the turn now rather than let it iterate forever.
+		if hardStopReason != "" {
+			c.failTurn(sessionID, requestID, errors.New(hardStopReason), time.Now().UTC())
+			return
 		}
 
 		// Refresh state for the next iteration.
@@ -1516,10 +1532,114 @@ func (c *Coordinator) runTurn(ctx context.Context, state chat.ChatSessionState) 
 	}
 }
 
+// toolLoopSoftThreshold is how many consecutive identical tool calls (same
+// name+arguments, ignoring the repeat_justification escape hatch below) are
+// allowed before the coordinator starts requiring the model to explicitly
+// justify continuing.
+const toolLoopSoftThreshold = 3
+
+// toolLoopHardBlockLimit ends the turn outright once a call has been
+// blocked this many times in a row without ever being justified — a
+// backstop for a model that never engages with the block message at all
+// (e.g. a model stuck in decoding-level token repetition, which by
+// definition can't spontaneously produce a novel justification string).
+// There is deliberately no cap on justified repeats: a model that keeps
+// affirming a genuinely repeated action (re-running the same test, polling
+// for a state change) can continue indefinitely.
+const toolLoopHardBlockLimit = 3
+
+// toolLoopVerdict is what checkToolLoop decided for one tool call.
+type toolLoopVerdict struct {
+	blocked   bool // true: don't execute the real tool; return message as a synthetic error result instead
+	hardStop  bool // true: end the whole turn, not just this call
+	justified bool // true: at/past the threshold, but let through by an explicit repeat_justification
+	streak    int  // consecutive identical calls so far, for logging/metrics
+	blockedN  int  // consecutive unjustified blocks so far, for logging/metrics
+	message   string
+}
+
+// parseToolCallKey unmarshals the tool call arguments once and returns both
+// the normalized comparison key (name+args, excluding repeat_justification)
+// and any non-empty repeat_justification string.
+func parseToolCallKey(name, argsJSON string) (key string, justification string) {
+	var m map[string]any
+	if err := json.Unmarshal([]byte(argsJSON), &m); err != nil {
+		return name + "\x00" + argsJSON, ""
+	}
+	s, _ := m["repeat_justification"].(string)
+	justification = strings.TrimSpace(s)
+	delete(m, "repeat_justification")
+	normalized, err := json.Marshal(m)
+	if err != nil {
+		return name + "\x00" + argsJSON, justification
+	}
+	return name + "\x00" + string(normalized), justification
+}
+
+// checkToolLoop tracks consecutive identical tool calls (same name+args,
+// ignoring repeat_justification) per session, to break a decoding-level
+// repetition loop — a real incident had a model call grep with byte-
+// identical arguments 103 times in a row, each getting a valid, non-empty,
+// identical result, without ever producing a final answer. Past
+// toolLoopSoftThreshold, a call must carry a non-empty top-level
+// "repeat_justification" argument to proceed; toolLoopHardBlockLimit
+// consecutive unjustified blocks for the same call ends the turn outright.
+func (c *Coordinator) checkToolLoop(sessionID string, tc chat.ChatToolCall) toolLoopVerdict {
+	c.mu.Lock()
+	sess := c.sessions[sessionID]
+	c.mu.Unlock()
+	if sess == nil {
+		return toolLoopVerdict{}
+	}
+
+	key, justification := parseToolCallKey(tc.Function.Name, tc.Function.Arguments)
+
+	sess.toolLoopMu.Lock()
+	defer sess.toolLoopMu.Unlock()
+
+	if key != sess.lastToolKey {
+		sess.lastToolKey = key
+		sess.lastToolStreak = 1
+		sess.lastToolBlocked = 0
+		return toolLoopVerdict{}
+	}
+	sess.lastToolStreak++
+
+	if sess.lastToolStreak <= toolLoopSoftThreshold {
+		return toolLoopVerdict{}
+	}
+	if justification != "" {
+		sess.lastToolBlocked = 0
+		return toolLoopVerdict{justified: true, streak: sess.lastToolStreak}
+	}
+
+	sess.lastToolBlocked++
+	if sess.lastToolBlocked >= toolLoopHardBlockLimit {
+		return toolLoopVerdict{
+			hardStop: true,
+			streak:   sess.lastToolStreak,
+			blockedN: sess.lastToolBlocked,
+			message: fmt.Sprintf(
+				"tool %q was called %d times in a row with identical arguments and blocked %d times without ever being justified — stopping the turn to avoid a runaway loop",
+				tc.Function.Name, sess.lastToolStreak, sess.lastToolBlocked,
+			),
+		}
+	}
+	return toolLoopVerdict{
+		blocked:  true,
+		streak:   sess.lastToolStreak,
+		blockedN: sess.lastToolBlocked,
+		message: fmt.Sprintf(
+			"This exact %s call has now been made %d times in a row with identical arguments. If repeating it is genuinely necessary (e.g. re-running the same test, polling for a state change), call it again with an added top-level argument %s explaining why — otherwise, try a different approach.",
+			tc.Function.Name, sess.lastToolStreak, `"repeat_justification": "<short reason>"`,
+		),
+	}
+}
+
 // executeToolsParallel runs tool calls and returns results in input order.
 // When parallelToolCalls is true, calls run concurrently; otherwise sequentially.
-func (c *Coordinator) executeToolsParallel(ctx context.Context, sessionID, requestID string, calls []chat.ChatToolCall) []tools.Result {
-	results := make([]tools.Result, len(calls))
+func (c *Coordinator) executeToolsParallel(ctx context.Context, sessionID, requestID string, calls []chat.ChatToolCall) (results []tools.Result, hardStopReason string) {
+	results = make([]tools.Result, len(calls))
 
 	toolNames := make([]string, len(calls))
 	for i, tc := range calls {
@@ -1532,9 +1652,69 @@ func (c *Coordinator) executeToolsParallel(ctx context.Context, sessionID, reque
 		"parallel", c.parallelToolCalls,
 	)
 
+	var hardStopMu sync.Mutex
+
 	executeTool := func(i int, tc chat.ChatToolCall) {
 		startedAt := time.Now().UTC()
 		effectiveArgs := tc.Function.Arguments
+
+		loopVerdict := c.checkToolLoop(sessionID, tc)
+		switch {
+		case loopVerdict.hardStop:
+			hardStopMu.Lock()
+			if hardStopReason == "" {
+				hardStopReason = loopVerdict.message
+			}
+			hardStopMu.Unlock()
+			c.loggerWithTurn(sessionID, requestID).Warn(
+				"tool loop breaker: hard stop",
+				"tool", tc.Function.Name,
+				"call_id", tc.ID,
+				"streak", loopVerdict.streak,
+				"blocked", loopVerdict.blockedN,
+			)
+			c.emitMetrics(chat.MetricEvent{
+				Category:  chat.MetricCategoryTool,
+				Name:      "tool.loop.hard_stop",
+				Value:     1,
+				Unit:      "count",
+				Labels:    map[string]string{"tool": tc.Function.Name, "streak": fmt.Sprintf("%d", loopVerdict.streak)},
+				SessionID: sessionID,
+			})
+
+		case loopVerdict.blocked:
+			c.loggerWithTurn(sessionID, requestID).Debug(
+				"tool loop breaker: blocked pending justification",
+				"tool", tc.Function.Name,
+				"call_id", tc.ID,
+				"streak", loopVerdict.streak,
+				"blocked", loopVerdict.blockedN,
+			)
+			c.emitMetrics(chat.MetricEvent{
+				Category:  chat.MetricCategoryTool,
+				Name:      "tool.loop.blocked",
+				Value:     1,
+				Unit:      "count",
+				Labels:    map[string]string{"tool": tc.Function.Name, "streak": fmt.Sprintf("%d", loopVerdict.streak)},
+				SessionID: sessionID,
+			})
+
+		case loopVerdict.justified:
+			c.loggerWithTurn(sessionID, requestID).Debug(
+				"tool loop breaker: justified override accepted",
+				"tool", tc.Function.Name,
+				"call_id", tc.ID,
+				"streak", loopVerdict.streak,
+			)
+			c.emitMetrics(chat.MetricEvent{
+				Category:  chat.MetricCategoryTool,
+				Name:      "tool.loop.justified",
+				Value:     1,
+				Unit:      "count",
+				Labels:    map[string]string{"tool": tc.Function.Name, "streak": fmt.Sprintf("%d", loopVerdict.streak)},
+				SessionID: sessionID,
+			})
+		}
 
 		// Lifecycle event: tool execution is about to start.
 		c.publishPluginLifecycleEvent("tool_execution_start", sessionID, &api.EventPayload{
@@ -1572,6 +1752,9 @@ func (c *Coordinator) executeToolsParallel(ctx context.Context, sessionID, reque
 		}
 
 		switch {
+		case loopVerdict.blocked || loopVerdict.hardStop:
+			result = tools.Result{Content: loopVerdict.message, IsError: true}
+
 		case beforeResp != nil && beforeResp.GetBlockToolExecution():
 			reason := beforeResp.GetBlockReason()
 			if reason == "" {
@@ -1712,7 +1895,7 @@ func (c *Coordinator) executeToolsParallel(ctx context.Context, sessionID, reque
 		}
 	}
 
-	return results
+	return results, hardStopReason
 }
 
 // SetAllowedTools sets the allowed tool filter for the next LLM call.
