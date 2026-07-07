@@ -3391,6 +3391,63 @@ func TestOpenContextMenuOnCommittedToolGroupRowRightClick(t *testing.T) {
 	}
 }
 
+// TestCompositeContextMenuPreservesBaseContentOutsideMenu is a regression
+// test for a real bug: composing bare Layers directly onto a Canvas (rather
+// than through a Compositor) ignores each Layer's X/Y and draws every layer
+// starting at (0,0) filling the whole canvas area — which blanks out
+// everything the menu layer's own small bounds don't cover, leaving only a
+// tiny box in the top-left corner and wiping the rest of the screen.
+func TestCompositeContextMenuPreservesBaseContentOutsideMenu(t *testing.T) {
+	m := newTestModel(&fakeRuntime{}, nil)
+	m.width, m.height = 40, 10
+	m.contextMenu = &contextMenu{
+		x: 20, y: 5,
+		items: []contextMenuItem{{label: "Copy output"}, {label: "Expand"}},
+	}
+
+	base := strings.Repeat("base-line-content\n", 9) + "base-line-content"
+	out := stripANSI(m.compositeContextMenu(base))
+
+	if !strings.Contains(out, "base-line-content") {
+		t.Fatalf("expected base content to survive compositing, got:\n%s", out)
+	}
+	lines := strings.Split(out, "\n")
+	if strings.TrimSpace(lines[0]) == "" {
+		t.Fatalf("expected the top row (far from the click at y=5) to still show base content, got blank line: %q", lines[0])
+	}
+}
+
+// TestCompositeContextMenuPositionsNearClick guards the other half of the
+// same bug: the menu must render near m.contextMenu.x/y, not always at the
+// canvas origin.
+func TestCompositeContextMenuPositionsNearClick(t *testing.T) {
+	m := newTestModel(&fakeRuntime{}, nil)
+	m.width, m.height = 60, 20
+	m.contextMenu = &contextMenu{
+		x: 30, y: 10,
+		items: []contextMenuItem{{label: "Copy output"}, {label: "Expand"}},
+	}
+
+	base := strings.Repeat(strings.Repeat(".", 60)+"\n", 19) + strings.Repeat(".", 60)
+	out := stripANSI(m.compositeContextMenu(base))
+	lines := strings.Split(out, "\n")
+
+	for i := range 5 {
+		if strings.Contains(lines[i], "Copy output") {
+			t.Fatalf("expected the menu not to appear near the top of the screen (click was at y=10), found it on line %d: %q", i, lines[i])
+		}
+	}
+	found := false
+	for _, l := range lines {
+		if strings.Contains(l, "Copy output") {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("expected the menu to appear somewhere in the composited output, got:\n%s", out)
+	}
+}
+
 func TestContextMenuUpDownWraps(t *testing.T) {
 	m := newTestModel(&fakeRuntime{}, nil)
 	m.contextMenu = &contextMenu{items: []contextMenuItem{{label: "a"}, {label: "b"}, {label: "c"}}}
@@ -3547,6 +3604,47 @@ func TestCompletionsDoNotConsumeKeysWhileContextMenuOpen(t *testing.T) {
 	}
 	if m.contextMenu.selected != 1 {
 		t.Fatalf("selected = %d, want 1 — the menu, not the completions dropdown, should have consumed 'down'", m.contextMenu.selected)
+	}
+}
+
+func TestContextMenuClickAwayDismisses(t *testing.T) {
+	m := newTestModel(&fakeRuntime{}, nil)
+	m.Update(tea.WindowSizeMsg{Width: 80, Height: 24})
+	m.tools = []toolState{{id: "t1", name: "read", status: "done", result: "alpha"}}
+	m.contextMenu = &contextMenu{
+		target: contextMenuTargetTool, targetID: "t1",
+		x: 5, y: 5,
+		items: []contextMenuItem{{label: "Copy output"}, {label: "Expand"}},
+	}
+
+	// Far outside the menu's small footprint near (5,5).
+	m.Update(tea.MouseClickMsg{Button: tea.MouseLeft, X: 70, Y: 20})
+
+	if m.contextMenu != nil {
+		t.Fatal("expected a click outside the menu's bounds to close it")
+	}
+}
+
+func TestContextMenuClickInsideActivatesItem(t *testing.T) {
+	m := newTestModel(&fakeRuntime{}, nil)
+	m.Update(tea.WindowSizeMsg{Width: 80, Height: 24})
+	m.tools = []toolState{{id: "t1", name: "read", status: "done", result: "alpha output"}}
+	m.contextMenu = &contextMenu{
+		target: contextMenuTargetTool, targetID: "t1",
+		x: 5, y: 5,
+		items: []contextMenuItem{{label: "Copy output", action: contextMenuActionCopy}, {label: "Expand", action: contextMenuActionToggleExpand}},
+	}
+
+	// contextMenuStyle draws a 1-cell border, so item 0 ("Copy output")
+	// sits one row below the menu's top-left corner (5,5) -> (5, 6).
+	_, cmd := m.Update(tea.MouseClickMsg{Button: tea.MouseLeft, X: 6, Y: 6})
+
+	if m.contextMenu != nil {
+		t.Fatal("expected a click on an item to close the menu")
+	}
+	drainCmd(cmd)
+	if !strings.Contains(m.notification, "copied") {
+		t.Fatalf("expected the click to activate Copy output, got notification %q", m.notification)
 	}
 }
 

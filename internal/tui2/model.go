@@ -529,7 +529,7 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case tea.MouseLeft:
 			switch msg.(type) {
 			case tea.MouseClickMsg:
-				m.handleMousePress(mev.X, mev.Y)
+				return m, m.handleMousePress(mev.X, mev.Y)
 			case tea.MouseMotionMsg:
 				m.handleMouseDrag(mev.X, mev.Y)
 			case tea.MouseReleaseMsg:
@@ -667,7 +667,12 @@ func (m *model) View() tea.View {
 	sb.WriteString("\n")
 	sb.WriteString(geom.chromeStr)
 
-	v := tea.NewView(sb.String())
+	base := sb.String()
+	if m.contextMenu != nil {
+		base = m.compositeContextMenu(base)
+	}
+
+	v := tea.NewView(base)
 	// AltScreen owns the full terminal so we can use guaranteed screen real
 	// estate for tool boxes, expansion panels, and flicker-free output.
 	v.AltScreen = true
@@ -681,6 +686,80 @@ func (m *model) View() tea.View {
 	// supported across terminals — all we need for scroll + click-to-expand.
 	v.MouseMode = tea.MouseModeCellMotion
 	return v
+}
+
+// compositeContextMenu overlays the open context menu on top of base using a
+// lipgloss Compositor — tui2's only (x,y)-stamping compositing path, used
+// nowhere else, since every other piece of chrome is flow-laid-out below
+// the viewport rather than floating on top of arbitrary content. Compositing
+// happens at the decoded-cell level (via lipgloss.Layer's underlying
+// uv.StyledString), so this never corrupts either base's or menuStr's ANSI
+// regardless of what's already styled underneath.
+//
+// This must go through a Compositor, not bare Canvas.Compose(layer) calls —
+// Canvas.Compose(drawer) always calls drawer.Draw(canvas, canvas.Bounds()),
+// and a bare Layer.Draw ignores its own X/Y and just stamps its content
+// starting at whatever area it's handed, filling that entire area (blanking
+// anything beyond its own content). A Layer's X/Y/Z only get honored once
+// it's inside a Compositor, which precomputes each layer's true absolute
+// bounds before drawing it.
+func (m *model) compositeContextMenu(base string) string {
+	menuStr := renderContextMenu(m.contextMenu.items, m.contextMenu.selected)
+	mx, my := m.clampContextMenuPosition(menuStr)
+
+	// Compositor.Render() would auto-size the canvas to the union of layer
+	// bounds, which could come up short of the real terminal size if base's
+	// widest line is narrower than m.width — pin it explicitly instead, so
+	// the composited frame always matches what bubbletea expects.
+	compositor := lipgloss.NewCompositor(
+		lipgloss.NewLayer(base).X(0).Y(0),
+		lipgloss.NewLayer(menuStr).X(mx).Y(my).Z(1),
+	)
+	canvas := lipgloss.NewCanvas(m.width, m.height)
+	canvas.Compose(compositor)
+	return canvas.Render()
+}
+
+// clampContextMenuPosition returns where the open menu should actually be
+// drawn: anchored at its raw click position (m.contextMenu.x/y), flipped to
+// the opposite corner when it would overflow the right or bottom edge, then
+// hard-clamped into the terminal bounds as a safety net for a menu wider or
+// taller than the terminal itself (which the flip alone doesn't guarantee).
+// Shared by compositeContextMenu (render) and handleContextMenuClick
+// (click-away hit-test) so the two can never disagree about where the menu
+// actually is — same rationale as computeLayout being the single source of
+// truth for the rest of the screen.
+func (m *model) clampContextMenuPosition(menuStr string) (x, y int) {
+	mw := lipgloss.Width(menuStr)
+	mh := lipgloss.Height(menuStr)
+	x, y = m.contextMenu.x, m.contextMenu.y
+
+	if x+mw > m.width {
+		x = m.contextMenu.x - mw
+	}
+	if y+mh > m.height {
+		y = m.contextMenu.y - mh + 1
+	}
+	x = max(0, min(x, max(0, m.width-mw)))
+	y = max(0, min(y, max(0, m.height-mh)))
+	return x, y
+}
+
+// renderContextMenu renders an open context menu's items as a bordered box,
+// mirroring renderPrompt/renderCompletions' signature shape. The selected
+// row gets the same "▶ " chevron + bold-foreground convention as the
+// completions dropdown, for a consistent selection idiom across tui2's
+// keyboard-navigable lists.
+func renderContextMenu(items []contextMenuItem, selected int) string {
+	lines := make([]string, len(items))
+	for i, item := range items {
+		if i == selected {
+			lines[i] = "▶ " + contextMenuSelectedStyle.Render(item.label)
+		} else {
+			lines[i] = "  " + item.label
+		}
+	}
+	return contextMenuStyle.Render(strings.Join(lines, "\n"))
 }
 
 // computeLayout renders every non-viewport UI region, decides how much
@@ -2539,7 +2618,15 @@ func (m *model) focusNextTool(delta int) {
 // View()'s geometry) keeps hit-testing correct even if the event arrives
 // before the next render — cheap enough since it only runs per mouse event,
 // not per frame.
-func (m *model) handleMousePress(x, y int) {
+func (m *model) handleMousePress(x, y int) tea.Cmd {
+	// A left-click while a context menu is open resolves against the menu
+	// itself — inside its bounds activates whatever's under the click,
+	// outside closes it — and never also fires the region's own press
+	// action underneath (e.g. re-focusing a different tool box).
+	if m.contextMenu != nil {
+		return m.handleContextMenuClick(x, y)
+	}
+
 	geom := m.computeLayout()
 
 	if y >= geom.toolsStartY && y <= geom.toolsEndY {
@@ -2552,7 +2639,7 @@ func (m *model) handleMousePress(x, y int) {
 				break
 			}
 		}
-		return
+		return nil
 	}
 
 	switch {
@@ -2584,6 +2671,33 @@ func (m *model) handleMousePress(x, y int) {
 	// The region's selectionState.dragging stays false until
 	// handleMouseDrag actually sees motion — a plain click (press+release,
 	// no movement) must not leave a stray highlight or copy anything.
+	return nil
+}
+
+// handleContextMenuClick resolves a left-click while a context menu is open
+// against the menu's clamped on-screen bounds (see clampContextMenuPosition
+// — the same function compositeContextMenu uses to render it, so hit-test
+// and render can never disagree about where the menu actually is). A click
+// inside the menu activates the item under it; a click anywhere else closes
+// the menu without performing the click's underlying region action.
+func (m *model) handleContextMenuClick(x, y int) tea.Cmd {
+	menuStr := renderContextMenu(m.contextMenu.items, m.contextMenu.selected)
+	mx, my := m.clampContextMenuPosition(menuStr)
+	mw, mh := lipgloss.Width(menuStr), lipgloss.Height(menuStr)
+
+	if x < mx || x >= mx+mw || y < my || y >= my+mh {
+		m.contextMenu = nil
+		return nil
+	}
+
+	// contextMenuStyle draws a 1-cell border on every side, so the first
+	// content row (item index 0) sits at my+1, not my.
+	itemIdx := y - my - 1
+	if itemIdx < 0 || itemIdx >= len(m.contextMenu.items) {
+		m.contextMenu = nil
+		return nil
+	}
+	return m.activateContextMenuItem(m.contextMenu.items[itemIdx])
 }
 
 // handleMouseDrag extends whichever selection dragRegion says is active to
@@ -3392,11 +3506,17 @@ func (m *model) renderToolBox(t toolState, expanded bool, _ int) string {
 		if looksLikeMarkdown(t.result) {
 			// Wrap as a fenced markdown block and render through
 			// the width-memoized glamour cache for syntax highlight.
-			md := "```result.md\n" + t.result + "\n```"
+			var mdBuilder strings.Builder
+			mdBuilder.Grow(len(t.result) + len("```result.md\n\n```"))
+			mdBuilder.WriteString("```result.md\n")
+			mdBuilder.WriteString(t.result)
+			mdBuilder.WriteString("\n```")
+			md := mdBuilder.String()
 			if r, ok := m.mdCache[innerWidth]; ok && r != nil {
 				if out, err := r.Render(md); err == nil {
 					for line := range strings.SplitSeq(out, "\n") {
-						innerContent.WriteString(line + "\n")
+						innerContent.WriteString(line)
+						innerContent.WriteByte('\n')
 					}
 					innerRendered := innerStyle.Render(strings.TrimRight(innerContent.String(), "\n"))
 					for line := range strings.SplitSeq(innerRendered, "\n") {
@@ -3412,7 +3532,8 @@ func (m *model) renderToolBox(t toolState, expanded bool, _ int) string {
 
 		resultLines := strings.SplitSeq(t.result, "\n")
 		for line := range resultLines {
-			innerContent.WriteString(line + "\n")
+			innerContent.WriteString(line)
+			innerContent.WriteByte('\n')
 		}
 		// Render inner box and append each line to body.
 		innerRendered := innerStyle.Render(strings.TrimRight(innerContent.String(), "\n"))
@@ -4371,6 +4492,24 @@ var (
 				Background(themeHex(theme.SkillFailed.BG)).
 				Foreground(themeHex(theme.SkillFailed.FG)).
 				Padding(0, 1)
+
+	// Context menu — a floating overlay composited on top of arbitrary
+	// already-rendered content (see compositeContextMenu), so unlike the
+	// prompt/completions boxes (which sit in dedicated blank chrome rows)
+	// it needs an opaque background to read clearly as "on top," matching
+	// the tool-box bordered-box family rather than the prompt/completions
+	// hand-drawn foreground-only family. No dedicated neutral "surface"
+	// color exists in the palette, so this reuses ToolPending's muted
+	// grey-blue background — the closest existing tone to a neutral panel.
+	contextMenuStyle = lipgloss.NewStyle().
+				Border(lipgloss.RoundedBorder()).
+				BorderForeground(themeHex(theme.ToneMuted)).
+				Background(themeHex(theme.ToolPending.BG)).
+				Foreground(themeHex(theme.ToneBody)).
+				Padding(0, 1)
+	// Selected-item highlight follows the completions dropdown's convention:
+	// foreground color + bold, no background swap.
+	contextMenuSelectedStyle = lipgloss.NewStyle().Foreground(themeHex(theme.CommandFG)).Bold(true)
 
 	// toolBoxExpandedStyle is the style for an expanded tool box (subtle border).
 	toolBoxExpandedStyle = lipgloss.NewStyle().
