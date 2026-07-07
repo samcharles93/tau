@@ -46,7 +46,7 @@ func (p *providerRuntime) snapshot() (*runtime.Runtime, []tauconfig.ProviderConf
 // rebuilds the runtime around them, and force-refreshes the model catalogue.
 // On success the new runtime and provider set are swapped in atomically; on
 // failure the existing runtime is left untouched. Safe for concurrent use.
-func (p *providerRuntime) reload(ctx context.Context) error {
+func (p *providerRuntime) reload(_ context.Context) error {
 	cfg, _, err := providers.Effective()
 	if err != nil {
 		return err

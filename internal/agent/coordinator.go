@@ -903,7 +903,7 @@ func (c *Coordinator) handleCancelBash(cmd chat.CancelBashCommand) {
 
 // handleReloadSkills re-discovers skills from disk and merges them into the
 // command registry, enabling hot-reload without restarting tau.
-func (c *Coordinator) handleReloadSkills(cmd chat.ReloadSkillsCommand) {
+func (c *Coordinator) handleReloadSkills(_ chat.ReloadSkillsCommand) {
 	now := time.Now().UTC()
 	if c.skillsMgr == nil {
 		c.emit(chat.ChatNotificationEvent{
@@ -933,7 +933,7 @@ func (c *Coordinator) handleReloadSkills(cmd chat.ReloadSkillsCommand) {
 }
 
 // handleListSkills prints the available skill catalog as a notification.
-func (c *Coordinator) handleListSkills(cmd chat.ListSkillsCommand) {
+func (c *Coordinator) handleListSkills(_ chat.ListSkillsCommand) {
 	now := time.Now().UTC()
 	if c.skillsMgr == nil {
 		c.emit(chat.ChatNotificationEvent{

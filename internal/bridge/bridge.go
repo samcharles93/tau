@@ -326,7 +326,7 @@ func (c *client) writeLoop() {
 	}
 }
 
-func (c *client) write(messageType int, data []byte) error {
+func (c *client) write(_ int, data []byte) error {
 	select {
 	case c.send <- data:
 		return nil
