@@ -130,14 +130,17 @@ func (c *Config) UnmarshalYAML(value *yaml.Node) error {
 
 // UIConfig controls terminal UI observability and presentation.
 type UIConfig struct {
-	ShowReasoning bool `yaml:"show_reasoning" json:"show_reasoning"`
+	ShowReasoning             bool `yaml:"show_reasoning" json:"show_reasoning"`
+	ToolCallsDefaultCollapsed bool `yaml:"tool_calls_default_collapsed" json:"tool_calls_default_collapsed"`
 
-	showReasoningSet bool
+	showReasoningSet             bool
+	toolCallsDefaultCollapsedSet bool
 }
 
 func (c *UIConfig) UnmarshalYAML(value *yaml.Node) error {
 	type rawUIConfig struct {
-		ShowReasoning *bool `yaml:"show_reasoning"`
+		ShowReasoning             *bool `yaml:"show_reasoning"`
+		ToolCallsDefaultCollapsed *bool `yaml:"tool_calls_default_collapsed"`
 	}
 	var raw rawUIConfig
 	if err := value.Decode(&raw); err != nil {
@@ -146,6 +149,10 @@ func (c *UIConfig) UnmarshalYAML(value *yaml.Node) error {
 	if raw.ShowReasoning != nil {
 		c.ShowReasoning = *raw.ShowReasoning
 		c.showReasoningSet = true
+	}
+	if raw.ToolCallsDefaultCollapsed != nil {
+		c.ToolCallsDefaultCollapsed = *raw.ToolCallsDefaultCollapsed
+		c.toolCallsDefaultCollapsedSet = true
 	}
 	return nil
 }
@@ -968,6 +975,10 @@ func mergeUIConfigs(globalCfg, localCfg UIConfig) UIConfig {
 	if localCfg.showReasoningSet {
 		merged.ShowReasoning = localCfg.ShowReasoning
 		merged.showReasoningSet = true
+	}
+	if localCfg.toolCallsDefaultCollapsedSet {
+		merged.ToolCallsDefaultCollapsed = localCfg.ToolCallsDefaultCollapsed
+		merged.toolCallsDefaultCollapsedSet = true
 	}
 	return merged
 }

@@ -345,21 +345,22 @@ func RunChat(ctx context.Context, opts ChatOptions) error {
 	}
 
 	tuiCfg := tui.TUIConfig{
-		SessionID:          sessionID,
-		ModelName:          model.ID,
-		Provider:           opts.Provider.Name,
-		AvailableModels:    available,
-		AvailableProviders: tauconfig.ProviderNames(opts.Config),
-		InitialCommands:    initialCommands,
-		Bus:                bus,
-		RefreshModels:      refresher,
-		ShowReasoning:      opts.Config.UI.ShowReasoning,
-		ReasoningEffort:    opts.ReasoningEffort,
-		Debug:              isDevel(opts.Version, opts.Config),
-		WebURL:             webURL,
-		OnReady:            onReady,
-		MetricsConfig:      opts.Config.Metrics,
-		NewTUI:             opts.NewTUI,
+		SessionID:                 sessionID,
+		ModelName:                 model.ID,
+		Provider:                  opts.Provider.Name,
+		AvailableModels:           available,
+		AvailableProviders:        tauconfig.ProviderNames(opts.Config),
+		InitialCommands:           initialCommands,
+		Bus:                       bus,
+		RefreshModels:             refresher,
+		ShowReasoning:             opts.Config.UI.ShowReasoning,
+		ReasoningEffort:           opts.ReasoningEffort,
+		Debug:                     isDevel(opts.Version, opts.Config),
+		WebURL:                    webURL,
+		OnReady:                   onReady,
+		MetricsConfig:             opts.Config.Metrics,
+		ToolCallsDefaultCollapsed: opts.Config.UI.ToolCallsDefaultCollapsed,
+		NewTUI:                    opts.NewTUI,
 	}
 
 	logStartupPhase("after-tui", t0)

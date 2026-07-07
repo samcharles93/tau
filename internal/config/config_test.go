@@ -213,6 +213,58 @@ providers:
 	}
 }
 
+func TestLoadConfigUIToolCallsDefaultCollapsedDefaultAndLocalOverride(t *testing.T) {
+	configDir := t.TempDir()
+	projectDir := t.TempDir()
+	t.Setenv("TAU_CONFIG_DIR", configDir)
+
+	writeFile(t, filepath.Join(configDir, "config.yaml"), `default_provider: local
+ui:
+  tool_calls_default_collapsed: true
+providers:
+  - name: local
+    base_url: http://localhost:11434
+    auth:
+      type: none
+`)
+	cfg, err := LoadConfigFrom(projectDir)
+	if err != nil {
+		t.Fatalf("LoadConfigFrom() error = %v", err)
+	}
+	if !cfg.UI.ToolCallsDefaultCollapsed {
+		t.Fatal("UI.ToolCallsDefaultCollapsed = false, want global true")
+	}
+
+	writeFile(t, filepath.Join(projectDir, ".tau.yaml"), `ui:
+  tool_calls_default_collapsed: false
+`)
+	cfg, err = LoadConfigFrom(projectDir)
+	if err != nil {
+		t.Fatalf("LoadConfigFrom() with local override error = %v", err)
+	}
+	if cfg.UI.ToolCallsDefaultCollapsed {
+		t.Fatal("UI.ToolCallsDefaultCollapsed = true, want local override false")
+	}
+
+	writeFile(t, filepath.Join(configDir, "config.yaml"), `default_provider: local
+providers:
+  - name: local
+    base_url: http://localhost:11434
+    auth:
+      type: none
+`)
+	if err := os.Remove(filepath.Join(projectDir, ".tau.yaml")); err != nil {
+		t.Fatalf("remove local config: %v", err)
+	}
+	cfg, err = LoadConfigFrom(projectDir)
+	if err != nil {
+		t.Fatalf("LoadConfigFrom() default error = %v", err)
+	}
+	if cfg.UI.ToolCallsDefaultCollapsed {
+		t.Fatal("UI.ToolCallsDefaultCollapsed default = true, want false")
+	}
+}
+
 func TestLoadConfigAcceptsProviderMapAndAliases(t *testing.T) {
 	configDir := t.TempDir()
 	projectDir := t.TempDir()

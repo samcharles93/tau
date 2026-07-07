@@ -65,7 +65,7 @@ func drainCmd(cmd tea.Cmd) []tea.Msg {
 }
 
 func newTestModel(rt tauchat.ChatRuntime, sub *eventbus.Subscriber[tauchat.ChatEvent]) *model {
-	return newModel(context.Background(), rt, sub, "sess", "gpt", "openai", nil, nil, true, "medium", nil, "", false)
+	return newModel(context.Background(), rt, sub, "sess", "gpt", "openai", nil, nil, true, "medium", false, nil, "", false)
 }
 
 // --- bash mode: CallID tracking (real bug found in commit 585874f) --------
@@ -2127,6 +2127,59 @@ func TestRecallHistoryDownNoNavigationActive(t *testing.T) {
 	m.recallHistory(1) // down without navigating yet
 	if m.input != "first" {
 		t.Fatalf("down from -1: input = %q, want %q", m.input, "first")
+	}
+}
+
+// TestRecallHistoryDraftRestore verifies that an in-progress (unsent) draft is
+// stashed on first history recall and restored when navigating past the most
+// recent history entry (CAT-18).
+func TestRecallHistoryDraftRestore(t *testing.T) {
+	m := newTestModel(&fakeRuntime{}, nil)
+	m.history = []string{"first", "second"}
+	m.historyIdx = -1
+	m.input = "my draft"
+	m.inputCursor = 8
+
+	// Up: should stash draft and show most recent history.
+	m.recallHistory(-1)
+	if m.input != "second" {
+		t.Fatalf("up: input = %q, want %q", m.input, "second")
+	}
+	if m.draftInput != "my draft" {
+		t.Fatalf("draft not stashed: draftInput = %q, want %q", m.draftInput, "my draft")
+	}
+
+	// Up again: oldest entry.
+	m.recallHistory(-1)
+	if m.input != "first" {
+		t.Fatalf("up again: input = %q, want %q", m.input, "first")
+	}
+
+	// Down: back to most recent.
+	m.recallHistory(1)
+	if m.input != "second" {
+		t.Fatalf("down: input = %q, want %q", m.input, "second")
+	}
+
+	// Down past most recent: should restore draft.
+	m.recallHistory(1)
+	if m.input != "my draft" {
+		t.Fatalf("down past most recent: input = %q, want %q", m.input, "my draft")
+	}
+	if m.historyIdx != len(m.history) {
+		t.Fatalf("historyIdx = %d, want %d (draft slot)", m.historyIdx, len(m.history))
+	}
+
+	// Down again: clamped at draft slot.
+	m.recallHistory(1)
+	if m.input != "my draft" {
+		t.Fatalf("down again: input = %q, want %q", m.input, "my draft")
+	}
+
+	// Up from draft: back to most recent history.
+	m.recallHistory(-1)
+	if m.input != "second" {
+		t.Fatalf("up from draft: input = %q, want %q", m.input, "second")
 	}
 }
 

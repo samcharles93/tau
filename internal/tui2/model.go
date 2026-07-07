@@ -62,6 +62,7 @@ type model struct {
 	inputCursor int
 	history     []string // submitted inputs for up/down recall
 	historyIdx  int      // -1 = not navigating; 0..len(history) = navigating
+	draftInput  string   // stashed input on first history recall; restored at idx == len(history)
 
 	// focused reports whether the terminal window currently has focus,
 	// tracked via tea.FocusMsg/tea.BlurMsg (requires View.ReportFocus).
@@ -169,6 +170,16 @@ type model struct {
 	// Phase 1: tool focus/expansion navigation (keyboard and mouse).
 	focusedTool int    // index into m.tools for keyboard nav (-1 = none)
 	expandedID  string // tool ID currently expanded ("" = none)
+
+	// toolGroupCollapsed collapses the live tool-call group to a one-line
+	// summary, saving vertical space when there are many calls. Toggled by
+	// clicking on the live group header / border area.
+	toolGroupCollapsed bool
+
+	// toolCallsDefaultCollapsed is the initial value for toolGroupCollapsed
+	// at the start of each turn, driven by UI.ToolCallsDefaultCollapsed in
+	// the global/project config.
+	toolCallsDefaultCollapsed bool
 
 	// autoFollow keeps the viewport pinned to the bottom as new content
 	// arrives. Cleared when the user scrolls up (they want to read
@@ -428,6 +439,7 @@ func newModel(
 	refresh func(context.Context) ([]tauchat.ChatModelRef, error),
 	showReasoning bool,
 	reasoningEffort string,
+	toolCallsDefaultCollapsed bool,
 	usage *metrics.UsageTracker,
 	webURL string,
 	debug bool,
@@ -442,31 +454,33 @@ func newModel(
 	ensureMDRenderer(mdCache, 80)
 
 	return &model{
-		ctx:               ctx,
-		runtime:           runtime,
-		chatSub:           chatSub,
-		sessionID:         sessionID,
-		modelName:         modelName,
-		provider:          provider,
-		viewport:          vp,
-		historyIdx:        -1,
-		focused:           true,
-		focusedTool:       -1,
-		autoFollow:        true,
-		viewportSel:       newSelectionState(),
-		inputSel:          newSelectionState(),
-		statusSel:         newSelectionState(),
-		toolsSel:          newSelectionState(),
-		availableModels:   availableModels,
-		refresh:           refresh,
-		showReasoning:     showReasoning,
-		reasoningEffort:   reasoningEffort,
-		usage:             usage,
-		webURL:            webURL,
-		debug:             debug,
-		extensionCommands: make(map[string]tauchat.ExtensionCommand),
-		panels:            make(map[string]pluginPanel),
-		mdCache:           mdCache,
+		ctx:                       ctx,
+		runtime:                   runtime,
+		chatSub:                   chatSub,
+		sessionID:                 sessionID,
+		modelName:                 modelName,
+		provider:                  provider,
+		viewport:                  vp,
+		historyIdx:                -1,
+		focused:                   true,
+		focusedTool:               -1,
+		autoFollow:                true,
+		viewportSel:               newSelectionState(),
+		inputSel:                  newSelectionState(),
+		statusSel:                 newSelectionState(),
+		toolsSel:                  newSelectionState(),
+		availableModels:           availableModels,
+		refresh:                   refresh,
+		showReasoning:             showReasoning,
+		reasoningEffort:           reasoningEffort,
+		toolCallsDefaultCollapsed: toolCallsDefaultCollapsed,
+		toolGroupCollapsed:        toolCallsDefaultCollapsed,
+		usage:                     usage,
+		webURL:                    webURL,
+		debug:                     debug,
+		extensionCommands:         make(map[string]tauchat.ExtensionCommand),
+		panels:                    make(map[string]pluginPanel),
+		mdCache:                   mdCache,
 	}
 }
 
@@ -1727,7 +1741,8 @@ func (m *model) recallHistory(delta int) tea.Cmd {
 		return nil
 	}
 	if m.historyIdx == -1 {
-		// Start navigating from the end.
+		// Start navigating: stash current input as draft before overwriting.
+		m.draftInput = m.input
 		if delta < 0 {
 			m.historyIdx = len(m.history) - 1
 		} else {
@@ -1738,11 +1753,15 @@ func (m *model) recallHistory(delta int) tea.Cmd {
 		if m.historyIdx < 0 {
 			m.historyIdx = 0
 		}
-		if m.historyIdx >= len(m.history) {
-			m.historyIdx = len(m.history) - 1
+		if m.historyIdx > len(m.history) {
+			m.historyIdx = len(m.history)
 		}
 	}
-	m.input = m.history[m.historyIdx]
+	if m.historyIdx == len(m.history) {
+		m.input = m.draftInput
+	} else {
+		m.input = m.history[m.historyIdx]
+	}
 	m.inputCursor = utf8.RuneCountInString(m.input)
 	return nil
 }
@@ -1985,6 +2004,7 @@ func (m *model) handleChatEvent(evt tauchat.ChatEvent) tea.Cmd {
 		m.streaming = ""
 		m.reasoning = ""
 		m.tools = nil
+		m.toolGroupCollapsed = m.toolCallsDefaultCollapsed
 		m.inResponse = true
 		m.spinnerFrame = 0
 		m.turnStartedAt = time.Now()
@@ -2634,9 +2654,9 @@ func (m *model) handleMousePress(x, y int) tea.Cmd {
 		m.clearAllSelections()
 		m.dragRegion = dragTools
 		m.toolsSel.press(y)
-		for i, tb := range geom.toolBoxes {
+		for _, tb := range geom.toolBoxes {
 			if y >= tb.startY && y <= tb.endY {
-				m.focusedTool = i
+				m.focusedTool = m.findLiveTool(tb.id)
 				break
 			}
 		}
@@ -2804,20 +2824,39 @@ func (m *model) handleMouseRelease() tea.Cmd {
 // toggleToolBoxAtY toggles expand/collapse for whichever live tool box (from
 // a fresh layout computation) contains absolute view row y — the
 // click-to-expand behavior for a plain click (no drag) on the tool group.
+// When the live group is collapsed, any click inside the tools area expands
+// it. When expanded, a click on a tool row toggles per-tool expansion
+// (existing behavior), while a click on the header/border/padding area
+// collapses the whole group back to its one-line summary.
 func (m *model) toggleToolBoxAtY(y int) {
 	geom := m.computeLayout()
-	for i, tb := range geom.toolBoxes {
+
+	// A click inside the tools area when the group is collapsed: expand it.
+	if m.toolGroupCollapsed && y >= geom.toolsStartY && y <= geom.toolsEndY {
+		m.toolGroupCollapsed = false
+		return
+	}
+
+	for _, tb := range geom.toolBoxes {
 		if y < tb.startY || y > tb.endY {
 			continue
 		}
-		m.focusedTool = i
+		m.focusedTool = m.findLiveTool(tb.id)
 		if m.expandedID == tb.id {
 			m.expandedID = ""
 		} else {
 			m.expandedID = tb.id
-			m.tools[i].expanded = true
+			if realIdx := m.findLiveTool(tb.id); realIdx >= 0 {
+				m.tools[realIdx].expanded = true
+			}
 		}
 		return
+	}
+
+	// Click landed inside the tools area but on the header/border/padding —
+	// collapse the whole live group to its one-line summary.
+	if y >= geom.toolsStartY && y <= geom.toolsEndY {
+		m.toolGroupCollapsed = true
 	}
 }
 
@@ -3366,8 +3405,55 @@ func (m *model) renderToolGroup() (string, []toolBoxGeometry) {
 	if len(m.tools) == 0 {
 		return "", nil
 	}
+	if m.toolGroupCollapsed && len(m.tools) > 1 {
+		return renderLiveToolsSummary(m.tools, m.spinnerFrame), nil
+	}
 	return m.renderToolGroupBox(m.tools, m.expandedID, m.focusedTool)
 }
+
+// renderLiveToolsSummary renders a collapsed one-line summary for the live
+// tool-call group — mirrors renderCommittedToolsSummary but keeps the live
+// spinner and running/pending/error counts up-to-date.
+func renderLiveToolsSummary(tools []toolState, frame int) string {
+	running, pending, errored := 0, 0, 0
+	for _, t := range tools {
+		switch t.status {
+		case "running":
+			running++
+		case "pending":
+			pending++
+		case "error":
+			errored++
+		}
+	}
+	glyph := toolGlyph("running", frame)
+	if running+pending == 0 {
+		if errored > 0 {
+			glyph = "✗"
+		} else {
+			glyph = "✓"
+		}
+	}
+	summary := fmt.Sprintf("%s %d tool calls", glyph, len(tools))
+	total := running + pending
+	if total > 0 {
+		if pending > 0 {
+			summary += fmt.Sprintf(" · %d pending", pending)
+		}
+		if running > 0 {
+			summary += fmt.Sprintf(" · %d running", running)
+		}
+	}
+	if errored > 0 {
+		summary += fmt.Sprintf(" · %d error", errored)
+	}
+	return toolGroupSummaryStyle.Render(summary)
+}
+
+// maxToolRowsVisible is the most per-tool rows renderToolGroupBox will show
+// inside a group before windowing — prevents a turn with 40+ tool calls from
+// pushing everything off-screen. Overflowed rows get an "↑ N more" indicator.
+const maxToolRowsVisible = 8
 
 // renderToolGroupBox renders any batch of tool calls — live or a committed
 // group reopened from scrollback (see committedToolGroup) — as one unit. A
@@ -3377,8 +3463,12 @@ func (m *model) renderToolGroup() (string, []toolBoxGeometry) {
 // expandedID, which renders its full box in place of its row. focusedIdx
 // draws the keyboard-focus marker on that row (pass -1 for a committed
 // group, which has no live keyboard focus). Returns the rendered string
-// plus each tool's row range (relative to the string's own first line, i.e.
-// row 0 is the box's top border) for mouse hit-testing.
+// plus each *visible* tool's row range (relative to the string's own first
+// line, i.e. row 0 is the box's top border) for mouse hit-testing.
+//
+// When there are more tools than maxToolRowsVisible, the box windows to show
+// the last N rows (most-recent calls at the bottom) and prepends an
+// "↑ N more" overflow indicator so the user knows there's more above.
 func (m *model) renderToolGroupBox(tools []toolState, expandedID string, focusedIdx int) (string, []toolBoxGeometry) {
 	if len(tools) == 1 {
 		t := tools[0]
@@ -3387,34 +3477,59 @@ func (m *model) renderToolGroupBox(tools []toolState, expandedID string, focused
 		return box, []toolBoxGeometry{{id: t.id, startY: 0, endY: visualLineCount(box) - 1}}
 	}
 
-	running, errored := 0, 0
+	running, errored, pending := 0, 0, 0
 	for _, t := range tools {
 		switch t.status {
-		case "pending", "running":
+		case "pending":
+			pending++
+		case "running":
 			running++
 		case "error":
 			errored++
 		}
 	}
 	header := fmt.Sprintf("%d tool calls", len(tools))
-	if running > 0 {
-		header += fmt.Sprintf(" · %d running", running)
+	if running > 0 || pending > 0 {
+		if pending > 0 {
+			header += fmt.Sprintf(" · %d pending", pending)
+		}
+		if running > 0 {
+			header += fmt.Sprintf(" · %d running", running)
+		}
 	}
 	if errored > 0 {
 		header += fmt.Sprintf(" · %d error", errored)
 	}
 
+	n := len(tools)
+	visibleCount := n
+	start := 0
+	if visibleCount > maxToolRowsVisible {
+		visibleCount = maxToolRowsVisible
+		start = n - visibleCount
+	}
+
 	lines := []string{toolGroupHeaderStyle.Render(header)}
-	rows := make([]toolBoxGeometry, 0, len(tools))
+	rows := make([]toolBoxGeometry, 0, visibleCount)
 	row := 2 // top border row (0) + header row (1)
-	for i, t := range tools {
+
+	// Overflow indicator for windowed groups.
+	if start > 0 {
+		overflow := toolGroupOverflowStyle.Render(fmt.Sprintf("  ↑ %d more", start))
+		lines = append(lines, overflow)
+		row++ // account for the overflow line
+	}
+
+	for i := start; i < n; i++ {
+		t := tools[i]
+		upperI := i // relative to the full slice, for focusedIdx comparison
 		expanded := expandedID != "" && expandedID == t.id
 		var line string
 		if expanded {
 			line = m.renderToolBox(t, true, len(tools))
 		} else {
 			marker := "  "
-			if focusedIdx == i {
+			if focusedIdx == upperI {
 				marker = toolFocusMarkerStyle.Render("› ")
 			}
 			line = marker + renderTool(t, m.spinnerFrame)
@@ -4551,7 +4666,9 @@ var (
 
 	// toolGroupBoxStyle wraps a live multi-tool-call batch (renderToolGroup)
 	// — neutral (not status-colored, since it holds a mix of statuses).
-	toolGroupBoxStyle    = lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).BorderForeground(themeHex(theme.ToneMuted))
-	toolGroupHeaderStyle = lipgloss.NewStyle().Foreground(themeHex(theme.ToneMuted)).Bold(true)
-	toolFocusMarkerStyle = lipgloss.NewStyle().Foreground(themeHex(theme.CommandFG)).Bold(true)
+	toolGroupBoxStyle      = lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).BorderForeground(themeHex(theme.ToneMuted))
+	toolGroupHeaderStyle   = lipgloss.NewStyle().Foreground(themeHex(theme.ToneMuted)).Bold(true)
+	toolFocusMarkerStyle   = lipgloss.NewStyle().Foreground(themeHex(theme.CommandFG)).Bold(true)
+	toolGroupSummaryStyle  = lipgloss.NewStyle().Foreground(themeHex(theme.ToneMuted))
+	toolGroupOverflowStyle = lipgloss.NewStyle().Foreground(themeHex(theme.ToneMuted)).Italic(true)
 )

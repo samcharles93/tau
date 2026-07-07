@@ -39,6 +39,10 @@ type TUIConfig struct {
 	// session persistence, TUI widget toggles).
 	MetricsConfig tauconfig.MetricsConfig
 
+	// ToolCallsDefaultCollapsed starts each new live tool-call group in its
+	// one-line collapsed form rather than showing all rows.
+	ToolCallsDefaultCollapsed bool
+
 	// NewTUI selects the new Bubbletea-based TUI instead of the legacy
 	// taui inline renderer.
 	NewTUI bool
