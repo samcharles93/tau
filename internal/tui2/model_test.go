@@ -777,6 +777,119 @@ func TestManyToolCallsCommitAsOneGroup(t *testing.T) {
 	}
 }
 
+// TestCommittedToolGroupUnfoldsRefoldsAndExpandsRow covers the fix that let
+// a committed "N tool calls" group keep its accordion interaction after it
+// scrolls into history: it used to freeze forever as one flat summary line
+// the moment a group had more than one call, with no way back to the
+// per-tool detail. toggleCommittedToolAtLine now mirrors the live group's
+// two levels — click the header to unfold into per-tool rows, click a row
+// to see its full output, click again to fold back down.
+func TestCommittedToolGroupUnfoldsRefoldsAndExpandsRow(t *testing.T) {
+	m := newTestModel(&fakeRuntime{}, nil)
+	m.width = 80
+	m.commitToolGroup([]toolState{
+		{id: "t0", name: "read", status: "done", result: "a.go"},
+		{id: "t1", name: "search", status: "done", result: "b.go"},
+	}, nil)
+
+	if len(m.committedGroups) != 1 {
+		t.Fatalf("expected 1 committed group, got %d", len(m.committedGroups))
+	}
+	g := m.committedGroups[0]
+	if g.expanded {
+		t.Fatal("expected a freshly committed group to start folded")
+	}
+
+	// Click the header line (relative row 0) to unfold.
+	if !m.toggleCommittedToolAtLine(g.lineIdx) {
+		t.Fatal("expected a click on the group's header line to be handled")
+	}
+	if !g.expanded {
+		t.Fatal("expected the group to unfold on header click")
+	}
+	joined := stripANSI(strings.Join(m.renderedLines, "\n"))
+	if !strings.Contains(joined, "read") || !strings.Contains(joined, "search") {
+		t.Fatalf("expected unfolded group to show each tool's compact row, got %q", joined)
+	}
+	if strings.Contains(joined, "Press Enter to collapse") {
+		t.Fatalf("expected rows to stay compact (no full-detail box) until individually expanded, got %q", joined)
+	}
+
+	// Click the second row (relative row 3: border(0) + header(1) + t0's
+	// row(2) + t1's row(3) — see renderToolGroupBox's row accounting) to
+	// expand just that tool's full output.
+	if !m.toggleCommittedToolAtLine(g.lineIdx + 3) {
+		t.Fatal("expected a click on a tool row to be handled")
+	}
+	if g.expandedID != "t1" {
+		t.Fatalf("expandedID = %q, want t1", g.expandedID)
+	}
+	joined = stripANSI(strings.Join(m.renderedLines, "\n"))
+	if !strings.Contains(joined, "b.go") {
+		t.Fatalf("expected t1's full output visible once expanded, got %q", joined)
+	}
+
+	// Click the header TEXT line again (relative row 1, not row 0's
+	// border) to fold the whole group back down — a real regression: the
+	// fold trigger only matched row 0 (the border character), so clicking
+	// the actual visible "N tool calls" text a user would click did
+	// nothing at all.
+	if !m.toggleCommittedToolAtLine(g.lineIdx + 1) {
+		t.Fatal("expected a click on the header text line to be handled")
+	}
+	if g.expanded {
+		t.Fatal("expected the group to fold back down on a header text click")
+	}
+	joined = stripANSI(strings.Join(m.renderedLines, "\n"))
+	if strings.Contains(joined, "read") || strings.Contains(joined, "b.go") {
+		t.Fatalf("expected folded group to show only the one-line summary, got %q", joined)
+	}
+}
+
+// TestApplySnapshotPreservesCommittedGroupExpandState guards the other half
+// of the same fix: applySnapshot fully rebuilds m.renderedLines from scratch
+// on every snapshot (which fires after every submitted prompt), so without
+// carrying expand state forward via oldGroups/committedGroupKey, a group the
+// user had unfolded would silently refold the moment they sent their next
+// message.
+func TestApplySnapshotPreservesCommittedGroupExpandState(t *testing.T) {
+	m := newTestModel(&fakeRuntime{}, nil)
+	m.width = 80
+
+	messages := []tauchat.ChatMessage{
+		{
+			Role: tauchat.ChatRoleAssistant,
+			ToolCalls: []tauchat.ChatToolCall{
+				{ID: "call-1", Function: tauchat.ChatFunctionCall{Name: "read"}},
+				{ID: "call-2", Function: tauchat.ChatFunctionCall{Name: "read"}},
+			},
+		},
+		{Role: tauchat.ChatRoleTool, ToolCallID: "call-1", Content: "a"},
+		{Role: tauchat.ChatRoleTool, ToolCallID: "call-2", Content: "b"},
+	}
+
+	m.applySnapshot(tauchat.ChatSessionSnapshotEvent{State: tauchat.ChatSessionState{Messages: messages}})
+	if len(m.committedGroups) != 1 {
+		t.Fatalf("expected 1 committed group after first snapshot, got %d", len(m.committedGroups))
+	}
+	if !m.toggleCommittedToolAtLine(m.committedGroups[0].lineIdx) {
+		t.Fatal("expected the header click to be handled")
+	}
+	if !m.committedGroups[0].expanded {
+		t.Fatal("expected the group to be unfolded before the next snapshot")
+	}
+
+	// A second snapshot (e.g. after the user sends another message) rebuilds
+	// everything from scratch — the group must come back already unfolded.
+	m.applySnapshot(tauchat.ChatSessionSnapshotEvent{State: tauchat.ChatSessionState{Messages: messages}})
+	if len(m.committedGroups) != 1 {
+		t.Fatalf("expected 1 committed group after second snapshot, got %d", len(m.committedGroups))
+	}
+	if !m.committedGroups[0].expanded {
+		t.Fatal("expected the group's unfolded state to survive an applySnapshot rebuild")
+	}
+}
+
 // TestScrollUpDuringResponseIsNotUndoneByRender guards against a real bug:
 // computeLayout forced the viewport back to the bottom on every render while
 // m.inResponse was true, so a manual scroll-up made during a live turn got
@@ -2320,6 +2433,63 @@ func TestApplySnapshotGroupsConsecutiveToolCalls(t *testing.T) {
 	}
 }
 
+// TestApplySnapshotReconstructsBashHistoryBox covers the fix for a bash-mode
+// ("!") command losing its tool box on replay: runBashCommand
+// (internal/agent/coordinator.go) persists the result as a plain
+// ChatRoleUser message in "Ran `cmd`\n\n```\noutput\n```" form since it runs
+// outside the normal tool-call loop. applySnapshot must recognize that shape
+// and rebuild a real tool box from it instead of showing raw markdown text.
+func TestApplySnapshotReconstructsBashHistoryBox(t *testing.T) {
+	m := newTestModel(&fakeRuntime{}, nil)
+	m.width = 80
+
+	m.applySnapshot(tauchat.ChatSessionSnapshotEvent{
+		State: tauchat.ChatSessionState{
+			Messages: []tauchat.ChatMessage{
+				{Role: tauchat.ChatRoleUser, Content: "Ran `git status`\n\n```\nOn branch main\n```"},
+			},
+		},
+	})
+
+	joined := stripANSI(strings.Join(m.renderedLines, "\n"))
+	if !strings.Contains(joined, "shell") {
+		t.Fatalf("expected reconstructed tool box to show tool name %q, got %q", "shell", joined)
+	}
+	if !strings.Contains(joined, "On branch main") {
+		t.Fatalf("expected reconstructed tool box to show its output, got %q", joined)
+	}
+	if strings.Contains(joined, "Ran `git status`") {
+		t.Fatalf("expected raw bash-history markdown to be replaced by a tool box, got %q", joined)
+	}
+}
+
+// TestApplySnapshotGroupsConsecutiveBashHistory ensures back-to-back bash-mode
+// commands (no assistant/user text between them) replay as one compact group,
+// matching how a live burst of tool calls collapses via renderCommittedTools.
+func TestApplySnapshotGroupsConsecutiveBashHistory(t *testing.T) {
+	m := newTestModel(&fakeRuntime{}, nil)
+	m.width = 80
+
+	m.applySnapshot(tauchat.ChatSessionSnapshotEvent{
+		State: tauchat.ChatSessionState{
+			Messages: []tauchat.ChatMessage{
+				{Role: tauchat.ChatRoleUser, Content: "Ran `git status`\n\n```\nclean\n```"},
+				{Role: tauchat.ChatRoleUser, Content: "Ran `git diff`\n\n```\n\n```"},
+			},
+		},
+	})
+
+	groupLines := 0
+	for _, line := range m.renderedLines {
+		if strings.Contains(stripANSI(line), "2 tool calls") {
+			groupLines++
+		}
+	}
+	if groupLines != 1 {
+		t.Fatalf("expected exactly one compact '2 tool calls' summary line, found %d in %v", groupLines, m.renderedLines)
+	}
+}
+
 func TestApplySnapshotEmptySessionIDKeepsCurrent(t *testing.T) {
 	m := newTestModel(&fakeRuntime{}, nil)
 	m.sessionID = "keep-me"
@@ -2740,7 +2910,11 @@ func TestMouseClickFocusesAndExpandsTool(t *testing.T) {
 		t.Fatalf("toolBoxes = %d, want 2", len(geom.toolBoxes))
 	}
 
+	// The expand toggle is a click action (press+release with no drag in
+	// between) — see toggleToolBoxAtY — since press alone must instead arm
+	// toolsSel in case the gesture turns into a drag-to-select.
 	m.Update(tea.MouseClickMsg{Button: tea.MouseLeft, Y: geom.toolBoxes[0].startY})
+	m.Update(tea.MouseReleaseMsg{Button: tea.MouseLeft, Y: geom.toolBoxes[0].startY})
 
 	if m.focusedTool != 0 {
 		t.Fatalf("focusedTool = %d, want 0", m.focusedTool)
@@ -2751,6 +2925,7 @@ func TestMouseClickFocusesAndExpandsTool(t *testing.T) {
 
 	// Clicking the same box again collapses it.
 	m.Update(tea.MouseClickMsg{Button: tea.MouseLeft, Y: geom.toolBoxes[0].startY})
+	m.Update(tea.MouseReleaseMsg{Button: tea.MouseLeft, Y: geom.toolBoxes[0].startY})
 	if m.expandedID != "" {
 		t.Fatalf("expandedID = %q, want empty after second click", m.expandedID)
 	}
@@ -2783,7 +2958,36 @@ func TestMousePressStartsSelectionInViewport(t *testing.T) {
 	}
 }
 
-func TestMouseDragExtendsSelectionAndCopiesOnRelease(t *testing.T) {
+// TestMouseClickOnCommittedToolGroupUnfolds drives the fold/unfold action
+// through the real mouse press/release path (handleMousePress ->
+// handleMouseRelease's dragViewport case -> toggleCommittedToolAtLine),
+// rather than calling toggleCommittedToolAtLine directly, to prove the
+// wiring itself — not just the toggle logic — works end to end.
+func TestMouseClickOnCommittedToolGroupUnfolds(t *testing.T) {
+	m := newTestModel(&fakeRuntime{}, nil)
+	m.Update(tea.WindowSizeMsg{Width: 80, Height: 24})
+	m.commitToolGroup([]toolState{
+		{id: "t0", name: "read", status: "done"},
+		{id: "t1", name: "search", status: "done"},
+	}, nil)
+	m.View()
+
+	geom := m.computeLayout()
+	m.Update(tea.MouseClickMsg{Button: tea.MouseLeft, Y: geom.viewportStartY})
+	_, cmd := m.Update(tea.MouseReleaseMsg{Button: tea.MouseLeft, Y: geom.viewportStartY})
+
+	if cmd != nil {
+		t.Fatal("expected folding/unfolding a tool group to be a pure re-render, not a Cmd")
+	}
+	if !m.committedGroups[0].expanded {
+		t.Fatal("expected clicking the committed group's header line to unfold it")
+	}
+	if m.viewportSel.armed() {
+		t.Fatal("expected the click to be consumed as a toggle, not left behind as an active selection")
+	}
+}
+
+func TestMouseDragExtendsSelectionWithoutCopyingOnRelease(t *testing.T) {
 	m := newTestModel(&fakeRuntime{}, nil)
 	m.Update(tea.WindowSizeMsg{Width: 80, Height: 24})
 	for i := 1; i <= 5; i++ {
@@ -2805,15 +3009,23 @@ func TestMouseDragExtendsSelectionAndCopiesOnRelease(t *testing.T) {
 	}
 
 	_, cmd := m.Update(tea.MouseReleaseMsg{Button: tea.MouseLeft, Y: startY + 2})
+	if cmd != nil {
+		t.Fatal("release after a real drag should finalize the selection without copying")
+	}
+	if m.notification != "" {
+		t.Fatalf("release after a real drag should not show a copy notification, got %q", m.notification)
+	}
+	if !m.viewportSel.armed() {
+		t.Fatal("expected the highlight to remain after release so the user can inspect it before copying")
+	}
+
+	_, cmd = m.Update(tea.MouseClickMsg{Button: tea.MouseRight, Y: startY + 2})
 	if cmd == nil {
-		t.Fatal("expected a Cmd (clipboard copy + notification) after releasing a real drag")
+		t.Fatal("expected right-click to copy the finalized selection")
 	}
 	drainCmd(cmd)
 	if !strings.Contains(m.notification, "copied") {
 		t.Fatalf("expected a 'copied N lines' notification, got %q", m.notification)
-	}
-	if !m.viewportSel.armed() {
-		t.Fatal("expected the highlight to remain after release so the user can see what was copied")
 	}
 }
 
@@ -2851,6 +3063,50 @@ func TestMousePressOnToolBoxClearsSelection(t *testing.T) {
 	}
 }
 
+// TestMouseDragInToolBoxSelectsLinesForRightClickCopy covers the fix that made the
+// live tool-call box selectable: it used to be pure chrome outside the
+// viewport's drag-select regions, so nothing inside it could be copied.
+func TestMouseDragInToolBoxSelectsLinesForRightClickCopy(t *testing.T) {
+	m := newTestModel(&fakeRuntime{}, nil)
+	m.Update(tea.WindowSizeMsg{Width: 80, Height: 24})
+	m.tools = []toolState{
+		{id: "t1", name: "read", status: "done", result: "alpha"},
+		{id: "t2", name: "search", status: "done", result: "bravo"},
+	}
+	m.View()
+
+	geom := m.computeLayout()
+	startY := geom.toolsStartY
+	m.Update(tea.MouseClickMsg{Button: tea.MouseLeft, Y: startY})
+	if !m.toolsSel.armed() {
+		t.Fatal("expected pressing inside the tool box to arm toolsSel")
+	}
+
+	m.Update(tea.MouseMotionMsg{Button: tea.MouseLeft, Y: geom.toolsEndY})
+	if !m.toolsSel.dragging {
+		t.Fatal("expected dragging to become true once motion is seen")
+	}
+
+	_, cmd := m.Update(tea.MouseReleaseMsg{Button: tea.MouseLeft, Y: geom.toolsEndY})
+	if cmd != nil {
+		t.Fatal("release after a real drag should finalize the tool selection without copying")
+	}
+	// A plain click (no drag) inside the tool box must still toggle
+	// expand/collapse rather than being swallowed by selection handling.
+	if m.expandedID != "" {
+		t.Fatalf("expected a real drag not to trigger the expand-toggle click action, got expandedID=%q", m.expandedID)
+	}
+
+	_, cmd = m.Update(tea.MouseClickMsg{Button: tea.MouseRight, Y: geom.toolsEndY})
+	if cmd == nil {
+		t.Fatal("expected right-click to copy the finalized tool selection")
+	}
+	drainCmd(cmd)
+	if !strings.Contains(m.notification, "copied") {
+		t.Fatalf("expected a 'copied N lines' notification, got %q", m.notification)
+	}
+}
+
 func TestHighlightSelectionWrapsSelectedRange(t *testing.T) {
 	m := newTestModel(&fakeRuntime{}, nil)
 	m.renderedLines = []string{"alpha", "bravo", "charlie"}
@@ -2870,13 +3126,37 @@ func TestHighlightSelectionWrapsSelectedRange(t *testing.T) {
 	}
 }
 
+// TestHighlightSelectionSurvivesEmbeddedReset covers a real visual bug: a
+// styled line (e.g. glamour markdown with an inline-code span) contains its
+// own SGR reset partway through — "\x1b[38;5;252mNow \x1b[m\x1b[38;5;203mgit
+// status\x1b[m more text". Wrapping the whole line in a single
+// "\x1b[7m...\x1b[27m" pair only visually highlights up to that first
+// embedded reset, since a bare reset clears every attribute including
+// reverse video — everything after it silently renders unhighlighted even
+// though the line is genuinely selected and copies correctly. Reverse video
+// must be re-asserted after each embedded reset so highlighting covers the
+// whole line.
+func TestHighlightSelectionSurvivesEmbeddedReset(t *testing.T) {
+	m := newTestModel(&fakeRuntime{}, nil)
+	m.renderedLines = []string{"\x1b[38;5;252mNow \x1b[m\x1b[38;5;203mgit status\x1b[m more text"}
+	m.viewportSel.anchor, m.viewportSel.cursor = 0, 0
+
+	lines := append([]string{}, m.renderedLines...)
+	m.highlightSelection(lines)
+
+	afterFirstReset := strings.SplitN(lines[0], "\x1b[m", 2)[1]
+	if !strings.HasPrefix(afterFirstReset, "\x1b[7m") {
+		t.Fatalf("expected reverse video re-asserted right after the line's first embedded reset, got %q", lines[0])
+	}
+}
+
 func TestCopySelectionTooLargeShowsNotificationInsteadOfCopying(t *testing.T) {
 	m := newTestModel(&fakeRuntime{}, nil)
 	huge := strings.Repeat("x", termkit.OSC52MaxBytes+1)
 	m.renderedLines = []string{huge}
 	m.viewportSel.anchor, m.viewportSel.cursor, m.viewportSel.dragging = 0, 0, true
 
-	drainCmd(m.finalizeSelection(&m.viewportSel, m.viewportSelectionText, "line"))
+	drainCmd(m.copySelection(&m.viewportSel, m.viewportSelectionText, "line"))
 
 	if !strings.Contains(m.notification, "too large to copy") {
 		t.Fatalf("expected an oversized-selection notification, got %q", m.notification)
@@ -3252,7 +3532,7 @@ func TestMousePressInInputPositionsCursorAndArmsSelection(t *testing.T) {
 	}
 }
 
-func TestMouseDragInInputCopiesSelectedSubstring(t *testing.T) {
+func TestMouseDragInInputSelectsSubstringForRightClickCopy(t *testing.T) {
 	m := newTestModel(&fakeRuntime{}, nil)
 	m.Update(tea.WindowSizeMsg{Width: 80, Height: 24})
 	m.input = "hello world"
@@ -3266,8 +3546,15 @@ func TestMouseDragInInputCopiesSelectedSubstring(t *testing.T) {
 	m.Update(tea.MouseMotionMsg{Button: tea.MouseLeft, X: textStartCol + 5, Y: row})
 	_, cmd := m.Update(tea.MouseReleaseMsg{Button: tea.MouseLeft, X: textStartCol + 5, Y: row})
 
+	if cmd != nil {
+		t.Fatal("release after a real drag should finalize the input selection without copying")
+	}
+	if m.notification != "" {
+		t.Fatalf("release after a real drag should not show a copy notification, got %q", m.notification)
+	}
+	_, cmd = m.Update(tea.MouseClickMsg{Button: tea.MouseRight, X: textStartCol + 5, Y: row})
 	if cmd == nil {
-		t.Fatal("expected a Cmd (clipboard copy + notification) after releasing a real drag")
+		t.Fatal("expected right-click to copy the finalized input selection")
 	}
 	drainCmd(cmd)
 	if !strings.Contains(m.notification, "copied selection") {
@@ -3338,7 +3625,7 @@ func TestArrowKeyClearsInputSelection(t *testing.T) {
 
 // --- status bar mouse selection ----------------------------------------------
 
-func TestMouseDragInStatusBarCopiesSubstring(t *testing.T) {
+func TestMouseDragInStatusBarSelectsSubstringForRightClickCopy(t *testing.T) {
 	m := newTestModel(&fakeRuntime{}, nil)
 	m.Update(tea.WindowSizeMsg{Width: 80, Height: 24})
 	m.View()
@@ -3353,8 +3640,15 @@ func TestMouseDragInStatusBarCopiesSubstring(t *testing.T) {
 	m.Update(tea.MouseMotionMsg{Button: tea.MouseLeft, X: 3, Y: geom.statusY})
 	_, cmd := m.Update(tea.MouseReleaseMsg{Button: tea.MouseLeft, X: 3, Y: geom.statusY})
 
+	if cmd != nil {
+		t.Fatal("release after a real drag should finalize the status selection without copying")
+	}
+	if m.notification != "" {
+		t.Fatalf("release after a real drag should not show a copy notification, got %q", m.notification)
+	}
+	_, cmd = m.Update(tea.MouseClickMsg{Button: tea.MouseRight, X: 3, Y: geom.statusY})
 	if cmd == nil {
-		t.Fatal("expected a Cmd (clipboard copy + notification) after releasing a real drag")
+		t.Fatal("expected right-click to copy the finalized status selection")
 	}
 	drainCmd(cmd)
 	if !strings.Contains(m.notification, "copied selection") {

@@ -51,7 +51,8 @@ type model struct {
 	inResponse bool   // true while a response is in progress
 
 	// Tool state.
-	tools []toolState // active tool calls in display order
+	tools           []toolState           // active tool calls in display order
+	committedGroups []*committedToolGroup // multi-call batches already in scrollback, still foldable — see committedToolGroup
 
 	// Input state. input may contain embedded '\n' (Shift+Enter/Ctrl+J
 	// inserts a newline rather than submitting) — inputCursor is a rune
@@ -165,16 +166,16 @@ type model struct {
 	// Mouse drag text selection (see handleMousePress/Drag/Release, and
 	// selectionState below). Built from scratch on raw press/motion/release
 	// events — bubbletea v2 and bubbles have no selection primitive to
-	// reuse (verified against clipboard.go/mouse.go). Three regions each
-	// get their own selectionState — viewport (whole logical lines, since
-	// that's scrollback you only ever copy from), input box (rune-precise,
-	// since it's an editable field you also cut/replace within), and status
-	// bar (column-precise, select+copy only, see highlightSelection) — but
-	// share one state machine and one finalize/copy path (finalizeSelection)
-	// rather than three hand-rolled ones.
+	// reuse (verified against clipboard.go/mouse.go). Four regions each
+	// get their own selectionState — viewport (whole logical lines), input
+	// box (rune-precise), status bar (column-precise), and the live tool-call
+	// box (whole lines) — but share one state machine and one finalize path
+	// (finalizeSelection) rather than four hand-rolled ones. Copying is an
+	// explicit right-click action after selection.
 	viewportSel selectionState
 	inputSel    selectionState
 	statusSel   selectionState
+	toolsSel    selectionState
 
 	// dragRegion records which UI region a mouse gesture started in, so a
 	// drag/release that moves outside that region (or outside the terminal
@@ -195,15 +196,16 @@ const (
 	dragViewport
 	dragInput
 	dragStatus
+	dragTools
 )
 
 // selectionState is a press→drag→release text-selection gesture over some
 // region's content, addressed by a single ordered integer position — a
 // line index, a rune index, a column, whatever that region's own
-// coordinate space is. Any UI region gets full drag-to-select-and-copy
-// behavior (via finalizeSelection) just by driving one of these plus a
-// small position-mapping function and a text-extraction function, instead
-// of hand-rolling its own anchor/cursor/dragging fields and copy logic —
+// coordinate space is. Any UI region gets full drag-to-select behavior (via
+// finalizeSelection) just by driving one of these plus a small
+// position-mapping function and a text-extraction function, instead of
+// hand-rolling its own anchor/cursor/dragging fields and copy logic —
 // see viewportSel/inputSel/statusSel for the three current regions.
 type selectionState struct {
 	anchor   int // -1 = no selection
@@ -274,6 +276,42 @@ type toolState struct {
 	expanded   bool     // user has clicked Enter to expand this tool
 }
 
+// committedToolGroup is a multi-tool-call batch already committed to
+// permanent scrollback (see commitToolGroup) that can still be
+// unfolded/refolded and drilled into afterward, mirroring the live group's
+// own two-level accordion (group -> per-tool rows -> one row's full output)
+// instead of freezing forever into a single flat summary line the moment it
+// scrolls into history. A lone committed tool call doesn't need one of
+// these — it's already a full, permanently-detailed box (see
+// commitToolGroup) with nothing left to toggle.
+type committedToolGroup struct {
+	tools      []toolState
+	expanded   bool   // group unfolded into per-tool rows
+	expandedID string // which row, if any, is further expanded to full output
+
+	// lineIdx/lineCount record where in m.renderedLines this group's current
+	// rendering lives, so a click can find it (toggleCommittedToolAtLine)
+	// and a toggle can splice its replacement in without disturbing any
+	// other content beyond a fixed line-count shift (spliceCommittedGroup).
+	lineIdx   int
+	lineCount int
+}
+
+// committedGroupKey identifies a committed tool-call group by its ordered
+// tool-call IDs. Real tool calls keep their persisted call ID across an
+// applySnapshot rebuild; bash-history-reconstructed entries key off the
+// message's index instead (see applySnapshot) since they have no real call
+// ID — either way the key is stable across rebuilds, which is what lets
+// fold/expand state survive a snapshot instead of resetting to folded every
+// time the user submits another prompt.
+func committedGroupKey(tools []toolState) string {
+	ids := make([]string, len(tools))
+	for i, t := range tools {
+		ids[i] = t.id
+	}
+	return strings.Join(ids, "\x00")
+}
+
 type pluginPanel struct {
 	id      string
 	title   string
@@ -292,6 +330,8 @@ type layoutGeometry struct {
 	viewportStartY int
 	viewportEndY   int
 	toolBoxes      []toolBoxGeometry
+	toolsStartY    int
+	toolsEndY      int
 
 	inputStartY int
 	inputEndY   int
@@ -345,6 +385,7 @@ func newModel(
 		viewportSel:       newSelectionState(),
 		inputSel:          newSelectionState(),
 		statusSel:         newSelectionState(),
+		toolsSel:          newSelectionState(),
 		availableModels:   availableModels,
 		refresh:           refresh,
 		showReasoning:     showReasoning,
@@ -423,6 +464,10 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.handleMouseDrag(mev.X, mev.Y)
 			case tea.MouseReleaseMsg:
 				return m, m.handleMouseRelease()
+			}
+		case tea.MouseRight:
+			if _, ok := msg.(tea.MouseClickMsg); ok {
+				return m, m.copyActiveSelection()
 			}
 		}
 		return m, nil
@@ -702,6 +747,8 @@ func (m *model) computeLayout() layoutGeometry {
 
 	row = g.viewportEndY + 1 // "\n" boundary between viewport and chrome
 	if toolsStr != "" {
+		g.toolsStartY = row
+		g.toolsEndY = row + visualLineCount(toolsStr) - 1
 		g.toolBoxes = make([]toolBoxGeometry, len(toolRows))
 		for i, tr := range toolRows {
 			g.toolBoxes[i] = toolBoxGeometry{id: tr.id, startY: row + tr.startY, endY: row + tr.endY}
@@ -963,6 +1010,7 @@ func (m *model) clearInput() {
 // session history, so nothing is actually lost.
 func (m *model) clearScreen() {
 	m.renderedLines = m.renderedLines[:0]
+	m.committedGroups = m.committedGroups[:0]
 	m.viewport.SetContentLines(m.renderedLines)
 	m.autoFollow = true
 	m.viewportSel.clear()
@@ -1968,22 +2016,46 @@ func (m *model) applySnapshot(e tauchat.ChatSessionSnapshotEvent) {
 	// consecutive tool results (uninterrupted by user/assistant text) so a
 	// turn with many tool calls renders as one compact group instead of
 	// burying the surrounding conversation.
+	// oldGroups lets a fold/row-expand the user made on a committed group
+	// survive this rebuild — without it, every submitted prompt (which
+	// triggers a fresh snapshot) would silently refold anything they'd
+	// opened. Keyed by committedGroupKey, which stays stable across
+	// rebuilds (see its doc comment).
+	oldGroups := make(map[string]*committedToolGroup, len(m.committedGroups))
+	for _, g := range m.committedGroups {
+		oldGroups[committedGroupKey(g.tools)] = g
+	}
+	m.committedGroups = m.committedGroups[:0]
+
 	toolCallsByID := map[string]tauchat.ChatToolCall{}
 	var pendingTools []toolState
 	flushPendingTools := func() {
 		if len(pendingTools) == 0 {
 			return
 		}
-		box := m.renderCommittedTools(pendingTools)
-		m.renderedLines = append(m.renderedLines, strings.Split(box, "\n")...)
+		m.commitToolGroup(pendingTools, oldGroups)
 		pendingTools = nil
 	}
 
 	m.renderedLines = m.renderedLines[:0]
 	m.viewportSel.clear()
-	for _, msg := range state.Messages {
+	for idx, msg := range state.Messages {
 		switch msg.Role {
 		case tauchat.ChatRoleUser:
+			if cmd, output, ok := parseBashHistoryMessage(msg.Content); ok {
+				pendingTools = append(pendingTools, toolState{
+					// A stable, index-derived ID (not uuid.NewString()) —
+					// this entry has no real call ID, and committedGroupKey
+					// needs the same ID back on every rebuild for fold
+					// state to carry over instead of resetting.
+					id:     fmt.Sprintf("bash-%d", idx),
+					name:   "shell",
+					args:   cmd,
+					result: output,
+					status: "done",
+				})
+				continue
+			}
 			flushPendingTools()
 			lines := strings.Split(msg.Content, "\n")
 			for i, l := range lines {
@@ -2197,53 +2269,65 @@ func (m *model) flushStreamingText() {
 }
 
 // flushToolGroup commits the current live tool-call batch to scrollback as
-// one group (see renderCommittedTools) and clears it from the live/chrome
-// list. Called when new streaming text resumes after a batch of tool calls,
-// and at turn end for a trailing batch with no following text — both mean
-// the batch is chronologically over.
+// one group (see commitToolGroup) and clears it from the live/chrome list.
+// Called when new streaming text resumes after a batch of tool calls, and
+// at turn end for a trailing batch with no following text — both mean the
+// batch is chronologically over.
 func (m *model) flushToolGroup() {
 	if len(m.tools) == 0 {
 		return
 	}
-	box := m.renderCommittedTools(m.tools)
-	m.renderedLines = append(m.renderedLines, strings.Split(box, "\n")...)
+	m.commitToolGroup(m.tools, nil)
 	m.viewport.SetContentLines(m.renderedLines)
 	m.tools = nil
 	m.focusedTool = -1
 	m.expandedID = ""
 }
 
-// renderCommittedTools renders a finished batch of tool calls for permanent
-// scrollback. A lone tool call keeps its full interactive-looking box (still
-// useful to read even frozen); multiple calls collapse into one compact,
-// non-interactive summary line — otherwise a turn with many tool calls would
-// bury the assistant text around it (real bug: a 100+ tool-call turn made
-// the preceding/following message unreachable in the scrollback).
-func (m *model) renderCommittedTools(tools []toolState) string {
-	if len(tools) == 0 {
-		return ""
-	}
-	if len(tools) == 1 {
-		return m.renderToolBox(tools[0], false, 1)
-	}
+// bashHistoryPrefix/bashHistoryInfix delimit the synthetic message format
+// runBashCommand (internal/agent/coordinator.go) persists for "!" bash-mode
+// commands: `fmt.Sprintf("Ran `+"`"+`%s`+"`"+`\n\n```\n%s\n```", cmd, output)`.
+// Those commands run outside the normal tool-call loop, so the backend
+// records them as plain ChatRoleUser text rather than a tool_call/tool
+// result pair — parseBashHistoryMessage reverses that back into a command
+// and output so a replayed session still shows the tool box instead of raw
+// markdown text.
+const (
+	bashHistoryPrefix = "Ran `"
+	bashHistoryInfix  = "`\n\n```\n"
+	bashHistorySuffix = "\n```"
+)
 
+func parseBashHistoryMessage(content string) (cmd, output string, ok bool) {
+	rest, ok := strings.CutPrefix(content, bashHistoryPrefix)
+	if !ok {
+		return "", "", false
+	}
+	cmd, body, ok := strings.Cut(rest, bashHistoryInfix)
+	if !ok {
+		return "", "", false
+	}
+	output, ok = strings.CutSuffix(body, bashHistorySuffix)
+	if !ok {
+		return "", "", false
+	}
+	return cmd, output, true
+}
+
+// renderCommittedToolsSummary renders a multi-tool-call group's folded
+// (collapsed) one-line form for permanent scrollback — otherwise a turn
+// with many tool calls would bury the assistant text around it (real bug: a
+// 100+ tool-call turn made the preceding/following message unreachable in
+// the scrollback). Tool names are deliberately omitted — with the group now
+// re-openable (see committedToolGroup), the count plus a click is enough,
+// and a long, deduped name list just added noise.
+func renderCommittedToolsSummary(tools []toolState) string {
 	errored := 0
-	names := make([]string, 0, len(tools))
-	seen := make(map[string]bool, len(tools))
 	for _, t := range tools {
 		if t.status == "error" {
 			errored++
 		}
-		label := t.name
-		if t.name == "skill" {
-			label = skillLabelFromArgs(t.args)
-		}
-		if !seen[label] {
-			seen[label] = true
-			names = append(names, label)
-		}
 	}
-
 	glyph := "✓"
 	if errored > 0 {
 		glyph = "✗"
@@ -2252,8 +2336,48 @@ func (m *model) renderCommittedTools(tools []toolState) string {
 	if errored > 0 {
 		summary += fmt.Sprintf(" (%d error)", errored)
 	}
-	summary += " — " + strings.Join(names, ", ")
 	return toolMetaStyle.Render(summary)
+}
+
+// renderCommittedGroup renders a committedToolGroup as it currently stands —
+// folded to its one-line summary, or unfolded into the same per-tool-row
+// accordion the live group uses (see renderToolGroupBox), depending on
+// g.expanded/g.expandedID.
+func (m *model) renderCommittedGroup(g *committedToolGroup) string {
+	if !g.expanded {
+		return renderCommittedToolsSummary(g.tools)
+	}
+	box, _ := m.renderToolGroupBox(g.tools, g.expandedID, -1)
+	return box
+}
+
+// commitToolGroup appends tools to scrollback as permanent content and, for
+// a real multi-call batch, registers a committedToolGroup so it can still be
+// unfolded after commit (see toggleCommittedToolAtLine) — a lone tool call
+// is already a full, permanently-detailed box with nothing left to toggle.
+// restore carries over fold/row-expand state from before a full
+// applySnapshot rebuild, keyed by committedGroupKey (nil for a brand-new
+// live-turn commit via flushToolGroup, which always starts folded).
+func (m *model) commitToolGroup(tools []toolState, restore map[string]*committedToolGroup) {
+	if len(tools) == 0 {
+		return
+	}
+	lineIdx := len(m.renderedLines)
+
+	var rendered string
+	if len(tools) == 1 {
+		rendered = m.renderToolBox(tools[0], false, 1)
+	} else {
+		g := &committedToolGroup{tools: append([]toolState(nil), tools...)}
+		if old, ok := restore[committedGroupKey(tools)]; ok {
+			g.expanded, g.expandedID = old.expanded, old.expandedID
+		}
+		rendered = m.renderCommittedGroup(g)
+		g.lineIdx = lineIdx
+		g.lineCount = visualLineCount(rendered)
+		m.committedGroups = append(m.committedGroups, g)
+	}
+	m.renderedLines = append(m.renderedLines, strings.Split(rendered, "\n")...)
 }
 
 // shouldNavigateTools returns true when tool focus navigation is appropriate:
@@ -2293,28 +2417,29 @@ func (m *model) focusNextTool(delta int) {
 }
 
 // handleMousePress maps a left-button-down terminal position to a UI
-// action: pressing on a tool box focuses and toggles its expansion;
+// action: pressing on the live tool-call box arms its text selection anchor
+// (and focuses whichever box, if any, sits under the cursor) — the actual
+// focus/expand-toggle click action fires on release, once handleMouseRelease
+// knows whether the gesture turned into a drag (see toggleToolBoxAtY);
 // pressing in the viewport, input box, or status bar arms that region's
-// text selection anchor, in case the press turns into a drag (see
-// dragRegion). Recomputing the layout here (rather than caching View()'s
-// geometry) keeps hit-testing correct even if the event arrives before the
-// next render — cheap enough since it only runs per mouse event, not per
-// frame.
+// text selection anchor the same way, in case the press turns into a drag
+// (see dragRegion). Recomputing the layout here (rather than caching
+// View()'s geometry) keeps hit-testing correct even if the event arrives
+// before the next render — cheap enough since it only runs per mouse event,
+// not per frame.
 func (m *model) handleMousePress(x, y int) {
 	geom := m.computeLayout()
 
-	for i, tb := range geom.toolBoxes {
-		if y < tb.startY || y > tb.endY {
-			continue
-		}
-		m.focusedTool = i
-		if m.expandedID == tb.id {
-			m.expandedID = ""
-		} else {
-			m.expandedID = tb.id
-			m.tools[i].expanded = true
-		}
+	if y >= geom.toolsStartY && y <= geom.toolsEndY {
 		m.clearAllSelections()
+		m.dragRegion = dragTools
+		m.toolsSel.press(y)
+		for i, tb := range geom.toolBoxes {
+			if y >= tb.startY && y <= tb.endY {
+				m.focusedTool = i
+				break
+			}
+		}
 		return
 	}
 
@@ -2395,23 +2520,151 @@ func (m *model) handleMouseDrag(x, y int) {
 			return
 		}
 		m.statusSel.drag(x)
+
+	case dragTools:
+		if !m.toolsSel.armed() {
+			return
+		}
+		m.toolsSel.drag(y)
 	}
 }
 
-// handleMouseRelease finalizes whichever selection dragRegion says was
-// active via the shared finalizeSelection path.
+// handleMouseRelease finalizes whichever selection dragRegion says was active
+// via the shared finalizeSelection path. A real drag leaves the highlight in
+// place; copying is an explicit right-click action handled by
+// copyActiveSelection.
 func (m *model) handleMouseRelease() tea.Cmd {
 	defer func() { m.dragRegion = dragNone }()
 
 	switch m.dragRegion {
 	case dragViewport:
+		// A plain click (no drag) landing on a committed tool-call group is
+		// the fold/unfold/row-expand action (see toggleCommittedToolAtLine),
+		// not a selection — finalizeSelection's generic "no-op on click"
+		// doesn't know about that, so it's checked here first. A click on
+		// ordinary text still just clears the selection, same as before.
+		if !m.viewportSel.dragging {
+			m.toggleCommittedToolAtLine(m.viewportSel.anchor)
+			m.viewportSel.clear()
+			return nil
+		}
 		return m.finalizeSelection(&m.viewportSel, m.viewportSelectionText, "line")
 	case dragInput:
 		return m.finalizeSelection(&m.inputSel, m.inputSelectionText, "")
 	case dragStatus:
 		return m.finalizeSelection(&m.statusSel, m.statusSelectionText, "")
+	case dragTools:
+		// A plain click (no drag) is the pre-existing focus/expand-toggle
+		// action, not a selection — finalizeSelection's generic "no-op on
+		// click" doesn't know about that domain-specific behavior, so it's
+		// handled here before falling back to the shared copy path for an
+		// actual drag.
+		if !m.toolsSel.dragging {
+			m.toggleToolBoxAtY(m.toolsSel.anchor)
+			m.toolsSel.clear()
+			return nil
+		}
+		return m.finalizeSelection(&m.toolsSel, m.toolsSelectionText, "line")
 	}
 	return nil
+}
+
+// toggleToolBoxAtY toggles expand/collapse for whichever live tool box (from
+// a fresh layout computation) contains absolute view row y — the
+// click-to-expand behavior for a plain click (no drag) on the tool group.
+func (m *model) toggleToolBoxAtY(y int) {
+	geom := m.computeLayout()
+	for i, tb := range geom.toolBoxes {
+		if y < tb.startY || y > tb.endY {
+			continue
+		}
+		m.focusedTool = i
+		if m.expandedID == tb.id {
+			m.expandedID = ""
+		} else {
+			m.expandedID = tb.id
+			m.tools[i].expanded = true
+		}
+		return
+	}
+}
+
+// toggleCommittedToolAtLine handles a plain click (no drag) landing on a
+// committed tool-call group in scrollback (idx is the absolute logical line
+// index from m.viewportSel's anchor — see logicalLineAtRow): folds/unfolds
+// the group, or, if it's already unfolded, expands/collapses whichever tool
+// row the click landed on — restoring the same accordion interaction the
+// group had live, which would otherwise be lost for good the moment it
+// scrolls into history (see committedToolGroup). Returns whether a group
+// actually handled the click, so the caller can tell that apart from an
+// ordinary click on plain text (which should just clear the selection).
+func (m *model) toggleCommittedToolAtLine(idx int) bool {
+	for _, g := range m.committedGroups {
+		if idx < g.lineIdx || idx >= g.lineIdx+g.lineCount {
+			continue
+		}
+		if !g.expanded {
+			g.expanded = true
+			m.spliceCommittedGroup(g)
+			return true
+		}
+
+		// Unfolded: a click on a specific tool row toggles just that row's
+		// full-detail expansion. Anything else — the header text, the
+		// group's top/bottom border, the padding around a row — folds the
+		// whole group back down. rows only covers the per-tool lines (see
+		// renderToolGroupBox: row 0 is the border, row 1 is the header
+		// text), so a click landing outside every row's range is exactly
+		// "not on a tool row", which is deliberately the fold trigger
+		// rather than a dead click — a header/border click is the obvious
+		// place a user would click to close what they just opened.
+		rel := idx - g.lineIdx
+		toggledRow := false
+		if _, rows := m.renderToolGroupBox(g.tools, g.expandedID, -1); rows != nil {
+			for _, tb := range rows {
+				if rel < tb.startY || rel > tb.endY {
+					continue
+				}
+				if g.expandedID == tb.id {
+					g.expandedID = ""
+				} else {
+					g.expandedID = tb.id
+				}
+				toggledRow = true
+				break
+			}
+		}
+		if !toggledRow {
+			g.expanded = false
+			g.expandedID = ""
+		}
+		m.spliceCommittedGroup(g)
+		return true
+	}
+	return false
+}
+
+// spliceCommittedGroup re-renders g after toggleCommittedToolAtLine folded,
+// unfolded, or expanded/collapsed one of its rows, and splices the result
+// into m.renderedLines in place of its previous lines — shifting every
+// other committed group that comes after it by the resulting line-count
+// delta so their recorded positions stay accurate for the next click.
+func (m *model) spliceCommittedGroup(g *committedToolGroup) {
+	rendered := m.renderCommittedGroup(g)
+	newLines := strings.Split(rendered, "\n")
+	delta := len(newLines) - g.lineCount
+
+	tail := append([]string(nil), m.renderedLines[g.lineIdx+g.lineCount:]...)
+	m.renderedLines = append(m.renderedLines[:g.lineIdx], newLines...)
+	m.renderedLines = append(m.renderedLines, tail...)
+
+	g.lineCount = len(newLines)
+	for _, other := range m.committedGroups {
+		if other != g && other.lineIdx > g.lineIdx {
+			other.lineIdx += delta
+		}
+	}
+	m.viewport.SetContentLines(m.renderedLines)
 }
 
 // clearAllSelections drops every region's selection — used whenever an
@@ -2420,25 +2673,49 @@ func (m *model) clearAllSelections() {
 	m.viewportSel.clear()
 	m.inputSel.clear()
 	m.statusSel.clear()
+	m.toolsSel.clear()
 }
 
 // finalizeSelection is the shared "mouse released" behavior for any
-// selectionState: a real drag extracts the selected range's text (via
-// extract, in the region's own domain — see viewportSelectionText et al),
-// copies it to the clipboard, and shows a notification; a plain click (no
-// drag) clears the selection instead of leaving a stray highlight behind.
-// The OSC 52 size guard mirrors legacy taui's /copy — tea.SetClipboard
-// itself has no such guard, and many terminals silently drop or corrupt
-// oversized payloads rather than truncating. unit names what was selected
-// for the notification ("line" -> "copied 3 lines"); pass "" for a region
-// where a count isn't meaningful ("copied selection").
-func (m *model) finalizeSelection(s *selectionState, extract func(lo, hi int) string, unit string) tea.Cmd {
+// selectionState: a real drag freezes the selected range so it stays
+// highlighted for an explicit right-click copy; a plain click (no drag)
+// clears the selection instead of leaving a stray highlight behind.
+func (m *model) finalizeSelection(s *selectionState, extract func(lo, hi int) string, _ string) tea.Cmd {
 	dragging := s.dragging
 	s.dragging = false
 	if !dragging {
 		s.clear()
 		return nil
 	}
+	lo, hi, ok := s.bounds()
+	if !ok || extract(lo, hi) == "" {
+		s.clear()
+	}
+	return nil
+}
+
+// copyActiveSelection copies whichever region currently has a finalized
+// selection. Only one selection is normally armed at a time because every
+// left-button press clears all other regions first.
+func (m *model) copyActiveSelection() tea.Cmd {
+	if cmd := m.copySelection(&m.viewportSel, m.viewportSelectionText, "line"); cmd != nil {
+		return cmd
+	}
+	if cmd := m.copySelection(&m.inputSel, m.inputSelectionText, ""); cmd != nil {
+		return cmd
+	}
+	if cmd := m.copySelection(&m.statusSel, m.statusSelectionText, ""); cmd != nil {
+		return cmd
+	}
+	return m.copySelection(&m.toolsSel, m.toolsSelectionText, "line")
+}
+
+// The OSC 52 size guard mirrors legacy taui's /copy — tea.SetClipboard
+// itself has no such guard, and many terminals silently drop or corrupt
+// oversized payloads rather than truncating. unit names what was selected
+// for the notification ("line" -> "copied 3 lines"); pass "" for a region
+// where a count isn't meaningful ("copied selection").
+func (m *model) copySelection(s *selectionState, extract func(lo, hi int) string, unit string) tea.Cmd {
 	lo, hi, ok := s.bounds()
 	if !ok {
 		return nil
@@ -2479,8 +2756,26 @@ func (m *model) highlightSelection(lines []string) {
 		return
 	}
 	for i := lo; i <= hi && i < len(lines); i++ {
-		lines[i] = "\x1b[7m" + lines[i] + "\x1b[27m"
+		lines[i] = reverseVideo(lines[i])
 	}
+}
+
+// reverseVideoReset re-asserts reverse video after any SGR reset the line
+// already contains internally — glamour ends each styled span (e.g. an
+// inline-code span's colors) with a bare reset ("\x1b[m", equivalent to
+// "\x1b[0m"), and a reset clears every active attribute, not just the one
+// that span set. Without re-asserting, wrapping the whole line in
+// "\x1b[7m...\x1b[27m" only highlights up to the line's first embedded
+// reset — everything after it silently loses the reverse attribute, even
+// though the whole line is genuinely selected and copies correctly (copy
+// reads the unmodified, un-highlighted line via stripANSI).
+var reverseVideoReset = strings.NewReplacer(
+	"\x1b[m", "\x1b[m\x1b[7m",
+	"\x1b[0m", "\x1b[0m\x1b[7m",
+)
+
+func reverseVideo(line string) string {
+	return "\x1b[7m" + reverseVideoReset.Replace(line) + "\x1b[27m"
 }
 
 // viewportSelectionText returns the plain (ANSI-stripped) text of
@@ -2492,6 +2787,36 @@ func (m *model) viewportSelectionText(lo, hi int) string {
 	lines := make([]string, 0, hi-lo+1)
 	for i := lo; i <= hi; i++ {
 		lines = append(lines, stripANSI(m.renderedLines[i]))
+	}
+	return strings.Join(lines, "\n")
+}
+
+// toolsSelectionText returns the plain (ANSI-stripped) text of the live
+// tool-call box's own lines between absolute view rows lo and hi inclusive
+// (toolsSel presses/drags in that same coordinate space — see
+// handleMousePress). The box isn't cached between frames like
+// m.renderedLines, so this recomputes it fresh; cheap enough at
+// mouse-release frequency.
+func (m *model) toolsSelectionText(lo, hi int) string {
+	geom := m.computeLayout()
+	toolsStr, _ := m.renderToolGroup()
+	if toolsStr == "" {
+		return ""
+	}
+	boxLines := strings.Split(toolsStr, "\n")
+	loRow, hiRow := lo-geom.toolsStartY, hi-geom.toolsStartY
+	if loRow < 0 {
+		loRow = 0
+	}
+	if hiRow >= len(boxLines) {
+		hiRow = len(boxLines) - 1
+	}
+	if loRow > hiRow {
+		return ""
+	}
+	lines := make([]string, 0, hiRow-loRow+1)
+	for i := loRow; i <= hiRow; i++ {
+		lines = append(lines, stripANSI(boxLines[i]))
 	}
 	return strings.Join(lines, "\n")
 }
@@ -2772,26 +3097,34 @@ func renderTool(t toolState, frame int) string {
 }
 
 // renderToolGroup renders the current live (uncommitted) tool-call batch —
-// see flushToolGroup for when it moves to permanent scrollback. A lone tool
-// keeps its full interactive box (matches the pre-grouping look); multiple
-// tools render as one bordered group — a header summary line, then each
-// tool as a compact one-line row, except the currently-expanded tool, which
-// renders its full box in place of its row. Returns the rendered string
-// plus each tool's row range (relative to the string's own first line, i.e.
-// row 0 is the box's top border) for mouse hit-testing.
+// see flushToolGroup for when it moves to permanent scrollback.
 func (m *model) renderToolGroup() (string, []toolBoxGeometry) {
 	if len(m.tools) == 0 {
 		return "", nil
 	}
-	if len(m.tools) == 1 {
-		t := m.tools[0]
-		expanded := m.expandedID != "" && m.expandedID == t.id
+	return m.renderToolGroupBox(m.tools, m.expandedID, m.focusedTool)
+}
+
+// renderToolGroupBox renders any batch of tool calls — live or a committed
+// group reopened from scrollback (see committedToolGroup) — as one unit. A
+// lone tool keeps its full interactive box (matches the pre-grouping look);
+// multiple tools render as one bordered group — a header summary line, then
+// each tool as a compact one-line row, except the tool whose id matches
+// expandedID, which renders its full box in place of its row. focusedIdx
+// draws the keyboard-focus marker on that row (pass -1 for a committed
+// group, which has no live keyboard focus). Returns the rendered string
+// plus each tool's row range (relative to the string's own first line, i.e.
+// row 0 is the box's top border) for mouse hit-testing.
+func (m *model) renderToolGroupBox(tools []toolState, expandedID string, focusedIdx int) (string, []toolBoxGeometry) {
+	if len(tools) == 1 {
+		t := tools[0]
+		expanded := expandedID != "" && expandedID == t.id
 		box := m.renderToolBox(t, expanded, 1)
 		return box, []toolBoxGeometry{{id: t.id, startY: 0, endY: visualLineCount(box) - 1}}
 	}
 
 	running, errored := 0, 0
-	for _, t := range m.tools {
+	for _, t := range tools {
 		switch t.status {
 		case "pending", "running":
 			running++
@@ -2799,7 +3132,7 @@ func (m *model) renderToolGroup() (string, []toolBoxGeometry) {
 			errored++
 		}
 	}
-	header := fmt.Sprintf("%d tool calls", len(m.tools))
+	header := fmt.Sprintf("%d tool calls", len(tools))
 	if running > 0 {
 		header += fmt.Sprintf(" · %d running", running)
 	}
@@ -2808,16 +3141,16 @@ func (m *model) renderToolGroup() (string, []toolBoxGeometry) {
 	}
 
 	lines := []string{toolGroupHeaderStyle.Render(header)}
-	rows := make([]toolBoxGeometry, 0, len(m.tools))
+	rows := make([]toolBoxGeometry, 0, len(tools))
 	row := 2 // top border row (0) + header row (1)
-	for i, t := range m.tools {
-		expanded := m.expandedID != "" && m.expandedID == t.id
+	for i, t := range tools {
+		expanded := expandedID != "" && expandedID == t.id
 		var line string
 		if expanded {
-			line = m.renderToolBox(t, true, len(m.tools))
+			line = m.renderToolBox(t, true, len(tools))
 		} else {
 			marker := "  "
-			if m.focusedTool == i {
+			if focusedIdx == i {
 				marker = toolFocusMarkerStyle.Render("› ")
 			}
 			line = marker + renderTool(t, m.spinnerFrame)
@@ -2858,8 +3191,16 @@ func (m *model) renderToolBox(t toolState, expanded bool, _ int) string {
 		elapsedStr = " (" + formatElapsed(elapsed) + ")"
 	}
 
-	// Title line content: glyph + name + status + elapsed.
-	title := glyph + " " + label + " " + t.status + elapsedStr
+	// Title line content: glyph + name + elapsed. For pending/running, the
+	// status word ("pending" vs "running") is real information the shared
+	// spinner glyph alone doesn't distinguish. For done/error, the glyph
+	// and box color (green/red) already say everything — repeating "done"
+	// or "error" as text is redundant log-speak, not state.
+	statusWord := ""
+	if t.status == "pending" || t.status == "running" {
+		statusWord = " " + t.status
+	}
+	title := glyph + " " + label + statusWord + elapsedStr
 
 	// Pick the style based on status.
 	boxStyle := toolBoxStyleForStatus(t.name, t.status)
@@ -2894,12 +3235,10 @@ func (m *model) renderToolBox(t toolState, expanded bool, _ int) string {
 			BorderForeground(themeHex(theme.ToneMuted)).
 			Width(innerWidth).
 			Padding(0, 1)
-		innerTitle := "Full output"
-		if len(t.result) == 0 {
-			innerTitle = "No output"
-		}
 		var innerContent strings.Builder
-		innerContent.WriteString(innerTitle + "\n")
+		if len(t.result) == 0 {
+			innerContent.WriteString("No output\n")
+		}
 
 		if looksLikeMarkdown(t.result) {
 			// Wrap as a fenced markdown block and render through
