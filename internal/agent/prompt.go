@@ -147,11 +147,13 @@ func DiscoverContextFiles(cwd string) []ContextFile {
 
 	// Build the list of directories from filesystem root down to CWD (inclusive).
 	var dirs []string
-	for d := cwd; ; d = filepath.Dir(d) {
+	for d := cwd; ; {
 		dirs = append(dirs, d)
-		if d == string(filepath.Separator) || d == "" {
+		parent := filepath.Dir(d)
+		if parent == d {
 			break
 		}
+		d = parent
 	}
 	// Reverse so we go root→CWD.
 	slices.Reverse(dirs)
