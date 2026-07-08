@@ -1,5 +1,14 @@
 # Changelog
 
+## [0.15.1](https://github.com/samcharles93/tau/compare/v0.15.0...v0.15.1) (2026-07-08)
+
+
+### Bug Fixes
+
+* add scrolling, collapse, and config to tool-call group box ([6f4b93a](https://github.com/samcharles93/tau/commit/6f4b93a6594576d29e801d88f3c12277bc91ee22))
+* **agent:** infinite loop in DiscoverContextFiles on Windows ([79997b3](https://github.com/samcharles93/tau/commit/79997b3416f9a90787f473a24557b1907520b8fe))
+* preserve draft input on history recall ([6f4b93a](https://github.com/samcharles93/tau/commit/6f4b93a6594576d29e801d88f3c12277bc91ee22))
+
 ## [0.15.0](https://github.com/samcharles93/tau/compare/v0.14.0...v0.15.0) (2026-07-07)
 
 
