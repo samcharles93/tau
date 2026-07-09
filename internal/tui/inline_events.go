@@ -547,15 +547,8 @@ func notifyLevelFromChat(level tauchat.ChatNotificationLevel) notify.Level {
 	}
 }
 
-// notifyDurationFromChat returns the auto-dismiss duration for a level. Errors
-// persist (0); warnings get 8s; info gets 5s.
+// notifyDurationFromChat returns the auto-dismiss duration for a level.
+// Notifications do not time out (0).
 func notifyDurationFromChat(level tauchat.ChatNotificationLevel) time.Duration {
-	switch level {
-	case tauchat.ChatNotificationError:
-		return 0
-	case tauchat.ChatNotificationWarn:
-		return 8 * time.Second
-	default:
-		return 5 * time.Second
-	}
+	return 0
 }

@@ -211,11 +211,20 @@ func oauthProviderConfig(entry CatalogEntry, creds OAuthCredentials) config.Prov
 	if v := strings.TrimSpace(creds.Extra["base_url"]); v != "" {
 		baseURL = v
 	}
+	headers := cloneStringMap(entry.Headers)
+	if entry.ID == openAICodexID {
+		if accountID := strings.TrimSpace(creds.Extra["account_id"]); accountID != "" {
+			if headers == nil {
+				headers = make(map[string]string)
+			}
+			headers["Openai-Sentinel-Chatgpt-Account-Id"] = accountID
+		}
+	}
 	return config.ProviderConfig{
 		Name:    entry.ID,
 		Type:    entry.Class,
 		BaseURL: baseURL,
-		Headers: cloneStringMap(entry.Headers),
+		Headers: headers,
 		Auth: config.AuthConfig{
 			Type:   config.AuthTypeAPIKey,
 			APIKey: creds.Access,
