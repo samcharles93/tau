@@ -3,7 +3,7 @@ package app
 import (
 	"context"
 
-	"github.com/samcharles93/ai-sdk/pkg/runtime"
+	"github.com/samcharles93/ai-sdk/runtime"
 
 	"github.com/samcharles93/tau/internal/config"
 )

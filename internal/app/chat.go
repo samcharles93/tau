@@ -14,8 +14,8 @@ import (
 	"time"
 
 	"github.com/pkg/browser"
-	aisdkchat "github.com/samcharles93/ai-sdk/pkg/chat"
-	"github.com/samcharles93/ai-sdk/pkg/runtime"
+	aisdkchat "github.com/samcharles93/ai-sdk/chat"
+	"github.com/samcharles93/ai-sdk/runtime"
 
 	"github.com/samcharles93/tau/internal/agent"
 	"github.com/samcharles93/tau/internal/agent/tools"

@@ -13,8 +13,8 @@ import (
 	"strings"
 	"time"
 
-	aisdkchat "github.com/samcharles93/ai-sdk/pkg/chat"
-	"github.com/samcharles93/ai-sdk/pkg/runtime"
+	aisdkchat "github.com/samcharles93/ai-sdk/chat"
+	"github.com/samcharles93/ai-sdk/runtime"
 )
 
 type codexClass struct{}

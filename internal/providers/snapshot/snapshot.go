@@ -8,7 +8,7 @@ import (
 	_ "embed"
 	"fmt"
 
-	"github.com/samcharles93/ai-sdk/pkg/runtime"
+	"github.com/samcharles93/ai-sdk/runtime"
 )
 
 //go:generate go run ./gen

@@ -4,7 +4,7 @@ import (
 	"context"
 	"sync"
 
-	"github.com/samcharles93/ai-sdk/pkg/runtime"
+	"github.com/samcharles93/ai-sdk/runtime"
 
 	tauconfig "github.com/samcharles93/tau/internal/config"
 	"github.com/samcharles93/tau/internal/providers"
