@@ -114,6 +114,8 @@ github.com/samcharles93/ai-sdk v0.1.9 h1:i601ZKgxbHc5PPXdXQeN7o0Ikv90j3Bv2n3RC6z
 github.com/samcharles93/ai-sdk v0.1.9/go.mod h1:a4JYsUrwGsmm2eiXgrpcKExtYe7uHQ5zsHDbbkcPB6o=
 github.com/samcharles93/ai-sdk v0.1.10 h1:yxNCx+EHmOq4riTu0cCWubT+kixzp8/s0GUxMCRIb2A=
 github.com/samcharles93/ai-sdk v0.1.10/go.mod h1:a4JYsUrwGsmm2eiXgrpcKExtYe7uHQ5zsHDbbkcPB6o=
+github.com/samcharles93/ai-sdk v0.1.11 h1:trZ9vj+fOZDHAlobouMOeuP0NtRB3aGt86ZDfsX/Aow=
+github.com/samcharles93/ai-sdk v0.1.11/go.mod h1:a4JYsUrwGsmm2eiXgrpcKExtYe7uHQ5zsHDbbkcPB6o=
 github.com/stretchr/objx v0.1.0/go.mod h1:HFkY916IF+rwdDfMAkV7OtwuqBVzrE8GR6GFx+wExME=
 github.com/stretchr/testify v1.7.2/go.mod h1:R6va5+xMeoiuVRoj+gSkQ7d3FALtqAAGI1FQKckRals=
 github.com/stretchr/testify v1.11.1 h1:7s2iGBzp5EwR7/aIZr8ao5+dra3wiQyKjjFuvgVKu7U=
