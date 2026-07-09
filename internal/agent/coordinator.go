@@ -14,6 +14,7 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	agentspec "github.com/samcharles93/tau/internal/agent/spec"
@@ -92,7 +93,7 @@ type Coordinator struct {
 	turnWG    sync.WaitGroup
 	promptMu  sync.Mutex
 	prompts   map[string]chan interactivePromptResponse
-	promptSeq uint64
+	promptSeq atomic.Uint64
 }
 
 type coordinatorSession struct {
@@ -1776,6 +1777,13 @@ func (c *Coordinator) executeToolsParallel(ctx context.Context, sessionID, reque
 			c:         c,
 		}
 
+		// Resolve which tool.Execute call (if any) this turn needs, without
+		// running it yet, so the started event — and the "pending" ->
+		// "running" transition it drives in the UI — fires before a
+		// long-running tool actually executes rather than after it
+		// returns (previously the whole call sat in "pending" for its
+		// entire duration).
+		var run func() (tools.Result, error)
 		switch {
 		case loopVerdict.blocked || loopVerdict.hardStop:
 			result = tools.Result{Content: loopVerdict.message, IsError: true}
@@ -1795,42 +1803,34 @@ func (c *Coordinator) executeToolsParallel(ctx context.Context, sessionID, reque
 				}
 			} else {
 				effectiveArgs = beforeResp.GetModifiedToolArguments()
-				tool, ok := c.registry.Get(tc.Function.Name)
-				if !ok {
+				if tool, ok := c.registry.Get(tc.Function.Name); ok {
+					run = func() (tools.Result, error) {
+						return tool.Execute(ctx, json.RawMessage(effectiveArgs), bridge)
+					}
+				} else {
 					result = tools.Result{
 						Content: fmt.Sprintf("unknown tool: %s", tc.Function.Name),
 						IsError: true,
-					}
-				} else {
-					result, toolErr = tool.Execute(ctx, json.RawMessage(effectiveArgs), bridge)
-					if toolErr != nil {
-						result = tools.Result{
-							Content: fmt.Sprintf("tool execution error: %v", toolErr),
-							IsError: true,
-						}
 					}
 				}
 			}
 
 		default:
-			tool, ok := c.registry.Get(tc.Function.Name)
-			if !ok {
+			if tool, ok := c.registry.Get(tc.Function.Name); ok {
+				run = func() (tools.Result, error) {
+					return tool.Execute(ctx, json.RawMessage(effectiveArgs), bridge)
+				}
+			} else {
 				result = tools.Result{
 					Content: fmt.Sprintf("unknown tool: %s", tc.Function.Name),
 					IsError: true,
 				}
-			} else {
-				result, toolErr = tool.Execute(ctx, json.RawMessage(effectiveArgs), bridge)
-				if toolErr != nil {
-					result = tools.Result{
-						Content: fmt.Sprintf("tool execution error: %v", toolErr),
-						IsError: true,
-					}
-				}
 			}
 		}
 
-		// Emit started event with effective args AFTER plugin hooks.
+		// Emit started event with effective args AFTER plugin hooks but
+		// BEFORE tool.Execute runs, so the UI reflects "running" for the
+		// actual duration of the call instead of only after it completes.
 		c.emit(chat.ChatToolExecutionStartedEvent{
 			SessionID:        sessionID,
 			RequestID:        requestID,
@@ -1839,6 +1839,16 @@ func (c *Coordinator) executeToolsParallel(ctx context.Context, sessionID, reque
 			ArgumentsSummary: summarizeForUI(effectiveArgs),
 			StartedAt:        startedAt,
 		})
+
+		if run != nil {
+			result, toolErr = run()
+			if toolErr != nil {
+				result = tools.Result{
+					Content: fmt.Sprintf("tool execution error: %v", toolErr),
+					IsError: true,
+				}
+			}
+		}
 
 		// Mutation hook: plugins may modify the result. Dispatch on all paths.
 		afterResp := c.dispatchPluginRequestResponse("after_tool_exec", sessionID, &api.EventPayload{

@@ -3,7 +3,6 @@ package agent
 import (
 	"context"
 	"fmt"
-	"sync/atomic"
 	"time"
 
 	"github.com/samcharles93/tau/internal/agent/tools"
@@ -156,7 +155,7 @@ func (b *coordinatorUIBridge) Log(chunk string) {
 }
 
 func (c *Coordinator) nextPromptID() string {
-	seq := atomic.AddUint64(&c.promptSeq, 1)
+	seq := c.promptSeq.Add(1)
 	return fmt.Sprintf("prompt_%d", seq)
 }
 
