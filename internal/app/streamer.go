@@ -63,7 +63,7 @@ func (s *Streamer) StreamChatCompletionFull(
 	}
 
 	req := s.buildRequest(session, modelID, provider)
-	streamCtx := aisdkchat.WithContextHeaders(ctx, extraHeaders)
+	streamCtx := aisdkchat.WithContextHeaders(ctx, mergeHeaders(session.Provider.Headers, extraHeaders))
 	stream, err := provider.ChatStream(streamCtx, req)
 	if err != nil {
 		return tauchat.CompletionResult{}, err
@@ -115,6 +115,24 @@ func (s *Streamer) StreamChatCompletionFull(
 
 	result.ToolCalls = buildToolCalls(calls)
 	return result, nil
+}
+
+func mergeHeaders(base, override map[string]string) map[string]string {
+	if len(base) == 0 && len(override) == 0 {
+		return nil
+	}
+	out := make(map[string]string, len(base)+len(override))
+	for k, v := range base {
+		if strings.TrimSpace(k) != "" && strings.TrimSpace(v) != "" {
+			out[k] = v
+		}
+	}
+	for k, v := range override {
+		if strings.TrimSpace(k) != "" && strings.TrimSpace(v) != "" {
+			out[k] = v
+		}
+	}
+	return out
 }
 
 func (s *Streamer) buildRequest(session tauchat.ChatSessionState, modelID string, provider aisdkchat.Provider) aisdkchat.Request {

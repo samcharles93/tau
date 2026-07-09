@@ -8,7 +8,9 @@ import (
 
 	"github.com/samcharles93/tau/internal/config"
 	"github.com/samcharles93/tau/internal/providers"
+	"github.com/samcharles93/tau/internal/providerui"
 	"github.com/samcharles93/tau/pkg/taui"
+	"github.com/samcharles93/tau/pkg/taui/termkit"
 )
 
 // argProvider offers completions for /provider's argument(s): argsBefore==0
@@ -114,10 +116,13 @@ func (c *inlineChat) handleProviderToggle(name string) {
 	c.refreshAfterProviderChange(entry.DisplayName, !enabled, warning)
 }
 
-// handleProviderLogin handles /provider login <name> — the interactive
-// OAuth flow, not yet implemented for any catalog provider.
-func (c *inlineChat) handleProviderLogin(name string) {
-	name = strings.ToLower(strings.TrimSpace(name))
+// handleProviderLogin handles /provider login <name> [enterprise-domain].
+func (c *inlineChat) handleProviderLogin(args string) {
+	fields := strings.Fields(args)
+	name := ""
+	if len(fields) > 0 {
+		name = strings.ToLower(strings.TrimSpace(fields[0]))
+	}
 	if name == "" {
 		c.engine.PrintAbove("%s %s", c.grey("✗"), "usage: /provider login <provider>")
 		return
@@ -131,7 +136,50 @@ func (c *inlineChat) handleProviderLogin(name string) {
 		c.engine.PrintAbove("%s %s", c.grey("ℹ"), fmt.Sprintf("%s doesn't use OAuth — use /provider %s to toggle it", entry.DisplayName, entry.ID))
 		return
 	}
-	c.engine.PrintAbove("%s %s", c.grey("ℹ"), fmt.Sprintf("%s uses an interactive login that isn't wired up yet", entry.DisplayName))
+	enterpriseDomain := ""
+	if len(fields) > 1 {
+		enterpriseDomain = fields[1]
+	}
+	c.engine.PrintAbove("%s", c.grey(providerui.StartMessage(entry.DisplayName)))
+	go func() {
+		creds, err := providers.LoginOAuth(c.ctx, entry.ID, providers.LoginOptions{
+			EnterpriseDomain: enterpriseDomain,
+			OnDeviceCode: func(code providers.DeviceCode) {
+				opened := providerui.TryOpenBrowser(c.ctx, code.VerificationURI)
+				copied := c.copyProviderLoginCode(code.UserCode)
+				c.engine.PrintAbove("%s", c.grey(providerui.DeviceCodeMessage(entry.DisplayName, code, opened, copied)))
+			},
+		})
+		if err != nil {
+			c.engine.PrintAbove("%s %s", c.grey("✗"), providerui.FailureMessage(entry.DisplayName, err))
+			return
+		}
+		state, err := providers.LoadState()
+		if err != nil {
+			c.engine.PrintAbove("%s %s", c.grey("✗"), "load provider state: "+err.Error())
+			return
+		}
+		state.Enable(entry.ID)
+		state.SetOAuth(entry.ID, creds)
+		if err := state.Save(); err != nil {
+			c.engine.PrintAbove("%s %s", c.grey("✗"), "save provider state: "+err.Error())
+			return
+		}
+		c.refreshAfterProviderChange(entry.DisplayName, true, "")
+	}()
+}
+
+func (c *inlineChat) copyProviderLoginCode(code string) bool {
+	code = strings.TrimSpace(code)
+	if code == "" {
+		return false
+	}
+	seq, ok := termkit.OSC52Copy(code)
+	if !ok {
+		return false
+	}
+	c.engine.Terminal.Write(seq)
+	return true
 }
 
 // handleProviderLogout handles /provider logout <name> — disables the

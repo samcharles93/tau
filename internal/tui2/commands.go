@@ -12,6 +12,7 @@ import (
 	tauchat "github.com/samcharles93/tau/internal/chat"
 	"github.com/samcharles93/tau/internal/config"
 	"github.com/samcharles93/tau/internal/providers"
+	"github.com/samcharles93/tau/internal/providerui"
 )
 
 // --- command table ---------------------------------------------------------
@@ -526,10 +527,13 @@ func (m *model) providerToggle(name string) tea.Cmd {
 	return m.refreshAfterProviderChange(entry.DisplayName, !enabled, warning)
 }
 
-// providerLogin handles /provider login <name> — the interactive OAuth flow,
-// not yet implemented for any catalog provider.
-func (m *model) providerLogin(name string) tea.Cmd {
-	name = strings.ToLower(strings.TrimSpace(name))
+// providerLogin handles /provider login <name> [enterprise-domain].
+func (m *model) providerLogin(args string) tea.Cmd {
+	fields := strings.Fields(args)
+	name := ""
+	if len(fields) > 0 {
+		name = strings.ToLower(strings.TrimSpace(fields[0]))
+	}
 	if name == "" {
 		return m.setNotification("usage: /provider login <provider>")
 	}
@@ -540,7 +544,44 @@ func (m *model) providerLogin(name string) tea.Cmd {
 	if entry.Auth != providers.AuthOAuth {
 		return m.setNotification(fmt.Sprintf("%s doesn't use OAuth — use /provider %s to toggle it", entry.DisplayName, entry.ID))
 	}
-	return m.setNotification(fmt.Sprintf("%s uses an interactive login that isn't wired up yet", entry.DisplayName))
+	enterpriseDomain := ""
+	if len(fields) > 1 {
+		enterpriseDomain = fields[1]
+	}
+	m.appendMessage("system", providerui.StartMessage(entry.DisplayName))
+	return func() tea.Msg {
+		session, err := providers.BeginOAuthLogin(m.ctx, entry.ID, providers.LoginOptions{
+			EnterpriseDomain: enterpriseDomain,
+		})
+		opened := false
+		if err == nil {
+			opened = providerui.TryOpenBrowser(m.ctx, session.DeviceCode.VerificationURI)
+		}
+		return providerLoginStartedMsg{providerID: entry.ID, displayName: entry.DisplayName, session: session, browserOpened: opened, err: err}
+	}
+}
+
+func (m *model) providerLoginPoll(providerID, displayName string, session providers.OAuthLoginSession) tea.Cmd {
+	return func() tea.Msg {
+		creds, err := session.Poll(m.ctx)
+		if err != nil {
+			return providerLoginResultMsg{displayName: displayName, err: err}
+		}
+		state, err := providers.LoadState()
+		if err != nil {
+			return providerLoginResultMsg{displayName: displayName, err: err}
+		}
+		state.Enable(providerID)
+		state.SetOAuth(providerID, creds)
+		if err := state.Save(); err != nil {
+			return providerLoginResultMsg{displayName: displayName, err: err}
+		}
+		if m.refresh == nil {
+			return providerLoginResultMsg{displayName: displayName}
+		}
+		models, err := m.refresh(m.ctx)
+		return providerLoginResultMsg{displayName: displayName, models: models, err: err}
+	}
 }
 
 // providerLogout handles /provider logout <name> — disables the provider and
@@ -594,6 +635,20 @@ type providerToggleResultMsg struct {
 	displayName string
 	action      string
 	warning     string
+	models      []tauchat.ChatModelRef
+	err         error
+}
+
+type providerLoginStartedMsg struct {
+	providerID    string
+	displayName   string
+	session       providers.OAuthLoginSession
+	browserOpened bool
+	err           error
+}
+
+type providerLoginResultMsg struct {
+	displayName string
 	models      []tauchat.ChatModelRef
 	err         error
 }

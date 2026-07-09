@@ -39,7 +39,8 @@ Tau discovers providers automatically. To enable a provider:
    (e.g. `DEEPSEEK_API_KEY=sk-...`). Tau detects it at startup.
 2. **TUI:** Run `tau` and type `/provider <name>` in the chat input to toggle
    a provider on/off; saved to `~/.config/tau/auth.yaml`. OAuth providers use
-   `/provider login <name>` instead.
+   `/provider login <name>` instead; Tau opens the browser, copies the code
+   when possible, and always prints the URL/code fallback.
 3. **config.yaml:** Add a provider block (see Configuration below).
 
 Run `/model` in the TUI to pick from all enabled providers' models.
@@ -66,7 +67,7 @@ TUI commands. Multiple browser tabs may connect to the same session.
 | ------- | ----------- |
 | `/model [id]` | Switch model; opens picker when called without an ID |
 | `/provider [name]` | Toggle a provider on/off; lists all providers when called without an argument |
-| `/provider login <provider>` | OAuth sign-in for a provider (not yet implemented for any catalog provider) |
+| `/provider login <provider>` | OAuth device-code sign-in for `github-copilot` or `openai-codex`; opens the browser and copies the code when possible |
 | `/provider logout <provider>` | Disable a provider / remove its saved key |
 | `/refresh` | Re-discover models from all enabled providers |
 | `/effort [level]` | Set reasoning effort (`off`, `low`, `medium`, `high`, `max`) |
@@ -160,6 +161,7 @@ snapshot — you do not need to repeat it in config. See
 | `auth.type` | `api_key`, `none`, or `oauth_pkce` |
 | `auth.api_key_env` | Environment variable name for the API key |
 | `auth.api_key` | Literal API key (not recommended; prefer `api_key_env`) |
+| `headers` | Optional static request headers; do not put bearer tokens here |
 | `models` | Optional list of model overrides (see below) |
 
 ### Model overrides

@@ -33,6 +33,12 @@ type CatalogEntry struct {
 	BaseURL     string
 	EnvVars     []string
 	Auth        AuthKind
+	// OAuthHandler selects the provider-specific login/refresh implementation.
+	// Empty means this catalog entry has no OAuth login flow.
+	OAuthHandler string
+	// Headers are static request headers required by the provider runtime. They
+	// must never contain bearer tokens; credentials live in OAuthCredentials.
+	Headers map[string]string
 	// CatalogID is the provider key under which models.dev publishes this
 	// provider, when it differs from our ID (e.g. we call it "gemini", they
 	// key it "google"). Empty means it matches ID. Used by the snapshot
@@ -85,6 +91,15 @@ var catalog = []CatalogEntry{
 	// uses the dedicated "anthropic" runtime class with an x-api-key. Base URL
 	// is the host without /v1 — the anthropic client appends /v1/messages.
 	{ID: "anthropic", DisplayName: "Anthropic (Claude)", BaseURL: "https://api.anthropic.com", EnvVars: []string{"ANTHROPIC_API_KEY"}, Auth: AuthAPIKey, Class: "anthropic"},
+
+	{ID: "github-copilot", DisplayName: "GitHub Copilot", BaseURL: "https://api.githubcopilot.com", Auth: AuthOAuth, OAuthHandler: "github-copilot", CatalogID: "github-copilot", Headers: map[string]string{
+		"Copilot-Integration-Id": "tau",
+		"Editor-Plugin-Version":  "tau/1.0",
+		"Editor-Version":         "tau/1.0",
+		"OpenAI-Intent":          "conversation-panel",
+		"User-Agent":             "tau",
+	}},
+	{ID: "openai-codex", DisplayName: "OpenAI Codex", BaseURL: "https://chatgpt.com/backend-api", Auth: AuthOAuth, OAuthHandler: "openai-codex", CatalogID: "openai", Class: "openai-codex"},
 }
 
 // Catalog returns a copy of the built-in provider catalog.

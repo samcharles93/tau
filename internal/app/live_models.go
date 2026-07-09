@@ -25,7 +25,7 @@ const liveModelTimeout = 4 * time.Second
 // order the endpoint reports them, tagged with the provider. Capability data is
 // unavailable from /models, so no tool-call filtering is applied here.
 func liveModelRefs(ctx context.Context, provider tauconfig.ProviderConfig, insecure bool) ([]tauchat.ChatModelRef, error) {
-	ids, err := liveModelIDs(ctx, provider.BaseURL, providerAPIKey(provider), insecure)
+	ids, err := liveModelIDs(ctx, provider.BaseURL, providerAPIKey(provider), provider.Headers, insecure)
 	if err != nil {
 		return nil, err
 	}
@@ -43,7 +43,7 @@ func liveModelRefs(ctx context.Context, provider tauconfig.ProviderConfig, insec
 }
 
 // liveModelIDs performs the GET {baseURL}/models call and returns the model IDs.
-func liveModelIDs(ctx context.Context, baseURL, apiKey string, insecure bool) ([]string, error) {
+func liveModelIDs(ctx context.Context, baseURL, apiKey string, headers map[string]string, insecure bool) ([]string, error) {
 	endpoint := strings.TrimRight(baseURL, "/") + "/models"
 	ctx, cancel := context.WithTimeout(ctx, liveModelTimeout)
 	defer cancel()
@@ -54,6 +54,11 @@ func liveModelIDs(ctx context.Context, baseURL, apiKey string, insecure bool) ([
 	}
 	if apiKey != "" {
 		req.Header.Set("Authorization", "Bearer "+apiKey)
+	}
+	for k, v := range headers {
+		if strings.TrimSpace(k) != "" && strings.TrimSpace(v) != "" {
+			req.Header.Set(k, v)
+		}
 	}
 
 	client := &http.Client{Timeout: liveModelTimeout}

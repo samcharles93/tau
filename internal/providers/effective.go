@@ -1,6 +1,8 @@
 package providers
 
 import (
+	"context"
+
 	"github.com/samcharles93/tau/internal/config"
 )
 
@@ -21,7 +23,7 @@ func Effective() (config.Config, []ResolvedProvider, error) {
 	if err != nil {
 		return config.Config{}, nil, err
 	}
-	resolved := Resolve(cfg, state, nil)
+	resolved, _ := ResolveWithRefresh(context.Background(), cfg, state, nil)
 
 	merged := cfg
 	merged.Providers = usableProviders(resolved)

@@ -47,6 +47,8 @@ providers. Each `CatalogEntry` carries:
 | `BaseURL` | Default API endpoint |
 | `EnvVars` | Environment variables to probe for the API key (first set wins) |
 | `Auth` | `AuthAPIKey`, `AuthOAuth`, or `AuthNone` |
+| `OAuthHandler` | Provider-specific managed login/refresh handler |
+| `Headers` | Static request headers merged into provider calls |
 | `Class` | ai-sdk runtime class; empty → `"openai-compatible"` |
 | `CatalogID` | models.dev key when it differs from tau's `ID` (e.g. Gemini → `"google"`) |
 | `LiveModels` | When `true`, model list is fetched from `/v1/models` at runtime |
@@ -68,6 +70,8 @@ providers. Each `CatalogEntry` carries:
 | `minimax` | MiniMax | API key (`MINIMAX_API_KEY`) | |
 | `ollama` | Ollama (local) | None | Live model discovery from localhost:11434 |
 | `ollama-cloud` | Ollama (cloud) | API key (`OLLAMA_API_KEY`) | |
+| `github-copilot` | GitHub Copilot | OAuth | Device-code login; Copilot token exchange supplies token/base URL/account model IDs |
+| `openai-codex` | OpenAI Codex | OAuth | Device-code login; ChatGPT backend Responses transport and live Codex model discovery |
 
 Providers are activated either by the user's hand-written `config.yaml`,
 by the managed `auth.yaml` (via `/provider`), or by auto-detecting a set API key
@@ -106,6 +110,7 @@ for exploring what a provider offers, but interactive mode ignores them.
 2. `newRuntimeForProviders(provs)` → builds `runtime.Runtime` loaded with the
    embedded `snapshot.Catalog()`.
 3. `aggregateModelRefs(ctx, rt, insecure, provs)` iterates providers:
+   - `openai-codex` → `codexModelRefs()` → ChatGPT backend Codex models endpoint
    - `LiveModels: true` (Ollama local) → `liveModelRefs()` → GET `/v1/models`
    - others → `rt.Models(providerID)` from snapshot, filtered by `toolCapable()`
    - every `ChatModelRef` carries `Provider: providerID` so the UI can route correctly.

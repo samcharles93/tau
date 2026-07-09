@@ -7,7 +7,8 @@ Tau's provider system (`internal/providers/`) manages the lifecycle of LLM provi
 ```
 internal/providers/
 ├── catalog.go    — Built-in catalog of known OpenAI-compatible providers
-├── state.go      — Writable provider/auth state file (~/.config/tau/providers.json)
+├── oauth.go      — OAuth device-code login and refresh handlers
+├── state.go      — Writable provider/auth state file (~/.config/tau/auth.yaml)
 ├── resolve.go    — Resolves effective provider set from config + state + env
 └── effective.go  — Merges resolved providers into tau config
 ```
@@ -19,31 +20,33 @@ internal/providers/
 - Provider ID and display name
 - Default base URL
 - Supported auth types (api_key, oauth)
-- OAuth endpoints (authorization URL, token URL)
+- OAuth handler ID for device-code providers
+- Static request headers required by the provider runtime
 - Environment variable hints for API keys
 
 This catalog means users don't need to specify `base_url` for well-known providers — tau fills in the defaults.
 
 ## Provider State
 
-`state.go` manages a writable state file (`~/.config/tau/providers.json`) that records:
+`state.go` manages a writable state file (`~/.config/tau/auth.yaml`) that records:
 
 - Which providers the user has enabled
 - OAuth credentials (access tokens, refresh tokens, expiry)
-- Provider metadata overrides
+- Provider-specific OAuth extras, such as Copilot `base_url` and `available_model_ids`, or Codex `account_id`
 
-The state file is managed by the `tau login` command and the provider runtime in `internal/app/`.
+The state file is managed by `/provider` commands and the provider runtime in `internal/app/`. Tau does not write OAuth secrets to `config.yaml`.
 
 ### State Operations
 
 ```go
-func LoadState() (*State, error)
+func LoadState() (State, error)
 func (s *State) Save() error
 func (s *State) IsEnabled(providerID string) bool
-func (s *State) Enable(providerID string) error
-func (s *State) Disable(providerID string) error
-func (s *State) SetToken(providerID, accessToken, refreshToken string, expiry time.Time) error
-func (s *State) GetToken(providerID string) (*OAuthToken, error)
+func (s *State) Enable(providerID string)
+func (s *State) Disable(providerID string)
+func (s *State) SetOAuth(providerID string, creds OAuthCredentials)
+func (s *State) OAuthFor(providerID string) (OAuthCredentials, bool)
+func (s *State) RemoveOAuth(providerID string)
 ```
 
 ## Resolution
@@ -51,13 +54,13 @@ func (s *State) GetToken(providerID string) (*OAuthToken, error)
 `resolve.go` merges three sources to determine the effective providers:
 
 1. **Hand-written config** (`config.yaml` / `.tau.yaml`) — Provider names, base URLs, API key env vars.
-2. **Managed state** (`providers.json`) — OAuth tokens, enabled/disabled flags.
+2. **Managed state** (`auth.yaml`) — OAuth tokens, enabled/disabled flags.
 3. **Environment variables** — API keys from configured env vars.
 
 Resolution order:
-1. For each provider in config, resolve its auth: API key from env var, or OAuth token from state.
-2. Filter out providers that have no valid auth.
-3. Merge in model metadata from the models.dev catalog.
+1. Hand-written config providers are used first and are never rewritten by Tau.
+2. Catalog API-key providers are enabled from environment variables or `/provider <name>`.
+3. OAuth providers with stored credentials are refreshed before use; failed refresh makes the provider unavailable and asks for re-login instead of using stale credentials.
 
 ## Effective Provider Set
 
@@ -91,19 +94,20 @@ The dynamic streamer (`internal/app/streamer.go`) maps provider names to ai-sdk 
 | `cohere` | `pkg/provider/cohere` |
 | `azure` | `pkg/provider/azure` |
 | `openrouter` | `pkg/provider/openai` (OpenAI-compatible) |
+| `github-copilot` | `pkg/provider/openai` (OpenAI-compatible + Copilot headers) |
+| `openai-codex` | Tau `openai-codex` class (ChatGPT backend Responses SSE) |
 
 If a provider has no matching ai-sdk constructor, tau falls back to its built-in OpenAI-compatible streamer.
 
 ## Model Discovery
 
-Models are discovered from the models.dev catalog:
+Most hosted providers use Tau's embedded models.dev snapshot. Dynamic providers are queried live:
 
-1. On startup, `internal/app/platform.go` loads the cached catalog from `~/.config/tau/models.json`.
-2. If the cache doesn't exist or is stale (>24h), it downloads a fresh copy from models.dev.
-3. User overrides (`~/.config/tau/api.overrides.json`) are merged in.
-4. Models are filtered to the configured provider.
+1. `ollama` calls the local `/models` endpoint.
+2. `github-copilot` uses account-available model IDs from the Copilot token exchange.
+3. `openai-codex` calls the ChatGPT backend Codex model endpoint at refresh/startup time, so current slugs such as `gpt-5.5` are not hard-coded in Tau.
 
-The `/refresh` command forces a catalog re-download.
+The `/refresh` command rebuilds the runtime from current provider state and re-runs model discovery.
 
 ### Catalog Format
 
@@ -150,15 +154,21 @@ When the user switches models (via `/model` or the Web UI), the dynamic streamer
 
 ## OAuth Login
 
-The `/provider login <name>` command starts an OAuth 2.0 flow:
+The `/provider login <name>` command starts an OAuth device-code flow:
 
-1. Opens the provider's authorization URL in the default browser.
-2. Starts a local HTTP server to receive the callback.
-3. Exchanges the authorization code for tokens.
-4. Stores tokens in `providers.json`.
-5. The provider is now usable with the OAuth-authenticated session.
+1. Requests a device code from the provider.
+2. Attempts to open the verification URL in the default browser.
+3. Attempts to copy the user code to the clipboard.
+4. Prints a spaced URL/code fallback in the TUI, then polls until browser authorization completes or the context is cancelled.
+5. Exchanges/stores tokens in `~/.config/tau/auth.yaml` with mode `0600`.
+6. Refreshes the model list and enables the provider.
 
-OAuth providers are defined in the built-in catalog and include endpoints for GitHub, Google, and other identity providers that tau integrates with.
+Supported OAuth providers:
+
+- `/provider login github-copilot [enterprise-domain]`
+- `/provider login openai-codex`
+
+`/provider logout <name>` removes stored OAuth credentials and disables the provider.
 
 ## Adding a Custom Provider
 

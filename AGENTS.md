@@ -162,6 +162,7 @@ The project follows a **layered architecture** with a command/event boundary bet
   - **Legacy TUI (`internal/tui/`)**: Handles app bootstrapping, event watchers, slash command dispatch, completions, and inline rendering. Gated behind legacy path (default); `--new-tui` flag delegates to `internal/tui2`.
   - **Notify (`internal/tui/notify/`)**: Queue-based notification system. Shared leaf package — usable by both frontends.
   - **Experimental TUI (`internal/tui2/`)**: Bubbletea v2-based interactive terminal UI behind `--new-tui`. Subscribes to the same event bus as the legacy TUI; implements its own rendering, input handling, and command dispatch. See `reference/tui-migration/parity-checklist.md` for feature parity status.
+- **`providerui`** — Shared presentation helpers for provider OAuth login. Formats the device-code workflow/failure blocks and performs best-effort browser opening/code-copy UX for both TUI frontends.
 - **`config`** — Loads `~/.config/tau/config.yaml` (global) and `.tau.yaml` (project-local); foundation package with no internal imports.
 - **`skills`** — Skill discovery from markdown/YAML files, lifecycle management, activation tracking. Publishes `skills.Event` on the event bus when the catalog is refreshed.
 - **`store`** — Session persistence layer (SQLite + raw SQL). Defines `SessionStore` interface and `SessionSummary` struct. Implements JSONL export.
@@ -425,10 +426,12 @@ Use this section to quickly find the right files for a given change.
 LLM provider integration is handled through the external `github.com/samcharles93/ai-sdk` library (`v0.1.6`):
 
 **Provider catalog (tau-side):**
-- `internal/providers/catalog.go` — `CatalogEntry` (ID, DisplayName, BaseURL, EnvVars, Auth, Class, CatalogID, LiveModels); `Catalog()`, `Lookup()`, `DetectEnvVar()`
+- `internal/providers/catalog.go` — `CatalogEntry` (ID, DisplayName, BaseURL, EnvVars, Auth, OAuthHandler, Headers, Class, CatalogID, LiveModels); `Catalog()`, `Lookup()`, `DetectEnvVar()`
 - `internal/providers/state.go` — `State` (Enabled/Disabled/OAuth persisted in `~/.config/tau/auth.yaml`); `Enable()`, `Disable()`, `SetOAuth()`, `RemoveOAuth()`, `Save()`
-- `internal/providers/resolve.go` — `Resolve()`, `Menu()`, `Effective()` — merges hand-written config + state + env into the usable provider set
+- `internal/providers/oauth.go` — device-code OAuth handlers for `github-copilot` and `openai-codex`; stores shared access/refresh/expiry fields plus provider-specific `OAuthCredentials.Extra`
+- `internal/providers/resolve.go` — `Resolve()`, `ResolveWithRefresh()`, `Menu()` — merges hand-written config + state + env into the usable provider set and refreshes expired OAuth credentials before use
 - `internal/providers/effective.go` — `Effective()` returns the merged `Config` + `State` for the current environment
+- `internal/providerui/login.go` — shared TUI-facing OAuth login text plus quiet best-effort browser opening/code-copy presentation for `/provider login`
 
 **Embedded model snapshot:**
 - `internal/providers/snapshot/snapshot.go` — `//go:embed models.json` → `Catalog()` returns an `*runtime.Catalog`; loaded at binary startup, no network needed
@@ -436,9 +439,11 @@ LLM provider integration is handled through the external `github.com/samcharles9
 - `internal/providers/snapshot/gen/main.go` — snapshot generator: fetches models.dev, filters by tau catalog + `tool_call=true`, writes deterministic JSON
 
 **ai-sdk runtime wiring:**
-- `internal/app/chat.go:newRuntimeForProviders()` — builds `runtime.Runtime` from provider configs + embedded snapshot; `resolveProviderClass()` maps tau provider → ai-sdk class (default `"openai-compatible"`, `"anthropic"` for Anthropic native API)
+- `internal/app/chat.go:newRuntimeForProviders()` — builds `runtime.Runtime` from provider configs + embedded snapshot; `resolveProviderClass()` maps tau provider → ai-sdk class (default `"openai-compatible"`, `"anthropic"` for Anthropic native API, `"openai-codex"` for ChatGPT/Codex Responses transport)
+- `internal/app/codex_provider.go` — `openai-codex` runtime class; uses ChatGPT backend Responses-style SSE rather than OpenAI-compatible chat completions.
+- `internal/app/codex_models.go` — live Codex model discovery from the ChatGPT backend model endpoint; do not hard-code Codex model IDs.
 - ai-sdk URL rule: base URLs with `/v1` in the path are left as-is; host-only URLs get `/v1` appended. Endpoint paths do NOT include `/v1` (e.g., `/chat/completions` not `/v1/chat/completions`). Violating this causes 404s.
-- `internal/providers/snapshot/models.json` is the single authoritative model catalogue at runtime. `~/.config/tau/models.json` is no longer used.
+- `internal/providers/snapshot/models.json` is the single authoritative model catalogue for snapshot-backed providers at runtime. Dynamic providers such as Ollama and OpenAI Codex query live endpoints instead. `~/.config/tau/models.json` is no longer used.
 
 ---
 
@@ -707,7 +712,8 @@ go install ./cmd/tau                 # Install to $GOPATH/bin
 
 ```
 internal/providers/          ← tau's writable provider layer
-├── catalog.go               ← built-in well-known providers (IDs, base URLs, env vars, auth kind)
+├── catalog.go               ← built-in well-known providers (IDs, base URLs, env vars, auth kind, OAuth handlers, request headers)
+├── oauth.go                 ← device-code OAuth login/refresh for GitHub Copilot and OpenAI Codex
 ├── state.go                 ← ~/.config/tau/auth.yaml: enabled/disabled/OAuth credentials
 ├── resolve.go               ← merges config + state + env → ResolvedProvider list
 ├── effective.go             ← Effective() → usable []ProviderConfig for the runtime
@@ -720,6 +726,8 @@ internal/providers/snapshot/
 internal/app/
 ├── provider_runtime.go      ← providerRuntime: mutex-guarded runtime + provider set; reload()
 ├── live_models.go           ← liveModelRefs() — queries /models for dynamic providers (Ollama)
+├── codex_models.go          ← codexModelRefs() — queries ChatGPT backend for current Codex model slugs
+├── codex_provider.go        ← openai-codex runtime class (Responses-style SSE)
 └── chat.go                  ← aggregateModelRefs(), toolCapable(), newRuntimeForProviders()
 ```
 
@@ -730,6 +738,7 @@ At startup (`RunChat`):
 1. `providers.Effective()` → usable `[]ProviderConfig` (config + state + env merged).
 2. `newRuntimeForProviders(provs)` — builds `runtime.Runtime`; loads embedded snapshot via `snapshot.Catalog()`.
 3. `aggregateModelRefs(ctx, rt, insecure, provs)`:
+   - If provider is `openai-codex`, call `codexModelRefs()` → GET ChatGPT backend Codex models. Do not hard-code current Codex slugs.
    - For each provider: if `entry.LiveModels` (e.g. `ollama`), call `liveModelRefs()` → GET `/models`.
    - Otherwise: `rt.Models(providerName)` → snapshot models → filter by `toolCapable()`.
    - Each `ChatModelRef` carries `Provider: providerID` so the UI can route correctly.
@@ -762,6 +771,8 @@ This means `/model deepseek-v3` + provider patch takes effect on the **next turn
 | anthropic | `anthropic` | Native Messages API; `x-api-key` header; base URL must be host-only (no `/v1`) |
 | gemini | `openai-compatible` | Google's OpenAI-compatible endpoint |
 | ollama (local) | `openai-compatible` | Live `/models` discovery; no key required |
+| github-copilot | `openai-compatible` | OAuth device-code login; Copilot token exchange supplies token/base URL/available model IDs; requires Copilot headers |
+| openai-codex | `openai-codex` | OAuth device-code login; live Codex model discovery; ChatGPT backend Responses-style SSE |
 
 `resolveProviderClass()` in `internal/app/chat.go` maps `provider.Type` → class; falls through to `"openai-compatible"` if no match.
 
@@ -780,8 +791,9 @@ ai-sdk's openai client (`pkg/provider/openai`) applies:
 2. Set `Class` if not OpenAI-compatible (see table above).
 3. Set `CatalogID` if models.dev uses a different key.
 4. Set `LiveModels: true` if models come from a live `/models` endpoint.
-5. Run `go generate ./internal/providers/snapshot/...` to update `models.json`.
-6. Update `internal/providers/providers_test.go` (add `TestMenuReflectsState` assertions).
+5. For OAuth providers, add an `OAuthHandler` in `internal/providers/oauth.go`; credentials must stay in `~/.config/tau/auth.yaml`, not `config.yaml`.
+6. Run `go generate ./internal/providers/snapshot/...` to update `models.json` when the provider is snapshot-backed.
+7. Update `internal/providers/providers_test.go` (catalog/menu/state assertions).
 
 ### Regenerating models.json
 

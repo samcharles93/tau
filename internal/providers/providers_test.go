@@ -31,6 +31,20 @@ func TestCatalogDetectEnvVar(t *testing.T) {
 	assert.Equal(t, "TOGETHER_API_KEY", name)
 }
 
+func TestOAuthCatalogEntries(t *testing.T) {
+	copilot, ok := Lookup("github-copilot")
+	require.True(t, ok)
+	assert.Equal(t, AuthOAuth, copilot.Auth)
+	assert.Equal(t, "github-copilot", copilot.OAuthHandler)
+	assert.NotEmpty(t, copilot.Headers["Copilot-Integration-Id"])
+
+	codex, ok := Lookup("openai-codex")
+	require.True(t, ok)
+	assert.Equal(t, AuthOAuth, codex.Auth)
+	assert.Equal(t, "openai-codex", codex.OAuthHandler)
+	assert.Equal(t, "openai-codex", codex.Class)
+}
+
 func TestStateRoundTripAtomic(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "auth.yaml")
 	s, err := loadStateFrom(path)
@@ -41,7 +55,7 @@ func TestStateRoundTripAtomic(t *testing.T) {
 	s.Enable("openrouter") // idempotent
 	s.Enable("deepseek")
 	s.Disable("openai")
-	s.SetOAuth("anthropic", OAuthCredentials{Access: "tok", Refresh: "r", Expires: 0})
+	s.SetOAuth("anthropic", OAuthCredentials{Access: "tok", Refresh: "r", Expires: 0, Extra: map[string]string{"base_url": "https://example.test"}})
 	require.NoError(t, s.Save())
 
 	// File should be 0600 (not world-readable: credentials live here).
@@ -61,6 +75,7 @@ func TestStateRoundTripAtomic(t *testing.T) {
 	creds, ok := reloaded.OAuthFor("anthropic")
 	require.True(t, ok)
 	assert.Equal(t, "tok", creds.Access)
+	assert.Equal(t, "https://example.test", creds.Extra["base_url"])
 
 	reloaded.Disable("openrouter")
 	reloaded.RemoveOAuth("anthropic")

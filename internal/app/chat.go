@@ -112,6 +112,15 @@ func buildModelRefresher(pr *providerRuntime) tui.ModelRefresher {
 func aggregateModelRefs(ctx context.Context, rt *runtime.Runtime, insecure bool, provs []tauconfig.ProviderConfig) []tauchat.ChatModelRef {
 	var out []tauchat.ChatModelRef
 	for _, p := range provs {
+		if p.Name == "openai-codex" {
+			refs, err := codexModelRefs(ctx, p, insecure)
+			if err != nil {
+				slog.Debug("Codex model discovery failed", "provider", p.Name, "err", err)
+				continue
+			}
+			out = append(out, refs...)
+			continue
+		}
 		if entry, ok := providers.Lookup(p.Name); ok && entry.LiveModels {
 			refs, err := liveModelRefs(ctx, p, insecure)
 			if err != nil {
@@ -365,6 +374,7 @@ func newRuntimeForProvider(provider tauconfig.ProviderConfig, insecure bool) *ru
 // provider class for each is resolved by [resolveProviderClass].
 func newRuntimeForProviders(providers []tauconfig.ProviderConfig, insecure bool) *runtime.Runtime {
 	runtime.RegisterBuiltinClasses()
+	runtime.RegisterClass(codexClass{})
 
 	cfgs := make(map[string]runtime.ProviderConfig, len(providers))
 	for _, provider := range providers {
@@ -399,6 +409,7 @@ func newRuntimeForProviders(providers []tauconfig.ProviderConfig, insecure bool)
 			ID:       provider.Name,
 			Class:    resolveProviderClass(provider),
 			BaseURL:  strings.TrimRight(provider.BaseURL, "/"),
+			Headers:  provider.Headers,
 			Insecure: insecure,
 			Auth: runtime.AuthConfig{
 				Type:            authType,

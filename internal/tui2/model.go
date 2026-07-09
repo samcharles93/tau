@@ -17,6 +17,7 @@ import (
 	tauchat "github.com/samcharles93/tau/internal/chat"
 	"github.com/samcharles93/tau/internal/eventbus"
 	"github.com/samcharles93/tau/internal/metrics"
+	"github.com/samcharles93/tau/internal/providerui"
 	"github.com/samcharles93/tau/internal/theme"
 	"github.com/samcharles93/tau/internal/tui/notify"
 	"github.com/samcharles93/tau/pkg/taui/termkit"
@@ -641,6 +642,37 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 		}
 		m.appendMessage("system", line)
+		return m, nil
+
+	case providerLoginStartedMsg:
+		if msg.err != nil {
+			m.appendMessage("system", providerui.FailureMessage(msg.displayName, msg.err))
+			return m, nil
+		}
+		code := msg.session.DeviceCode
+		codeText := strings.TrimSpace(code.UserCode)
+		codeCopied := false
+		var copyCmd tea.Cmd
+		if codeText != "" {
+			if _, ok := termkit.OSC52Copy(codeText); ok {
+				codeCopied = true
+				copyCmd = tea.SetClipboard(codeText)
+			}
+		}
+		m.appendMessage("system", providerui.DeviceCodeMessage(msg.displayName, code, msg.browserOpened, codeCopied))
+		return m, tea.Batch(copyCmd, m.providerLoginPoll(msg.providerID, msg.displayName, msg.session))
+
+	case providerLoginResultMsg:
+		if msg.err != nil {
+			m.appendMessage("system", providerui.FailureMessage(msg.displayName, msg.err))
+			return m, nil
+		}
+		if len(msg.models) > 0 {
+			m.availableModels = msg.models
+			m.appendMessage("system", fmt.Sprintf("%s enabled, models available: %d", msg.displayName, len(msg.models)))
+		} else {
+			m.appendMessage("system", fmt.Sprintf("%s enabled", msg.displayName))
+		}
 		return m, nil
 
 	case tickMsg:

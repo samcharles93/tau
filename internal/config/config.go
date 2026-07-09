@@ -159,26 +159,28 @@ func (c *UIConfig) UnmarshalYAML(value *yaml.Node) error {
 
 // ProviderConfig describes an OpenAI-compatible chat provider.
 type ProviderConfig struct {
-	Name    string        `yaml:"name" json:"name"`
-	Type    string        `yaml:"type,omitempty" json:"type,omitempty"`
-	API     string        `yaml:"api,omitempty" json:"api,omitempty"`
-	BaseURL string        `yaml:"base_url" json:"base_url"`
-	Auth    AuthConfig    `yaml:"auth" json:"auth"`
-	Models  []ModelConfig `yaml:"models,omitempty" json:"models,omitempty"`
+	Name    string            `yaml:"name" json:"name"`
+	Type    string            `yaml:"type,omitempty" json:"type,omitempty"`
+	API     string            `yaml:"api,omitempty" json:"api,omitempty"`
+	BaseURL string            `yaml:"base_url" json:"base_url"`
+	Auth    AuthConfig        `yaml:"auth" json:"auth"`
+	Headers map[string]string `yaml:"headers,omitempty" json:"headers,omitempty"`
+	Models  []ModelConfig     `yaml:"models,omitempty" json:"models,omitempty"`
 }
 
 func (p *ProviderConfig) UnmarshalYAML(value *yaml.Node) error {
 	type rawProviderConfig struct {
-		Name         string       `yaml:"name"`
-		Type         string       `yaml:"type"`
-		API          string       `yaml:"api"`
-		BaseURL      string       `yaml:"base_url"`
-		BaseURLCamel string       `yaml:"baseUrl"`
-		Auth         AuthConfig   `yaml:"auth"`
-		APIKey       string       `yaml:"api_key"`
-		APIKeyCamel  string       `yaml:"apiKey"`
-		APIKeyEnv    string       `yaml:"api_key_env"`
-		Models       modelConfigs `yaml:"models"`
+		Name         string            `yaml:"name"`
+		Type         string            `yaml:"type"`
+		API          string            `yaml:"api"`
+		BaseURL      string            `yaml:"base_url"`
+		BaseURLCamel string            `yaml:"baseUrl"`
+		Auth         AuthConfig        `yaml:"auth"`
+		Headers      map[string]string `yaml:"headers"`
+		APIKey       string            `yaml:"api_key"`
+		APIKeyCamel  string            `yaml:"apiKey"`
+		APIKeyEnv    string            `yaml:"api_key_env"`
+		Models       modelConfigs      `yaml:"models"`
 	}
 	var raw rawProviderConfig
 	if err := value.Decode(&raw); err != nil {
@@ -189,6 +191,7 @@ func (p *ProviderConfig) UnmarshalYAML(value *yaml.Node) error {
 	p.API = raw.API
 	p.BaseURL = firstNonEmpty(raw.BaseURL, raw.BaseURLCamel)
 	p.Auth = raw.Auth
+	p.Headers = cleanStringMap(raw.Headers)
 	p.Models = []ModelConfig(raw.Models)
 
 	apiKey := firstNonEmpty(raw.APIKey, raw.APIKeyCamel)
@@ -829,6 +832,25 @@ func firstNonNilStringMap(values ...map[string]string) map[string]string {
 		}
 	}
 	return nil
+}
+
+func cleanStringMap(value map[string]string) map[string]string {
+	if len(value) == 0 {
+		return nil
+	}
+	out := make(map[string]string, len(value))
+	for k, v := range value {
+		k = strings.TrimSpace(k)
+		v = strings.TrimSpace(v)
+		if k == "" || v == "" {
+			continue
+		}
+		out[k] = v
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
 }
 
 func firstNonNilAnyMap(values ...map[string]any) map[string]any {

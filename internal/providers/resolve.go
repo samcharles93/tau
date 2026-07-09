@@ -1,9 +1,11 @@
 package providers
 
 import (
+	"context"
 	"os"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/samcharles93/tau/internal/config"
 )
@@ -29,6 +31,7 @@ type ResolvedProvider struct {
 	Source    Source
 	EnvVar    string // for env providers: the variable supplying the key
 	Available bool   // a usable credential is present right now
+	Message   string // optional user-facing status, e.g. refresh failed
 }
 
 // MenuEntry is one row in the /provider menu: every catalog provider plus
@@ -43,6 +46,7 @@ type MenuEntry struct {
 	Available   bool   // credential present right now
 	EnvVar      string // for api-key providers: the variable probed
 	FromConfig  bool   // also declared in hand-written config (cannot toggle here)
+	Message     string // optional user-facing status, e.g. refresh failed
 }
 
 func osGetenv(name string) string { return os.Getenv(name) }
@@ -53,9 +57,19 @@ func osGetenv(name string) string { return os.Getenv(name) }
 // providers, both alphabetical. getenv may be nil to use the process
 // environment.
 func Resolve(cfg config.Config, state State, getenv func(string) string) []ResolvedProvider {
+	resolved, _ := ResolveWithRefresh(context.Background(), cfg, state, getenv)
+	return resolved
+}
+
+// ResolveWithRefresh is Resolve plus best-effort OAuth token refresh. When an
+// expired credential refreshes successfully, the updated state is saved before
+// returning. When refresh fails, the provider is returned as unavailable with a
+// status message instead of falling back to a stale token.
+func ResolveWithRefresh(ctx context.Context, cfg config.Config, state State, getenv func(string) string) ([]ResolvedProvider, bool) {
 	if getenv == nil {
 		getenv = osGetenv
 	}
+	refreshOAuthCredentials(ctx, &state)
 
 	var out []ResolvedProvider
 	declared := make(map[string]struct{}, len(cfg.Providers))
@@ -113,14 +127,20 @@ func Resolve(cfg config.Config, state State, getenv func(string) string) []Resol
 			continue
 		}
 		creds := state.OAuth[id]
+		msg := ""
+		available := strings.TrimSpace(creds.Access) != "" && !creds.Expired()
+		if !available {
+			msg = "login expired — run /provider login " + id
+		}
 		out = append(out, ResolvedProvider{
 			Config:    oauthProviderConfig(entry, creds),
 			Source:    SourceOAuth,
-			Available: strings.TrimSpace(creds.Access) != "",
+			Available: available,
+			Message:   msg,
 		})
 	}
 
-	return out
+	return out, true
 }
 
 // Menu builds the /provider list: every catalog entry annotated with its
@@ -149,6 +169,9 @@ func Menu(cfg config.Config, state State, getenv func(string) string) []MenuEntr
 			entry.Source = SourceOAuth
 			entry.Enabled = ok && strings.TrimSpace(creds.Access) != ""
 			entry.Available = entry.Enabled && !creds.Expired()
+			if entry.Enabled && !entry.Available {
+				entry.Message = "login expired"
+			}
 		default:
 			envVar, present := e.DetectEnvVar(getenv)
 			available := present || e.Auth == AuthNone
@@ -174,6 +197,7 @@ func apiKeyProviderConfig(entry CatalogEntry, envVar string) config.ProviderConf
 		Name:    entry.ID,
 		Type:    entry.Class,
 		BaseURL: entry.BaseURL,
+		Headers: cloneStringMap(entry.Headers),
 		Auth:    auth,
 	}
 }
@@ -189,10 +213,69 @@ func oauthProviderConfig(entry CatalogEntry, creds OAuthCredentials) config.Prov
 	}
 	return config.ProviderConfig{
 		Name:    entry.ID,
+		Type:    entry.Class,
 		BaseURL: baseURL,
+		Headers: cloneStringMap(entry.Headers),
 		Auth: config.AuthConfig{
 			Type:   config.AuthTypeAPIKey,
 			APIKey: creds.Access,
 		},
+		Models: oauthProviderModels(entry, creds),
 	}
+}
+
+func oauthProviderModels(entry CatalogEntry, creds OAuthCredentials) []config.ModelConfig {
+	switch entry.ID {
+	case githubCopilotID:
+		ids := strings.Split(creds.Extra["available_model_ids"], ",")
+		models := make([]config.ModelConfig, 0, len(ids))
+		for _, id := range ids {
+			id = strings.TrimSpace(id)
+			if id != "" {
+				models = append(models, config.ModelConfig{ID: id})
+			}
+		}
+		return models
+	case openAICodexID:
+		return nil
+	default:
+		return nil
+	}
+}
+
+func refreshOAuthCredentials(ctx context.Context, state *State) {
+	if len(state.OAuth) == 0 {
+		return
+	}
+	changed := false
+	for id, creds := range state.OAuth {
+		if strings.TrimSpace(creds.Access) == "" || !creds.Expired() {
+			continue
+		}
+		refreshed, err := RefreshOAuth(ctx, id, creds)
+		if err != nil {
+			creds.Expires = time.Now().Add(-time.Minute).Unix()
+			state.OAuth[id] = creds
+			changed = true
+			continue
+		}
+		state.OAuth[id] = refreshed
+		changed = true
+	}
+	if changed {
+		_ = state.Save()
+	}
+}
+
+func cloneStringMap(in map[string]string) map[string]string {
+	if len(in) == 0 {
+		return nil
+	}
+	out := make(map[string]string, len(in))
+	for k, v := range in {
+		if strings.TrimSpace(k) != "" && strings.TrimSpace(v) != "" {
+			out[k] = v
+		}
+	}
+	return out
 }

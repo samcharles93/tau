@@ -16,6 +16,7 @@ import (
 	tauchat "github.com/samcharles93/tau/internal/chat"
 	"github.com/samcharles93/tau/internal/eventbus"
 	"github.com/samcharles93/tau/internal/metrics"
+	"github.com/samcharles93/tau/internal/providers"
 	"github.com/samcharles93/tau/internal/tui/notify"
 	"github.com/samcharles93/tau/pkg/taui/termkit"
 )
@@ -256,6 +257,40 @@ func TestCopyCommandNotifiesWhenNothingToCopy(t *testing.T) {
 
 	if m.notification != "nothing to copy" {
 		t.Fatalf("notification = %q, want %q", m.notification, "nothing to copy")
+	}
+}
+
+func TestProviderLoginStartedCopiesDeviceCode(t *testing.T) {
+	rt := &fakeRuntime{}
+	m := newTestModel(rt, nil)
+
+	_, cmd := m.Update(providerLoginStartedMsg{
+		providerID:  "github-copilot",
+		displayName: "GitHub Copilot",
+		session: providers.OAuthLoginSession{
+			DeviceCode: providers.DeviceCode{
+				VerificationURI: "https://github.com/login/device",
+				UserCode:        "ABCD-1234",
+			},
+		},
+		browserOpened: true,
+	})
+	if cmd == nil {
+		t.Fatal("expected provider login start to return clipboard and polling commands")
+	}
+	batch, ok := cmd().(tea.BatchMsg)
+	if !ok || len(batch) == 0 {
+		t.Fatalf("expected a BatchMsg containing the clipboard Cmd, got %#v", cmd())
+	}
+
+	clip := batch[0]()
+	v := reflect.ValueOf(clip)
+	if v.Kind() != reflect.String || v.String() != "ABCD-1234" {
+		t.Fatalf("clipboard payload = %#v, want %q", clip, "ABCD-1234")
+	}
+	rendered := strings.Join(m.renderedLines, "\n")
+	if !strings.Contains(rendered, "Paste code (copied)") {
+		t.Fatalf("expected copied-code instruction in rendered lines, got %q", rendered)
 	}
 }
 

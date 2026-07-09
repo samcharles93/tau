@@ -22,14 +22,17 @@ type Config struct {
 
 ```go
 type ProviderConfig struct {
-    Name    string     `yaml:"name"`
-    BaseURL string     `yaml:"base_url"`
-    Auth    AuthConfig `yaml:"auth"`
+    Name    string            `yaml:"name"`
+    Type    string            `yaml:"type,omitempty"`
+    BaseURL string            `yaml:"base_url"`
+    Auth    AuthConfig        `yaml:"auth"`
+    Headers map[string]string `yaml:"headers,omitempty"`
 }
 
 type AuthConfig struct {
-    Type      string `yaml:"type"`       // "api_key", "oauth"
+    Type      string `yaml:"type"`        // "api_key", "none", "oauth_pkce"
     APIKeyEnv string `yaml:"api_key_env"` // env var for API key
+    APIKey    string `yaml:"api_key"`     // literal key; prefer api_key_env
 }
 ```
 
@@ -38,7 +41,12 @@ type AuthConfig struct {
 | Type | Description |
 | ---- | ----------- |
 | `api_key` | Static API key from environment variable (`api_key_env`) |
-| `oauth` | OAuth 2.0 flow (managed via `tau login`) |
+| `none` | No credential required |
+| `oauth_pkce` | Browser OAuth PKCE for hand-written config providers |
+
+Tau-managed catalog OAuth logins, currently `github-copilot` and
+`openai-codex`, are handled with `/provider login <name>` and persisted in
+`~/.config/tau/auth.yaml`, not in `config.yaml`.
 
 ## UIConfig
 
