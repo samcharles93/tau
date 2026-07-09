@@ -99,8 +99,8 @@ func (s *SQLiteStore) Save(ctx context.Context, state chat.ChatSessionState, dur
 		len(state.Messages),
 		state.LastUsage.PromptTokens,
 		state.LastUsage.CompletionTokens,
-		0, // cache_read — TODO(cache-tokens): ChatUsage needs cache token fields
-		0, // cache_write
+		state.LastUsage.CachedTokens,
+		state.LastUsage.CacheCreationTokens,
 		state.LastUsage.TotalTokens,
 		cost,
 		duration.Milliseconds(),
@@ -435,18 +435,26 @@ func decodeToolCalls(jsonStr string) []chat.ChatToolCall {
 // calculateCost estimates session cost from usage and model pricing.
 // Returns 0 if cost config is unavailable.
 //
-// TODO(cache-tokens): ChatUsage does not currently track cache_read or
-// cache_write token counts. When those fields are added, include them here
-// using cfg.CacheRead and cfg.CacheWrite.
+// usage.PromptTokens is the total prompt token count and already includes
+// CachedTokens and CacheCreationTokens as subsets (see chat.Usage and
+// ai-sdk's usageFromWire for why this holds across providers); the
+// uncached portion is priced at cost.Input, cache reads at the
+// (cheaper) cost.CacheRead, and cache writes at the (pricier)
+// cost.CacheWrite. Both default to 0 for providers/configs with no
+// cache pricing, in which case cached tokens are silently unpriced
+// rather than double-counted at the base input rate.
 func calculateCost(cfg config.ModelConfig, usage chat.ChatUsage) float64 {
 	cost := cfg.Cost
 	if cost.Input == 0 && cost.Output == 0 {
 		return 0
 	}
 	// Prices are per 1M tokens.
-	inputCost := float64(usage.PromptTokens) * cost.Input / 1_000_000
+	uncachedPrompt := usage.PromptTokens - usage.CachedTokens - usage.CacheCreationTokens
+	inputCost := float64(uncachedPrompt) * cost.Input / 1_000_000
+	cacheReadCost := float64(usage.CachedTokens) * cost.CacheRead / 1_000_000
+	cacheWriteCost := float64(usage.CacheCreationTokens) * cost.CacheWrite / 1_000_000
 	outputCost := float64(usage.CompletionTokens) * cost.Output / 1_000_000
-	return inputCost + outputCost
+	return inputCost + cacheReadCost + cacheWriteCost + outputCost
 }
 
 func nullString(s string) any {

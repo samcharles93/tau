@@ -93,6 +93,13 @@ export interface ChatUsage {
   completion_tokens?: number
   output_tokens?: number
   total_tokens?: number
+  /** Portion of prompt_tokens served from a provider cache (OpenAI's
+   * automatic prefix cache, or an Anthropic cache_control read), billed
+   * at a reduced rate. */
+  cached_tokens?: number
+  /** Anthropic-specific: tokens written to the cache on this call,
+   * billed at a premium over normal input tokens. */
+  cache_creation_tokens?: number
 }
 
 export interface ChatParameters {

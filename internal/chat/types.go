@@ -207,6 +207,14 @@ type ChatUsage struct {
 	CompletionTokens int `json:"completion_tokens,omitempty"`
 	OutputTokens     int `json:"output_tokens,omitempty"`
 	TotalTokens      int `json:"total_tokens,omitempty"`
+	// CachedTokens is the portion of PromptTokens served from a provider
+	// cache (OpenAI's automatic prefix cache, or an Anthropic cache_control
+	// read), billed at a reduced rate. Zero when the provider didn't
+	// report it or nothing was served from cache.
+	CachedTokens int `json:"cached_tokens,omitempty"`
+	// CacheCreationTokens is Anthropic-specific: tokens written to the
+	// cache on this call, billed at a premium over normal input tokens.
+	CacheCreationTokens int `json:"cache_creation_tokens,omitempty"`
 }
 
 // ChatSessionConfig is the immutable setup for a newly created session.

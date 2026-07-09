@@ -8,7 +8,7 @@ import (
 	"io"
 	"strings"
 
-	aisdkchat "github.com/samcharles93/ai-sdk/pkg/chat"
+	aisdkchat "github.com/samcharles93/ai-sdk/chat"
 	tauchat "github.com/samcharles93/tau/internal/chat"
 )
 
@@ -100,9 +100,11 @@ func (s *Streamer) StreamChatCompletionFull(
 		}
 		if chunk.Usage != nil {
 			result.Usage = tauchat.ChatUsage{
-				PromptTokens:     chunk.Usage.PromptTokens,
-				CompletionTokens: chunk.Usage.CompletionTokens,
-				TotalTokens:      chunk.Usage.TotalTokens,
+				PromptTokens:        chunk.Usage.PromptTokens,
+				CompletionTokens:    chunk.Usage.CompletionTokens,
+				TotalTokens:         chunk.Usage.TotalTokens,
+				CachedTokens:        chunk.Usage.CachedTokens,
+				CacheCreationTokens: chunk.Usage.CacheCreationTokens,
 			}
 		}
 		if chunk.FinishReason != "" {
