@@ -576,6 +576,9 @@ func loadConfigFrom(cwd string, requireProviders bool) (Config, error) {
 		return Config{}, err
 	}
 	cfg := mergeConfigs(globalCfg, localCfg)
+	if !cfg.UI.showReasoningSet {
+		cfg.UI.ShowReasoning = true
+	}
 	if len(cfg.Providers) == 0 && requireProviders {
 		if !globalFound && !localFound {
 			return Config{}, fmt.Errorf("no Tau providers configured; create %s or %s", globalPath, localPath)

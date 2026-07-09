@@ -208,8 +208,8 @@ providers:
 	if err != nil {
 		t.Fatalf("LoadConfigFrom() default error = %v", err)
 	}
-	if cfg.UI.ShowReasoning {
-		t.Fatal("UI.ShowReasoning default = true, want false")
+	if !cfg.UI.ShowReasoning {
+		t.Fatal("UI.ShowReasoning default = false, want true")
 	}
 }
 
