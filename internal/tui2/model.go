@@ -873,10 +873,19 @@ func (m *model) computeLayout() layoutGeometry {
 		notifyWidth = 80
 	}
 	var notifyRendered string
-	if m.notification != "" {
+	switch {
+	case m.notification != "":
 		notifyRendered = notifyStyleForLevel(m.notificationLevel).Width(notifyWidth).Render(m.notification)
+	case m.inResponse:
+		// No active notification — use the reserved area for the steer hint
+		// instead of growing the input box by a row for it.
+		notifyRendered = lipgloss.NewStyle().Width(notifyWidth).Render(steerHint())
 	}
-	notifyStr := padOrClipLines(notifyRendered, notifyReservedLines)
+	h := visualLineCount(notifyRendered)
+	if h < notifyReservedLines {
+		h = notifyReservedLines
+	}
+	notifyStr := padOrClipLines(notifyRendered, h)
 
 	// 7. Divider and input area.
 	sepWidth := m.width
@@ -1485,16 +1494,18 @@ func (m *model) renderInputArea() string {
 	}
 
 	title := m.inputModeTitle()
-	res := renderInputBox(m.width, title, body, "")
-	if m.inResponse {
-		ctrlC := lipgloss.NewStyle().Foreground(themeHex(theme.ToneError)).Bold(true).Render("Ctrl+C")
-		enter := lipgloss.NewStyle().Foreground(themeHex(theme.CommandFG)).Bold(true).Render("Enter")
-		hint := lipgloss.NewStyle().Foreground(themeHex(theme.ToneMuted)).Italic(true).Render(
-			fmt.Sprintf("[%s] stop | [%s] steer", ctrlC, enter),
-		)
-		res = renderInputBox(m.width, "steer", body, hint)
-	}
-	return res
+	return renderInputBox(m.width, title, body, "")
+}
+
+// steerHint renders the "[Ctrl+C] stop | [Enter] steer" hint shown in the
+// notification area (not the input box itself, which would otherwise grow
+// by a row for it) while a response is in flight.
+func steerHint() string {
+	ctrlC := lipgloss.NewStyle().Foreground(themeHex(theme.ToneError)).Bold(true).Render("Ctrl+C")
+	enter := lipgloss.NewStyle().Foreground(themeHex(theme.CommandFG)).Bold(true).Render("Enter")
+	return lipgloss.NewStyle().Foreground(themeHex(theme.ToneMuted)).Italic(true).Render(
+		fmt.Sprintf("[%s] stop | [%s] steer", ctrlC, enter),
+	)
 }
 
 // inputPositionAt maps a (row, col) coordinate within the rendered input
@@ -3222,12 +3233,12 @@ func (m *model) toggleToolExpansion() tea.Cmd {
 // notifications set via setNotification. Exported as a package variable
 // so tests can set it to time.Millisecond (via TestMain) and avoid a
 // real 4-second sleep per test through drainCmd.
-var notificationClearDelay = 4 * time.Second
+var notificationClearDelay = 0 * time.Second
 
-// setNotification sets an info-level notification that auto-clears after
-// notificationClearDelay. For a level (drives its color) or a custom
-// duration — e.g. an error that should persist until superseded rather than
-// silently vanish after a few seconds — use setNotificationWithLevel.
+// setNotification sets an info-level notification that does not auto-clear.
+// For a level (drives its color) or a custom duration — e.g. an error that
+// should persist until superseded rather than silently vanish — use
+// setNotificationWithLevel.
 func (m *model) setNotification(text string) tea.Cmd {
 	return m.setNotificationWithLevel(text, notify.LevelInfo, notificationClearDelay)
 }
@@ -3243,7 +3254,7 @@ func (m *model) setNotificationWithLevel(text string, level notify.Level, durati
 	m.notification = text
 	m.notificationLevel = level
 	if duration <= 0 {
-		return nil
+		return func() tea.Msg { return nil }
 	}
 	gen := m.notificationGen
 	return tea.Tick(duration, func(t time.Time) tea.Msg {
@@ -3274,8 +3285,8 @@ func notifyLevelFromChat(level tauchat.ChatNotificationLevel) notify.Level {
 // tea.Tick duration now that it schedules a genuine auto-clear Cmd instead
 // of being handed to the old (never-rendered) notifyQ.
 var (
-	notifyWarnDuration = 8 * time.Second
-	notifyInfoDuration = 5 * time.Second
+	notifyWarnDuration = 0 * time.Second
+	notifyInfoDuration = 0 * time.Second
 )
 
 func notifyDurationFromChat(level tauchat.ChatNotificationLevel) time.Duration {
