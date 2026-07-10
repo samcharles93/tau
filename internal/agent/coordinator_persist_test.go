@@ -4,6 +4,7 @@ import (
 	"context"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/samcharles93/tau/internal/agent/tools"
 	"github.com/samcharles93/tau/internal/chat"
@@ -26,8 +27,21 @@ func newTestSessionManager(t *testing.T) *sessions.Manager {
 	return mgr
 }
 
+// startAndCloseTestSession starts a session and waits for its
+// ChatSessionSnapshotEvent (proof the coordinator's loop actually processed
+// the StartChatSessionCommand) before calling Close(). Send() only enqueues
+// onto a buffered channel and returns immediately, so closing right after
+// Send() without this wait races Close()'s ctx.Done() against the loop still
+// having the start command queued — select picks between the two
+// pseudo-randomly, and a "session not found" outcome (nothing to persist)
+// is a real possible result, not a hang.
 func startAndCloseTestSession(t *testing.T, coordinator *Coordinator, sessionID string) {
 	t.Helper()
+
+	sub, err := coordinator.SubscribeEvents()
+	require.NoError(t, err)
+	defer sub.Close()
+
 	require.NoError(t, coordinator.Send(chat.StartChatSessionCommand{
 		SessionID: sessionID,
 		Config: chat.ChatSessionConfig{
@@ -35,7 +49,19 @@ func startAndCloseTestSession(t *testing.T, coordinator *Coordinator, sessionID 
 			Model:    chat.ChatModelRef{ID: "model", URL: "https://example.test"},
 		},
 	}))
-	coordinator.Close()
+
+	deadline := time.After(time.Second)
+	for {
+		select {
+		case event := <-sub.Events():
+			if snap, ok := event.(chat.ChatSessionSnapshotEvent); ok && snap.State.SessionID == sessionID {
+				coordinator.Close()
+				return
+			}
+		case <-deadline:
+			t.Fatal("timed out waiting for session start snapshot")
+		}
+	}
 }
 
 // TestCoordinatorNoPersistSkipsSessionStore guards --ephemeral: with
