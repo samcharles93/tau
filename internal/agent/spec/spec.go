@@ -203,3 +203,60 @@ func Lookup(name string) (*Definition, bool) {
 	}
 	return nil, false
 }
+
+// userAgentPrefix and projectAgentPrefix mirror internal/registry's
+// userCommandPrefix/projectCommandPrefix. Duplicated rather than imported to
+// avoid a dependency from this leaf package on the registry, matching the
+// existing precedent of skills/commands.go and registry/sources.go each
+// keeping their own copies of the same two prefixes.
+const (
+	userAgentPrefix    = "user:"
+	projectAgentPrefix = "project:"
+)
+
+// CommandPrefix returns the "user:" or "project:" prefix a
+// filesystem-discovered definition's slash command carries, matching
+// internal/registry's precedence scheme (agentCommands). Empty for embedded
+// built-ins, which are never prefixed.
+func (d *Definition) CommandPrefix() string {
+	switch d.Scope {
+	case skills.ScopeProject:
+		return projectAgentPrefix
+	case skills.ScopeUser:
+		return userAgentPrefix
+	default:
+		return ""
+	}
+}
+
+// Resolve looks up an agent definition by the name it was invoked with. A
+// bare name (no prefix) only matches a built-in — filesystem-discovered
+// definitions are never reachable by their bare name, exactly mirroring how
+// internal/registry lists them (prefixed, and skipped entirely when the
+// bare name collides with a built-in). A "user:" or "project:" prefixed
+// name resolves against the corresponding filesystem source instead.
+func Resolve(name, workingDir string) (*Definition, bool) {
+	trimmed := strings.TrimSpace(name)
+	if trimmed == "" {
+		return nil, false
+	}
+
+	if rest, ok := strings.CutPrefix(trimmed, userAgentPrefix); ok {
+		return lookupDiscovered(rest, UserSources())
+	}
+	if rest, ok := strings.CutPrefix(trimmed, projectAgentPrefix); ok {
+		return lookupDiscovered(rest, ProjectSources(workingDir))
+	}
+
+	return Lookup(trimmed)
+}
+
+func lookupDiscovered(name string, sources []Source) (*Definition, bool) {
+	defs, _ := DiscoverFromDisk(sources)
+	for _, def := range defs {
+		if strings.EqualFold(def.Name, name) {
+			return def, true
+		}
+	}
+	return nil, false
+}

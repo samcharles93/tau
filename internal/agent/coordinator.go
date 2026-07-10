@@ -767,18 +767,26 @@ func (c *Coordinator) handleRunSkill(cmd chat.RunSkillCommand) {
 	})
 }
 
-// handleRunAgent activates a built-in agent command (e.g. /plan, /research)
-// in response to its matching slash command. It looks the agent up by name,
-// renders its prompt template, replaces the session's system prompt with it,
-// and applies its tool restriction (if any) via the same AllowedTools
-// mechanism skills use. Unlike handleRunSkill, this replaces rather than
-// appends to the system prompt: these are distinct operating modes, not
-// stacked knowledge.
+// handleRunAgent activates an agent command (e.g. /plan, /research, or a
+// filesystem-discovered /project:foo) in response to its matching slash
+// command. It resolves the agent by name, renders its prompt template,
+// replaces the session's system prompt with it, and applies its tool
+// restriction (if any) via the same AllowedTools mechanism skills use.
+// Unlike handleRunSkill, this replaces rather than appends to the system
+// prompt: these are distinct operating modes, not stacked knowledge.
+//
+// Filesystem-discovered definitions (agentspec.Resolve returning a
+// Definition with SourcePath set — i.e. not one of the embedded built-ins)
+// are untrusted relative to built-ins: they may have been authored by the
+// model itself rather than reviewed and shipped in the binary. Their
+// requested Tools are clamped to the session's current allowlist rather
+// than applied as-is, so activating one can never grant a wider tool set
+// than the session already had — see clampToolsToCurrentAllowlist.
 func (c *Coordinator) handleRunAgent(cmd chat.RunAgentCommand) {
 	now := normalizedTime(cmd.RequestedAt)
 
 	name := strings.TrimSpace(cmd.Name)
-	def, ok := agentspec.Lookup(name)
+	def, ok := agentspec.Resolve(name, c.projectDir)
 	if !ok {
 		c.emit(chat.ChatNotificationEvent{
 			Message:    "agent not found: " + name,
@@ -808,9 +816,35 @@ func (c *Coordinator) handleRunAgent(cmd chat.RunAgentCommand) {
 
 	c.emit(chat.ChatSessionSnapshotEvent{State: snapshot})
 
-	if len(def.Tools) > 0 {
+	discovered := def.SourcePath != ""
+	switch {
+	case len(def.Tools) > 0 && discovered:
+		clamped := c.clampToolsToCurrentAllowlist(def.Tools)
+		if len(clamped) < len(def.Tools) {
+			c.emit(chat.ChatNotificationEvent{
+				Message:    fmt.Sprintf("agent %q requested tools outside the session's current allowlist; clamped to what was already allowed", def.Name),
+				Level:      chat.ChatNotificationWarn,
+				OccurredAt: now,
+			})
+		}
+		if len(clamped) > 0 {
+			c.SetAllowedTools(clamped)
+		}
+		// Else every requested tool was clamped away — do NOT call
+		// SetAllowedTools(clamped) with an empty slice: SetAllowedTools
+		// treats an empty list as "no restriction" (its nil-allowedTools
+		// sentinel), which would grant everything, the opposite of this
+		// guard's purpose. Leave the session's current allowlist as-is,
+		// same treatment as the "declared no tools at all" case below.
+	case len(def.Tools) > 0:
 		c.SetAllowedTools(def.Tools)
-	} else {
+	case discovered:
+		// A discovered definition with no tools list at all declares no
+		// restriction — but for an untrusted definition, treating that as
+		// "grant every tool" would be the single largest possible
+		// escalation. Leave the session's current allowlist untouched
+		// instead of clearing it.
+	default:
 		c.SetAllowedTools(nil)
 	}
 
@@ -819,6 +853,28 @@ func (c *Coordinator) handleRunAgent(cmd chat.RunAgentCommand) {
 		Level:      chat.ChatNotificationInfo,
 		OccurredAt: now,
 	})
+}
+
+// clampToolsToCurrentAllowlist intersects requested with the coordinator's
+// current tool allowlist. When the session is currently unrestricted
+// (allowedTools nil/empty), there is nothing to escalate past, so requested
+// passes through unchanged.
+func (c *Coordinator) clampToolsToCurrentAllowlist(requested []string) []string {
+	c.mu.Lock()
+	current := c.allowedTools
+	c.mu.Unlock()
+
+	if len(current) == 0 {
+		return requested
+	}
+
+	clamped := make([]string, 0, len(requested))
+	for _, name := range requested {
+		if current[name] {
+			clamped = append(clamped, name)
+		}
+	}
+	return clamped
 }
 
 // handleRunBashCommand runs a "!" (or "!!") bash-mode command entered

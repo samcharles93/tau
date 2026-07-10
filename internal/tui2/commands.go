@@ -30,6 +30,28 @@ type slashEntry struct {
 	run         func(m *model, args string) tea.Cmd
 }
 
+// buildAgentSlashEntry builds the slash-command table entry for a single
+// agent definition, dispatching under invokeName (the bare name for a
+// built-in, or a user:/project:-prefixed name for a filesystem-discovered
+// one).
+func buildAgentSlashEntry(invokeName string, def *agentspec.Definition) slashEntry {
+	usage := def.ArgumentHint
+	if usage == "" {
+		usage = "[prompt]"
+	}
+	return slashEntry{
+		name:        invokeName,
+		usage:       usage,
+		displayName: def.DisplayName,
+		description: def.Description,
+		isAgent:     true,
+		modeSwitch:  def.ModeSwitcher,
+		run: func(m *model, args string) tea.Cmd {
+			return m.runAgentCommand(invokeName, args)
+		},
+	}
+}
+
 func (e slashEntry) modeLabel() string {
 	if e.displayName != "" {
 		return e.displayName
@@ -147,28 +169,29 @@ func init() {
 
 	// Append agent commands from spec (dynamic discovery).
 	defs, err := agentspec.Builtins()
-	if err == nil {
-		for _, def := range defs {
-			if !def.UserInvocable {
-				continue
-			}
-			name := def.Name
-			usage := def.ArgumentHint
-			if usage == "" {
-				usage = "[prompt]"
-			}
-			slashTable = append(slashTable, slashEntry{
-				name:        name,
-				usage:       usage,
-				displayName: def.DisplayName,
-				description: def.Description,
-				isAgent:     true,
-				modeSwitch:  def.ModeSwitcher,
-				run: func(m *model, args string) tea.Cmd {
-					return m.runAgentCommand(name, args)
-				},
-			})
+	if err != nil {
+		defs = nil
+	}
+	builtinAgentNames := make(map[string]bool, len(defs))
+	for _, def := range defs {
+		builtinAgentNames[def.Name] = true
+		if !def.UserInvocable {
+			continue
 		}
+		slashTable = append(slashTable, buildAgentSlashEntry(def.Name, def))
+	}
+
+	// Filesystem-discovered agent definitions (.agents/agents/*.agent.md),
+	// listed under a user:/project: prefix exactly like internal/registry
+	// does — a name colliding with a built-in is skipped so a discovered
+	// definition can never shadow one.
+	cwd, _ := os.Getwd()
+	discovered, _ := agentspec.DiscoverFromDisk(agentspec.DefaultSources(cwd))
+	for _, def := range discovered {
+		if builtinAgentNames[def.Name] || !def.UserInvocable {
+			continue
+		}
+		slashTable = append(slashTable, buildAgentSlashEntry(def.CommandPrefix()+def.Name, def))
 	}
 
 	slashIndex = make(map[string]*slashEntry, len(slashTable)*2)
@@ -544,10 +567,35 @@ func (m *model) providerLogin(args string) tea.Cmd {
 	if entry.Auth != providers.AuthOAuth {
 		return m.setNotification(fmt.Sprintf("%s doesn't use OAuth — use /provider %s to toggle it", entry.DisplayName, entry.ID))
 	}
-	enterpriseDomain := ""
+	// A domain given inline keeps working unchanged for scripting/muscle
+	// memory: /provider login github-copilot mycompany.ghe.com.
 	if len(fields) > 1 {
-		enterpriseDomain = fields[1]
+		return m.startProviderOAuthLogin(entry, fields[1])
 	}
+
+	// GitHub Copilot silently defaulted to personal github.com here before —
+	// ask interactively instead, so picking an Enterprise host doesn't
+	// require already knowing the positional-arg syntax. Empty input (bare
+	// Enter) still means personal GitHub.
+	if entry.ID == "github-copilot" {
+		return m.presentLocalPrompt(
+			"GitHub Copilot host",
+			"github.com by default, or type an Enterprise domain",
+			"mycompany.ghe.com",
+			func(domain string) tea.Cmd {
+				return m.startProviderOAuthLogin(entry, strings.TrimSpace(domain))
+			},
+			func() tea.Cmd { return m.setNotification("login canceled") },
+		)
+	}
+
+	return m.startProviderOAuthLogin(entry, "")
+}
+
+// startProviderOAuthLogin begins a provider's device-code login and reports
+// the result via providerLoginStartedMsg. Shared by providerLogin's
+// inline-domain-arg path and its interactive Enterprise-domain prompt path.
+func (m *model) startProviderOAuthLogin(entry providers.CatalogEntry, enterpriseDomain string) tea.Cmd {
 	m.appendMessage("system", providerui.StartMessage(entry.DisplayName))
 	return func() tea.Msg {
 		session, err := providers.BeginOAuthLogin(m.ctx, entry.ID, providers.LoginOptions{

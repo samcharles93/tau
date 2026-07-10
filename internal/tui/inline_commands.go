@@ -2,6 +2,7 @@ package tui
 
 import (
 	"fmt"
+	"os"
 	"slices"
 	"strconv"
 	"strings"
@@ -227,30 +228,52 @@ func (c *inlineChat) printHelp() {
 func agentSlashCommands() []slashCommand {
 	defs, err := agentspec.Builtins()
 	if err != nil {
-		return nil
+		defs = nil
 	}
+	builtinNames := make(map[string]bool, len(defs))
 	cmds := make([]slashCommand, 0, len(defs))
 	for _, def := range defs {
+		builtinNames[def.Name] = true
 		if !def.UserInvocable {
 			continue
 		}
-		name := def.Name
-		usage := def.ArgumentHint
-		if usage == "" {
-			usage = "[prompt]"
+		cmds = append(cmds, buildAgentSlashCommand(def.Name, def))
+	}
+
+	// Filesystem-discovered agent definitions (.agents/agents/*.agent.md),
+	// listed under a user:/project: prefix exactly like internal/registry
+	// does — a name colliding with a built-in is skipped so a discovered
+	// definition can never shadow one.
+	cwd, _ := os.Getwd()
+	discovered, _ := agentspec.DiscoverFromDisk(agentspec.DefaultSources(cwd))
+	for _, def := range discovered {
+		if builtinNames[def.Name] || !def.UserInvocable {
+			continue
 		}
-		cmds = append(cmds, slashCommand{
-			name:        name,
-			usage:       usage,
-			description: def.Description,
-			run: func(c *inlineChat, args string) {
-				c.runAgentCommand(name, args)
-			},
-			isAgent: true,
-			mode:    agentInputMode(def),
-		})
+		cmds = append(cmds, buildAgentSlashCommand(def.CommandPrefix()+def.Name, def))
 	}
 	return cmds
+}
+
+// buildAgentSlashCommand builds the slash-command table entry for a single
+// agent definition, dispatching under invokeName (the bare name for a
+// built-in, or a user:/project:-prefixed name for a filesystem-discovered
+// one).
+func buildAgentSlashCommand(invokeName string, def *agentspec.Definition) slashCommand {
+	usage := def.ArgumentHint
+	if usage == "" {
+		usage = "[prompt]"
+	}
+	return slashCommand{
+		name:        invokeName,
+		usage:       usage,
+		description: def.Description,
+		run: func(c *inlineChat, args string) {
+			c.runAgentCommand(invokeName, args)
+		},
+		isAgent: true,
+		mode:    agentInputMode(def),
+	}
 }
 
 // agentInputMode builds the input-mode indicator for an agent command —
