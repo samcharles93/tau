@@ -1703,12 +1703,12 @@ func (m *model) viewportLinesForView(visibleReasoning bool) []string {
 		return lines
 	}
 	if visibleReasoning {
-		for line := range strings.SplitSeq(m.reasoning, "\n") {
+		for _, line := range wrapWords(m.reasoning, m.width) {
 			lines = append(lines, reasoningStyle.Render(line))
 		}
 	}
 	if m.streaming != "" {
-		for line := range strings.SplitSeq(m.streaming, "\n") {
+		for _, line := range wrapWords(m.streaming, m.width) {
 			lines = append(lines, streamStyle.Render(line))
 		}
 	}
@@ -2320,7 +2320,7 @@ func (m *model) applySnapshot(e tauchat.ChatSessionSnapshotEvent) {
 			// this function is the sole source of truth for renderedLines.
 			if msg.ReasoningContent != "" && m.showReasoning {
 				flushPendingTools()
-				for line := range strings.SplitSeq(msg.ReasoningContent, "\n") {
+				for _, line := range wrapWords(msg.ReasoningContent, m.width) {
 					m.renderedLines = append(m.renderedLines, reasoningStyle.Render(line))
 				}
 			}
@@ -2374,8 +2374,8 @@ func (m *model) finalizeResponse(id string) string {
 	// model, reasoning and the answer can both finish inside a second, so
 	// it would flash on screen and vanish before anyone could read it.
 	if m.reasoning != "" && m.showReasoning {
-		for line := range strings.SplitSeq(m.reasoning, "\n") {
-			m.renderedLines = append(m.renderedLines, reasoningStyle.Render("Thinking: "+line))
+		for _, line := range wrapWords(m.reasoning, m.width) {
+			m.renderedLines = append(m.renderedLines, reasoningStyle.Render(line))
 		}
 	}
 	content := m.streaming
