@@ -5,5 +5,4 @@ use (
 	./examples/plugins/hello
 	./plugins/mcp
 	./tools
-	/work/projects/ai-sdk
 )
