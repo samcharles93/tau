@@ -25,6 +25,15 @@ type Result struct {
 	IsError bool   `json:"is_error,omitempty"`
 }
 
+// DiffDetails is carried in Result.Details by tools that replace file
+// content (edit, write), so callers such as the TUI can render a
+// before/after diff instead of just a summary string.
+type DiffDetails struct {
+	Path       string `json:"path"`
+	OldContent string `json:"old_content"`
+	NewContent string `json:"new_content"`
+}
+
 // Executor is a function that executes a tool with the given parameters.
 type Executor func(ctx context.Context, params json.RawMessage, ui UIBridge) (Result, error)
 

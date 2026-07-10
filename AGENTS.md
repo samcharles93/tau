@@ -246,7 +246,7 @@ Use this section to quickly find the right files for a given change.
   - **Lifecycle**: `NewCoordinator()`, `Send()`, `Close()`, `loop()`, `runTurn()`
   - **Command handlers**: `handleStart()`, `handleSubmit()`, `handleSteer()`, `handleUpdate()`, `handleCancel()`, `handleReset()`, `handleClose()`, `handleReloadExtensions()`, `handleRunExtensionCommand()`, `handleListSessions()`, `handleLoadSession()`, `handleDeleteSession()`, `handleExportSession()`, `handleInteractiveResponse()`
   - **Cancel semantics** (`handleCancel`): the coordinator is permissive about request_id mismatches because the Web UI's client-side `activeRequestId` can briefly diverge from the server's `state.ActiveRequestID` (reconnect, double-submit, missed `ChatResponseStartedEvent`). A cancel with a non-matching id cancels the currently active turn and emits a `ChatNotificationEvent` warning. A cancel arriving with no active request succeeds silently (the user's intent is already satisfied) and re-emits a snapshot.
-  - **Tool execution**: `executeToolsParallel()`, `mergeToolCallDelta()`
+  - **Tool execution**: `executeToolsParallel()`, `mergeToolCallDelta()`, `emitToolCompleted()` (forwards `result.Details` as `ChatToolExecutionCompletedEvent.Details` so the TUI can render structured output like diffs)
   - **Event emission**: `emit()` (non-blocking), `emitMustDeliver()` (bounded-blocking for terminal events)
   - **Plugin dispatch**: `dispatchPluginEvent()`, `broadcastTurnLifecycle()`, `applyPluginMessageModifications()`
 - `internal/agent/prompt.go` — System prompt construction: `PromptConfig`, `BuildSystemPrompt()`, `DiscoverContextFiles()`, `RenderAgentPrompt()` (renders a built-in agent command's template)
@@ -256,9 +256,10 @@ Use this section to quickly find the right files for a given change.
 
 ### Changing the Tool Registry / Adding Tools
 
-- `internal/agent/tools/registry.go` — `Registry` struct, `Tool` struct, `Schema`, `Result`, `UIBridge` interface:
+- `internal/agent/tools/registry.go` — `Registry` struct, `Tool` struct, `Schema`, `Result`, `DiffDetails`, `UIBridge` interface:
   - **Registry methods**: `Register()`, `Replace()`, `Unregister()`, `Get()`, `All()`, `Schemas()`, `Names()`, `Count()`
   - **Plugin tools**: `RegisterPluginTool()`, `UnregisterPluginTools()`, `SetPluginToolExecutor()`, `PluginToolDef`, `PluginToolExecutor`
+  - **Result.Details**: carries tool-specific structured data alongside the plain-text summary. `DiffDetails` (populated by edit/write tools) holds `Path`, `OldContent`, `NewContent` so callers (e.g. the TUI) can render before/after diffs without re-reading files from disk.
 - `internal/agent/tools/builtin.go` — `RegisterBuiltins()` — registers all built-in tools
 - `internal/agent/tools/read.go` — File reading tool
 - `internal/agent/tools/write.go` — File writing tool (queued via MutationQueue)
@@ -274,6 +275,7 @@ Use this section to quickly find the right files for a given change.
 - `internal/agent/tools/pathutil.go` — Path resolution utilities
 - `internal/agent/tools/truncate.go` — Content truncation utilities
 - `internal/agent/tools/bridge.go` — UIBridge implementation for interactive prompts
+- `internal/agent/tools/write_test.go` — Tests for write tool including DiffDetails population
 
 ### Changing the TUI (Interactive Chat UI)
 
@@ -295,7 +297,8 @@ Use this section to quickly find the right files for a given change.
 #### Experimental Bubbletea v2 TUI (`internal/tui2/`)
 
 - `internal/tui2/run.go` — `Run()` entry point. Creates `"tui2"` bus client, subscribes `ChatEvent`, wires metrics tracking (UsageTracker + FileSubscriber), calls `OnReady` for deferred plugin loading, creates and runs a `tea.NewProgram`.
-- `internal/tui2/model.go` — Root `model` implementing `tea.Model`. Handles input via `KeyPressMsg`, bridges events via the channel-drain-rearm pattern (`readNextEvent` → `chatEventMsg` → re-arm), renders with lipgloss v2 styles in `View()`. Handles all 24 ChatEvent variants, all ~20 slash commands, completions, status bar, interactive prompts, plugin views, session management, steering, bash mode, and input history.
+- `internal/tui2/model.go` — Root `model` implementing `tea.Model`. Handles input via `KeyPressMsg`, bridges events via the channel-drain-rearm pattern (`readNextEvent` → `chatEventMsg` → re-arm), renders with lipgloss v2 styles in `View()`. Handles all 24 ChatEvent variants, all ~20 slash commands, completions, status bar, interactive prompts, plugin views, session management, steering, bash mode, input history, context menus (Copy output, Expand/Collapse, View diff), and the diff viewer overlay.
+- `internal/tui2/diff.go` — Diff viewer overlay for tool results. `openDiffViewer()` creates a centered viewport showing a unified diff (via `go-difflib`) rendered through glamour markdown. `renderUnifiedDiff()` builds and colorizes the diff; `handleDiffViewerKey()` routes Esc/q to close and arrow/PgUp/PgDn to scroll; `compositeDiffViewer()` layers the overlay on top of the base chat using a lipgloss Compositor. Activated by the "View diff" context menu item on edit/write tools that carry `DiffDetails`.
 - **Flag gating**: `--new-tui` flag in `internal/cli/root.go` → `ChatOptions.NewTUI` → `TUIConfig.NewTUI` → `internal/tui/run.go` branches to `tui2.Run()`.
 - **Circular dependency avoidance**: `internal/tui/run.go` imports `internal/tui2`, but `internal/tui2` does NOT import `internal/tui`. Parameters are passed individually (not via `TUIConfig`).
 
@@ -641,8 +644,8 @@ internal/tui2/
 ├── fuzzy.go              # Fuzzy matching for completion filtering
 ├── statusbar.go          # Rich segmented status bar with priority-drop and live metrics
 ├── views.go              # Plugin widget → lipgloss/v2 translation (all 8 widget kinds)
+├── diff.go               # Unified diff viewer overlay (go-difflib + glamour + viewport)
 ├── *.go (test files)     # Table-driven tests for commands, completions, models, status bar, fuzzy matching
-```
 
 ### Lifecycle
 

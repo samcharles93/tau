@@ -570,6 +570,12 @@ type ChatToolExecutionCompletedEvent struct {
 	IsError       bool          `json:"is_error"`
 	Truncated     bool          `json:"truncated"`
 	CompletedAt   time.Time     `json:"completed_at"`
+
+	// Details carries tool-specific structured data (e.g.
+	// tools.DiffDetails for edit/write) alongside the plain-text summary,
+	// so consumers like the TUI can render richer views. nil when the tool
+	// has nothing structured to offer.
+	Details any `json:"details,omitempty"`
 }
 
 func (ChatToolExecutionCompletedEvent) IsChatEvent() {}

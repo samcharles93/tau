@@ -2139,6 +2139,7 @@ func (c *Coordinator) emitToolCompleted(
 		IsError:       result.IsError,
 		Truncated:     truncated,
 		CompletedAt:   completedAt,
+		Details:       result.Details,
 	}
 	c.emit(event)
 	c.emitMetrics(chat.MetricEvent{

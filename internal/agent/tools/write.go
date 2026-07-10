@@ -70,6 +70,7 @@ func makeWriteExecutor(cwd string, mq *MutationQueue, rt *ReadTracker) Executor 
 		// Check for accidental overwrite and enforce read-before-write.
 		// Both checks only apply when the file already exists; new files
 		// are always allowed.
+		var oldContent string
 		if info, err := os.Stat(path); err == nil && info.Mode().IsRegular() {
 			// Read-before-write: model must have read the file before mutating it.
 			if rt != nil {
@@ -87,6 +88,9 @@ func makeWriteExecutor(cwd string, mq *MutationQueue, rt *ReadTracker) Executor 
 					IsError: true,
 				}, nil
 			}
+			if data, err := os.ReadFile(path); err == nil {
+				oldContent = string(data)
+			}
 		}
 
 		release := mq.Acquire(path)
@@ -101,6 +105,9 @@ func makeWriteExecutor(cwd string, mq *MutationQueue, rt *ReadTracker) Executor 
 			return Result{Content: fmt.Sprintf("error writing file: %v", err), IsError: true}, nil
 		}
 
-		return Result{Content: fmt.Sprintf("wrote %d bytes to %s", len(p.Content), path)}, nil
+		return Result{
+			Content: fmt.Sprintf("wrote %d bytes to %s", len(p.Content), path),
+			Details: DiffDetails{Path: path, OldContent: oldContent, NewContent: p.Content},
+		}, nil
 	}
 }

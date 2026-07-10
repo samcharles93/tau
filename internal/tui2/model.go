@@ -14,6 +14,7 @@ import (
 	"charm.land/lipgloss/v2"
 
 	"github.com/google/uuid"
+	"github.com/samcharles93/tau/internal/agent/tools"
 	tauchat "github.com/samcharles93/tau/internal/chat"
 	"github.com/samcharles93/tau/internal/eventbus"
 	"github.com/samcharles93/tau/internal/metrics"
@@ -163,6 +164,10 @@ type model struct {
 	// open — mirrors activePrompt's nil-sentinel idiom.
 	contextMenu *contextMenu
 
+	// diffViewer is the currently open "View diff" overlay, or nil if none
+	// is open — same nil-sentinel idiom as contextMenu.
+	diffViewer *diffViewerState
+
 	// Plugin views.
 	panels map[string]pluginPanel
 
@@ -302,6 +307,7 @@ type contextMenuAction int
 const (
 	contextMenuActionCopy contextMenuAction = iota
 	contextMenuActionToggleExpand
+	contextMenuActionViewDiff
 )
 
 // contextMenuItem is one selectable row in an open context menu. label is
@@ -346,6 +352,19 @@ type toolState struct {
 	tailCap    int      // max tail lines to show (default 6)
 	spinnerIdx int      // per-tool spinner animation frame (bumped on tickMsg)
 	expanded   bool     // user has clicked Enter to expand this tool
+
+	// details carries tool-specific structured data (e.g. tools.DiffDetails
+	// for edit/write), as forwarded via ChatToolExecutionCompletedEvent.Details.
+	// nil when the tool has nothing structured to offer.
+	details any
+}
+
+// diffViewerState is the state of an open "View diff" overlay. A nil
+// *diffViewerState on model means no viewer is open — mirrors contextMenu's
+// nil-sentinel idiom.
+type diffViewerState struct {
+	title    string
+	viewport viewport.Model
 }
 
 // committedToolGroup is a multi-tool-call batch already committed to
@@ -720,6 +739,9 @@ func (m *model) View() tea.View {
 	if m.contextMenu != nil {
 		base = m.compositeContextMenu(base)
 	}
+	if m.diffViewer != nil {
+		base = m.compositeDiffViewer(base)
+	}
 
 	v := tea.NewView(base)
 	// AltScreen owns the full terminal so we can use guaranteed screen real
@@ -1011,6 +1033,13 @@ func (m *model) dispatchKey(msg tea.KeyPressMsg) tea.Cmd {
 	// Interactive prompt active: route keys to prompt handler.
 	if m.activePrompt != nil {
 		return m.handlePromptKey(msg)
+	}
+
+	// Diff viewer open: route keys to it, above the context menu — opening
+	// the viewer always closes the menu that spawned it, so the two are
+	// mutually exclusive, but this ordering keeps that invariant explicit.
+	if m.diffViewer != nil {
+		return m.handleDiffViewerKey(msg)
 	}
 
 	// Context menu open: route keys to the menu, above the completions
@@ -2088,8 +2117,8 @@ func (m *model) handleChatEvent(evt tauchat.ChatEvent) tea.Cmd {
 			status = "error"
 		}
 		m.setToolStatus(e.CallID, status)
-		if e.ResultSummary != "" {
-			m.finalizeToolResult(e.CallID, e.ResultSummary)
+		if e.ResultSummary != "" || e.Details != nil {
+			m.finalizeToolResult(e.CallID, e.ResultSummary, e.Details)
 		}
 		if m.bashCallID != "" && e.CallID == m.bashCallID {
 			m.bashRunning = false
@@ -2556,10 +2585,11 @@ func (m *model) setToolResult(id, result string) {
 // whatever ChatToolOutputEvent chunks streamed in beforehand. Mirrors
 // internal/tui/inline_events.go discarding the streamed tail before setting
 // the resolved row's label from ResultSummary alone.
-func (m *model) finalizeToolResult(id, result string) {
+func (m *model) finalizeToolResult(id, result string, details any) {
 	for i := range m.tools {
 		if m.tools[i].id == id {
 			m.tools[i].result = result
+			m.tools[i].details = details
 			return
 		}
 	}
@@ -4216,23 +4246,39 @@ func (m *model) buildMessageContextMenu(id string, x, y int) *contextMenu {
 // buildLiveToolContextMenu builds a menu for a right-click on the live
 // (uncommitted) tool batch's tool with the given id.
 func (m *model) buildLiveToolContextMenu(id string, x, y int) *contextMenu {
-	if i := m.findLiveTool(id); i < 0 {
+	i := m.findLiveTool(id)
+	if i < 0 {
 		return nil
 	}
 	expandLabel := "Expand"
 	if m.expandedID == id {
 		expandLabel = "Collapse"
 	}
+	items := []contextMenuItem{
+		{label: "Copy output", action: contextMenuActionCopy},
+		{label: expandLabel, action: contextMenuActionToggleExpand},
+	}
+	if toolSupportsDiffView(m.tools[i]) {
+		items = append(items, contextMenuItem{label: "View diff", action: contextMenuActionViewDiff})
+	}
 	return &contextMenu{
 		target:   contextMenuTargetTool,
 		targetID: id,
 		x:        x,
 		y:        y,
-		items: []contextMenuItem{
-			{label: "Copy output", action: contextMenuActionCopy},
-			{label: expandLabel, action: contextMenuActionToggleExpand},
-		},
+		items:    items,
 	}
+}
+
+// toolSupportsDiffView reports whether t's context menu should offer a "View
+// diff" item — true for edit/write tool calls that carry populated
+// tools.DiffDetails.
+func toolSupportsDiffView(t toolState) bool {
+	if t.name != "edit" && t.name != "write" {
+		return false
+	}
+	_, ok := t.details.(tools.DiffDetails)
+	return ok
 }
 
 // buildCommittedToolContextMenu resolves renderedLines index idx against
@@ -4270,15 +4316,22 @@ func (m *model) buildToolRowContextMenu(g *committedToolGroup, toolID string, x,
 	if g.expandedID == toolID {
 		expandLabel = "Collapse"
 	}
+	items := []contextMenuItem{
+		{label: "Copy output", action: contextMenuActionCopy},
+		{label: expandLabel, action: contextMenuActionToggleExpand},
+	}
+	for _, t := range g.tools {
+		if t.id == toolID && toolSupportsDiffView(t) {
+			items = append(items, contextMenuItem{label: "View diff", action: contextMenuActionViewDiff})
+			break
+		}
+	}
 	return &contextMenu{
 		target:   contextMenuTargetToolRow,
 		targetID: toolID,
 		x:        x,
 		y:        y,
-		items: []contextMenuItem{
-			{label: "Copy output", action: contextMenuActionCopy},
-			{label: expandLabel, action: contextMenuActionToggleExpand},
-		},
+		items:    items,
 	}
 }
 
@@ -4293,15 +4346,22 @@ func (m *model) buildCommittedGroupContextMenu(g *committedToolGroup, x, y int) 
 	if g.expanded {
 		expandLabel = "Collapse"
 	}
+	items := []contextMenuItem{
+		{label: "Copy output", action: contextMenuActionCopy},
+		{label: expandLabel, action: contextMenuActionToggleExpand},
+	}
+	// Only offer "View diff" from the group-level menu for a single-tool
+	// group — a multi-tool group's individual tools are reachable (and
+	// disambiguated) via buildToolRowContextMenu once unfolded.
+	if len(g.tools) == 1 && toolSupportsDiffView(g.tools[0]) {
+		items = append(items, contextMenuItem{label: "View diff", action: contextMenuActionViewDiff})
+	}
 	return &contextMenu{
 		target:   contextMenuTargetTool,
 		targetID: g.tools[0].id,
 		x:        x,
 		y:        y,
-		items: []contextMenuItem{
-			{label: "Copy output", action: contextMenuActionCopy},
-			{label: expandLabel, action: contextMenuActionToggleExpand},
-		},
+		items:    items,
 	}
 }
 
@@ -4411,6 +4471,8 @@ func (m *model) activateToolContextAction(id string, action contextMenuAction) t
 				m.expandedID = id
 				m.tools[i].expanded = true
 			}
+		case contextMenuActionViewDiff:
+			return m.openDiffViewer(m.tools[i])
 		}
 		return nil
 	}
@@ -4428,6 +4490,10 @@ func (m *model) activateToolContextAction(id string, action contextMenuAction) t
 				g.expandedID = ""
 			}
 			m.spliceCommittedGroup(g)
+		case contextMenuActionViewDiff:
+			if len(g.tools) > 0 {
+				return m.openDiffViewer(g.tools[0])
+			}
 		}
 	}
 	return nil
@@ -4454,6 +4520,12 @@ func (m *model) activateToolRowContextAction(id string, action contextMenuAction
 			g.expandedID = id
 		}
 		m.spliceCommittedGroup(g)
+	case contextMenuActionViewDiff:
+		for _, t := range g.tools {
+			if t.id == id {
+				return m.openDiffViewer(t)
+			}
+		}
 	}
 	return nil
 }

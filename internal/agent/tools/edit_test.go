@@ -213,6 +213,40 @@ func TestEditTool_AtomicOnDisk(t *testing.T) {
 	}
 }
 
+func TestEditTool_PopulatesDiffDetails(t *testing.T) {
+	tmp := t.TempDir()
+	path := filepath.Join(tmp, "f.txt")
+	original := "one\ntwo\nthree\n"
+	if err := os.WriteFile(path, []byte(original), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	tool := NewEditTool(tmp, NewMutationQueue(), nil)
+	params := `{"path": "f.txt", "edits": [{"old_text": "two", "new_text": "TWO"}]}`
+	res, err := tool.Execute(context.Background(), json.RawMessage(params), nil)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if res.IsError {
+		t.Fatalf("unexpected tool error: %s", res.Content)
+	}
+
+	details, ok := res.Details.(DiffDetails)
+	if !ok {
+		t.Fatalf("expected Details to be a DiffDetails, got %T", res.Details)
+	}
+	if details.OldContent != original {
+		t.Fatalf("OldContent mismatch:\ngot:  %q\nwant: %q", details.OldContent, original)
+	}
+	wantNew := "one\nTWO\nthree\n"
+	if details.NewContent != wantNew {
+		t.Fatalf("NewContent mismatch:\ngot:  %q\nwant: %q", details.NewContent, wantNew)
+	}
+	if details.Path != path {
+		t.Fatalf("Path mismatch: got %q want %q", details.Path, path)
+	}
+}
+
 func TestApplyEdits_ExactMatchPreservesTrailingWhitespace(t *testing.T) {
 	// A single-line old_text is an exact substring match even when the file
 	// line has trailing whitespace, which is preserved around the edit.

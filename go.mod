@@ -14,6 +14,7 @@ require (
 	github.com/hashicorp/go-plugin v1.8.0
 	github.com/minio/selfupdate v0.6.0
 	github.com/pkg/browser v0.0.0-20240102092130-5ac0b6a4141c
+	github.com/pmezard/go-difflib v1.0.0
 	github.com/rivo/uniseg v0.4.7
 	github.com/samcharles93/ai-sdk v0.1.12
 	github.com/stretchr/testify v1.11.1
@@ -52,7 +53,6 @@ require (
 	github.com/muesli/cancelreader v0.2.2 // indirect
 	github.com/ncruces/go-strftime v1.0.0 // indirect
 	github.com/oklog/run v1.2.0 // indirect
-	github.com/pmezard/go-difflib v1.0.0 // indirect
 	github.com/remyoudompheng/bigfft v0.0.0-20230129092748-24d4a6f8daec // indirect
 	github.com/xo/terminfo v0.0.0-20220910002029-abceb7e1c41e // indirect
 	github.com/yuin/goldmark v1.7.8 // indirect

@@ -182,7 +182,10 @@ func makeEditExecutor(cwd string, mq *MutationQueue, rt *ReadTracker) Executor {
 			return Result{Content: fmt.Sprintf("error writing file: %v", err), IsError: true}, nil
 		}
 
-		return Result{Content: fmt.Sprintf("applied %d edit(s) to %s", len(p.Edits), path)}, nil
+		return Result{
+			Content: fmt.Sprintf("applied %d edit(s) to %s", len(p.Edits), path),
+			Details: DiffDetails{Path: path, OldContent: content, NewContent: newContent},
+		}, nil
 	}
 }
 
