@@ -104,11 +104,16 @@ func ResolveWithRefresh(ctx context.Context, cfg config.Config, state State, get
 		if !active {
 			continue
 		}
+		msg := ""
+		if !available && envVar != "" {
+			msg = envVar + " is not set"
+		}
 		out = append(out, ResolvedProvider{
 			Config:    apiKeyProviderConfig(entry, envVar),
 			Source:    SourceEnv,
 			EnvVar:    envVar,
 			Available: available,
+			Message:   msg,
 		})
 	}
 

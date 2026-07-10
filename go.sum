@@ -106,14 +106,6 @@ github.com/remyoudompheng/bigfft v0.0.0-20230129092748-24d4a6f8daec h1:W09IVJc94
 github.com/remyoudompheng/bigfft v0.0.0-20230129092748-24d4a6f8daec/go.mod h1:qqbHyh8v60DhA7CoWK5oRCqLrMHRGoxYCSS9EjAz6Eo=
 github.com/rivo/uniseg v0.4.7 h1:WUdvkW8uEhrYfLC4ZzdpI2ztxP1I582+49Oc5Mq64VQ=
 github.com/rivo/uniseg v0.4.7/go.mod h1:FN3SvrM+Zdj16jyLfmOkMNblXMcoc8DfTHruCPUcx88=
-github.com/samcharles93/ai-sdk v0.1.7 h1:1HDv2WuXnNS6Ii5EHi0ooc6xDXV3QHZtLssZTuPbAZk=
-github.com/samcharles93/ai-sdk v0.1.7/go.mod h1:u1QYCAkpFVOz5KPmmpxNbYxJ3o5FEo/AMvOVvkmFm0Y=
-github.com/samcharles93/ai-sdk v0.1.8 h1:U7DuumZTc/v3yO+j8pWqy7i/IoOH5SFKBDb/dN+xUEQ=
-github.com/samcharles93/ai-sdk v0.1.8/go.mod h1:u1QYCAkpFVOz5KPmmpxNbYxJ3o5FEo/AMvOVvkmFm0Y=
-github.com/samcharles93/ai-sdk v0.1.9 h1:i601ZKgxbHc5PPXdXQeN7o0Ikv90j3Bv2n3RC6zRMd4=
-github.com/samcharles93/ai-sdk v0.1.9/go.mod h1:a4JYsUrwGsmm2eiXgrpcKExtYe7uHQ5zsHDbbkcPB6o=
-github.com/samcharles93/ai-sdk v0.1.10 h1:yxNCx+EHmOq4riTu0cCWubT+kixzp8/s0GUxMCRIb2A=
-github.com/samcharles93/ai-sdk v0.1.10/go.mod h1:a4JYsUrwGsmm2eiXgrpcKExtYe7uHQ5zsHDbbkcPB6o=
 github.com/samcharles93/ai-sdk v0.1.11 h1:trZ9vj+fOZDHAlobouMOeuP0NtRB3aGt86ZDfsX/Aow=
 github.com/samcharles93/ai-sdk v0.1.11/go.mod h1:a4JYsUrwGsmm2eiXgrpcKExtYe7uHQ5zsHDbbkcPB6o=
 github.com/stretchr/objx v0.1.0/go.mod h1:HFkY916IF+rwdDfMAkV7OtwuqBVzrE8GR6GFx+wExME=

@@ -3,6 +3,7 @@ package cli
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"strings"
@@ -199,7 +200,7 @@ func truncateString(s string, maxLen int) string {
 }
 
 func loadProvider(cmd *urfavecli.Command) (config.Config, config.ProviderConfig, error) {
-	cfg, _, err := providers.Effective()
+	cfg, resolved, err := providers.Effective()
 	if err != nil {
 		return config.Config{}, config.ProviderConfig{}, err
 	}
@@ -208,9 +209,39 @@ func loadProvider(cmd *urfavecli.Command) (config.Config, config.ProviderConfig,
 	}
 	provider, err := config.ResolveProvider(cfg, cmd.Root().String("provider"))
 	if err != nil {
+		if msg := unavailableProviderError(resolved, cmd.Root().String("provider"), cfg.DefaultProvider); msg != "" {
+			return config.Config{}, config.ProviderConfig{}, errors.New(msg)
+		}
 		return config.Config{}, config.ProviderConfig{}, err
 	}
 	return cfg, provider, nil
+}
+
+// unavailableProviderError distinguishes "you typo'd a provider name" from
+// "this provider is known and enabled but not currently usable" — e.g. it
+// tells you ANTHROPIC_API_KEY isn't set rather than making an already
+// -configured provider look unrecognized. Returns "" when the requested name
+// doesn't match any known-but-unavailable entry, so the caller falls back to
+// config.ResolveProvider's generic "unknown provider" message.
+func unavailableProviderError(resolved []providers.ResolvedProvider, requested, fallback string) string {
+	name := strings.TrimSpace(requested)
+	if name == "" {
+		name = strings.TrimSpace(fallback)
+	}
+	if name == "" {
+		return ""
+	}
+	for _, r := range resolved {
+		if r.Config.Name != name || r.Available {
+			continue
+		}
+		msg := r.Message
+		if msg == "" {
+			msg = "credential not available"
+		}
+		return fmt.Sprintf("provider %q is configured but not currently usable: %s", name, msg)
+	}
+	return ""
 }
 
 // noProvidersError explains how to get providers when none are usable, covering

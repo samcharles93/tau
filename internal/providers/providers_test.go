@@ -138,6 +138,7 @@ func TestResolvePrecedence(t *testing.T) {
 
 	assert.Equal(t, SourceEnv, byName["groq"].Source)
 	assert.False(t, byName["groq"].Available, "enabled but no key -> unavailable")
+	assert.Equal(t, "GROQ_API_KEY is not set", byName["groq"].Message, "unavailable API-key provider must explain which env var is missing")
 
 	_, hasTogether := byName["together"]
 	assert.False(t, hasTogether, "key present but disabled -> excluded")
