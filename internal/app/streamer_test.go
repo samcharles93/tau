@@ -2,8 +2,14 @@ package app
 
 import (
 	"context"
+	"fmt"
+	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
+
+	aisdkchat "github.com/samcharles93/ai-sdk/chat"
+	"github.com/samcharles93/ai-sdk/runtime"
 
 	tauchat "github.com/samcharles93/tau/internal/chat"
 	tauconfig "github.com/samcharles93/tau/internal/config"
@@ -63,6 +69,125 @@ func TestAggregateModelRefsTagsProvider(t *testing.T) {
 		if got := byID[id]; got != wantProvider {
 			t.Errorf("model %q: provider tag = %q, want %q", id, got, wantProvider)
 		}
+	}
+}
+
+func TestBuildSessionConfigClampsMaxTokensToModelLimit(t *testing.T) {
+	cfg := buildSessionConfig(ChatOptions{
+		Provider:    tauconfig.ProviderConfig{Name: "test"},
+		MaxTokens:   128000,
+		Temperature: 0.7,
+	}, tauchat.ChatModelRef{
+		ID: "smaller-output",
+		Config: tauconfig.ModelConfig{
+			MaxTokens:        65536,
+			DefaultMaxTokens: 65536,
+		},
+	}, "system")
+
+	if cfg.Parameters.MaxTokens != 65536 {
+		t.Fatalf("max tokens = %d, want 65536", cfg.Parameters.MaxTokens)
+	}
+}
+
+func TestResolveProviderClassInfersDedicatedProviderByName(t *testing.T) {
+	runtime.RegisterBuiltinClasses()
+	got := resolveProviderClass(tauconfig.ProviderConfig{
+		Name:    "deepseek",
+		BaseURL: "https://api.deepseek.com/v1",
+	})
+	if got != "deepseek" {
+		t.Fatalf("class = %q, want deepseek", got)
+	}
+}
+
+func TestResolveProviderClassDoesNotInferOllamaNativeClass(t *testing.T) {
+	runtime.RegisterBuiltinClasses()
+	got := resolveProviderClass(tauconfig.ProviderConfig{
+		Name:    "ollama",
+		BaseURL: "http://localhost:11434/v1",
+	})
+	if got != "openai-compatible" {
+		t.Fatalf("class = %q, want openai-compatible", got)
+	}
+}
+
+func TestDeepSeekProviderUsesNativeChatCompletionsPath(t *testing.T) {
+	var gotPath string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotPath = r.URL.Path
+		w.Header().Set("Content-Type", "text/event-stream")
+		fmt.Fprintln(w, `data: {"choices":[{"delta":{"content":"ok"},"finish_reason":"stop"}]}`)
+		fmt.Fprintln(w)
+		fmt.Fprintln(w, "data: [DONE]")
+	}))
+	defer srv.Close()
+
+	rt := newRuntimeForProviders([]tauconfig.ProviderConfig{{
+		Name:    "deepseek",
+		BaseURL: srv.URL + "/v1",
+		Auth: tauconfig.AuthConfig{
+			Type:   tauconfig.AuthTypeAPIKey,
+			APIKey: "test-key",
+		},
+		Models: []tauconfig.ModelConfig{{ID: "deepseek-v4-pro"}},
+	}}, false)
+
+	provider, modelID, err := rt.ChatProvider(context.Background(), "deepseek/deepseek-v4-pro")
+	if err != nil {
+		t.Fatalf("ChatProvider() error = %v", err)
+	}
+	stream, err := provider.ChatStream(context.Background(), aisdkchat.Request{
+		Model:    modelID,
+		Messages: []aisdkchat.Message{{Role: aisdkchat.RoleUser, Content: "hello"}},
+		Stream:   true,
+	})
+	if err != nil {
+		t.Fatalf("ChatStream() error = %v", err)
+	}
+	_ = stream.Close()
+
+	if gotPath != "/chat/completions" {
+		t.Fatalf("DeepSeek request path = %q, want /chat/completions", gotPath)
+	}
+}
+
+func TestOllamaProviderUsesOpenAICompatiblePath(t *testing.T) {
+	var gotPath string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotPath = r.URL.Path
+		w.Header().Set("Content-Type", "text/event-stream")
+		fmt.Fprintln(w, `data: {"choices":[{"delta":{"content":"ok"},"finish_reason":"stop"}]}`)
+		fmt.Fprintln(w)
+		fmt.Fprintln(w, "data: [DONE]")
+	}))
+	defer srv.Close()
+
+	rt := newRuntimeForProviders([]tauconfig.ProviderConfig{{
+		Name:    "ollama",
+		BaseURL: srv.URL + "/v1",
+		Auth: tauconfig.AuthConfig{
+			Type: tauconfig.AuthTypeNone,
+		},
+		Models: []tauconfig.ModelConfig{{ID: "kimi-k2.7-code:cloud"}},
+	}}, false)
+
+	provider, modelID, err := rt.ChatProvider(context.Background(), "ollama/kimi-k2.7-code:cloud")
+	if err != nil {
+		t.Fatalf("ChatProvider() error = %v", err)
+	}
+	stream, err := provider.ChatStream(context.Background(), aisdkchat.Request{
+		Model:    modelID,
+		Messages: []aisdkchat.Message{{Role: aisdkchat.RoleUser, Content: "hello"}},
+		Stream:   true,
+	})
+	if err != nil {
+		t.Fatalf("ChatStream() error = %v", err)
+	}
+	_ = stream.Close()
+
+	if gotPath != "/v1/chat/completions" {
+		t.Fatalf("Ollama request path = %q, want /v1/chat/completions", gotPath)
 	}
 }
 

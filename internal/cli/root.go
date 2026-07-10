@@ -67,6 +67,7 @@ func NewRootCommand(version string) *urfavecli.Command {
 			sessionsCmd(),
 			skillsCmd(),
 			pluginsCmd(),
+			updateCmd(version),
 		},
 		Flags: []urfavecli.Flag{
 			&urfavecli.StringFlag{

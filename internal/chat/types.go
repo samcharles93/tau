@@ -22,6 +22,19 @@ func DefaultParameters() ChatParameters {
 	return defaultChatParameters()
 }
 
+// ClampMaxTokensForModel caps a requested output-token budget to the selected
+// model's configured output ceiling. A zero requested value means provider
+// default and stays zero.
+func ClampMaxTokensForModel(maxTokens int, model ChatModelRef) int {
+	if maxTokens <= 0 {
+		return maxTokens
+	}
+	if model.Config.MaxTokens > 0 && maxTokens > model.Config.MaxTokens {
+		return model.Config.MaxTokens
+	}
+	return maxTokens
+}
+
 // ChatRole is the role value sent to the OpenAI-compatible chat endpoint.
 type ChatRole string
 
@@ -1043,6 +1056,7 @@ func (s *ChatSessionState) ApplyPatch(patch ChatSessionPatch, at time.Time) erro
 	}
 	if patch.Model != nil {
 		s.Model = *patch.Model
+		s.Parameters.MaxTokens = ClampMaxTokensForModel(s.Parameters.MaxTokens, s.Model)
 	}
 	if patch.Provider != nil {
 		s.Provider.Name = *patch.Provider
@@ -1052,7 +1066,7 @@ func (s *ChatSessionState) ApplyPatch(patch ChatSessionPatch, at time.Time) erro
 		s.SystemPrompt = *patch.SystemPrompt
 	}
 	if patch.MaxTokens != nil {
-		s.Parameters.MaxTokens = *patch.MaxTokens
+		s.Parameters.MaxTokens = ClampMaxTokensForModel(*patch.MaxTokens, s.Model)
 	}
 	if patch.Temperature != nil {
 		s.Parameters.Temperature = *patch.Temperature

@@ -45,6 +45,13 @@ func TestOAuthCatalogEntries(t *testing.T) {
 	assert.Equal(t, "openai-codex", codex.Class)
 }
 
+func TestDeepSeekCatalogUsesNativeProviderClass(t *testing.T) {
+	entry, ok := Lookup("deepseek")
+	require.True(t, ok)
+	assert.Equal(t, "https://api.deepseek.com", entry.BaseURL)
+	assert.Equal(t, "deepseek", entry.Class)
+}
+
 func TestStateRoundTripAtomic(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "auth.yaml")
 	s, err := loadStateFrom(path)

@@ -164,6 +164,7 @@ func buildSessionConfig(opts ChatOptions, model tauchat.ChatModelRef, systemProm
 	if maxTokens == 0 && model.Config.DefaultMaxTokens > 0 {
 		maxTokens = model.Config.DefaultMaxTokens
 	}
+	maxTokens = tauchat.ClampMaxTokensForModel(maxTokens, model)
 	reasoningEffort := opts.ReasoningEffort
 	if reasoningEffort == "" && model.Config.ReasoningEffort != "" {
 		reasoningEffort = model.Config.ReasoningEffort
@@ -358,7 +359,22 @@ func resolveProviderClass(provider tauconfig.ProviderConfig) string {
 			return t
 		}
 	}
+	// Compatibility for older DeepSeek configs that predate CatalogEntry.Class.
+	// Do not infer this broadly from every provider name: Tau intentionally
+	// routes providers such as Ollama through their OpenAI-compatible /v1
+	// surfaces, not ai-sdk's native provider classes.
+	if strings.TrimSpace(provider.Name) == "deepseek" {
+		return "deepseek"
+	}
 	return "openai-compatible"
+}
+
+func runtimeProviderBaseURL(provider tauconfig.ProviderConfig, class string) string {
+	baseURL := strings.TrimRight(provider.BaseURL, "/")
+	if class == "deepseek" {
+		baseURL = strings.TrimSuffix(baseURL, "/v1")
+	}
+	return baseURL
 }
 
 // newRuntimeForProvider creates a runtime configured for a single tau provider.
@@ -400,16 +416,17 @@ func newRuntimeForProviders(providers []tauconfig.ProviderConfig, insecure bool)
 				Name:            m.Name,
 				URL:             m.URL,
 				ContextWindow:   m.ContextWindow,
-				MaxOutputTokens: m.DefaultMaxTokens,
+				MaxOutputTokens: firstNonZero(m.MaxTokens, m.DefaultMaxTokens),
 				Reasoning:       m.Reasoning,
 				Extra:           extra,
 			})
 		}
 
+		class := resolveProviderClass(provider)
 		cfgs[provider.Name] = runtime.ProviderConfig{
 			ID:       provider.Name,
-			Class:    resolveProviderClass(provider),
-			BaseURL:  strings.TrimRight(provider.BaseURL, "/"),
+			Class:    class,
+			BaseURL:  runtimeProviderBaseURL(provider, class),
 			Headers:  provider.Headers,
 			Insecure: insecure,
 			Auth: runtime.AuthConfig{

@@ -71,7 +71,7 @@ func (e CatalogEntry) SnapshotID() string {
 var catalog = []CatalogEntry{
 	{ID: "openai", DisplayName: "OpenAI", BaseURL: "https://api.openai.com/v1", EnvVars: []string{"OPENAI_API_KEY"}, Auth: AuthAPIKey},
 	{ID: "openrouter", DisplayName: "OpenRouter", BaseURL: "https://openrouter.ai/api/v1", EnvVars: []string{"OPENROUTER_API_KEY"}, Auth: AuthAPIKey},
-	{ID: "deepseek", DisplayName: "DeepSeek", BaseURL: "https://api.deepseek.com/v1", EnvVars: []string{"DEEPSEEK_API_KEY"}, Auth: AuthAPIKey},
+	{ID: "deepseek", DisplayName: "DeepSeek", BaseURL: "https://api.deepseek.com", EnvVars: []string{"DEEPSEEK_API_KEY"}, Auth: AuthAPIKey, Class: "deepseek"},
 	{ID: "together", DisplayName: "Together AI", BaseURL: "https://api.together.xyz/v1", EnvVars: []string{"TOGETHER_API_KEY", "TOGETHERAI_API_KEY"}, Auth: AuthAPIKey},
 	{ID: "mistral", DisplayName: "Mistral", BaseURL: "https://api.mistral.ai/v1", EnvVars: []string{"MISTRAL_API_KEY", "MISTRALAI_API_KEY"}, Auth: AuthAPIKey},
 	{ID: "cerebras", DisplayName: "Cerebras", BaseURL: "https://api.cerebras.ai/v1", EnvVars: []string{"CEREBRAS_API_KEY"}, Auth: AuthAPIKey},

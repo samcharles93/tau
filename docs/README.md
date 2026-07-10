@@ -126,6 +126,17 @@ tau token
 
 Useful for debugging auth configuration.
 
+### `tau update`
+
+Update the current tau binary from GitHub release assets.
+
+```bash
+tau update [--check] [--version v0.16.2] [--repo owner/repo] [--force]
+```
+
+The updater downloads the platform archive and `checksums.txt`, verifies the
+archive checksum, extracts the tau binary, and applies it in place.
+
 ## Configuration
 
 Tau loads `~/.config/tau/config.yaml` (global) and `.tau.yaml` (project-local).

@@ -399,7 +399,8 @@ Use this section to quickly find the right files for a given change.
 ### Changing the CLI
 
 - `internal/cli/root.go` — `NewRootCommand()`, flag definitions, provider/model resolution
-- `internal/cli/commands.go` — Subcommands (`token`, `models`, `sessions`)
+- `internal/cli/commands.go` — Provider/session subcommands (`token`, `models`, `refresh`, `sessions`)
+- `internal/cli/update.go` and `internal/updater/` — `tau update` self-update command, GitHub release lookup, checksum verification, and binary replacement
 - `internal/cli/plugin_source.go` — Plugin source configuration
 
 ### Changing Session Persistence

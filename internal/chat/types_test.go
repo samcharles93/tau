@@ -249,6 +249,42 @@ func TestChatSessionPatchCancelAndFailure(t *testing.T) {
 	}
 }
 
+func TestApplyPatchClampsMaxTokensToModelLimit(t *testing.T) {
+	now := time.Date(2026, 5, 21, 10, 0, 0, 0, time.UTC)
+	session, err := NewChatSessionState("s1", ChatSessionConfig{
+		Provider: testProvider(),
+		Model: ChatModelRef{
+			ID:     "large-output",
+			URL:    "https://model.example/v1",
+			Config: config.ModelConfig{MaxTokens: 128000},
+		},
+		Parameters: ChatParameters{MaxTokens: 128000},
+	}, now)
+	if err != nil {
+		t.Fatalf("NewChatSessionState() error = %v", err)
+	}
+
+	smaller := ChatModelRef{
+		ID:     "smaller-output",
+		URL:    "https://model.example/v1",
+		Config: config.ModelConfig{MaxTokens: 65536},
+	}
+	if err := session.ApplyPatch(ChatSessionPatch{Model: &smaller}, now.Add(time.Second)); err != nil {
+		t.Fatalf("ApplyPatch() error = %v", err)
+	}
+	if session.Parameters.MaxTokens != 65536 {
+		t.Fatalf("max tokens after model switch = %d, want 65536", session.Parameters.MaxTokens)
+	}
+
+	tooHigh := 100000
+	if err := session.ApplyPatch(ChatSessionPatch{MaxTokens: &tooHigh}, now.Add(2*time.Second)); err != nil {
+		t.Fatalf("ApplyPatch() error = %v", err)
+	}
+	if session.Parameters.MaxTokens != 65536 {
+		t.Fatalf("max tokens after explicit high patch = %d, want 65536", session.Parameters.MaxTokens)
+	}
+}
+
 // TestAppendStandaloneMessageRequiresNoActiveRequest guards against a
 // regression where bash-mode ("!") results couldn't be appended to history
 // because, unlike AppendStandaloneMessage, the other Append* helpers require
