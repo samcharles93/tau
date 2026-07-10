@@ -1080,7 +1080,7 @@ func (m *model) dispatchKey(msg tea.KeyPressMsg) tea.Cmd {
 		if m.bashRunning {
 			return m.cancelBash()
 		}
-		if m.viewportSel.armed() || m.inputSel.armed() || m.statusSel.armed() {
+		if m.viewportSel.armed() || m.inputSel.armed() || m.statusSel.armed() || m.toolsSel.armed() {
 			m.clearAllSelections()
 			return nil
 		}
@@ -1704,7 +1704,7 @@ func (m *model) viewportLinesForView(visibleReasoning bool) []string {
 	}
 	if visibleReasoning {
 		for line := range strings.SplitSeq(m.reasoning, "\n") {
-			lines = append(lines, reasoningStyle.Render("Thinking: "+line))
+			lines = append(lines, reasoningStyle.Render(line))
 		}
 	}
 	if m.streaming != "" {
@@ -1928,6 +1928,8 @@ func (m *model) handleSteer() tea.Cmd {
 			return nil
 		}
 		m.clearInput()
+		m.history = append(m.history, text)
+		m.historyIdx = -1
 		return m.startOrQueueTurn(text)
 	}
 
@@ -1938,6 +1940,8 @@ func (m *model) handleSteer() tea.Cmd {
 		m.steering = !m.steering
 		return nil
 	}
+	m.history = append(m.history, text)
+	m.historyIdx = -1
 	m.steering = true
 	return sendCommand(m.runtime, tauchat.SteerChatPromptCommand{
 		SessionID:   m.sessionID,
@@ -2126,15 +2130,20 @@ func (m *model) handleChatEvent(evt tauchat.ChatEvent) tea.Cmd {
 		// Shown via the notification banner (above the input area) at error
 		// level with duration 0 (persists until dismissed rather than
 		// silently expiring), and also printed to the scrollback so it
-		// isn't lost if overtaken by a later notice.
-		cmd := m.setNotificationWithLevel(e.Message, notify.LevelError, 0)
-		m.appendMessage("system", "✗ "+e.Message)
+		// isn't lost if overtaken by a later notice. Truncated: some
+		// providers return an unbounded error body (e.g. a full HTML edge
+		// error page) that would otherwise flood scrollback and bury the
+		// prompt (N-something).
+		msg := truncateErrorText(e.Message)
+		cmd := m.setNotificationWithLevel(msg, notify.LevelError, 0)
+		m.appendMessage("system", "✗ "+msg)
 		return cmd
 
 	case tauchat.ChatNotificationEvent:
-		cmd := m.setNotificationWithLevel(e.Message, notifyLevelFromChat(e.Level), notifyDurationFromChat(e.Level))
+		msg := truncateErrorText(e.Message)
+		cmd := m.setNotificationWithLevel(msg, notifyLevelFromChat(e.Level), notifyDurationFromChat(e.Level))
 		if e.Level == tauchat.ChatNotificationError {
-			m.appendMessage("system", e.Message)
+			m.appendMessage("system", msg)
 		}
 		return cmd
 
@@ -2304,6 +2313,17 @@ func (m *model) applySnapshot(e tauchat.ChatSessionSnapshotEvent) {
 				m.messageRanges = append(m.messageRanges, messageLineRange{id: msg.ID, content: msg.Content, startLine: start, endLine: len(m.renderedLines)})
 			}
 		case tauchat.ChatRoleAssistant:
+			// Reasoning is persisted per-message (ChatMessage.ReasoningContent)
+			// specifically so it survives a snapshot rebuild — without this,
+			// finalizeResponse's live-turn commit would render fine once, then
+			// vanish the moment the next prompt triggered a rebuild here, since
+			// this function is the sole source of truth for renderedLines.
+			if msg.ReasoningContent != "" && m.showReasoning {
+				flushPendingTools()
+				for line := range strings.SplitSeq(msg.ReasoningContent, "\n") {
+					m.renderedLines = append(m.renderedLines, reasoningStyle.Render(line))
+				}
+			}
 			if msg.Content != "" {
 				flushPendingTools()
 				start := len(m.renderedLines)
@@ -2348,10 +2368,17 @@ func (m *model) finalizeResponse(id string) string {
 	if len(m.tools) > 0 {
 		m.flushToolGroup()
 	}
-	content := m.streaming
-	if m.reasoning != "" && content == "" {
-		content = "[reasoning only]"
+	// Commit reasoning to scrollback before the final answer, styled the
+	// same as the live reasoning view. Previously reasoning only ever
+	// existed in the live view and was discarded here unread — on a fast
+	// model, reasoning and the answer can both finish inside a second, so
+	// it would flash on screen and vanish before anyone could read it.
+	if m.reasoning != "" && m.showReasoning {
+		for line := range strings.SplitSeq(m.reasoning, "\n") {
+			m.renderedLines = append(m.renderedLines, reasoningStyle.Render("Thinking: "+line))
+		}
 	}
+	content := m.streaming
 	if content != "" {
 		// Store raw markdown for /copy before glamour renders it.
 		m.lastAssistantText = content
@@ -2364,8 +2391,8 @@ func (m *model) finalizeResponse(id string) string {
 		if id != "" {
 			m.messageRanges = append(m.messageRanges, messageLineRange{id: id, content: content, startLine: start, endLine: len(m.renderedLines)})
 		}
-		m.viewport.SetContentLines(m.renderedLines)
 	}
+	m.viewport.SetContentLines(m.renderedLines)
 	m.streaming = ""
 	m.reasoning = ""
 	m.inResponse = false
@@ -3424,6 +3451,39 @@ func padOrClipLines(s string, n int) string {
 		lines = append(lines, " ")
 	}
 	return strings.Join(lines, "\n")
+}
+
+// maxErrorTextLines and maxErrorTextChars bound how much of a runtime error
+// or notification message reaches the notification banner and scrollback.
+// Some providers return an unbounded response body verbatim in their error
+// (e.g. a full HTML edge/gateway error page), and without a cap that text
+// floods scrollback and effectively takes over the screen.
+const (
+	maxErrorTextLines = 20
+	maxErrorTextChars = 2000
+)
+
+// truncateErrorText caps s to maxErrorTextLines lines and maxErrorTextChars
+// characters, appending a marker when either limit trims content. Line
+// count is checked first since a single huge line (no newlines) would
+// otherwise pass the line check and still need the char cap.
+func truncateErrorText(s string) string {
+	s = strings.TrimSpace(s)
+	truncated := false
+	lines := strings.Split(s, "\n")
+	if len(lines) > maxErrorTextLines {
+		lines = lines[:maxErrorTextLines]
+		s = strings.Join(lines, "\n")
+		truncated = true
+	}
+	if len(s) > maxErrorTextChars {
+		s = s[:maxErrorTextChars]
+		truncated = true
+	}
+	if truncated {
+		s = strings.TrimRight(s, "\n") + "\n… (truncated)"
+	}
+	return s
 }
 
 // notifyStyleForLevel returns the notification banner's color for a level.

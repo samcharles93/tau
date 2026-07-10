@@ -1055,8 +1055,22 @@ func (s *ChatSessionState) ApplyPatch(patch ChatSessionPatch, at time.Time) erro
 		return errors.New("cannot update a closed session")
 	}
 	if patch.Model != nil {
+		prevModelID := s.Model.ID
 		s.Model = *patch.Model
-		s.Parameters.MaxTokens = ClampMaxTokensForModel(s.Parameters.MaxTokens, s.Model)
+		if s.Model.Config.MaxTokens > 0 {
+			s.Parameters.MaxTokens = ClampMaxTokensForModel(s.Parameters.MaxTokens, s.Model)
+		} else if s.Model.ID != prevModelID {
+			// The new model's output-token ceiling is unknown (e.g. a
+			// live-fetched provider like Ollama, which carries no per-model
+			// metadata) — ClampMaxTokensForModel can't validate against it,
+			// so a MaxTokens value tuned for the PREVIOUS model would
+			// otherwise be forwarded as-is and get rejected once it exceeds
+			// the new model's real limit. Reset to 0 (omitted from the wire
+			// request via omitempty) so the provider applies its own
+			// default instead of inheriting a number that was never meant
+			// for this model.
+			s.Parameters.MaxTokens = 0
+		}
 	}
 	if patch.Provider != nil {
 		s.Provider.Name = *patch.Provider

@@ -37,7 +37,7 @@ func TestChecksumForAsset(t *testing.T) {
 	t.Parallel()
 
 	sum := sha256.Sum256([]byte("archive"))
-	checksums := []byte(fmt.Sprintf("%x  tau_1.2.3_linux_amd64.tar.gz\n", sum))
+	checksums := fmt.Appendf(nil, "%x  tau_1.2.3_linux_amd64.tar.gz\n", sum)
 
 	got, ok := checksumForAsset("tau_1.2.3_linux_amd64.tar.gz", checksums)
 	require.True(t, ok)
@@ -129,7 +129,7 @@ func fakeReleaseServer(t *testing.T, binary []byte) *httptest.Server {
 
 	archive := makeTarGz(t, "tau_1.2.3_linux_amd64/tau", binary)
 	archiveSum := sha256.Sum256(archive)
-	checksums := []byte(fmt.Sprintf("%x  tau_1.2.3_linux_amd64.tar.gz\n", archiveSum))
+	checksums := fmt.Appendf(nil, "%x  tau_1.2.3_linux_amd64.tar.gz\n", archiveSum)
 
 	mux := http.NewServeMux()
 	server := httptest.NewServer(mux)

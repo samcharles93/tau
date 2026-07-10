@@ -2578,6 +2578,13 @@ func (c *Coordinator) publishPluginLifecycleEvent(event, sessionID string, paylo
 
 func (c *Coordinator) emit(event chat.ChatEvent) {
 	c.loggerOrDefault().Debug("chat event emitted", chatEventLogAttrs(event)...)
+	// Runtime errors get a full-text log line at Error level, independent of
+	// the Debug summary above (which only carries message_bytes) and of
+	// whatever the UI truncates for display. Without this the untruncated
+	// error text exists nowhere once the TUI clips it for scrollback.
+	if e, ok := event.(chat.ChatRuntimeErrorEvent); ok {
+		c.loggerOrDefault().Error("chat runtime error", "session_id", e.SessionID, "request_id", e.RequestID, "fatal", e.Fatal, "message", e.Message)
+	}
 	c.chatPub.Publish(event)
 }
 

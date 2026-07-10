@@ -285,6 +285,42 @@ func TestApplyPatchClampsMaxTokensToModelLimit(t *testing.T) {
 	}
 }
 
+// TestApplyPatchResetsMaxTokensWhenNewModelHasUnknownLimit guards against a
+// regression where switching to a model with no declared MaxTokens ceiling
+// (e.g. a live-fetched Ollama model, whose Config carries no per-model
+// metadata) forwarded the PREVIOUS model's MaxTokens value unclamped —
+// ClampMaxTokensForModel has no ceiling to clamp against, so a value tuned
+// for a large-output model got sent as-is to a model with a much smaller
+// real limit and the provider rejected the request with a 400.
+func TestApplyPatchResetsMaxTokensWhenNewModelHasUnknownLimit(t *testing.T) {
+	now := time.Date(2026, 5, 21, 10, 0, 0, 0, time.UTC)
+	session, err := NewChatSessionState("s1", ChatSessionConfig{
+		Provider: testProvider(),
+		Model: ChatModelRef{
+			ID:     "large-output",
+			URL:    "https://model.example/v1",
+			Config: config.ModelConfig{MaxTokens: 393220},
+		},
+		Parameters: ChatParameters{MaxTokens: 393220},
+	}, now)
+	if err != nil {
+		t.Fatalf("NewChatSessionState() error = %v", err)
+	}
+
+	liveModel := ChatModelRef{
+		ID:  "ollama-live-model",
+		URL: "http://localhost:11434/v1",
+		// No Config.MaxTokens — matches internal/app.liveModelRefs, which
+		// has no metadata source for a live-fetched provider's output limit.
+	}
+	if err := session.ApplyPatch(ChatSessionPatch{Model: &liveModel}, now.Add(time.Second)); err != nil {
+		t.Fatalf("ApplyPatch() error = %v", err)
+	}
+	if session.Parameters.MaxTokens != 0 {
+		t.Fatalf("max tokens after switching to unknown-limit model = %d, want 0 (omitted from wire request)", session.Parameters.MaxTokens)
+	}
+}
+
 // TestAppendStandaloneMessageRequiresNoActiveRequest guards against a
 // regression where bash-mode ("!") results couldn't be appended to history
 // because, unlike AppendStandaloneMessage, the other Append* helpers require

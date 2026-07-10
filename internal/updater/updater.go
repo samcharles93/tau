@@ -251,7 +251,7 @@ func verifyArchiveChecksum(assetName string, archiveBytes, checksums []byte) err
 }
 
 func checksumForAsset(assetName string, checksums []byte) ([]byte, bool) {
-	for _, line := range strings.Split(string(checksums), "\n") {
+	for line := range strings.SplitSeq(string(checksums), "\n") {
 		fields := strings.Fields(line)
 		if len(fields) < 2 || fields[1] != assetName {
 			continue

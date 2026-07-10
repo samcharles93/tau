@@ -1187,6 +1187,12 @@ func TestScrollUpDuringResponseIsNotUndoneByRender(t *testing.T) {
 	}
 }
 
+// TestHandleChatEventResponseCompletedReasoningOnly guards against a
+// regression where a reasoning-only turn (no trailing answer text) was
+// rendered as a literal "[reasoning only]" placeholder instead of the real
+// reasoning text — and more generally, where reasoning was never committed
+// to scrollback at all and only ever existed in the live view, vanishing
+// the instant the turn completed (see finalizeResponse).
 func TestHandleChatEventResponseCompletedReasoningOnly(t *testing.T) {
 	m := newTestModel(&fakeRuntime{}, nil)
 	m.streaming = ""
@@ -1195,8 +1201,18 @@ func TestHandleChatEventResponseCompletedReasoningOnly(t *testing.T) {
 
 	m.handleChatEvent(tauchat.ChatResponseCompletedEvent{})
 
-	if m.lastAssistantText != "[reasoning only]" {
-		t.Fatalf("lastAssistantText = %q, want %q", m.lastAssistantText, "[reasoning only]")
+	found := false
+	for _, line := range m.renderedLines {
+		if strings.Contains(line, "I think...") {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("renderedLines = %q, want a line containing the reasoning text", m.renderedLines)
+	}
+	if m.reasoning != "" {
+		t.Fatalf("m.reasoning = %q, want cleared after finalizeResponse", m.reasoning)
 	}
 }
 
@@ -2711,6 +2727,35 @@ func TestApplySnapshotRendersAssistantMarkdown(t *testing.T) {
 	}
 }
 
+// TestApplySnapshotRendersPersistedReasoning guards against a real bug
+// twinned with finalizeResponse's live-reasoning commit: reasoning is
+// persisted per-message (ChatMessage.ReasoningContent) specifically so it
+// survives a snapshot rebuild, but applySnapshot ignored that field
+// entirely — a reasoning block that finalizeResponse had just committed to
+// scrollback would render correctly for one turn, then vanish the moment
+// the next prompt triggered a rebuild here, since this function is the sole
+// source of truth for renderedLines.
+func TestApplySnapshotRendersPersistedReasoning(t *testing.T) {
+	m := newTestModel(&fakeRuntime{}, nil)
+	m.width = 80
+
+	m.applySnapshot(tauchat.ChatSessionSnapshotEvent{
+		State: tauchat.ChatSessionState{
+			Messages: []tauchat.ChatMessage{
+				{Role: tauchat.ChatRoleAssistant, ReasoningContent: "carefully considering", Content: "the answer"},
+			},
+		},
+	})
+
+	joined := strings.Join(m.renderedLines, "\n")
+	if !strings.Contains(joined, "carefully considering") {
+		t.Fatalf("expected persisted reasoning to survive applySnapshot, got %q", joined)
+	}
+	if !strings.Contains(stripANSI(joined), "the answer") {
+		t.Fatalf("expected assistant content to still render, got %q", stripANSI(joined))
+	}
+}
+
 // TestApplySnapshotPreservesToolCalls guards against a real bug: a
 // ChatRoleTool message fell into applySnapshot's default/continue branch,
 // so every past tool call silently vanished from the viewport the next time
@@ -3938,6 +3983,25 @@ func TestEscClearsActiveSelection(t *testing.T) {
 
 	if m.viewportSel.armed() {
 		t.Fatalf("expected Esc to clear the selection, got anchor=%d", m.viewportSel.anchor)
+	}
+}
+
+// TestEscClearsToolsSelection guards against a real bug: Esc's "is anything
+// selected" guard checked viewportSel/inputSel/statusSel but not toolsSel,
+// so a stuck-armed tools selection (e.g. from a press that never saw a
+// matching release) was never reachable via Esc. copyActiveSelection
+// (model.go) checks toolsSel first among the four states, and right-click
+// prefers an active selection over opening the context menu — so a stuck
+// toolsSel silently hijacked every right-click into a copy, with no menu
+// ever appearing and no visible way to escape it.
+func TestEscClearsToolsSelection(t *testing.T) {
+	m := newTestModel(&fakeRuntime{}, nil)
+	m.toolsSel.anchor, m.toolsSel.cursor = 0, 1
+
+	m.dispatchKey(tea.KeyPressMsg{Code: tea.KeyEscape})
+
+	if m.toolsSel.armed() {
+		t.Fatalf("expected Esc to clear the tools selection, got anchor=%d", m.toolsSel.anchor)
 	}
 }
 
