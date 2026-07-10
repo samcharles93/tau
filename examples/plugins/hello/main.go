@@ -111,6 +111,8 @@ func (p *HelloPlugin) Metadata() (string, []*pluginapi.Command) {
 				{Name: "panel", Description: "Render a one-shot demo panel", ExtensionName: "hello"},
 				{Name: "watch", Description: "Open (or update) a live demo panel", ExtensionName: "hello"},
 				{Name: "close", Description: "Close the panel opened by /hello watch", ExtensionName: "hello"},
+				{Name: "ask", Description: "Demo: ask the user a free-text question via host.Input", ExtensionName: "hello"},
+				{Name: "confirm", Description: "Demo: ask the user to confirm via host.Confirm", ExtensionName: "hello"},
 			},
 		},
 	}
@@ -152,6 +154,26 @@ func (p *HelloPlugin) RunCommand(ctx context.Context, name, args string) (string
 			return "", nil, fmt.Errorf("hello plugin: close view: %w", err)
 		}
 		return "closed watch panel", nil, nil
+
+	case "hello ask":
+		if p.host == nil {
+			return "", nil, fmt.Errorf("hello plugin: host not available")
+		}
+		answer, err := p.host.Input(ctx, "Hello plugin asks", "e.g. your name")
+		if err != nil {
+			return "", nil, fmt.Errorf("hello plugin: input canceled or failed: %w", err)
+		}
+		return fmt.Sprintf("you answered: %q", answer), nil, nil
+
+	case "hello confirm":
+		if p.host == nil {
+			return "", nil, fmt.Errorf("hello plugin: host not available")
+		}
+		ok, err := p.host.Confirm(ctx, "Hello plugin confirms", "Do you want to proceed?")
+		if err != nil {
+			return "", nil, fmt.Errorf("hello plugin: confirm canceled or failed: %w", err)
+		}
+		return fmt.Sprintf("you confirmed: %v", ok), nil, nil
 
 	default:
 		return "", nil, fmt.Errorf("hello plugin: unknown command %q", name)

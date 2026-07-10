@@ -263,3 +263,174 @@ func fakeJWT(t *testing.T, claims map[string]any) string {
 	}
 	return "header." + base64.RawURLEncoding.EncodeToString(payload) + ".sig"
 }
+
+func TestGithubEndpointsGitHubCom(t *testing.T) {
+	device, access, copilot := githubEndpoints("github.com")
+	if device != "https://github.com/login/device/code" {
+		t.Errorf("device URL = %q", device)
+	}
+	if access != "https://github.com/login/oauth/access_token" {
+		t.Errorf("access token URL = %q", access)
+	}
+	if copilot != "https://api.github.com/copilot_internal/v2/token" {
+		t.Errorf("copilot token URL = %q", copilot)
+	}
+}
+
+func TestGithubEndpointsEnterpriseCloud(t *testing.T) {
+	device, access, copilot := githubEndpoints("contoso.ghe.com")
+	if device != "https://contoso.ghe.com/login/device/code" {
+		t.Errorf("device URL = %q", device)
+	}
+	if access != "https://contoso.ghe.com/login/oauth/access_token" {
+		t.Errorf("access token URL = %q", access)
+	}
+	if want := "https://api.contoso.ghe.com/copilot_internal/v2/token"; copilot != want {
+		t.Errorf("copilot token URL = %q, want %q", copilot, want)
+	}
+}
+
+func TestGithubEndpointsEnterpriseServer(t *testing.T) {
+	device, access, copilot := githubEndpoints("github.mycompany.com")
+	if device != "https://github.mycompany.com/login/device/code" {
+		t.Errorf("device URL = %q", device)
+	}
+	if access != "https://github.mycompany.com/login/oauth/access_token" {
+		t.Errorf("access token URL = %q", access)
+	}
+	if want := "https://github.mycompany.com/api/v3/copilot_internal/v2/token"; copilot != want {
+		t.Errorf("copilot token URL = %q, want %q", copilot, want)
+	}
+}
+
+// TestGitHubCopilotLoginEndToEnd exercises beginGitHubCopilotLogin +
+// session.Poll against a local mock server, verifying the enterprise domain
+// travels through to every request (device code, access token, and Copilot
+// token exchange) rather than silently falling back to github.com — the bug
+// this test guards against previously went unnoticed because the endpoint
+// consts weren't swappable at all.
+func TestGitHubCopilotLoginEndToEnd(t *testing.T) {
+	var deviceCodeCalls, tokenCalls, copilotCalls int32
+
+	mux := http.NewServeMux()
+	mux.HandleFunc("/login/device/code", func(w http.ResponseWriter, r *http.Request) {
+		atomic.AddInt32(&deviceCodeCalls, 1)
+		if err := r.ParseForm(); err != nil {
+			t.Fatalf("parse device code form: %v", err)
+		}
+		if got := r.FormValue("client_id"); got != githubCopilotClientID {
+			t.Errorf("client_id = %q, want %q", got, githubCopilotClientID)
+		}
+		_ = json.NewEncoder(w).Encode(githubDeviceResponse{
+			DeviceCode:      "devcode-1",
+			UserCode:        "ABCD-1234",
+			VerificationURI: "https://example.test/device",
+			ExpiresIn:       900,
+			Interval:        1,
+		})
+	})
+	mux.HandleFunc("/login/oauth/access_token", func(w http.ResponseWriter, r *http.Request) {
+		n := atomic.AddInt32(&tokenCalls, 1)
+		if n == 1 {
+			// First poll: browser authorization still pending, the standard
+			// RFC 8628 way (unlike Codex's bespoke bare-403 signal).
+			_ = json.NewEncoder(w).Encode(oauthError{Code: "authorization_pending"})
+			return
+		}
+		_ = json.NewEncoder(w).Encode(oauthTokenResponse{AccessToken: "gh-access-1"})
+	})
+	mux.HandleFunc("/copilot_internal/v2/token", func(w http.ResponseWriter, r *http.Request) {
+		atomic.AddInt32(&copilotCalls, 1)
+		if got := r.Header.Get("Authorization"); got != "Bearer gh-access-1" {
+			t.Errorf("Authorization = %q, want Bearer gh-access-1", got)
+		}
+		_ = json.NewEncoder(w).Encode(copilotTokenResponse{
+			Token:     "copilot-token-1",
+			ExpiresAt: time.Now().Add(time.Hour).Unix(),
+		})
+	})
+
+	srv := httptest.NewServer(mux)
+	defer srv.Close()
+	defer swapGitHubEndpoints(t, srv.URL)()
+
+	session, err := beginGitHubCopilotLogin(context.Background(), LoginOptions{EnterpriseDomain: "github.mycompany.com"})
+	if err != nil {
+		t.Fatalf("beginGitHubCopilotLogin() error = %v", err)
+	}
+	if session.DeviceCode.UserCode != "ABCD-1234" {
+		t.Fatalf("UserCode = %q, want ABCD-1234", session.DeviceCode.UserCode)
+	}
+
+	creds, err := session.Poll(context.Background())
+	if err != nil {
+		t.Fatalf("session.Poll() error = %v", err)
+	}
+	if creds.Access != "copilot-token-1" {
+		t.Fatalf("Access = %q, want copilot-token-1", creds.Access)
+	}
+	if creds.Refresh != "gh-access-1" {
+		t.Fatalf("Refresh = %q, want gh-access-1", creds.Refresh)
+	}
+	if creds.Extra["enterprise_domain"] != "github.mycompany.com" {
+		t.Fatalf("enterprise_domain = %q, want github.mycompany.com", creds.Extra["enterprise_domain"])
+	}
+	if got := atomic.LoadInt32(&deviceCodeCalls); got != 1 {
+		t.Fatalf("device code calls = %d, want 1", got)
+	}
+	if got := atomic.LoadInt32(&tokenCalls); got != 2 {
+		t.Fatalf("token poll calls = %d, want 2 (one pending, one success)", got)
+	}
+	if got := atomic.LoadInt32(&copilotCalls); got != 1 {
+		t.Fatalf("copilot token calls = %d, want 1", got)
+	}
+}
+
+// TestRefreshGitHubCopilotUsesStoredDomain verifies token refresh (not just
+// initial login) stays pinned to the host recorded in creds.Extra at login
+// time, rather than reverting to github.com.
+func TestRefreshGitHubCopilotUsesStoredDomain(t *testing.T) {
+	var copilotCalls int32
+	mux := http.NewServeMux()
+	mux.HandleFunc("/copilot_internal/v2/token", func(w http.ResponseWriter, r *http.Request) {
+		atomic.AddInt32(&copilotCalls, 1)
+		if got := r.Header.Get("Authorization"); got != "Bearer gh-refresh-1" {
+			t.Errorf("Authorization = %q, want Bearer gh-refresh-1", got)
+		}
+		_ = json.NewEncoder(w).Encode(copilotTokenResponse{
+			Token:     "copilot-token-2",
+			ExpiresAt: time.Now().Add(time.Hour).Unix(),
+		})
+	})
+	srv := httptest.NewServer(mux)
+	defer srv.Close()
+	defer swapGitHubEndpoints(t, srv.URL)()
+
+	creds, err := refreshGitHubCopilot(context.Background(), OAuthCredentials{
+		Refresh: "gh-refresh-1",
+		Extra:   map[string]string{"enterprise_domain": "github.mycompany.com"},
+	})
+	if err != nil {
+		t.Fatalf("refreshGitHubCopilot() error = %v", err)
+	}
+	if creds.Access != "copilot-token-2" {
+		t.Fatalf("Access = %q, want copilot-token-2", creds.Access)
+	}
+	if got := atomic.LoadInt32(&copilotCalls); got != 1 {
+		t.Fatalf("copilot token calls = %d, want 1", got)
+	}
+}
+
+// swapGitHubEndpoints points all three GitHub OAuth/Copilot endpoints at a
+// local mock server for the duration of a test and returns a restore func —
+// mirrors swapCodexEndpoints above. It ignores the domain argument since the
+// mock server serves all three paths itself; domain-to-URL mapping is
+// covered separately by TestGithubEndpoints*.
+func swapGitHubEndpoints(t *testing.T, baseURL string) func() {
+	t.Helper()
+	orig := githubEndpoints
+	githubEndpoints = func(string) (deviceCodeURL, accessTokenURL, copilotTokenURL string) {
+		return baseURL + "/login/device/code", baseURL + "/login/oauth/access_token", baseURL + "/copilot_internal/v2/token"
+	}
+	return func() { githubEndpoints = orig }
+}

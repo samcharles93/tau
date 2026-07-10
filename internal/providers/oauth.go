@@ -20,9 +20,6 @@ const (
 	githubCopilotID = "github-copilot"
 	openAICodexID   = "openai-codex"
 
-	githubDeviceCodeURL   = "https://github.com/login/device/code"
-	githubAccessTokenURL  = "https://github.com/login/oauth/access_token"
-	githubCopilotTokenURL = "https://api.github.com/copilot_internal/v2/token"
 	githubCopilotClientID = "Iv1.b507a08c87ecfe98"
 
 	// OpenAI Codex does not implement RFC 8628 device authorization (there is
@@ -47,6 +44,34 @@ var (
 	openAICodexUserCodeURL    = "https://auth.openai.com/api/accounts/deviceauth/usercode"
 	openAICodexDeviceTokenURL = "https://auth.openai.com/api/accounts/deviceauth/token"
 )
+
+// githubEndpoints resolves the device-code, access-token, and Copilot-token
+// URLs for a normalized GitHub host (see normalizeEnterpriseDomain — empty
+// input becomes "github.com"). It is a var, not a function, so tests can
+// redirect it at a local httptest server instead of resolving real
+// github.com/GHE hosts.
+//
+// GitHub Enterprise has two URL shapes for the Copilot token endpoint:
+//   - Enterprise Cloud with data residency (host ends in ".ghe.com") serves
+//     the Copilot API from an "api." subdomain, the same shape as github.com.
+//   - Enterprise Server (self-hosted, any other host) serves it under
+//     "/api/v3" on the same host instead.
+//
+// This mapping is a best-effort convention, not something verified against a
+// real GHE instance — treat it as unproven until confirmed against one.
+var githubEndpoints = func(domain string) (deviceCodeURL, accessTokenURL, copilotTokenURL string) {
+	deviceCodeURL = "https://" + domain + "/login/device/code"
+	accessTokenURL = "https://" + domain + "/login/oauth/access_token"
+	switch {
+	case domain == "github.com":
+		copilotTokenURL = "https://api.github.com/copilot_internal/v2/token"
+	case strings.HasSuffix(domain, ".ghe.com"):
+		copilotTokenURL = "https://api." + domain + "/copilot_internal/v2/token"
+	default:
+		copilotTokenURL = "https://" + domain + "/api/v3/copilot_internal/v2/token"
+	}
+	return deviceCodeURL, accessTokenURL, copilotTokenURL
+}
 
 // DeviceCode holds the user-facing part of an OAuth device-code flow.
 type DeviceCode struct {
@@ -116,7 +141,8 @@ func RefreshOAuth(ctx context.Context, providerID string, creds OAuthCredentials
 
 func beginGitHubCopilotLogin(ctx context.Context, opts LoginOptions) (OAuthLoginSession, error) {
 	domain := normalizeEnterpriseDomain(opts.EnterpriseDomain)
-	device, err := requestForm[githubDeviceResponse](ctx, githubDeviceCodeURL, url.Values{
+	deviceCodeURL, accessTokenURL, _ := githubEndpoints(domain)
+	device, err := requestForm[githubDeviceResponse](ctx, deviceCodeURL, url.Values{
 		"client_id": {githubCopilotClientID},
 		"scope":     {"read:user"},
 	})
@@ -133,7 +159,7 @@ func beginGitHubCopilotLogin(ctx context.Context, opts LoginOptions) (OAuthLogin
 	return OAuthLoginSession{
 		DeviceCode: code,
 		Poll: func(ctx context.Context) (OAuthCredentials, error) {
-			githubToken, err := pollDeviceToken(ctx, githubAccessTokenURL, url.Values{
+			githubToken, err := pollDeviceToken(ctx, accessTokenURL, url.Values{
 				"client_id":   {githubCopilotClientID},
 				"device_code": {device.DeviceCode},
 				"grant_type":  {"urn:ietf:params:oauth:grant-type:device_code"},
@@ -157,7 +183,9 @@ func refreshGitHubCopilot(ctx context.Context, creds OAuthCredentials) (OAuthCre
 	if githubToken == "" {
 		return OAuthCredentials{}, errors.New("missing GitHub OAuth token; run /provider login github-copilot")
 	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, githubCopilotTokenURL, nil)
+	domain := normalizeEnterpriseDomain(creds.Extra["enterprise_domain"])
+	_, _, copilotTokenURL := githubEndpoints(domain)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, copilotTokenURL, nil)
 	if err != nil {
 		return OAuthCredentials{}, err
 	}

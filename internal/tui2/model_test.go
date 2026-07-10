@@ -159,13 +159,13 @@ func TestConfirmPromptEnterUsesHighlightedOption(t *testing.T) {
 	if m.activePrompt == nil {
 		t.Fatal("expected activePrompt to be set")
 	}
-	if !m.promptConfirmYes {
+	if !m.activePrompt.confirmYes {
 		t.Fatal("expected the default highlighted option to be Yes")
 	}
 
 	// Toggle to "No" before submitting.
 	m.handlePromptKey(tea.KeyPressMsg{Code: tea.KeyTab})
-	if m.promptConfirmYes {
+	if m.activePrompt.confirmYes {
 		t.Fatal("expected tab to toggle the highlighted option to No")
 	}
 
@@ -1238,8 +1238,8 @@ func TestHandleChatEventInteractivePromptQueued(t *testing.T) {
 	if m.activePrompt == nil {
 		t.Fatal("expected activePrompt to be set")
 	}
-	if m.activePrompt.RequestID != "req-1" {
-		t.Fatalf("activePrompt.RequestID = %q, want %q", m.activePrompt.RequestID, "req-1")
+	if m.activePrompt.requestID != "req-1" {
+		t.Fatalf("activePrompt.requestID = %q, want %q", m.activePrompt.requestID, "req-1")
 	}
 }
 
@@ -1250,10 +1250,10 @@ func TestHandleChatEventInteractivePromptQueueSecond(t *testing.T) {
 	m.handleChatEvent(tauchat.InteractivePromptRequestedEvent{RequestID: "req-2"})
 
 	// First should be active, second queued.
-	if m.activePrompt.RequestID != "req-1" {
-		t.Fatalf("active prompt = %q, want %q", m.activePrompt.RequestID, "req-1")
+	if m.activePrompt.requestID != "req-1" {
+		t.Fatalf("active prompt = %q, want %q", m.activePrompt.requestID, "req-1")
 	}
-	if len(m.promptQueue) != 1 || m.promptQueue[0].RequestID != "req-2" {
+	if len(m.promptQueue) != 1 || m.promptQueue[0].requestID != "req-2" {
 		t.Fatalf("expected [req-2] in prompt queue, got %+v", m.promptQueue)
 	}
 }
@@ -2379,18 +2379,18 @@ func TestCursorLineCol(t *testing.T) {
 
 func TestEnqueuePromptQueuesWhenActive(t *testing.T) {
 	m := newTestModel(&fakeRuntime{}, nil)
-	m.activePrompt = &tauchat.InteractivePromptRequestedEvent{RequestID: "first"}
+	m.enqueuePrompt(tauchat.InteractivePromptRequestedEvent{RequestID: "first"})
 
 	m.enqueuePrompt(tauchat.InteractivePromptRequestedEvent{RequestID: "second"})
 
-	if len(m.promptQueue) != 1 || m.promptQueue[0].RequestID != "second" {
+	if len(m.promptQueue) != 1 || m.promptQueue[0].requestID != "second" {
 		t.Fatalf("expected [second] queued, got %+v", m.promptQueue)
 	}
 }
 
 func TestPresentNextQueuedPromptNoQueue(t *testing.T) {
 	m := newTestModel(&fakeRuntime{}, nil)
-	m.activePrompt = &tauchat.InteractivePromptRequestedEvent{RequestID: "current"}
+	m.enqueuePrompt(tauchat.InteractivePromptRequestedEvent{RequestID: "current"})
 
 	m.presentNextQueuedPrompt()
 
@@ -2401,29 +2401,27 @@ func TestPresentNextQueuedPromptNoQueue(t *testing.T) {
 
 func TestPresentNextQueuedPromptDrains(t *testing.T) {
 	m := newTestModel(&fakeRuntime{}, nil)
-	m.activePrompt = &tauchat.InteractivePromptRequestedEvent{RequestID: "current"}
-	m.promptQueue = []tauchat.InteractivePromptRequestedEvent{
-		{RequestID: "next"},
-		{RequestID: "last"},
-	}
+	m.enqueuePrompt(tauchat.InteractivePromptRequestedEvent{RequestID: "current"})
+	m.enqueuePrompt(tauchat.InteractivePromptRequestedEvent{RequestID: "next"})
+	m.enqueuePrompt(tauchat.InteractivePromptRequestedEvent{RequestID: "last"})
 
 	m.presentNextQueuedPrompt()
 
-	if m.activePrompt == nil || m.activePrompt.RequestID != "next" {
-		t.Fatalf("activePrompt.RequestID = %v, want 'next'", m.activePrompt.RequestID)
+	if m.activePrompt == nil || m.activePrompt.requestID != "next" {
+		t.Fatalf("activePrompt.requestID = %v, want 'next'", m.activePrompt.requestID)
 	}
-	if len(m.promptQueue) != 1 || m.promptQueue[0].RequestID != "last" {
+	if len(m.promptQueue) != 1 || m.promptQueue[0].requestID != "last" {
 		t.Fatalf("promptQueue should have [last], got %+v", m.promptQueue)
 	}
-	if !m.promptConfirmYes {
-		t.Fatal("promptConfirmYes should reset to true for new prompt")
+	if !m.activePrompt.confirmYes {
+		t.Fatal("confirmYes should reset to true for new prompt")
 	}
 }
 
 func TestResolvePromptCancel(t *testing.T) {
 	rt := &fakeRuntime{}
 	m := newTestModel(rt, nil)
-	m.activePrompt = &tauchat.InteractivePromptRequestedEvent{RequestID: "req-cancel"}
+	m.enqueuePrompt(tauchat.InteractivePromptRequestedEvent{RequestID: "req-cancel"})
 
 	drainCmd(m.resolvePromptCancel())
 
@@ -2451,7 +2449,7 @@ func TestResolvePromptCancelWithNoActivePrompt(t *testing.T) {
 func TestResolvePromptWithNoActivePrompt(t *testing.T) {
 	m := newTestModel(&fakeRuntime{}, nil)
 
-	cmd := m.resolvePrompt("some input")
+	cmd := m.resolvePrompt()
 	if cmd != nil {
 		t.Fatal("expected nil Cmd when no active prompt")
 	}
@@ -2493,7 +2491,7 @@ func TestHandlePromptKeyNoActive(t *testing.T) {
 func TestHandlePromptKeyEsc(t *testing.T) {
 	rt := &fakeRuntime{}
 	m := newTestModel(rt, nil)
-	m.activePrompt = &tauchat.InteractivePromptRequestedEvent{RequestID: "req-1", Kind: "input"}
+	m.enqueuePrompt(tauchat.InteractivePromptRequestedEvent{RequestID: "req-1", Kind: "question"})
 
 	drainCmd(m.handlePromptKey(key(tea.KeyEscape, 0)))
 
@@ -2509,10 +2507,10 @@ func TestHandlePromptKeyEsc(t *testing.T) {
 func TestHandlePromptKeyEnterOnConfirmWithInputKind(t *testing.T) {
 	rt := &fakeRuntime{}
 	m := newTestModel(rt, nil)
-	m.activePrompt = &tauchat.InteractivePromptRequestedEvent{
-		RequestID: "req-1", Kind: "input", Message: "enter value",
-	}
-	m.input = "my value"
+	m.enqueuePrompt(tauchat.InteractivePromptRequestedEvent{
+		RequestID: "req-1", Kind: "question", Message: "enter value",
+	})
+	m.activePrompt.field.SetValue("my value")
 
 	drainCmd(m.handlePromptKey(key(tea.KeyEnter, 0)))
 
@@ -2527,24 +2525,22 @@ func TestHandlePromptKeyEnterOnConfirmWithInputKind(t *testing.T) {
 
 func TestHandlePromptKeyYNonConfirmInserts(t *testing.T) {
 	m := newTestModel(&fakeRuntime{}, nil)
-	m.activePrompt = &tauchat.InteractivePromptRequestedEvent{RequestID: "req-1", Kind: "input"}
-	m.input = ""
+	m.enqueuePrompt(tauchat.InteractivePromptRequestedEvent{RequestID: "req-1", Kind: "question"})
 
 	m.handlePromptKey(key('y', 0))
-	if m.input != "y" {
-		t.Fatalf("input = %q, want %q (y should be inserted for non-confirm prompts)", m.input, "y")
+	if got := m.activePrompt.field.Value(); got != "y" {
+		t.Fatalf("field value = %q, want %q (y should be inserted for non-confirm prompts)", got, "y")
 	}
 }
 
 func TestHandlePromptKeyBackspace(t *testing.T) {
 	m := newTestModel(&fakeRuntime{}, nil)
-	m.activePrompt = &tauchat.InteractivePromptRequestedEvent{RequestID: "req-1", Kind: "input"}
-	m.input = "abc"
-	m.inputCursor = 3
+	m.enqueuePrompt(tauchat.InteractivePromptRequestedEvent{RequestID: "req-1", Kind: "question"})
+	m.activePrompt.field.SetValue("abc")
 
 	m.handlePromptKey(key(tea.KeyBackspace, 0))
-	if m.input != "ab" {
-		t.Fatalf("input = %q, want %q", m.input, "ab")
+	if got := m.activePrompt.field.Value(); got != "ab" {
+		t.Fatalf("field value = %q, want %q", got, "ab")
 	}
 }
 
@@ -3712,7 +3708,7 @@ func TestActivePromptTakesPriorityOverOpenContextMenu(t *testing.T) {
 		target: contextMenuTargetTool, targetID: "t1",
 		items: []contextMenuItem{{label: "Copy output", action: contextMenuActionCopy}},
 	}
-	m.activePrompt = &tauchat.InteractivePromptRequestedEvent{Kind: "confirm", Title: "t", Message: "m"}
+	m.activePrompt = &formPrompt{kind: promptConfirm, title: "t", message: "m", confirmYes: true}
 
 	m.dispatchKey(key(tea.KeyEnter, 0))
 
@@ -4629,9 +4625,9 @@ func TestAppendMessageAssistantTracksLastText(t *testing.T) {
 func TestHandlePromptKeyNOnConfirm(t *testing.T) {
 	rt := &fakeRuntime{}
 	m := newTestModel(rt, nil)
-	m.activePrompt = &tauchat.InteractivePromptRequestedEvent{
+	m.enqueuePrompt(tauchat.InteractivePromptRequestedEvent{
 		RequestID: "req-1", Kind: "confirm",
-	}
+	})
 
 	drainCmd(m.handlePromptKey(key('n', 0)))
 
@@ -4661,18 +4657,17 @@ func TestSubmitInputDebounceGuardFires(t *testing.T) {
 
 func TestHandlePromptKeyTabTogglesOnConfirm(t *testing.T) {
 	m := newTestModel(&fakeRuntime{}, nil)
-	m.activePrompt = &tauchat.InteractivePromptRequestedEvent{
+	m.enqueuePrompt(tauchat.InteractivePromptRequestedEvent{
 		RequestID: "req-1", Kind: "confirm",
-	}
-	m.promptConfirmYes = true
+	})
 
 	m.handlePromptKey(key(tea.KeyTab, 0))
-	if m.promptConfirmYes {
-		t.Fatal("Tab should toggle promptConfirmYes to false")
+	if m.activePrompt.confirmYes {
+		t.Fatal("Tab should toggle confirmYes to false")
 	}
 
 	m.handlePromptKey(key(tea.KeyTab, 0))
-	if !m.promptConfirmYes {
+	if !m.activePrompt.confirmYes {
 		t.Fatal("Tab again should toggle back to true")
 	}
 }
@@ -4738,14 +4733,13 @@ func TestHandleChatEventInteractivePromptClearsInput(t *testing.T) {
 
 func TestHandleChatEventInteractivePromptSetsConfirmYes(t *testing.T) {
 	m := newTestModel(&fakeRuntime{}, nil)
-	m.promptConfirmYes = false
 
 	m.handleChatEvent(tauchat.InteractivePromptRequestedEvent{
 		RequestID: "req-1", Kind: "confirm",
 	})
 
-	if !m.promptConfirmYes {
-		t.Fatal("promptConfirmYes should default to true")
+	if !m.activePrompt.confirmYes {
+		t.Fatal("confirmYes should default to true")
 	}
 }
 
@@ -4753,33 +4747,30 @@ func TestHandleChatEventInteractivePromptSetsConfirmYes(t *testing.T) {
 
 func TestHandlePromptKeyLeftTogglesOnConfirm(t *testing.T) {
 	m := newTestModel(&fakeRuntime{}, nil)
-	m.activePrompt = &tauchat.InteractivePromptRequestedEvent{RequestID: "req-1", Kind: "confirm"}
-	m.promptConfirmYes = true
+	m.enqueuePrompt(tauchat.InteractivePromptRequestedEvent{RequestID: "req-1", Kind: "confirm"})
 
 	m.handlePromptKey(key(tea.KeyLeft, 0))
-	if m.promptConfirmYes {
-		t.Fatal("Left should toggle promptConfirmYes to false")
+	if m.activePrompt.confirmYes {
+		t.Fatal("Left should toggle confirmYes to false")
 	}
 }
 
 func TestHandlePromptKeyRightTogglesOnConfirm(t *testing.T) {
 	m := newTestModel(&fakeRuntime{}, nil)
-	m.activePrompt = &tauchat.InteractivePromptRequestedEvent{RequestID: "req-1", Kind: "confirm"}
-	m.promptConfirmYes = false
+	m.enqueuePrompt(tauchat.InteractivePromptRequestedEvent{RequestID: "req-1", Kind: "confirm"})
+	m.activePrompt.confirmYes = false
 
 	m.handlePromptKey(key(tea.KeyRight, 0))
-	if !m.promptConfirmYes {
-		t.Fatal("Right should toggle promptConfirmYes to true")
+	if !m.activePrompt.confirmYes {
+		t.Fatal("Right should toggle confirmYes to true")
 	}
 }
 
 // --- renderPrompt ---
 
 func TestRenderPromptConfirm(t *testing.T) {
-	p := &tauchat.InteractivePromptRequestedEvent{
-		RequestID: "r1", Kind: "confirm", Title: "Confirm?", Message: "Are you sure?",
-	}
-	out := stripANSI(renderPrompt(p, true))
+	p := &formPrompt{kind: promptConfirm, title: "Confirm?", message: "Are you sure?", confirmYes: true}
+	out := stripANSI(renderPrompt(p, 80))
 	if !strings.Contains(out, "Yes") || !strings.Contains(out, "No") {
 		t.Fatalf("expected Yes/No in confirm prompt:\n%s", out)
 	}
@@ -4789,14 +4780,12 @@ func TestRenderPromptConfirm(t *testing.T) {
 }
 
 func TestRenderPromptInput(t *testing.T) {
-	p := &tauchat.InteractivePromptRequestedEvent{
-		RequestID: "r2", Kind: "input", Title: "Name?", Message: "What is your name?",
-	}
-	out := stripANSI(renderPrompt(p, true))
+	p := &formPrompt{kind: promptQuestion, title: "Name?", message: "What is your name?", field: newTextField("")}
+	out := stripANSI(renderPrompt(p, 80))
 	if strings.Contains(out, "Yes") || strings.Contains(out, "No") {
 		t.Fatalf("input prompt should not show Yes/No:\n%s", out)
 	}
-	if !strings.Contains(out, "type + enter") {
+	if !strings.Contains(out, "enter to continue") {
 		t.Fatalf("input prompt should show hint:\n%s", out)
 	}
 }
@@ -4806,9 +4795,9 @@ func TestRenderPromptInput(t *testing.T) {
 func TestResolvePromptConfirmTrue(t *testing.T) {
 	rt := &fakeRuntime{}
 	m := newTestModel(rt, nil)
-	m.activePrompt = &tauchat.InteractivePromptRequestedEvent{
+	m.enqueuePrompt(tauchat.InteractivePromptRequestedEvent{
 		RequestID: "req-cf", Kind: "confirm",
-	}
+	})
 
 	drainCmd(m.resolvePromptConfirm(true))
 

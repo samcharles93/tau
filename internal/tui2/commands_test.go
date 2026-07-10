@@ -951,6 +951,33 @@ func TestCmdProviderLoginNonOAuthProvider(t *testing.T) {
 	}
 }
 
+func TestCmdProviderLoginGitHubCopilotNoDomainPromptsInteractively(t *testing.T) {
+	m := newTestModel(&fakeRuntime{}, nil)
+	m.cmdProvider("login github-copilot")
+
+	if m.activePrompt == nil {
+		t.Fatal("expected an interactive prompt asking for the GitHub Copilot host")
+	}
+	if m.activePrompt.kind != promptQuestion {
+		t.Fatal("expected a free-text prompt, not a confirm")
+	}
+	if !strings.Contains(m.activePrompt.title, "GitHub Copilot") {
+		t.Fatalf("title = %q, want it to mention GitHub Copilot", m.activePrompt.title)
+	}
+}
+
+func TestCmdProviderLoginGitHubCopilotWithInlineDomainSkipsPrompt(t *testing.T) {
+	m := newTestModel(&fakeRuntime{}, nil)
+	cmd := m.cmdProvider("login github-copilot mycompany.ghe.com")
+
+	if m.activePrompt != nil {
+		t.Fatal("expected no interactive prompt when a domain is given inline")
+	}
+	if cmd == nil {
+		t.Fatal("expected a Cmd to start the OAuth login")
+	}
+}
+
 func TestCmdProviderLogoutEmptyUsage(t *testing.T) {
 	m := newTestModel(&fakeRuntime{}, nil)
 	drainCmd(m.cmdProvider("logout"))

@@ -152,10 +152,12 @@ type model struct {
 	// Steering.
 	steering bool
 
-	// Interactive prompts.
-	activePrompt     *tauchat.InteractivePromptRequestedEvent
-	promptQueue      []tauchat.InteractivePromptRequestedEvent
-	promptConfirmYes bool // confirm-kind prompts: which option (Yes/No) is highlighted
+	// Interactive prompts — see formPrompt in prompt.go for the shared
+	// widget both the agent-question flow and local UI flows (e.g.
+	// providerLogin's Enterprise-domain prompt) build and present through
+	// presentPrompt/presentLocalPrompt.
+	activePrompt *formPrompt
+	promptQueue  []*formPrompt
 
 	// contextMenu is the currently open right-click menu, or nil if none is
 	// open — mirrors activePrompt's nil-sentinel idiom.
@@ -844,7 +846,7 @@ func (m *model) computeLayout() layoutGeometry {
 	// 4. Interactive prompt (modal).
 	var promptStr string
 	if m.activePrompt != nil {
-		promptStr = renderPrompt(m.activePrompt, m.promptConfirmYes)
+		promptStr = renderPrompt(m.activePrompt, m.width)
 	}
 
 	// 5. Completion dropdown.
@@ -1827,7 +1829,7 @@ func (m *model) seedHistoryFromMessages(messages []tauchat.ChatMessage) {
 func (m *model) submitInput() tea.Cmd {
 	// Interactive prompt active: handle prompt input.
 	if m.activePrompt != nil {
-		return m.resolvePrompt(m.input)
+		return m.resolvePrompt()
 	}
 
 	// If a response is in-flight, any Enter press acts as a steering command!
@@ -4307,132 +4309,6 @@ func (m *model) copyText(text string) tea.Cmd {
 	return tea.Batch(tea.SetClipboard(text), m.setNotification("copied to clipboard"))
 }
 
-// --- interactive prompt handling -------------------------------------------
-
-func (m *model) enqueuePrompt(e tauchat.InteractivePromptRequestedEvent) tea.Cmd {
-	// A prompt represents a blocking host-service round-trip and must win
-	// over a UI affordance the user can freely re-open — close any open
-	// context menu so it can't linger swallowing keys the prompt needs.
-	m.contextMenu = nil
-	if m.activePrompt != nil {
-		m.promptQueue = append(m.promptQueue, e)
-		return m.setNotification("prompt queued")
-	}
-	m.activePrompt = &e
-	m.clearInput()
-	m.promptConfirmYes = true
-	return nil
-}
-
-// presentNextQueuedPrompt pops the next queued prompt (if any) into
-// activePrompt, resetting per-prompt UI state (input buffer, Yes/No
-// highlight) exactly as enqueuePrompt does for the first prompt shown.
-func (m *model) presentNextQueuedPrompt() {
-	m.activePrompt = nil
-	m.clearInput()
-	if len(m.promptQueue) == 0 {
-		return
-	}
-	next := m.promptQueue[0]
-	m.promptQueue = m.promptQueue[1:]
-	m.activePrompt = &next
-	m.promptConfirmYes = true
-}
-
-func (m *model) handlePromptKey(msg tea.KeyPressMsg) tea.Cmd {
-	p := m.activePrompt
-	if p == nil {
-		return nil
-	}
-	switch msg.String() {
-	case "esc":
-		return m.resolvePromptCancel()
-	case "enter":
-		return m.resolvePrompt(m.input)
-	case "y", "Y":
-		if p.Kind == "confirm" {
-			return m.resolvePromptConfirm(true)
-		}
-		// msg.String() is used rather than msg.Key().Text since the switch
-		// above already guarantees it's exactly "y"/"Y" here.
-		m.insertAtCursor(msg.String())
-	case "n", "N":
-		if p.Kind == "confirm" {
-			return m.resolvePromptConfirm(false)
-		}
-		m.insertAtCursor(msg.String())
-	case "tab", "left", "right":
-		// Toggle the highlighted Yes/No option — matches the legacy
-		// taui.Prompt behaviour (pkg/taui/prompt.go) where bare Enter
-		// submits whichever option is currently highlighted, never an
-		// unconditional "yes".
-		if p.Kind == "confirm" {
-			m.promptConfirmYes = !m.promptConfirmYes
-		}
-	case "backspace":
-		m.backspaceAtCursor()
-	default:
-		if text := msg.Key().Text; text != "" {
-			r, _ := utf8.DecodeRuneInString(text)
-			if r >= 32 && r != utf8.RuneError {
-				m.insertAtCursor(text)
-			}
-		}
-	}
-	return nil
-}
-
-func (m *model) resolvePrompt(input string) tea.Cmd {
-	p := m.activePrompt
-	if p == nil {
-		return nil
-	}
-
-	var cmd tauchat.RespondInteractivePromptCommand
-	cmd.RequestID = p.RequestID
-	cmd.RespondedAt = time.Now().UTC()
-	if p.Kind == "confirm" {
-		// Enter submits whichever option is currently highlighted, not an
-		// unconditional "yes" — see the tab/left/right case above.
-		cmd.Confirmed = m.promptConfirmYes
-		cmd.Canceled = !m.promptConfirmYes
-	} else {
-		cmd.Response = input
-	}
-
-	m.presentNextQueuedPrompt()
-	return sendCommand(m.runtime, cmd)
-}
-
-func (m *model) resolvePromptConfirm(confirmed bool) tea.Cmd {
-	p := m.activePrompt
-	if p == nil {
-		return nil
-	}
-
-	m.presentNextQueuedPrompt()
-	return sendCommand(m.runtime, tauchat.RespondInteractivePromptCommand{
-		RequestID:   p.RequestID,
-		Confirmed:   confirmed,
-		Canceled:    !confirmed,
-		RespondedAt: time.Now().UTC(),
-	})
-}
-
-func (m *model) resolvePromptCancel() tea.Cmd {
-	p := m.activePrompt
-	if p == nil {
-		return nil
-	}
-
-	m.presentNextQueuedPrompt()
-	return sendCommand(m.runtime, tauchat.RespondInteractivePromptCommand{
-		RequestID:   p.RequestID,
-		Canceled:    true,
-		RespondedAt: time.Now().UTC(),
-	})
-}
-
 // activePanel returns the first active plugin panel (if any).
 func (m *model) activePanel() *pluginPanel {
 	for _, p := range m.panels {
@@ -4442,32 +4318,6 @@ func (m *model) activePanel() *pluginPanel {
 }
 
 // --- rendering helpers -----------------------------------------------------
-
-func renderPrompt(p *tauchat.InteractivePromptRequestedEvent, confirmYes bool) string {
-	var sb strings.Builder
-	sb.WriteString(promptBoxStyle.Render("┌─ " + p.Title + " ─┐"))
-	sb.WriteString("\n")
-	sb.WriteString(promptTextStyle.Render("  " + p.Message))
-	sb.WriteString("\n")
-	if p.Kind == "confirm" {
-		yes, no := "Yes", "No"
-		if confirmYes {
-			yes = promptHighlightStyle.Render(yes)
-		} else {
-			no = promptHighlightStyle.Render(no)
-		}
-		sb.WriteString("  ")
-		sb.WriteString(yes)
-		sb.WriteString("   ")
-		sb.WriteString(no)
-		sb.WriteString(promptHintStyle.Render("  (y/n · tab to switch · enter to confirm · esc to cancel)"))
-	} else {
-		sb.WriteString(promptHintStyle.Render("  [type + enter, esc to cancel]"))
-	}
-	sb.WriteString("\n")
-	sb.WriteString(promptBoxStyle.Render("└" + strings.Repeat("─", 40) + "┘"))
-	return sb.String()
-}
 
 // renderCompletions draws the dropdown: a scrolling window (so a selection
 // past the visible window is never invisible/unreachable), group headers,
@@ -4607,7 +4457,7 @@ var (
 	inputCursorStyle = lipgloss.NewStyle().Background(themeHex(theme.ToneMuted))
 
 	// Prompt / completion styles.
-	promptBoxStyle       = lipgloss.NewStyle().Foreground(themeHex(theme.ToneWarn))
+	promptTitleStyle     = lipgloss.NewStyle().Bold(true).Foreground(themeHex(theme.ShimmerHighlight))
 	promptTextStyle      = lipgloss.NewStyle().Foreground(themeHex(theme.TonePrimary))
 	promptHintStyle      = lipgloss.NewStyle().Foreground(themeHex(theme.ToneMuted)).Italic(true)
 	promptHighlightStyle = lipgloss.NewStyle().Bold(true).Underline(true)
