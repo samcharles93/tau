@@ -881,10 +881,7 @@ func (m *model) computeLayout() layoutGeometry {
 		// instead of growing the input box by a row for it.
 		notifyRendered = lipgloss.NewStyle().Width(notifyWidth).Render(steerHint())
 	}
-	h := visualLineCount(notifyRendered)
-	if h < notifyReservedLines {
-		h = notifyReservedLines
-	}
+	h := max(visualLineCount(notifyRendered), notifyReservedLines)
 	notifyStr := padOrClipLines(notifyRendered, h)
 
 	// 7. Divider and input area.

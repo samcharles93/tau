@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"net/http"
 	"os"
+	"slices"
 	"strings"
 	"time"
 
@@ -113,11 +114,8 @@ func ollamaThinkingModels(ctx context.Context, baseURL, apiKey string, insecure 
 
 	out := make(map[string]bool, len(payload.Models))
 	for _, m := range payload.Models {
-		for _, c := range m.Capabilities {
-			if c == "thinking" {
-				out[m.Name] = true
-				break
-			}
+		if slices.Contains(m.Capabilities, "thinking") {
+			out[m.Name] = true
 		}
 	}
 	return out, nil
