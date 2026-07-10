@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"sort"
 	"strings"
 
 	aisdkchat "github.com/samcharles93/ai-sdk/chat"
@@ -245,16 +246,11 @@ func buildToolCalls(calls map[int]*assembledToolCall) []tauchat.ChatToolCall {
 	for i := range calls {
 		indices = append(indices, i)
 	}
-	for len(indices) > 0 && indices[0] > len(indices)-1 {
-		// Defensive: ensure contiguous indexing.
-		break
-	}
+	sort.Ints(indices)
+
 	out := make([]tauchat.ChatToolCall, 0, len(indices))
-	for i := 0; i < len(calls); i++ {
-		call, ok := calls[i]
-		if !ok {
-			continue
-		}
+	for _, i := range indices {
+		call := calls[i]
 		if call.id == "" {
 			call.id = fmt.Sprintf("tool_call_%d", i)
 		}

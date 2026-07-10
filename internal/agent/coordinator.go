@@ -330,6 +330,8 @@ func (c *Coordinator) loop() {
 }
 
 func (c *Coordinator) handleCommand(cmd chat.ChatCommand) {
+	c.loggerOrDefault().Debug("chat command received", chatCommandLogAttrs(cmd)...)
+
 	switch command := cmd.(type) {
 	case chat.StartChatSessionCommand:
 		c.handleStart(command)
@@ -1043,17 +1045,12 @@ func (c *Coordinator) handleListSkills(_ chat.ListSkillsCommand) {
 		Skills: skills,
 	})
 
-	// Also show as a notification for backward compatibility
-	var b strings.Builder
-	b.WriteString("available skills:\n")
-	for _, s := range snapshot.ActiveSkills {
-		if s == nil {
-			continue
-		}
-		fmt.Fprintf(&b, "  %s — %s\n", s.Name, s.Description)
-	}
+	// The notification banner is a single-line widget, not a list view —
+	// dumping the full catalog into it renders as an unwrapped wall of
+	// text. SkillsChangedEvent above already gives both TUIs a proper
+	// list rendering, so keep this to a short heads-up.
 	c.emit(chat.ChatNotificationEvent{
-		Message:    b.String(),
+		Message:    fmt.Sprintf("%d skills available", len(skills)),
 		Level:      chat.ChatNotificationInfo,
 		OccurredAt: now,
 	})
@@ -1342,13 +1339,20 @@ func (c *Coordinator) isIdle() bool {
 // loggerWith returns a child logger that carries the given session_id on
 // every log line. Call once per session and reuse.
 func (c *Coordinator) loggerWith(sessionID string) *slog.Logger {
-	return c.logger.With("session_id", sessionID)
+	return c.loggerOrDefault().With("session_id", sessionID)
 }
 
 // loggerWithTurn returns a child logger that carries both session_id and
 // request_id, suitable for use within a single turn.
 func (c *Coordinator) loggerWithTurn(sessionID, requestID string) *slog.Logger {
-	return c.logger.With("session_id", sessionID, "request_id", requestID)
+	return c.loggerOrDefault().With("session_id", sessionID, "request_id", requestID)
+}
+
+func (c *Coordinator) loggerOrDefault() *slog.Logger {
+	if c != nil && c.logger != nil {
+		return c.logger
+	}
+	return slog.Default()
 }
 
 // runTurn is the agentic turn loop. It streams a completion, and if the
@@ -2560,6 +2564,11 @@ func (c *Coordinator) dispatchPluginRequestResponse(event string, sessionID stri
 // notification on the event bus. Plugin manager (or any subscriber)
 // receives these asynchronously.
 func (c *Coordinator) publishPluginLifecycleEvent(event, sessionID string, payload *api.EventPayload) {
+	c.loggerWith(sessionID).Debug(
+		"plugin lifecycle event emitted",
+		"event", event,
+		"payload_kind", pluginPayloadKind(payload),
+	)
 	c.pluginPub.Publish(chat.PluginLifecycleEvent{
 		Event:     event,
 		SessionID: sessionID,
@@ -2568,7 +2577,154 @@ func (c *Coordinator) publishPluginLifecycleEvent(event, sessionID string, paylo
 }
 
 func (c *Coordinator) emit(event chat.ChatEvent) {
+	c.loggerOrDefault().Debug("chat event emitted", chatEventLogAttrs(event)...)
 	c.chatPub.Publish(event)
+}
+
+func shortTypeName(v any) string {
+	name := fmt.Sprintf("%T", v)
+	if idx := strings.LastIndex(name, "."); idx >= 0 {
+		return name[idx+1:]
+	}
+	return name
+}
+
+func chatCommandLogAttrs(cmd chat.ChatCommand) []any {
+	attrs := []any{"command_type", shortTypeName(cmd)}
+	switch c := cmd.(type) {
+	case chat.StartChatSessionCommand:
+		attrs = append(attrs, "session_id", c.SessionID, "provider", c.Config.Provider.Name, "model", c.Config.Model.ID)
+	case chat.SubmitChatPromptCommand:
+		attrs = append(attrs, "session_id", c.SessionID, "request_id", c.RequestID, "prompt_bytes", len(c.Prompt))
+	case chat.SteerChatPromptCommand:
+		attrs = append(attrs, "session_id", c.SessionID, "request_id", c.RequestID, "prompt_bytes", len(c.Prompt))
+	case chat.UpdateChatSessionCommand:
+		attrs = append(attrs, "session_id", c.SessionID)
+		if c.Patch.Model != nil {
+			attrs = append(attrs, "model", c.Patch.Model.ID)
+		}
+		if c.Patch.Provider != nil {
+			attrs = append(attrs, "provider", *c.Patch.Provider)
+		}
+	case chat.CancelChatRequestCommand:
+		attrs = append(attrs, "session_id", c.SessionID, "request_id", c.RequestID)
+	case chat.ResetChatSessionCommand:
+		attrs = append(attrs, "session_id", c.SessionID)
+	case chat.CloseChatSessionCommand:
+		attrs = append(attrs, "session_id", c.SessionID)
+	case chat.ReloadExtensionsCommand:
+		attrs = append(attrs, "requested_at", c.RequestedAt)
+	case chat.RunExtensionCommandCommand:
+		attrs = append(attrs, "name", c.Name, "args_bytes", len(c.Args))
+	case chat.RespondInteractivePromptCommand:
+		attrs = append(attrs, "prompt_request_id", c.RequestID, "confirmed", c.Confirmed, "canceled", c.Canceled, "response_bytes", len(c.Response))
+	case chat.LoadSessionCommand:
+		attrs = append(attrs, "session_id", c.SessionID)
+	case chat.DeleteSessionCommand:
+		attrs = append(attrs, "session_id", c.SessionID)
+	case chat.ExportSessionCommand:
+		attrs = append(attrs, "session_id", c.SessionID, "format", c.Format, "path_set", c.Output != "")
+	case chat.RunSkillCommand:
+		attrs = append(attrs, "session_id", c.SessionID, "skill", c.SkillName, "args_bytes", len(c.Args))
+	case chat.RunAgentCommand:
+		attrs = append(attrs, "session_id", c.SessionID, "agent", c.Name)
+	case chat.RunBashCommand:
+		attrs = append(attrs, "session_id", c.SessionID, "call_id", c.CallID, "command_bytes", len(c.Command), "exclude", c.Exclude)
+	case chat.CancelBashCommand:
+		attrs = append(attrs, "session_id", c.SessionID)
+	}
+	return attrs
+}
+
+func chatEventLogAttrs(event chat.ChatEvent) []any {
+	attrs := []any{"event_type", shortTypeName(event)}
+	switch e := event.(type) {
+	case chat.ChatSessionSnapshotEvent:
+		attrs = append(
+			attrs,
+			"session_id", e.State.SessionID,
+			"request_id", e.State.ActiveRequestID,
+			"status", e.State.Status,
+			"message_count", len(e.State.Messages),
+			"pending_assistant_bytes", len(e.State.PendingAssistant),
+			"tool_count", len(e.State.Tools),
+		)
+	case chat.ChatResponseStartedEvent:
+		attrs = append(attrs, "session_id", e.SessionID, "request_id", e.RequestID)
+	case chat.ChatResponseDeltaEvent:
+		attrs = append(attrs, "session_id", e.SessionID, "request_id", e.RequestID, "delta_bytes", len(e.Delta), "snapshot_bytes", len(e.Snapshot))
+	case chat.ChatReasoningDeltaEvent:
+		attrs = append(attrs, "session_id", e.SessionID, "request_id", e.RequestID, "delta_bytes", len(e.Delta), "snapshot_bytes", len(e.Snapshot))
+	case chat.ChatToolCallDeltaEvent:
+		attrs = append(attrs, "session_id", e.SessionID, "request_id", e.RequestID, "call_id", e.CallID, "index", e.Index, "tool", e.ToolName, "args_summary_bytes", len(e.ArgumentsSummary), "truncated", e.Truncated)
+	case chat.ChatToolExecutionStartedEvent:
+		attrs = append(attrs, "session_id", e.SessionID, "request_id", e.RequestID, "call_id", e.CallID, "tool", e.ToolName, "args_summary_bytes", len(e.ArgumentsSummary))
+	case chat.ChatToolExecutionCompletedEvent:
+		attrs = append(attrs, "session_id", e.SessionID, "request_id", e.RequestID, "call_id", e.CallID, "tool", e.ToolName, "status", e.Status, "is_error", e.IsError, "duration_ms", e.Duration.Milliseconds(), "result_summary_bytes", len(e.ResultSummary), "truncated", e.Truncated)
+	case chat.ChatToolOutputEvent:
+		attrs = append(attrs, "session_id", e.SessionID, "request_id", e.RequestID, "call_id", e.CallID, "chunk_bytes", len(e.Chunk))
+	case chat.ChatResponseCompletedEvent:
+		attrs = append(attrs, "session_id", e.State.SessionID, "request_id", e.RequestID, "finish_reason", e.FinishReason, "message_count", len(e.State.Messages), "total_tokens", e.Usage.TotalTokens)
+	case chat.ChatResponseCancelledEvent:
+		attrs = append(attrs, "session_id", e.State.SessionID, "request_id", e.RequestID, "message_count", len(e.State.Messages))
+	case chat.ChatRuntimeErrorEvent:
+		attrs = append(attrs, "session_id", e.SessionID, "request_id", e.RequestID, "fatal", e.Fatal, "message_bytes", len(e.Message))
+	case chat.ChatNotificationEvent:
+		attrs = append(attrs, "level", e.Level, "message_bytes", len(e.Message))
+	case chat.ExtensionsReloadedEvent:
+		attrs = append(attrs, "extension_count", e.Result.ExtensionCount, "diagnostic_count", len(e.Result.Diagnostics), "command_count", len(e.Result.Commands))
+	case chat.ExtensionCommandsChangedEvent:
+		attrs = append(attrs, "command_count", len(e.Commands))
+	case chat.CommandsChangedEvent:
+		attrs = append(attrs, "command_count", len(e.Commands))
+	case chat.SkillsChangedEvent:
+		attrs = append(attrs, "skill_count", len(e.Skills))
+	case chat.ExtensionCommandResultEvent:
+		attrs = append(attrs, "name", e.Name, "output_bytes", len(e.Output), "has_view", e.View != nil)
+	case chat.ExtensionViewRenderedEvent:
+		attrs = append(attrs, "plugin", e.PluginName, "view_id", e.ViewID, "widget_count", len(e.View.Widgets))
+	case chat.ExtensionViewClosedEvent:
+		attrs = append(attrs, "plugin", e.PluginName, "view_id", e.ViewID)
+	case chat.InteractivePromptRequestedEvent:
+		attrs = append(attrs, "prompt_request_id", e.RequestID, "kind", e.Kind, "title_bytes", len(e.Title), "message_bytes", len(e.Message))
+	case chat.SessionsListedEvent:
+		attrs = append(attrs, "session_count", len(e.Sessions), "has_next_cursor", e.NextCursor != "")
+	case chat.SessionLoadedEvent:
+		attrs = append(attrs, "session_id", e.State.SessionID, "message_count", len(e.State.Messages))
+	case chat.SessionDeletedEvent:
+		attrs = append(attrs, "session_id", e.SessionID)
+	case chat.SessionExportedEvent:
+		attrs = append(attrs, "session_id", e.SessionID, "format", e.Format, "path_set", e.Path != "")
+	}
+	return attrs
+}
+
+func pluginPayloadKind(payload *api.EventPayload) string {
+	if payload == nil {
+		return ""
+	}
+	switch payload.GetKind().(type) {
+	case *api.EventPayload_Session:
+		return "session"
+	case *api.EventPayload_Context:
+		return "context"
+	case *api.EventPayload_Turn:
+		return "turn"
+	case *api.EventPayload_BeforeLlmCall:
+		return "before_llm_call"
+	case *api.EventPayload_AfterLlmCall:
+		return "after_llm_call"
+	case *api.EventPayload_BeforeToolExec:
+		return "before_tool_exec"
+	case *api.EventPayload_AfterToolExec:
+		return "after_tool_exec"
+	case *api.EventPayload_MessageDelta:
+		return "message_delta"
+	case *api.EventPayload_Compaction:
+		return "compaction"
+	default:
+		return shortTypeName(payload.GetKind())
+	}
 }
 
 func normalizedTime(at time.Time) time.Time {

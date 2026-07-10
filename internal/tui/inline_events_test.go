@@ -281,6 +281,18 @@ func TestHandleEvent_RuntimeError_ReachesStatusBar(t *testing.T) {
 	}
 }
 
+func TestNotifyDurationFromChat(t *testing.T) {
+	if got := notifyDurationFromChat(tauchat.ChatNotificationInfo); got != 5*time.Second {
+		t.Fatalf("info duration = %v, want 5s", got)
+	}
+	if got := notifyDurationFromChat(tauchat.ChatNotificationWarn); got != 8*time.Second {
+		t.Fatalf("warn duration = %v, want 8s", got)
+	}
+	if got := notifyDurationFromChat(tauchat.ChatNotificationError); got != 0 {
+		t.Fatalf("error duration = %v, want persistent", got)
+	}
+}
+
 // TestHandleEvent_BashCompletion_ClearsBashRunning guards against a
 // regression where bashRunning/bashCallID were never reset on completion,
 // permanently locking out further "!" commands (and the Esc/Ctrl+C cancel

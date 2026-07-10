@@ -1854,6 +1854,10 @@ func (m *model) submitInput() tea.Cmd {
 		return nil
 	}
 
+	// Record in history — every submitted line is recallable via up-arrow,
+	// slash commands and bash commands included, not just LLM prompts.
+	m.history = append(m.history, text)
+
 	// Slash commands.
 	if strings.HasPrefix(text, "/") {
 		return m.handleSlashCommand(text)
@@ -1871,9 +1875,6 @@ func (m *model) submitInput() tea.Cmd {
 		return m.setNotification("slow down — submit debounced")
 	}
 	m.lastSubmit = time.Now()
-
-	// Record in history.
-	m.history = append(m.history, text)
 
 	// Queue or start a turn.
 	return m.startOrQueueTurn(text)
@@ -2077,6 +2078,7 @@ func (m *model) handleChatEvent(evt tauchat.ChatEvent) tea.Cmd {
 		m.setToolStatus(e.CallID, "running")
 
 	case tauchat.ChatToolExecutionCompletedEvent:
+		m.adoptToolCallID(e.CallID, e.ToolName)
 		status := "done"
 		if e.IsError {
 			status = "error"
@@ -2108,23 +2110,19 @@ func (m *model) handleChatEvent(evt tauchat.ChatEvent) tea.Cmd {
 		return tea.Batch(cmds...)
 
 	case tauchat.ChatResponseCancelledEvent:
-		m.streaming = ""
-		m.reasoning = ""
-		m.tools = nil
+		m.flushInterruptedTurn("chat request cancelled")
 		m.inResponse = false
 		m.steering = false
 		return m.drainTurnQueue()
 
 	case tauchat.ChatRuntimeErrorEvent:
-		// Abandons the in-flight turn's UI state entirely (matches legacy's
-		// clearTurnLocked) — an error means there's nothing left to stream
-		// into, so the streaming/reasoning/tools buffers would otherwise
-		// linger as stale leftovers from the failed turn.
+		// The turn cannot continue, but any text/tools that already streamed
+		// are still useful scrollback. Commit them before clearing the live
+		// buffers so failed in-flight tool groups do not vanish when the next
+		// prompt starts.
+		m.flushInterruptedTurn(e.Message)
 		m.steering = false
 		m.inResponse = false
-		m.streaming = ""
-		m.reasoning = ""
-		m.tools = nil
 		// Shown via the notification banner (above the input area) at error
 		// level with duration 0 (persists until dismissed rather than
 		// silently expiring), and also printed to the scrollback so it
@@ -2205,9 +2203,14 @@ func (m *model) handleChatEvent(evt tauchat.ChatEvent) tea.Cmd {
 		delete(m.panels, e.ViewID)
 		return nil
 
-	// Skills events.
+	// Skills events. Rendered through glamour (like assistant markdown)
+	// rather than appendMessage, so long descriptions wrap with a hanging
+	// indent instead of spilling into one unstyled blob — see
+	// skillsChangedText.
 	case tauchat.SkillsChangedEvent:
-		m.appendMessage("system", skillsChangedText(e.Skills))
+		rendered := m.renderMarkdown(skillsChangedText(e.Skills))
+		m.renderedLines = append(m.renderedLines, strings.Split(rendered, "\n")...)
+		m.viewport.SetContentLines(m.renderedLines)
 		return nil
 
 	default:
@@ -2429,6 +2432,16 @@ func (m *model) upsertToolCall(callID, toolName, argumentsSummary string) {
 			return
 		}
 	}
+	if m.adoptToolCallID(callID, toolName) {
+		for i := range m.tools {
+			if m.tools[i].id == callID {
+				if argumentsSummary != "" {
+					m.tools[i].args += argumentsSummary
+				}
+				return
+			}
+		}
+	}
 	// This tool call is new — any streaming/reasoning text accumulated so
 	// far was authored before it started, so commit it now (see
 	// flushStreamingText) rather than let it render after the tool group
@@ -2441,6 +2454,47 @@ func (m *model) upsertToolCall(callID, toolName, argumentsSummary string) {
 		status:    "pending",
 		startedAt: time.Now(),
 	})
+}
+
+// adoptToolCallID reconciles the synthetic call IDs used before some
+// providers stream a real tool_call.id with the final IDs used by started /
+// completed lifecycle events. Without this, tui2 can keep rendering the
+// early "tool_call_0" row forever while the real call completes under a
+// different ID.
+func (m *model) adoptToolCallID(callID, toolName string) bool {
+	if callID == "" || toolName == "" {
+		return false
+	}
+	for i := range m.tools {
+		if m.tools[i].id == callID {
+			return true
+		}
+	}
+	match := -1
+	for i := range m.tools {
+		t := m.tools[i]
+		if t.name != toolName {
+			continue
+		}
+		if t.status != "pending" && t.status != "running" {
+			continue
+		}
+		if !strings.HasPrefix(t.id, "tool_call_") {
+			continue
+		}
+		if match >= 0 {
+			return false
+		}
+		match = i
+	}
+	if match < 0 {
+		return false
+	}
+	m.tools[match].id = callID
+	if m.expandedID != "" && strings.HasPrefix(m.expandedID, "tool_call_") {
+		m.expandedID = callID
+	}
+	return true
 }
 
 func (m *model) setToolStatus(id, status string) {
@@ -2539,6 +2593,47 @@ func (m *model) flushToolGroup() {
 	m.tools = nil
 	m.focusedTool = -1
 	m.expandedID = ""
+}
+
+// flushInterruptedTurn settles whatever was still live when a turn was
+// cancelled or failed, then commits it to scrollback. Completed/error tools
+// keep their final state; pending/running tools become error rows with the
+// interruption reason so they do not disappear as an unfinished live panel.
+func (m *model) flushInterruptedTurn(reason string) {
+	m.flushStreamingText()
+	if len(m.tools) == 0 {
+		return
+	}
+	for i := range m.tools {
+		t := &m.tools[i]
+		switch t.status {
+		case "done":
+			// Keep completed tools exactly as they resolved.
+		case "error":
+			if strings.TrimSpace(t.result) == "" {
+				t.result = reason
+			}
+		default:
+			t.status = "error"
+			t.result = appendInterruptReason(t.result, reason)
+		}
+		if !t.startedAt.IsZero() && t.elapsed == 0 {
+			t.elapsed = time.Since(t.startedAt)
+		}
+	}
+	m.flushToolGroup()
+}
+
+func appendInterruptReason(result, reason string) string {
+	reason = strings.TrimSpace(reason)
+	if reason == "" {
+		reason = "interrupted"
+	}
+	result = strings.TrimRight(result, "\n")
+	if result == "" {
+		return reason
+	}
+	return result + "\n" + reason
 }
 
 // bashHistoryPrefix/bashHistoryInfix delimit the synthetic message format
@@ -3228,13 +3323,19 @@ func (m *model) toggleToolExpansion() tea.Cmd {
 
 // --- notification helper ---------------------------------------------------
 
+const (
+	defaultNotificationClearDelay = 5 * time.Second
+	defaultNotifyWarnDuration     = 8 * time.Second
+	defaultNotifyInfoDuration     = 5 * time.Second
+)
+
 // notificationClearDelay is the auto-dismiss duration for transient
 // notifications set via setNotification. Exported as a package variable
 // so tests can set it to time.Millisecond (via TestMain) and avoid a
-// real 4-second sleep per test through drainCmd.
-var notificationClearDelay = 0 * time.Second
+// real multi-second sleep per test through drainCmd.
+var notificationClearDelay = defaultNotificationClearDelay
 
-// setNotification sets an info-level notification that does not auto-clear.
+// setNotification sets an info-level notification that auto-clears.
 // For a level (drives its color) or a custom duration — e.g. an error that
 // should persist until superseded rather than silently vanish — use
 // setNotificationWithLevel.
@@ -3284,8 +3385,8 @@ func notifyLevelFromChat(level tauchat.ChatNotificationLevel) notify.Level {
 // tea.Tick duration now that it schedules a genuine auto-clear Cmd instead
 // of being handed to the old (never-rendered) notifyQ.
 var (
-	notifyWarnDuration = 0 * time.Second
-	notifyInfoDuration = 0 * time.Second
+	notifyWarnDuration = defaultNotifyWarnDuration
+	notifyInfoDuration = defaultNotifyInfoDuration
 )
 
 func notifyDurationFromChat(level tauchat.ChatNotificationLevel) time.Duration {
@@ -3862,15 +3963,16 @@ func sessionInfoText(s tauchat.SessionSummary) string {
 // internal/tui/inline_events.go's handleSkillsChanged.
 func skillsChangedText(skills []tauchat.SkillInfo) string {
 	if len(skills) == 0 {
-		return "no skills available"
+		return "_no skills available_"
 	}
 	var b strings.Builder
-	b.WriteString("Available Skills:")
+	b.WriteString("**Available Skills**\n\n")
 	for _, skill := range skills {
-		fmt.Fprintf(&b, "\n  %-20s %s", skill.Name, skill.Description)
+		fmt.Fprintf(&b, "- **%s** — %s", skill.Name, skill.Description)
 		if skill.Scope != "" {
-			fmt.Fprintf(&b, " (%s)", skill.Scope)
+			fmt.Fprintf(&b, " _(%s)_", skill.Scope)
 		}
+		b.WriteString("\n")
 	}
 	return b.String()
 }

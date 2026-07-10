@@ -623,6 +623,30 @@ func TestHandleChatEventToolExecutionStarted(t *testing.T) {
 	}
 }
 
+func TestHandleChatEventToolExecutionStartedAdoptsFinalCallID(t *testing.T) {
+	m := newTestModel(&fakeRuntime{}, nil)
+	m.handleChatEvent(tauchat.ChatToolCallDeltaEvent{
+		CallID:           "tool_call_0",
+		ToolName:         "tau-plugin-hello__hello_greet",
+		ArgumentsSummary: `{"name":"Sam"}`,
+	})
+
+	m.handleChatEvent(tauchat.ChatToolExecutionStartedEvent{
+		CallID:   "call_real",
+		ToolName: "tau-plugin-hello__hello_greet",
+	})
+
+	if len(m.tools) != 1 {
+		t.Fatalf("expected lifecycle event to adopt existing synthetic row, got %d tools: %+v", len(m.tools), m.tools)
+	}
+	if m.tools[0].id != "call_real" {
+		t.Fatalf("tool id = %q, want final call id", m.tools[0].id)
+	}
+	if m.tools[0].status != "running" {
+		t.Fatalf("tool status = %q, want running", m.tools[0].status)
+	}
+}
+
 func TestHandleChatEventToolExecutionStartedCreatesMissingTool(t *testing.T) {
 	m := newTestModel(&fakeRuntime{}, nil)
 
@@ -666,6 +690,34 @@ func TestHandleChatEventToolExecutionCompletedDone(t *testing.T) {
 	}
 	if m.tools[0].result != "success" {
 		t.Fatalf("tool result = %q, want %q", m.tools[0].result, "success")
+	}
+}
+
+func TestHandleChatEventToolExecutionCompletedAdoptsFinalCallID(t *testing.T) {
+	m := newTestModel(&fakeRuntime{}, nil)
+	m.handleChatEvent(tauchat.ChatToolCallDeltaEvent{
+		CallID:           "tool_call_0",
+		ToolName:         "tau-plugin-hello__hello_greet",
+		ArgumentsSummary: `{"name":"Sam"}`,
+	})
+
+	m.handleChatEvent(tauchat.ChatToolExecutionCompletedEvent{
+		CallID:        "call_real",
+		ToolName:      "tau-plugin-hello__hello_greet",
+		ResultSummary: "Hello, Sam!",
+	})
+
+	if len(m.tools) != 1 {
+		t.Fatalf("expected completed event to adopt existing synthetic row, got %d tools: %+v", len(m.tools), m.tools)
+	}
+	if m.tools[0].id != "call_real" {
+		t.Fatalf("tool id = %q, want final call id", m.tools[0].id)
+	}
+	if m.tools[0].status != "done" {
+		t.Fatalf("tool status = %q, want done", m.tools[0].status)
+	}
+	if m.tools[0].result != "Hello, Sam!" {
+		t.Fatalf("tool result = %q, want final summary", m.tools[0].result)
 	}
 }
 
@@ -1167,7 +1219,12 @@ func TestHandleChatEventResponseCancelled(t *testing.T) {
 	m := newTestModel(&fakeRuntime{}, nil)
 	m.streaming = "partial"
 	m.reasoning = "thinking"
-	m.tools = []toolState{{id: "t1"}}
+	m.tools = []toolState{{
+		id:        "t1",
+		name:      "read",
+		status:    "running",
+		startedAt: time.Now().Add(-time.Second),
+	}}
 	m.inResponse = true
 	m.steering = true
 
@@ -1188,6 +1245,12 @@ func TestHandleChatEventResponseCancelled(t *testing.T) {
 	if m.steering {
 		t.Fatal("steering should be false on cancel")
 	}
+	joined := stripANSI(strings.Join(m.renderedLines, "\n"))
+	for _, want := range []string{"partial", "read", "chat request cancelled"} {
+		if !strings.Contains(joined, want) {
+			t.Fatalf("expected cancelled turn scrollback to contain %q, got %q", want, joined)
+		}
+	}
 }
 
 func TestHandleChatEventRuntimeError(t *testing.T) {
@@ -1196,7 +1259,10 @@ func TestHandleChatEventRuntimeError(t *testing.T) {
 	m.steering = true
 	m.streaming = "partial"
 	m.reasoning = "thinking"
-	m.tools = []toolState{{id: "t1"}}
+	m.tools = []toolState{
+		{id: "t1", name: "shell", status: "done", result: "ok"},
+		{id: "t2", name: "read", status: "pending", startedAt: time.Now().Add(-time.Second)},
+	}
 
 	m.handleChatEvent(tauchat.ChatRuntimeErrorEvent{Message: "API error"})
 
@@ -1212,9 +1278,20 @@ func TestHandleChatEventRuntimeError(t *testing.T) {
 	if m.notification != "API error" || m.notificationLevel != notify.LevelError {
 		t.Fatalf("expected an error-level notification banner, got %q level=%v", m.notification, m.notificationLevel)
 	}
-	joined := strings.Join(m.renderedLines, "\n")
-	if !strings.Contains(joined, "API error") {
-		t.Fatalf("expected the error to be printed to scrollback, got %q", joined)
+	joined := stripANSI(strings.Join(m.renderedLines, "\n"))
+	for _, want := range []string{"partial", "2 tool calls", "API error"} {
+		if !strings.Contains(joined, want) {
+			t.Fatalf("expected runtime error scrollback to contain %q, got %q", want, joined)
+		}
+	}
+	if len(m.committedGroups) != 1 {
+		t.Fatalf("expected interrupted tool batch to be committed, got %d groups", len(m.committedGroups))
+	}
+	if got := m.committedGroups[0].tools[1].status; got != "error" {
+		t.Fatalf("interrupted pending tool status = %q, want error", got)
+	}
+	if got := m.committedGroups[0].tools[1].result; !strings.Contains(got, "API error") {
+		t.Fatalf("interrupted pending tool result = %q, want API error", got)
 	}
 }
 
@@ -1493,7 +1570,7 @@ func TestHandleChatEventSkillsChanged(t *testing.T) {
 	}})
 
 	joined := strings.Join(m.renderedLines, "\n")
-	for _, want := range []string{"Available Skills:", "python", "Python helper", "(project)", "go", "Go helper"} {
+	for _, want := range []string{"Available Skills", "python", "Python helper", "(project)", "go", "Go helper"} {
 		if !strings.Contains(stripANSI(joined), want) {
 			t.Fatalf("rendered skills list missing %q, got %q", want, joined)
 		}
@@ -1561,6 +1638,9 @@ func TestSubmitInputSlashCommand(t *testing.T) {
 	if cmd == nil {
 		t.Fatal("expected a Cmd for /clear")
 	}
+	if len(m.history) != 1 || m.history[0] != "/clear" {
+		t.Fatalf("history = %v, want [/clear]", m.history)
+	}
 }
 
 func TestSubmitInputBashCommand(t *testing.T) {
@@ -1573,6 +1653,9 @@ func TestSubmitInputBashCommand(t *testing.T) {
 	}
 	if !m.bashRunning {
 		t.Fatal("bashRunning should be true after !command")
+	}
+	if len(m.history) != 1 || m.history[0] != "!ls -la" {
+		t.Fatalf("history = %v, want [!ls -la]", m.history)
 	}
 }
 
@@ -4030,6 +4113,18 @@ func TestSetNotificationReturnsTimerCmd(t *testing.T) {
 	}
 	if m.notificationGen == 0 {
 		t.Fatal("notificationGen should be > 0")
+	}
+}
+
+func TestNotificationDefaultDurationsAreTransient(t *testing.T) {
+	if defaultNotificationClearDelay <= 0 {
+		t.Fatalf("defaultNotificationClearDelay = %v, want positive", defaultNotificationClearDelay)
+	}
+	if defaultNotifyInfoDuration <= 0 {
+		t.Fatalf("defaultNotifyInfoDuration = %v, want positive", defaultNotifyInfoDuration)
+	}
+	if defaultNotifyWarnDuration <= 0 {
+		t.Fatalf("defaultNotifyWarnDuration = %v, want positive", defaultNotifyWarnDuration)
 	}
 }
 

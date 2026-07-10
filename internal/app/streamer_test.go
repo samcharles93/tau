@@ -65,3 +65,26 @@ func TestAggregateModelRefsTagsProvider(t *testing.T) {
 		}
 	}
 }
+
+func TestBuildToolCallsUsesPresentSparseIndexes(t *testing.T) {
+	calls := buildToolCalls(map[int]*assembledToolCall{
+		1: {
+			id:        "toolu_1",
+			name:      "find",
+			arguments: `{"pattern":"*.go"}`,
+		},
+	})
+
+	if len(calls) != 1 {
+		t.Fatalf("tool call count = %d, want 1", len(calls))
+	}
+	if calls[0].ID != "toolu_1" {
+		t.Fatalf("tool call ID = %q, want toolu_1", calls[0].ID)
+	}
+	if calls[0].Function.Name != "find" {
+		t.Fatalf("tool call name = %q, want find", calls[0].Function.Name)
+	}
+	if calls[0].Function.Arguments != `{"pattern":"*.go"}` {
+		t.Fatalf("tool call arguments = %q", calls[0].Function.Arguments)
+	}
+}
