@@ -195,18 +195,19 @@ func TestCoordinatorSteeringInjection(t *testing.T) {
 	require.NoError(t, err)
 	close(steerSent)
 
-	// Wait for coordinator turn loop to complete.
-	time.Sleep(100 * time.Millisecond)
-
-	// The last messages should contain the steering message.
-	found := false
-	for _, msg := range streamer.getLastMessages() {
-		if msg.Role == chat.ChatRoleUser && msg.Content == "steering message" {
-			found = true
-			break
+	// Poll until the steering message shows up in the streamer's last-seen
+	// messages instead of sleeping a fixed guess — a fixed sleep is a race
+	// against however long the turn loop actually takes on the machine
+	// running the test, and was observed flaking under CI's slower/more
+	// contended scheduler even though it reliably passed locally.
+	require.Eventually(t, func() bool {
+		for _, msg := range streamer.getLastMessages() {
+			if msg.Role == chat.ChatRoleUser && msg.Content == "steering message" {
+				return true
+			}
 		}
-	}
-	require.True(t, found, "steering message should be injected in conversation history")
+		return false
+	}, 2*time.Second, 10*time.Millisecond, "steering message should be injected in conversation history")
 }
 
 func TestCoordinatorDispatchesSessionLifecycleHooks(t *testing.T) {

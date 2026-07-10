@@ -83,17 +83,24 @@ func TestBridgeBroadcastsEventToClient(t *testing.T) {
 	}
 	defer clientConn.Close()
 
-	// Publish a notification on the bus from a separate client.
-	pub := eventbus.Publish[tauchat.ChatEvent](bus.Client("test"))
-	pub.Publish(tauchat.ChatNotificationEvent{Message: "hi", Level: tauchat.ChatNotificationInfo, OccurredAt: time.Now().UTC()})
-	pub.Close()
-
 	clientConn.SetReadDeadline(time.Now().Add(2 * time.Second))
 
-	// First message is the init envelope.
+	// Read the init envelope first. UpgradeHTTP registers the client
+	// (addClient, making it eligible for broadcastEvent's fan-out) strictly
+	// before writing this message, so receiving it is proof the server has
+	// finished registration — not just that the WebSocket handshake
+	// completed. Publishing before this point races the bus delivering the
+	// event against the server reaching addClient(); on a fast local
+	// machine the publish reliably loses that race, but it flaked on a
+	// slower/more contended CI runner, dropping the event for this client.
 	mt, _, err := clientConn.ReadMessage()
 	require.NoError(t, err)
 	assert.Equal(t, websocket.TextMessage, mt)
+
+	// Now publish the notification — the client is guaranteed registered.
+	pub := eventbus.Publish[tauchat.ChatEvent](bus.Client("test"))
+	pub.Publish(tauchat.ChatNotificationEvent{Message: "hi", Level: tauchat.ChatNotificationInfo, OccurredAt: time.Now().UTC()})
+	pub.Close()
 
 	// Next message should be the broadcast event.
 	mt, data, err := clientConn.ReadMessage()
