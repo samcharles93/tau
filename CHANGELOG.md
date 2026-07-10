@@ -1,5 +1,19 @@
 # Changelog
 
+## [0.17.0](https://github.com/samcharles93/tau/compare/v0.16.2...v0.17.0) (2026-07-10)
+
+
+### Features
+
+* add self update command ([7b1b489](https://github.com/samcharles93/tau/commit/7b1b4899c7b0d74b14af1f1ebe2ebb34c2a05524))
+* **agent:** wire execution for agent-authored subagent definitions ([aaf9a6d](https://github.com/samcharles93/tau/commit/aaf9a6debb2b16313b98c973e974d87294f57ab4))
+* **tui2:** interactive prompt system, GitHub Enterprise Copilot login ([df76f35](https://github.com/samcharles93/tau/commit/df76f359f16d9c52b0647bf19ac46c7e652e71d7))
+
+
+### Bug Fixes
+
+* improve TUI tool tracking, logging, and notifications ([64e50fe](https://github.com/samcharles93/tau/commit/64e50fe44ed5dcb0094bc4e0531e6b2aeb9be15b))
+
 ## [0.16.2](https://github.com/samcharles93/tau/compare/v0.16.1...v0.16.2) (2026-07-10)
 
 
