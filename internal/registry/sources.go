@@ -10,7 +10,7 @@ import (
 // TUI and web UI. These are the single source of truth for command registration;
 // the TUI's inline_commands.go hardcodes the same set for dispatch but the
 // registry feed is what drives the web UI completion menu and /help output.
-func builtinCommands() []Command {
+func builtinCommands(cwd string) []Command {
 	cmds := []Command{
 		{Name: "model", Label: "/model", Description: "switch model", AcceptsArgs: true},
 		{Name: "system", Label: "/system", Description: "set the system prompt", AcceptsArgs: true},
@@ -22,25 +22,53 @@ func builtinCommands() []Command {
 		{Name: "clear", Label: "/clear", Description: "start a fresh session [alias: /new, /reset]", AcceptsArgs: false},
 		{Name: "help", Label: "/help", Description: "show available commands", AcceptsArgs: false},
 	}
-	cmds = append(cmds, agentCommands()...)
+	cmds = append(cmds, agentCommands(cwd)...)
 	return cmds
 }
 
 // agentCommands adapts tau's built-in agent definitions (internal/agent/spec)
-// into registry Commands, skipping any marked user-invocable: false.
-func agentCommands() []Command {
+// into registry Commands, skipping any marked user-invocable: false, then
+// merges in user- and project-level agent definitions discovered on disk
+// under ~/.agents/agents/ and <cwd>/.agents/agents/.
+//
+// Discovered definitions are listed here for visibility only — invoking one
+// still resolves through agentspec.Lookup, which only searches built-ins, so
+// a discovered agent will report "agent not found" until execution is wired
+// up (tracked separately, since running an agent-authored definition needs a
+// tool-allowlist safety guard first).
+func agentCommands(cwd string) []Command {
 	defs, err := agentspec.Builtins()
 	if err != nil {
-		return nil
+		defs = nil
 	}
+	builtinNames := make(map[string]bool, len(defs))
 	cmds := make([]Command, 0, len(defs))
 	for _, def := range defs {
+		builtinNames[def.Name] = true
 		if !def.UserInvocable {
 			continue
 		}
 		cmds = append(cmds, Command{
 			Name:        def.Name,
 			Label:       "/" + def.Name,
+			Description: def.Description,
+			AcceptsArgs: true,
+		})
+	}
+
+	discovered, _ := agentspec.DiscoverFromDisk(agentspec.DefaultSources(cwd))
+	for _, def := range discovered {
+		if builtinNames[def.Name] || !def.UserInvocable {
+			continue // built-in takes precedence
+		}
+		prefix := userCommandPrefix
+		if def.Scope == skills.ScopeProject {
+			prefix = projectCommandPrefix
+		}
+		name := prefix + def.Name
+		cmds = append(cmds, Command{
+			Name:        name,
+			Label:       "/" + name,
 			Description: def.Description,
 			AcceptsArgs: true,
 		})

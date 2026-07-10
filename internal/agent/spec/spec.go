@@ -79,6 +79,15 @@ type Definition struct {
 
 	// Body is the unrendered Go text/template prompt.
 	Body string
+
+	// Scope is set by DiscoverFromDisk for filesystem-loaded definitions
+	// (skills.ScopeUser or skills.ScopeProject). Zero value for embedded
+	// built-ins.
+	Scope skills.Scope
+
+	// SourcePath is the file a filesystem-loaded definition was parsed
+	// from. Empty for embedded built-ins.
+	SourcePath string
 }
 
 // frontmatter mirrors Definition's fields for YAML decoding. UserInvocable is
