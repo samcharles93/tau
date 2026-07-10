@@ -48,6 +48,7 @@ type ChatOptions struct {
 	NoWeb           bool     // --no-web: do not start web UI
 	SkillDirs       []string // --skill-dir: additional skill directories
 	NewTUI          bool     // --new-tui: use the new Bubbletea-based TUI
+	Ephemeral       bool     // --ephemeral: do not persist this session to the session store
 	// Logger is the root logger for the session. When nil, slog.Default() is
 	// used. Each subsystem derives a named child (component=xxx) from it.
 	Logger *slog.Logger
@@ -699,6 +700,7 @@ func buildCoordinator(ctx context.Context, cfg coordinatorConfig) (*agent.Coordi
 		Registry:              registry,
 		InteractiveUI:         cfg.InteractiveUI,
 		SessionManager:        cfg.SessionManager,
+		NoPersist:             cfg.ChatOptions.Ephemeral,
 		AutoExportJSONL:       cfg.AutoExportJSONL,
 		StartupEvents:         cfg.StartupEvents,
 		ProjectDir:            cwd,

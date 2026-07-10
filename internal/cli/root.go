@@ -129,6 +129,11 @@ func NewRootCommand(version string) *urfavecli.Command {
 				Name:  "skill-dir",
 				Usage: "Additional skill directories (repeatable)",
 			},
+			&urfavecli.BoolFlag{
+				Name:    "ephemeral",
+				Usage:   "Do not persist this session to the session store",
+				Sources: urfavecli.EnvVars("TAU_EPHEMERAL"),
+			},
 		},
 		Action: func(ctx context.Context, cmd *urfavecli.Command) error {
 			// Support explicit provider:model syntax (preferred), e.g.
@@ -204,5 +209,6 @@ func chatOptionsFromCmd(cmd *urfavecli.Command, cfg tauconfig.Config, provider t
 		WebPort:         cmd.Int("port"),
 		NoWeb:           cmd.Bool("no-web"),
 		SkillDirs:       cmd.StringSlice("skill-dir"),
+		Ephemeral:       cmd.Bool("ephemeral"),
 	}
 }

@@ -68,6 +68,7 @@ type Coordinator struct {
 	uiBridge          tools.UIBridge
 	extensionReloader chat.ExtensionReloader
 	sessionManager    *sessions.Manager
+	noPersist         bool
 	autoExportJSONL   bool
 	onClose           func()
 	onPluginEvent     func(event string, sessionID string, payload *api.EventPayload) *api.EventResponse
@@ -138,9 +139,13 @@ type CoordinatorConfig struct {
 	InteractiveUI     bool
 	ExtensionReloader chat.ExtensionReloader
 	SessionManager    *sessions.Manager
-	AutoExportJSONL   bool
-	OnClose           func()
-	StartupEvents     []chat.ChatEvent
+	// NoPersist skips writing session state to the store on close/shutdown
+	// (--ephemeral). Zero value (false) preserves today's persist-by-default
+	// behaviour for every existing caller.
+	NoPersist       bool
+	AutoExportJSONL bool
+	OnClose         func()
+	StartupEvents   []chat.ChatEvent
 
 	// ProjectDir is the project root directory containing .tau.yaml.
 	// When set, provider/model changes from the UI are persisted to the local
@@ -232,6 +237,7 @@ func NewCoordinator(ctx context.Context, cfg CoordinatorConfig) (*Coordinator, e
 		interactiveUI:     cfg.InteractiveUI,
 		extensionReloader: cfg.ExtensionReloader,
 		sessionManager:    cfg.SessionManager,
+		noPersist:         cfg.NoPersist,
 		autoExportJSONL:   cfg.AutoExportJSONL,
 		onClose:           cfg.OnClose,
 		onPluginEvent:     cfg.OnPluginEvent,
@@ -2701,7 +2707,7 @@ func (c *Coordinator) handleExportSession(cmd chat.ExportSessionCommand) {
 // close and on forced shutdown. Errors are logged but not surfaced to the TUI —
 // persistence is best-effort.
 func (c *Coordinator) persistSession(state chat.ChatSessionState, duration time.Duration) {
-	if c.sessionManager == nil {
+	if c.sessionManager == nil || c.noPersist {
 		return
 	}
 
