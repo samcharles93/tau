@@ -1,5 +1,14 @@
 # Changelog
 
+## [0.16.1](https://github.com/samcharles93/tau/compare/v0.16.0...v0.16.1) (2026-07-10)
+
+
+### Bug Fixes
+
+* **agent:** fix race in persist tests caught by task test:race ([7d9dff2](https://github.com/samcharles93/tau/commit/7d9dff2d645c954656e0e6353746afd76632cac7))
+* **ci:** remove machine-local ai-sdk path from go.work ([d4406e9](https://github.com/samcharles93/tau/commit/d4406e94625efeb3488b680a2dc63460a20bcfe4))
+* **cli:** explain *why* a configured provider is unavailable ([fea3fe7](https://github.com/samcharles93/tau/commit/fea3fe798d326723ff75a7c9f7b6c791b9fbc6ca))
+
 ## [0.16.0](https://github.com/samcharles93/tau/compare/v0.15.1...v0.16.0) (2026-07-10)
 
 
