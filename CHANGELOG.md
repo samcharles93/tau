@@ -1,5 +1,24 @@
 # Changelog
 
+## [0.16.0](https://github.com/samcharles93/tau/compare/v0.15.1...v0.16.0) (2026-07-10)
+
+
+### Features
+
+* **agent:** discover agent-authored subagent definitions from disk ([e9234c7](https://github.com/samcharles93/tau/commit/e9234c793baf92525c1c35c924f51bf9fc90f2f8))
+* **chat:** surface cached prompt tokens in usage and cost accounting ([0ee2a39](https://github.com/samcharles93/tau/commit/0ee2a395777a6fd921a626f544116bf9a7d102ec))
+* **cli:** add --ephemeral flag to skip session persistence ([9eaf566](https://github.com/samcharles93/tau/commit/9eaf5664afe97f23021c45ffa5e220e7b53f3d33))
+* **providers:** add OAuth device-code login for Copilot and Codex ([cb9b321](https://github.com/samcharles93/tau/commit/cb9b321134588d9af16a34ab8bd86ea50bd44aed))
+
+
+### Bug Fixes
+
+* **agent:** emit tool execution started event before running the tool ([6c12846](https://github.com/samcharles93/tau/commit/6c128460c2327f0edf7168b6c97b04b5eab79fd2))
+* **app:** give live-discovered ollama models real reasoning effort levels ([ee8a1e0](https://github.com/samcharles93/tau/commit/ee8a1e026badf8f4929708574774a9ff08d9a506))
+* **config:** default ui.show_reasoning to true ([a42bbb1](https://github.com/samcharles93/tau/commit/a42bbb15341224176471a40bf445e17166e56179))
+* **providers:** forward Codex account-id header; stop auto-dismissing notifications ([e2b001e](https://github.com/samcharles93/tau/commit/e2b001e84b6a58b2d986394af1b0090d9ab483c0))
+* **tui2:** move the steer hint out of the input box into the notification area ([6d50444](https://github.com/samcharles93/tau/commit/6d50444b8ec6aab1e49149eac70377cb2b6b0266))
+
 ## [0.15.1](https://github.com/samcharles93/tau/compare/v0.15.0...v0.15.1) (2026-07-08)
 
 
