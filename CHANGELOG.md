@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.16.2](https://github.com/samcharles93/tau/compare/v0.16.1...v0.16.2) (2026-07-10)
+
+
+### Bug Fixes
+
+* **test:** remove two CI-only flaky-test races ([f5c0c2b](https://github.com/samcharles93/tau/commit/f5c0c2be7b7b3c57a6150e9b8b6e2b82097ae25f))
+
 ## [0.16.1](https://github.com/samcharles93/tau/compare/v0.16.0...v0.16.1) (2026-07-10)
 
 
