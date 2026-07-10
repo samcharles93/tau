@@ -24,6 +24,7 @@ type webServerResult struct {
 // server result and the reachable URL, or empty values if the web UI is disabled
 // or fails to start. The caller is responsible for calling Shutdown/Wait.
 func startWebUI(
+	ctx context.Context,
 	runtime webbridge.Runtime,
 	bus *eventbus.Bus,
 	opts ChatOptions,
@@ -59,7 +60,7 @@ func startWebUI(
 		addr = "127.0.0.1:0"
 	}
 
-	webCtx, webCancel := context.WithCancel(context.Background())
+	webCtx, webCancel := context.WithCancel(ctx)
 	webSrv := webserver.New(addr, bridge, spa.Handler(), logger)
 	bound, err := webSrv.Start(webCtx)
 	if err != nil {

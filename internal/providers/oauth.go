@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"net/http"
 	"net/url"
 	"slices"
@@ -713,6 +714,7 @@ func jwtClaims(token string) map[string]any {
 	}
 	var claims map[string]any
 	if err := json.Unmarshal(payload, &claims); err != nil {
+		slog.Debug("jwtClaims: unmarshal failed", "error", err)
 		return nil
 	}
 	return claims

@@ -319,7 +319,7 @@ func RunChat(ctx context.Context, opts ChatOptions) error {
 	var webShutdown func()
 	var webWait func()
 	if !opts.NoWeb {
-		webRes, err := startWebUI(coordinator, bus, opts, sessionID, model.ID, available, tauconfig.ProviderNames(opts.Config), initialCommands, initialSkills, result.ExtensionCommands, slog.Default())
+		webRes, err := startWebUI(ctx, coordinator, bus, opts, sessionID, model.ID, available, tauconfig.ProviderNames(opts.Config), initialCommands, initialSkills, result.ExtensionCommands, slog.Default())
 		if err != nil {
 			slog.Warn("web ui failed", "err", err)
 		} else if webRes != nil {

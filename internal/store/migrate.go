@@ -13,9 +13,7 @@ const currentSchemaVersion = 4
 
 // Migrate runs all pending schema migrations in order. It is idempotent —
 // already-applied migrations are skipped.
-func Migrate(db *sql.DB) error {
-	ctx := context.Background()
-
+func Migrate(ctx context.Context, db *sql.DB) error {
 	if err := ensureSchemaVersionTable(db, ctx); err != nil {
 		return err
 	}

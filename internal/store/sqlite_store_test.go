@@ -347,11 +347,11 @@ func TestSQLiteStore_MigrationIdempotent(t *testing.T) {
 	tmpDir := t.TempDir()
 	dbPath := filepath.Join(tmpDir, "test.db")
 
-	s1, err := store.NewSQLiteStore(dbPath, tmpDir)
+	s1, err := store.NewSQLiteStore(context.Background(), dbPath, tmpDir)
 	require.NoError(t, err)
 	require.NoError(t, s1.Close())
 
-	s2, err := store.NewSQLiteStore(dbPath, tmpDir)
+	s2, err := store.NewSQLiteStore(context.Background(), dbPath, tmpDir)
 	require.NoError(t, err)
 	require.NoError(t, s2.Close())
 }
@@ -391,7 +391,7 @@ func newTestStore(t *testing.T) *store.SQLiteStore {
 	t.Helper()
 	tmpDir := t.TempDir()
 	dbPath := filepath.Join(tmpDir, "test.db")
-	s, err := store.NewSQLiteStore(dbPath, tmpDir)
+	s, err := store.NewSQLiteStore(context.Background(), dbPath, tmpDir)
 	require.NoError(t, err)
 	t.Cleanup(func() { s.Close() })
 	return s

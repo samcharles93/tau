@@ -730,7 +730,7 @@ func buildCoordinator(ctx context.Context, cfg coordinatorConfig) (*agent.Coordi
 			return pluginMgr.DispatchEvent(ctx, event, sessionID, payload)
 		},
 		OnClose: func() {
-			pluginMgr.Unload()
+			pluginMgr.Unload(context.Background())
 			pluginBusClient.Close()
 			pluginHostClient.Close()
 		},

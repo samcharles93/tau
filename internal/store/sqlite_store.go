@@ -24,7 +24,7 @@ type SQLiteStore struct {
 
 // NewSQLiteStore opens or creates the SQLite database at dbPath and runs
 // pending migrations. sessionsDir is where JSONL export files are written.
-func NewSQLiteStore(dbPath, sessionsDir string) (*SQLiteStore, error) {
+func NewSQLiteStore(ctx context.Context, dbPath, sessionsDir string) (*SQLiteStore, error) {
 	dsn := dbPath + "?_journal_mode=WAL&_busy_timeout=5000&_foreign_keys=ON"
 	db, err := sql.Open("sqlite", dsn)
 	if err != nil {
@@ -32,7 +32,6 @@ func NewSQLiteStore(dbPath, sessionsDir string) (*SQLiteStore, error) {
 	}
 
 	// Belt and suspenders: enforce WAL mode and foreign keys after open.
-	ctx := context.Background()
 	if _, err := db.ExecContext(ctx, "PRAGMA journal_mode=WAL"); err != nil {
 		db.Close()
 		return nil, fmt.Errorf("store: enable WAL mode: %w", err)
@@ -49,7 +48,7 @@ func NewSQLiteStore(dbPath, sessionsDir string) (*SQLiteStore, error) {
 	db.SetMaxOpenConns(1)
 	db.SetMaxIdleConns(1)
 
-	if err := Migrate(db); err != nil {
+	if err := Migrate(ctx, db); err != nil {
 		db.Close()
 		return nil, err
 	}

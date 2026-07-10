@@ -49,7 +49,7 @@ func OpenStore() (store.SessionStore, error) {
 		return nil, fmt.Errorf("creating sessions directory: %w", err)
 	}
 	dbPath := config.SessionsDBPath()
-	return store.NewSQLiteStore(dbPath, sessionsDir)
+	return store.NewSQLiteStore(context.Background(), dbPath, sessionsDir)
 }
 
 // List returns paginated session summaries as chat types, newest first.

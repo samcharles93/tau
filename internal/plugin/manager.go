@@ -207,7 +207,7 @@ func (m *Manager) Load(ctx context.Context) error {
 
 // ReloadExtensions implements chat.ExtensionReloader.
 func (m *Manager) ReloadExtensions(ctx context.Context, idle bool) (chat.ExtensionReloadResult, error) {
-	m.Unload()
+	m.Unload(ctx)
 	if err := m.Load(ctx); err != nil {
 		return chat.ExtensionReloadResult{}, err
 	}
@@ -397,7 +397,7 @@ func mergeResponses(responses []*api.EventResponse) *api.EventResponse {
 }
 
 // Unload stops all plugins and releases their resources.
-func (m *Manager) Unload() {
+func (m *Manager) Unload(ctx context.Context) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
@@ -407,7 +407,7 @@ func (m *Manager) Unload() {
 		if m.cfg.ToolRegistry != nil {
 			m.cfg.ToolRegistry.UnregisterPluginTools(name)
 		}
-		m.host.closeAllViewsForPlugin(context.Background(), name)
+		m.host.closeAllViewsForPlugin(ctx, name)
 	}
 
 	for name, client := range m.clients {

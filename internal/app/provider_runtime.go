@@ -2,6 +2,7 @@ package app
 
 import (
 	"context"
+	"fmt"
 	"sync"
 
 	"github.com/samcharles93/ai-sdk/runtime"
@@ -46,10 +47,16 @@ func (p *providerRuntime) snapshot() (*runtime.Runtime, []tauconfig.ProviderConf
 // rebuilds the runtime around them, and force-refreshes the model catalogue.
 // On success the new runtime and provider set are swapped in atomically; on
 // failure the existing runtime is left untouched. Safe for concurrent use.
-func (p *providerRuntime) reload(_ context.Context) error {
+func (p *providerRuntime) reload(ctx context.Context) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	cfg, _, err := providers.Effective()
 	if err != nil {
 		return err
+	}
+	if len(cfg.Providers) == 0 {
+		return fmt.Errorf("providerRuntime.reload: no providers configured, refusing to swap")
 	}
 	// newRuntimeForProviders loads the embedded model snapshot, so the rebuilt
 	// runtime sees every provider just enabled without any network access.

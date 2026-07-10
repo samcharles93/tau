@@ -352,7 +352,7 @@ func TestUnload_ClosesOpenViewsForEveryPlugin(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	m.Unload()
+	m.Unload(context.Background())
 
 	if len(fvr.closed) != 2 {
 		t.Errorf("expected 2 views closed on unload, got %d: %v", len(fvr.closed), fvr.closed)

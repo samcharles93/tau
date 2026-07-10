@@ -20,7 +20,7 @@ import (
 func newTestSessionManager(t *testing.T) *sessions.Manager {
 	t.Helper()
 	dir := t.TempDir()
-	rawStore, err := store.NewSQLiteStore(filepath.Join(dir, "sessions.db"), dir)
+	rawStore, err := store.NewSQLiteStore(context.Background(), filepath.Join(dir, "sessions.db"), dir)
 	require.NoError(t, err)
 	mgr := sessions.NewManager(rawStore)
 	t.Cleanup(func() { _ = mgr.Close() })
