@@ -407,6 +407,9 @@ func (m *model) handleCompletionKey(msg tea.KeyPressMsg) (tea.Cmd, bool) {
 		m.compToken = token
 		m.compSelected = 0
 	}
+	if m.compDismissed && m.compDismissedToken == token {
+		return nil, false
+	}
 	if m.compSelected < 0 || m.compSelected >= len(rows) {
 		m.compSelected = 0
 	}
@@ -464,10 +467,13 @@ func (m *model) handleCompletionKey(msg tea.KeyPressMsg) (tea.Cmd, bool) {
 		return nil, true
 
 	case "esc":
-		// Swallow Esc for this keystroke without touching the input — taui's
-		// dropdown re-derives from the (unchanged) text on the very next
-		// render, so "dismissing" only prevents Esc from also clearing the
-		// input or cancelling a turn this time around.
+		// First Esc for this token hides the dropdown without touching the
+		// input. It stays hidden (checked above) until the token changes,
+		// so a second Esc falls through to the normal
+		// input-clearing/turn-cancelling handler instead of being
+		// swallowed forever.
+		m.compDismissed = true
+		m.compDismissedToken = token
 		return nil, true
 	}
 

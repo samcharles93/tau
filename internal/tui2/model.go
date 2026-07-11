@@ -75,9 +75,16 @@ type model struct {
 	// Completion dropdown state. compToken is the last token the dropdown was
 	// computed against — when it changes (the user typed/deleted a
 	// character), compSelected resets to the top-ranked match rather than
-	// pointing at whatever now sits at that index.
-	compSelected int
-	compToken    string
+	// pointing at whatever now sits at that index. compDismissed and
+	// compDismissedToken together record that Esc last hid the dropdown for
+	// a specific token (compDismissed guards against "" being both the
+	// zero value and a legitimate token, e.g. a bare "/"); it stays hidden
+	// for that token (so a second Esc can reach the input-clearing handler)
+	// and reappears only once compToken moves on to a different token.
+	compSelected       int
+	compToken          string
+	compDismissed      bool
+	compDismissedToken string
 
 	// Viewport content — rendered lines, built incrementally.
 	renderedLines []string
@@ -1259,6 +1266,8 @@ func (m *model) clearInput() {
 	m.input = ""
 	m.inputCursor = 0
 	m.inputSel.clear()
+	m.compDismissed = false
+	m.compDismissedToken = ""
 }
 
 // clearScreen wipes the visible scrollback (Ctrl+L) without touching the
@@ -2037,16 +2046,21 @@ func (m *model) cancelBash() tea.Cmd {
 const quitConfirmWindow = 800 * time.Millisecond
 
 // handleCtrlC triages a Ctrl+C press exactly like inline_chat.go's
-// inlineCtrl.HandleInput: cancel an in-flight turn or bash command first, and
-// only treat Ctrl+C as "quit" (with a double-tap confirmation) when there's
-// nothing running to cancel — so an accidental Ctrl+C during generation never
-// silently kills the program.
+// inlineCtrl.HandleInput: cancel an in-flight turn or bash command first,
+// clear any pending input next, and only treat Ctrl+C as "quit" (with a
+// double-tap confirmation) when there's nothing running or typed to clear —
+// so an accidental Ctrl+C during generation never silently kills the
+// program.
 func (m *model) handleCtrlC() tea.Cmd {
 	if m.inResponse {
 		return m.cancelTurn()
 	}
 	if m.bashRunning {
 		return m.cancelBash()
+	}
+	if m.input != "" {
+		m.clearInput()
+		return nil
 	}
 	now := time.Now()
 	if now.Sub(m.pendingQuit) < quitConfirmWindow {

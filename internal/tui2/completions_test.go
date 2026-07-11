@@ -287,7 +287,37 @@ func TestCompletionEscIsSwallowedWithoutClearingInput(t *testing.T) {
 	m.handleKey(key(tea.KeyEscape, 0))
 
 	if m.input != "/model gpt" {
-		t.Fatalf("input = %q, want unchanged %q — Esc must not clear input while the dropdown is open", m.input, "/model gpt")
+		t.Fatalf("input = %q, want unchanged %q — first Esc must not clear input while the dropdown is open", m.input, "/model gpt")
+	}
+	if _, handled := m.handleCompletionKey(key(tea.KeyUp, 0)); handled {
+		t.Error("expected the dropdown to stay dismissed for the same token after Esc")
+	}
+}
+
+func TestCompletionSecondEscClearsInput(t *testing.T) {
+	m := modelsFor("gpt-4")
+	m.input = "/model gpt"
+	m.inputCursor = utf8.RuneCountInString(m.input)
+
+	m.handleKey(key(tea.KeyEscape, 0)) // first Esc: hides the dropdown only
+	m.handleKey(key(tea.KeyEscape, 0)) // second Esc: dropdown already hidden, clears input
+
+	if m.input != "" {
+		t.Fatalf("input = %q, want empty — second Esc must clear input once the dropdown is hidden", m.input)
+	}
+}
+
+func TestCompletionDismissalResetsWhenTokenChanges(t *testing.T) {
+	m := modelsFor("gpt-4")
+	m.input = "/model gpt"
+	m.inputCursor = utf8.RuneCountInString(m.input)
+
+	m.handleKey(key(tea.KeyEscape, 0)) // hides dropdown for token "gpt"
+	m.input = "/model gpt-"            // simulate further typing — token changes
+	m.inputCursor = utf8.RuneCountInString(m.input)
+
+	if _, handled := m.handleCompletionKey(key(tea.KeyUp, 0)); !handled {
+		t.Error("expected the dropdown to reappear once the completion token changes")
 	}
 }
 
