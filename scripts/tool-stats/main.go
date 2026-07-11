@@ -9,12 +9,9 @@
 // It reads every *.jsonl and *.jsonl.tmp session file, prints a summary table
 // to stdout, and writes a self-contained HTML report.
 //
-// Error detection from sessions is heuristic: they persist tool result text
-// but not the is_error flag, so results are matched against known tau error
-// shapes. When a metrics.jsonl file exists (metrics.dir in the tau config, or
-// --metrics-dir), tool.<name>.duration events are joined in for ground-truth
-// error status and call durations — restricted to the sessions present in the
-// sessions dir so both sources describe the same population.
+// New sessions persist structured tool-result status. Legacy sessions fall
+// back to conservative tool-specific result-text classification. When a
+// metrics.jsonl file exists, duration events add an independent live view.
 package main
 
 import (
@@ -26,10 +23,12 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"sort"
 	"strings"
 	"time"
 
+	"github.com/samcharles93/tau/internal/agent/tools"
 	"github.com/samcharles93/tau/internal/chat"
 	tauconfig "github.com/samcharles93/tau/internal/config"
 )
@@ -59,18 +58,21 @@ var errorPatterns = []*regexp.Regexp{
 }
 
 type toolStat struct {
-	Name      string   `json:"name"`
-	Aliases   []string `json:"aliases,omitempty"`
-	Calls     int      `json:"calls"`
-	Results   int      `json:"results"`
-	Errors    int      `json:"errors"`
-	Tokens    int      `json:"estimatedTokens"`
-	Samples   []int    `json:"-"`
-	Histogram []int    `json:"histogram"`
-	ErrRate   float64  `json:"errorRate"`
-	Median    int      `json:"median"`
-	P90       int      `json:"p90"`
-	Max       int      `json:"max"`
+	Name              string   `json:"name"`
+	Aliases           []string `json:"aliases,omitempty"`
+	Calls             int      `json:"calls"`
+	Results           int      `json:"results"`
+	Errors            int      `json:"errors"`
+	StructuredResults int      `json:"structuredResults"`
+	Tokens            int      `json:"estimatedTokens"`
+	Samples           []int    `json:"-"`
+	Histogram         []int    `json:"histogram"`
+	ErrRate           float64  `json:"errorRate"`
+	Median            int      `json:"median"`
+	P90               int      `json:"p90"`
+	P95               int      `json:"p95"`
+	P99               int      `json:"p99"`
+	Max               int      `json:"max"`
 	// ErrorSamples holds up to three distinct error messages for the report.
 	ErrorSamples []string `json:"errorSamples,omitempty"`
 
@@ -89,13 +91,16 @@ type toolStat struct {
 }
 
 type reportData struct {
-	GeneratedAt string `json:"generatedAt"`
-	SessionsDir string `json:"sessionsDir"`
-	MetricsPath string `json:"metricsPath,omitempty"`
-	Files       int    `json:"files"`
-	ParseErrors int    `json:"parseErrors"`
-	TotalCalls  int    `json:"totalCalls"`
-	TotalTokens int    `json:"totalTokens"`
+	GeneratedAt      string `json:"generatedAt"`
+	SessionsDir      string `json:"sessionsDir"`
+	MetricsPath      string `json:"metricsPath,omitempty"`
+	Files            int    `json:"files"`
+	UniqueSessions   int    `json:"uniqueSessions"`
+	UnmatchedCalls   int    `json:"unmatchedCalls,omitempty"`
+	UnmatchedResults int    `json:"unmatchedResults,omitempty"`
+	ParseErrors      int    `json:"parseErrors"`
+	TotalCalls       int    `json:"totalCalls"`
+	TotalTokens      int    `json:"totalTokens"`
 	// MetricsSkipped counts metric events for sessions not present in the
 	// sessions dir (excluded so both sources describe the same population).
 	MetricsSkipped int            `json:"metricsSkipped,omitempty"`
@@ -104,6 +109,7 @@ type reportData struct {
 	Shell          []*toolStat    `json:"shellCommands"`
 	Outliers       []toolOutlier  `json:"outliers,omitempty"`
 	RepeatedReads  []repeatedRead `json:"repeatedReads,omitempty"`
+	RepeatedCalls  []repeatedCall `json:"repeatedCalls,omitempty"`
 	ErrorBreakdown []errorBucket  `json:"errorBreakdown,omitempty"`
 }
 
@@ -118,11 +124,21 @@ type toolOutlier struct {
 }
 
 type repeatedRead struct {
+	SessionID       string  `json:"sessionId"`
+	File            string  `json:"file"`
+	Path            string  `json:"path"`
+	Calls           int     `json:"calls"`
+	Tokens          int     `json:"tokens"`
+	ExactDuplicates int     `json:"exactDuplicates"`
+	UniqueLines     int     `json:"uniqueLines,omitempty"`
+	OverlapRatio    float64 `json:"overlapRatio,omitempty"`
+}
+
+type repeatedCall struct {
 	SessionID string `json:"sessionId"`
-	File      string `json:"file"`
-	Path      string `json:"path"`
-	Calls     int    `json:"calls"`
-	Tokens    int    `json:"tokens"`
+	Tool      string `json:"tool"`
+	Args      string `json:"args"`
+	MaxStreak int    `json:"maxStreak"`
 }
 
 type errorBucket struct {
@@ -133,18 +149,25 @@ type errorBucket struct {
 }
 
 type pendingCall struct {
-	stat      *toolStat
-	tool      string
-	args      string
-	readPath  string
-	sessionID string
-	file      string
-	primary   bool
+	stat            *toolStat
+	tool            string
+	args            string
+	readPath        string
+	readOffset      int
+	readLimit       int
+	readFingerprint string
+	sessionID       string
+	file            string
+	primary         bool
 }
 
 type readUse struct {
-	calls  int
-	tokens int
+	calls           int
+	tokens          int
+	exactDuplicates int
+	fingerprints    map[string]int
+	lines           map[int]bool
+	requestedLines  int
 }
 
 // sessionMessage is the subset of a persisted chat message the script needs.
@@ -152,7 +175,15 @@ type sessionMessage struct {
 	Role       string `json:"role"`
 	Content    string `json:"content"`
 	ToolCallID string `json:"tool_call_id"`
-	ToolCalls  []struct {
+	ToolResult *struct {
+		ToolName    string        `json:"tool_name"`
+		Status      string        `json:"status"`
+		ErrorKind   string        `json:"error_kind"`
+		Duration    time.Duration `json:"duration"`
+		Truncated   bool          `json:"truncated"`
+		ResultBytes int           `json:"result_bytes"`
+	} `json:"tool_result"`
+	ToolCalls []struct {
 		ID       string `json:"id"`
 		Function struct {
 			Name      string `json:"name"`
@@ -210,10 +241,17 @@ func analyse(dir, metricsDir string) (*reportData, error) {
 		Buckets:     bucketLabels,
 	}
 	sessionIDs := map[string]bool{}
+	entryNames := make(map[string]bool, len(entries))
+	for _, entry := range entries {
+		entryNames[entry.Name()] = true
+	}
 
 	for _, entry := range entries {
 		name := entry.Name()
 		if entry.IsDir() || !(strings.HasSuffix(name, ".jsonl") || strings.HasSuffix(name, ".jsonl.tmp")) {
+			continue
+		}
+		if strings.HasSuffix(name, ".jsonl.tmp") && entryNames[strings.TrimSuffix(name, ".tmp")] {
 			continue
 		}
 		data.Files++
@@ -222,6 +260,7 @@ func analyse(dir, metricsDir string) (*reportData, error) {
 			data.ParseErrors++
 		}
 	}
+	data.UniqueSessions = len(sessionIDs)
 
 	if metricsDir != "" {
 		joinMetrics(filepath.Join(metricsDir, "metrics.jsonl"), sessionIDs, tools, data)
@@ -234,7 +273,9 @@ func analyse(dir, metricsDir string) (*reportData, error) {
 			t.Histogram = histogram(t.Samples)
 			if n := len(t.Samples); n > 0 {
 				t.Median = t.Samples[n/2]
-				t.P90 = t.Samples[min(n*9/10, n-1)]
+				t.P90 = percentile(t.Samples, 90)
+				t.P95 = percentile(t.Samples, 95)
+				t.P99 = percentile(t.Samples, 99)
 				t.Max = t.Samples[n-1]
 			}
 			if t.Calls > 0 {
@@ -282,6 +323,29 @@ func analyse(dir, metricsDir string) (*reportData, error) {
 	if len(data.RepeatedReads) > 30 {
 		data.RepeatedReads = data.RepeatedReads[:30]
 	}
+	sort.Slice(data.RepeatedCalls, func(i, j int) bool { return data.RepeatedCalls[i].MaxStreak > data.RepeatedCalls[j].MaxStreak })
+	if len(data.RepeatedCalls) > 30 {
+		data.RepeatedCalls = data.RepeatedCalls[:30]
+	}
+	aggregatedErrors := map[string]*errorBucket{}
+	for _, bucket := range data.ErrorBreakdown {
+		key := bucket.Tool + "\x00" + bucket.Kind
+		aggregated := aggregatedErrors[key]
+		if aggregated == nil {
+			aggregated = &errorBucket{Tool: bucket.Tool, Kind: bucket.Kind}
+			aggregatedErrors[key] = aggregated
+		}
+		aggregated.Count += bucket.Count
+		for _, sample := range bucket.Samples {
+			if len(aggregated.Samples) < 3 && !slices.Contains(aggregated.Samples, sample) {
+				aggregated.Samples = append(aggregated.Samples, sample)
+			}
+		}
+	}
+	data.ErrorBreakdown = data.ErrorBreakdown[:0]
+	for _, bucket := range aggregatedErrors {
+		data.ErrorBreakdown = append(data.ErrorBreakdown, *bucket)
+	}
 	sort.Slice(data.ErrorBreakdown, func(i, j int) bool { return data.ErrorBreakdown[i].Count > data.ErrorBreakdown[j].Count })
 	return data, nil
 }
@@ -310,6 +374,7 @@ func joinMetrics(path string, sessionIDs map[string]bool, tools map[string]*tool
 	data.MetricsPath = path
 
 	sc := bufio.NewScanner(f)
+	seenCalls := map[string]bool{}
 	sc.Buffer(make([]byte, 0, 64*1024), 16*1024*1024)
 	for sc.Scan() {
 		line := sc.Bytes()
@@ -332,6 +397,21 @@ func joinMetrics(path string, sessionIDs map[string]bool, tools map[string]*tool
 		if !sessionIDs[e.SessionID] {
 			data.MetricsSkipped++
 			continue
+		}
+		callID := e.CallID
+		if callID == "" {
+			callID = e.Labels["call_id"]
+		}
+		if callID != "" {
+			requestID := e.RequestID
+			if requestID == "" {
+				requestID = e.Labels["request_id"]
+			}
+			key := e.SessionID + "\x00" + requestID + "\x00" + callID + "\x00" + toolName
+			if seenCalls[key] {
+				continue
+			}
+			seenCalls[key] = true
 		}
 
 		t, ok := tools[toolName]
@@ -370,6 +450,10 @@ func analyseFile(path string, tools, shell map[string]*toolStat, data *reportDat
 	pending := map[string]pendingCall{}
 	readUses := map[string]readUse{}
 	errorBuckets := map[string]*errorBucket{}
+	lastFingerprint := ""
+	streak := 0
+	maxStreaks := map[string]int{}
+	fingerprintCalls := map[string]pendingCall{}
 
 	get := func(m map[string]*toolStat, name string, rawAliases ...string) *toolStat {
 		t, ok := m[name]
@@ -406,18 +490,33 @@ func analyseFile(path string, tools, shell map[string]*toolStat, data *reportDat
 		case "assistant":
 			for _, tc := range msg.ToolCalls {
 				toolName := normalizeToolName(tc.Function.Name)
+				if toolName == "" {
+					toolName = "(malformed tool call)"
+				}
+				readPath, readOffset, readLimit := readArgs(tc.Function.Arguments)
 				t := get(tools, toolName, tc.Function.Name)
 				t.Calls++
 				args := summarizeArgs(tc.Function.Arguments)
-				pending[tc.ID] = pendingCall{
-					stat:      t,
-					tool:      toolName,
-					args:      args,
-					readPath:  readPathArg(tc.Function.Arguments),
-					sessionID: sessionID,
-					file:      fileName,
-					primary:   true,
+				fingerprint := toolName + "\x00" + args
+				if fingerprint == lastFingerprint {
+					streak++
+				} else {
+					lastFingerprint, streak = fingerprint, 1
 				}
+				maxStreaks[fingerprint] = max(maxStreaks[fingerprint], streak)
+				pending[tc.ID] = pendingCall{
+					stat:            t,
+					tool:            toolName,
+					args:            args,
+					readPath:        readPath,
+					readOffset:      readOffset,
+					readLimit:       readLimit,
+					readFingerprint: fmt.Sprintf("%s:%d:%d", readPath, readOffset, readLimit),
+					sessionID:       sessionID,
+					file:            fileName,
+					primary:         true,
+				}
+				fingerprintCalls[fingerprint] = pending[tc.ID]
 
 				if toolName == "shell" {
 					var args struct {
@@ -437,13 +536,27 @@ func analyseFile(path string, tools, shell map[string]*toolStat, data *reportDat
 				}
 			}
 		case "tool":
+			matched := false
 			record := func(call pendingCall) {
 				t := call.stat
 				t.Results++
 				tokens := (len(msg.Content) + 3) / 4
 				t.Tokens += tokens
 				t.Samples = append(t.Samples, tokens)
-				errKind := classifyErrorContent(msg.Content)
+				errKind := ""
+				if msg.ToolResult != nil {
+					t.StructuredResults++
+					if msg.ToolResult.Status == "error" {
+						errKind = msg.ToolResult.ErrorKind
+						if errKind == "" {
+							errKind = "execution_error"
+						}
+					}
+				} else if call.tool == "(malformed tool call)" {
+					errKind = "unknown_tool"
+				} else {
+					errKind = classifyLegacyErrorContent(call.tool, msg.Content)
+				}
 				if errKind != "" {
 					t.Errors++
 					if len(t.ErrorSamples) < 3 {
@@ -463,10 +576,28 @@ func analyseFile(path string, tools, shell map[string]*toolStat, data *reportDat
 					}
 				}
 				if call.primary && call.tool == "read" && call.readPath != "" {
-					use := readUses[call.readPath]
+					canonicalPath := filepath.Clean(call.readPath)
+					use := readUses[canonicalPath]
 					use.calls++
 					use.tokens += tokens
-					readUses[call.readPath] = use
+					if use.fingerprints == nil {
+						use.fingerprints = map[string]int{}
+					}
+					if use.lines == nil {
+						use.lines = map[int]bool{}
+					}
+					if use.fingerprints[call.readFingerprint] > 0 {
+						use.exactDuplicates++
+					}
+					use.fingerprints[call.readFingerprint]++
+					if call.readLimit > 0 {
+						start := max(call.readOffset, 1)
+						for line := start; line < start+call.readLimit; line++ {
+							use.lines[line] = true
+						}
+						use.requestedLines += call.readLimit
+					}
+					readUses[canonicalPath] = use
 				}
 				if call.primary {
 					data.Outliers = append(data.Outliers, toolOutlier{
@@ -481,13 +612,23 @@ func analyseFile(path string, tools, shell map[string]*toolStat, data *reportDat
 				}
 			}
 			if call, ok := pending[msg.ToolCallID]; ok {
+				matched = true
 				record(call)
 				delete(pending, msg.ToolCallID)
 			}
 			if call, ok := pending[msg.ToolCallID+"\x00shell"]; ok {
+				matched = true
 				record(call)
 				delete(pending, msg.ToolCallID+"\x00shell")
 			}
+			if !matched {
+				data.UnmatchedResults++
+			}
+		}
+	}
+	for key, call := range pending {
+		if call.primary && !strings.Contains(key, "\x00shell") {
+			data.UnmatchedCalls++
 		}
 	}
 	for p, use := range readUses {
@@ -495,11 +636,23 @@ func analyseFile(path string, tools, shell map[string]*toolStat, data *reportDat
 			continue
 		}
 		data.RepeatedReads = append(data.RepeatedReads, repeatedRead{
-			SessionID: sessionID,
-			File:      fileName,
-			Path:      p,
-			Calls:     use.calls,
-			Tokens:    use.tokens,
+			SessionID:       sessionID,
+			File:            fileName,
+			Path:            p,
+			Calls:           use.calls,
+			Tokens:          use.tokens,
+			ExactDuplicates: use.exactDuplicates,
+			UniqueLines:     len(use.lines),
+			OverlapRatio:    overlapRatio(use.requestedLines, len(use.lines)),
+		})
+	}
+	for fingerprint, maxStreak := range maxStreaks {
+		if maxStreak < 2 {
+			continue
+		}
+		call := fingerprintCalls[fingerprint]
+		data.RepeatedCalls = append(data.RepeatedCalls, repeatedCall{
+			SessionID: sessionID, Tool: call.tool, Args: call.args, MaxStreak: maxStreak,
 		})
 	}
 	for _, b := range errorBuckets {
@@ -588,21 +741,32 @@ func summarizeArgs(raw string) string {
 	return firstLine(string(blob), 220)
 }
 
-func readPathArg(raw string) string {
+func readArgs(raw string) (path string, offset, limit int) {
 	var args struct {
-		Path string `json:"path"`
-		File string `json:"file"`
+		Path   string `json:"path"`
+		File   string `json:"file"`
+		Offset int    `json:"offset"`
+		Limit  int    `json:"limit"`
+		Full   bool   `json:"full"`
+		Symbol string `json:"symbol"`
 	}
 	if json.Unmarshal([]byte(raw), &args) != nil {
-		return ""
+		return "", 0, 0
 	}
 	if args.Path != "" {
-		return args.Path
+		path = args.Path
+	} else {
+		path = args.File
 	}
-	return args.File
+	if args.Limit == 0 && !args.Full && args.Symbol == "" {
+		args.Limit = tools.DefaultReadLines
+	}
+	return path, args.Offset, args.Limit
 }
 
-func classifyErrorContent(content string) string {
+// classifyLegacyErrorContent is a conservative compatibility fallback for
+// sessions written before structured tool_result metadata existed.
+func classifyLegacyErrorContent(tool, content string) string {
 	head := content
 	if len(head) > 200 {
 		head = head[:200]
@@ -615,11 +779,11 @@ func classifyErrorContent(content string) string {
 		return "timeout"
 	case strings.Contains(lower, "old_text not found"):
 		return "stale_edit"
-	case strings.Contains(lower, "no such file or directory"), strings.Contains(lower, "not found"):
+	case strings.Contains(lower, "no such file or directory"):
 		return "not_found"
 	case strings.Contains(lower, "regex parse error"), strings.Contains(lower, "invalid regex"):
 		return "bad_regex"
-	case strings.Contains(lower, "required"), strings.Contains(lower, "cannot be empty"):
+	case strings.HasPrefix(lower, "path is required"), strings.HasPrefix(lower, "pattern is required"), strings.HasPrefix(lower, "command is required"), strings.Contains(lower, "cannot be empty"):
 		return "invalid_args"
 	case strings.Contains(lower, "escapes working directory"), strings.Contains(lower, "escaping docs sandbox"):
 		return "sandbox_escape"
@@ -628,12 +792,30 @@ func classifyErrorContent(content string) string {
 	case strings.Contains(lower, "too large"), strings.Contains(lower, "appears to be binary"):
 		return "unsupported_file"
 	}
+	if tool == "edit" && strings.HasPrefix(lower, "edit ") {
+		return "stale_edit"
+	}
 	for _, re := range errorPatterns {
 		if re.MatchString(head) {
 			return "tool_error"
 		}
 	}
 	return ""
+}
+
+func overlapRatio(requested, unique int) float64 {
+	if requested <= 0 || unique >= requested {
+		return 0
+	}
+	return float64(requested-unique) / float64(requested)
+}
+
+func percentile(sorted []int, percent int) int {
+	if len(sorted) == 0 {
+		return 0
+	}
+	index := (len(sorted)*percent+99)/100 - 1
+	return sorted[min(max(index, 0), len(sorted)-1)]
 }
 
 func firstLine(s string, maxChars int) string {
@@ -662,8 +844,11 @@ func histogram(samples []int) []int {
 }
 
 func printSummary(data *reportData) {
-	fmt.Printf("tau tool stats — %d session files, %d tool calls, ~%s result tokens\n",
-		data.Files, data.TotalCalls, formatCount(data.TotalTokens))
+	fmt.Printf("tau tool stats — %d unique sessions (%d files), %d tool calls, ~%s result tokens\n",
+		data.UniqueSessions, data.Files, data.TotalCalls, formatCount(data.TotalTokens))
+	if data.UnmatchedCalls > 0 || data.UnmatchedResults > 0 {
+		fmt.Printf("join gaps: %d calls without results, %d results without calls\n", data.UnmatchedCalls, data.UnmatchedResults)
+	}
 	if data.ParseErrors > 0 {
 		fmt.Printf("(%d unparseable lines skipped)\n", data.ParseErrors)
 	}
@@ -711,7 +896,17 @@ func printSummary(data *reportData) {
 			if i >= 8 {
 				break
 			}
-			fmt.Printf("%3dx %8s tokens  %-90s %s\n", r.Calls, formatCount(r.Tokens), r.Path, r.SessionID)
+			fmt.Printf("%3dx %8s tokens  %2d exact dup  %5.1f%% overlap  %-70s %s\n", r.Calls, formatCount(r.Tokens), r.ExactDuplicates, r.OverlapRatio*100, r.Path, r.SessionID)
+		}
+	}
+
+	if len(data.RepeatedCalls) > 0 {
+		fmt.Printf("\nexact repeated-call streaks:\n")
+		for i, r := range data.RepeatedCalls {
+			if i >= 8 {
+				break
+			}
+			fmt.Printf("%3dx %-18s %-90s %s\n", r.MaxStreak, r.Tool, r.Args, r.SessionID)
 		}
 	}
 
@@ -763,7 +958,7 @@ var htmlTemplate = template.Must(template.New("report").Parse(`<!doctype html>
   .path { max-width: 520px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 	.charts { display: grid; grid-template-columns: 1fr 1fr; gap: 24px; margin-top: 16px; }
 	.card { background: #18181b; border-radius: 8px; padding: 16px; }
-  .cards { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; margin-top: 16px; }
+  .cards { display: grid; grid-template-columns: repeat(5, 1fr); gap: 12px; margin-top: 16px; }
   .stat { background: #18181b; border-radius: 8px; padding: 12px; }
   .stat b { display: block; font-size: 20px; }
 </style>
@@ -771,13 +966,14 @@ var htmlTemplate = template.Must(template.New("report").Parse(`<!doctype html>
 <body>
 <main>
   <h1>Tau Tool Stats</h1>
-  <p class="meta" id="meta">Generated {{.GeneratedAt}} · {{.SessionsDir}} · {{.Files}} session files · {{.ParseErrors}} parse errors</p>
+  <p class="meta" id="meta">Generated {{.GeneratedAt}} · {{.SessionsDir}} · {{.UniqueSessions}} unique sessions ({{.Files}} files) · {{.ParseErrors}} parse errors</p>
 
   <div class="cards">
     <div class="stat"><span class="muted">Tool calls</span><b id="total-calls"></b></div>
     <div class="stat"><span class="muted">Result tokens</span><b id="total-tokens"></b></div>
     <div class="stat"><span class="muted">Read token share</span><b id="read-share"></b></div>
     <div class="stat"><span class="muted">Metric coverage</span><b id="metric-coverage"></b></div>
+    <div class="stat"><span class="muted">Structured coverage</span><b id="structured-coverage"></b></div>
   </div>
 
   <div class="charts">
@@ -787,7 +983,7 @@ var htmlTemplate = template.Must(template.New("report").Parse(`<!doctype html>
 
   <h2>Tools</h2>
   <table id="tools-table">
-    <tr id="tools-head"><th>Tool</th><th>Aliases</th><th>Calls</th><th>Call %</th><th>Errors</th><th>Err %</th><th>Est. tokens</th><th>Tok %</th><th>Median</th><th>P90</th><th>Max</th></tr>
+    <tr id="tools-head"><th>Tool</th><th>Aliases</th><th>Calls</th><th>Call %</th><th>Structured</th><th>Errors</th><th>Err %</th><th>Est. tokens</th><th>Tok %</th><th>Median</th><th>P90</th><th>P95</th><th>P99</th><th>Max</th></tr>
   </table>
 
   <h2>Outlier tool results</h2>
@@ -797,12 +993,17 @@ var htmlTemplate = template.Must(template.New("report").Parse(`<!doctype html>
 
   <h2>Repeated reads</h2>
   <table id="repeated-reads-table">
-    <tr><th class="path">Path</th><th>Calls</th><th>Est. tokens</th><th>Session</th></tr>
+    <tr><th class="path">Path</th><th>Calls</th><th>Exact duplicates</th><th>Unique lines</th><th>Overlap</th><th>Est. tokens</th><th>Session</th></tr>
   </table>
 
   <h2>Error breakdown</h2>
   <table id="error-breakdown-table">
     <tr><th>Tool</th><th>Kind</th><th>Count</th><th class="errmsg">Samples</th></tr>
+  </table>
+
+  <h2>Exact repeated-call streaks</h2>
+  <table id="repeated-calls-table">
+    <tr><th>Tool</th><th>Max streak</th><th class="path">Args</th><th>Session</th></tr>
   </table>
 
   <h2>Error samples</h2>
@@ -823,12 +1024,14 @@ const text = (value) => value == null ? "" : String(value);
 const esc = (value) => text(value).replace(/[&<>"']/g, (ch) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[ch]));
 const totalCalls = data.totalCalls, totalTokens = data.totalTokens;
 const metricCalls = data.tools.reduce((sum, t) => sum + (t.metricCalls || 0), 0);
+const structuredResults = data.tools.reduce((sum, t) => sum + (t.structuredResults || 0), 0);
 const readTool = data.tools.find((t) => t.name === "read");
 
 document.getElementById("total-calls").textContent = fmtN(totalCalls);
 document.getElementById("total-tokens").textContent = fmtN(totalTokens);
 document.getElementById("read-share").textContent = readTool ? fmtPct(readTool.estimatedTokens / Math.max(totalTokens, 1)) : "0.0%";
 document.getElementById("metric-coverage").textContent = fmtPct(metricCalls / Math.max(totalCalls, 1));
+document.getElementById("structured-coverage").textContent = fmtPct(structuredResults / Math.max(totalCalls, 1));
 
 const withMetrics = Boolean(data.metricsPath);
 const meta = document.getElementById("meta");
@@ -846,9 +1049,9 @@ for (const t of data.tools) {
   const errClass = t.errorRate >= 0.15 ? "err" : t.errorRate >= 0.05 ? "warn" : "";
   const aliases = (t.aliases || []).join(", ");
   tr.innerHTML = "<td>" + esc(t.name) + '</td><td class="muted">' + esc(aliases) + "</td><td>" + t.calls + "</td><td>" + fmtPct(t.calls / totalCalls) +
-    "</td><td>" + t.errors + '</td><td class="' + errClass + '">' + fmtPct(t.errorRate) +
+    "</td><td>" + (t.structuredResults || 0) + "</td><td>" + t.errors + '</td><td class="' + errClass + '">' + fmtPct(t.errorRate) +
     "</td><td>" + fmtN(t.estimatedTokens) + "</td><td>" + fmtPct(t.estimatedTokens / Math.max(totalTokens, 1)) +
-    "</td><td>" + t.median + "</td><td>" + t.p90 + "</td><td>" + t.max + "</td>";
+    "</td><td>" + t.median + "</td><td>" + t.p90 + "</td><td>" + t.p95 + "</td><td>" + t.p99 + "</td><td>" + t.max + "</td>";
   if (withMetrics) {
     if (t.metricCalls > 0) {
       const mErrClass = t.metricErrorRate >= 0.15 ? "err" : t.metricErrorRate >= 0.05 ? "warn" : "";
@@ -875,6 +1078,7 @@ const repeatedReadsTable = document.getElementById("repeated-reads-table");
 for (const r of (data.repeatedReads || []).slice(0, 30)) {
   const tr = document.createElement("tr");
   tr.innerHTML = '<td class="path" title="' + esc(r.path) + '">' + esc(r.path) + "</td><td>" + r.calls +
+    "</td><td>" + (r.exactDuplicates || 0) + "</td><td>" + (r.uniqueLines || "-") + "</td><td>" + fmtPct(r.overlapRatio || 0) +
     "</td><td>" + fmtN(r.tokens || 0) + '</td><td class="muted">' + esc(text(r.sessionId).slice(0, 12)) + "</td>";
   repeatedReadsTable.appendChild(tr);
 }
@@ -885,6 +1089,14 @@ for (const b of (data.errorBreakdown || []).slice(0, 30)) {
   tr.innerHTML = "<td>" + esc(b.tool) + "</td><td>" + esc(b.kind) + "</td><td>" + b.count +
     '</td><td class="errmsg">' + esc((b.samples || []).join("  ·  ")) + "</td>";
   errorBreakdownTable.appendChild(tr);
+}
+
+const repeatedCallsTable = document.getElementById("repeated-calls-table");
+for (const r of (data.repeatedCalls || []).slice(0, 30)) {
+  const tr = document.createElement("tr");
+  tr.innerHTML = "<td>" + esc(r.tool) + "</td><td>" + r.maxStreak + '</td><td class="path" title="' + esc(r.args) + '">' + esc(r.args) +
+    '</td><td class="muted">' + esc(text(r.sessionId).slice(0, 12)) + "</td>";
+  repeatedCallsTable.appendChild(tr);
 }
 
 const errorsTable = document.getElementById("errors-table");
