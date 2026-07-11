@@ -1,5 +1,39 @@
 # Changelog
 
+## [0.18.0](https://github.com/samcharles93/tau/compare/v0.17.0...v0.18.0) (2026-07-11)
+
+
+### Features
+
+* add Ctrl+Home/Ctrl+End conversation jump keys ([08792a4](https://github.com/samcharles93/tau/commit/08792a452fd1b866ccfc28c971f1c9d2fb538593))
+* add tool call summaries and status bar state machine ([642f1c4](https://github.com/samcharles93/tau/commit/642f1c47c9448ea59645b1210029eccc319126ce))
+* add workspace codesearch indexing ([44dbc6e](https://github.com/samcharles93/tau/commit/44dbc6e756e0d0cff1a3de60ad309f969968c865))
+* **agent:** restructure system prompt with instruction precedence and XML escaping ([5e3eb36](https://github.com/samcharles93/tau/commit/5e3eb368ff9062d6bdf794af78ee2cbe66a429b4))
+* enhance tool-stats with structured results and richer metrics ([a558c87](https://github.com/samcharles93/tau/commit/a558c8774ec7cdf6906d37879d31e11135059b01))
+* enrich tool metrics, add grep index, fix session contexts ([73afa47](https://github.com/samcharles93/tau/commit/73afa476c474590759ca7f561243e93507388758))
+* enrich tool results with truncation metadata and symbol reads ([8b8d5b0](https://github.com/samcharles93/tau/commit/8b8d5b0bc1ad4d1bba460a42e35698562ddfbacb))
+* integrate workspace codesearch indexing ([2938532](https://github.com/samcharles93/tau/commit/2938532511b665215461906cab693a1f9f5ca0eb))
+* parse nested function call item in codex SSE ([3bf906a](https://github.com/samcharles93/tau/commit/3bf906a1a8113ac69474a3385d9911cd4165c48d))
+* persist tool result metadata in messages ([9057a42](https://github.com/samcharles93/tau/commit/9057a424c3d195e820f6a0adeec1b5b386b8f4c9))
+* redesign /help as a responsive click-to-expand keybinding box ([7681e40](https://github.com/samcharles93/tau/commit/7681e405b52b7490a4bd043489e6dd04a18e26c5))
+* track and report search backend usage stats ([6954c0e](https://github.com/samcharles93/tau/commit/6954c0ec135ebe7552863686391b2b9b903036dd))
+* **tui2:** add "View diff" overlay for edit/write tool calls ([c2757e8](https://github.com/samcharles93/tau/commit/c2757e8b0e7f092d521a861b8351fd34bb3f11f1))
+* **tui2:** collapsible reasoning, capped input box, calm thinking indicator ([3f7a387](https://github.com/samcharles93/tau/commit/3f7a387532a8d5d899782cfede73d6e61bff9325))
+* **tui2:** give reasoning its own visual lane, distinct from the final answer ([82edc9e](https://github.com/samcharles93/tau/commit/82edc9e934bcd9bc37a82fe46ed6d7ceefaa8487))
+* **tui2:** introduce Tau's semantic colour palette without overriding terminal theme ([bf22e3e](https://github.com/samcharles93/tau/commit/bf22e3e4589bdd39185c890796d85200e9535592))
+
+
+### Bug Fixes
+
+* clip and scroll the /help overlay when it's taller than the terminal ([68cb34e](https://github.com/samcharles93/tau/commit/68cb34ed9080d903f72d08cb85c55c9939dadf4e))
+* make Esc and Ctrl+C clear input while slash completions are open ([493958c](https://github.com/samcharles93/tau/commit/493958c242d75812e965501e92ce43327e03b6e4))
+* prevent symlink escape in workspace file confinement ([349fc43](https://github.com/samcharles93/tau/commit/349fc433e1985b654e6774dc4db95f6765a6237f))
+* stop echoing a runtime error to scrollback when a lone tool box already shows it ([a7b9675](https://github.com/samcharles93/tau/commit/a7b967592328be51336fe7dcc0eecc69e5344b9a))
+* **tui2:** correct layout row drift, markdown cache key mismatches, and dead key case ([1d79d76](https://github.com/samcharles93/tau/commit/1d79d76eddb6e68fdb434ee43266a5080ad208f1))
+* **tui2:** persist reasoning across snapshots, cap error text, reset MaxTokens on model switch ([a5d706e](https://github.com/samcharles93/tau/commit/a5d706e10787e0ceebd6659d85e951d2a1816bcd))
+* **tui2:** remove "Thinking:" prefix from reasoning output and add intelligent word-wrapping ([7371cf1](https://github.com/samcharles93/tau/commit/7371cf1ac4e6e1cd4ae18c6634fec2429ee9a387))
+* wire context propagation through reload, store, web UI, and plugin lifecycle ([f8beb51](https://github.com/samcharles93/tau/commit/f8beb5128dbab1822eff96a6b6abf30c757e657b))
+
 ## [0.17.0](https://github.com/samcharles93/tau/compare/v0.16.2...v0.17.0) (2026-07-10)
 
 
