@@ -3,6 +3,7 @@ package tui2
 import (
 	"strings"
 
+	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
 
 	"github.com/samcharles93/tau/internal/theme"
@@ -335,4 +336,87 @@ func renderBoxAround(width int, title string, body []string) string {
 	}
 	out = append(out, bottom)
 	return strings.Join(out, "\n")
+}
+
+// --- /help overlay -----------------------------------------------------
+
+// helpOverlayWidthFrac caps how much of the terminal the /help overlay
+// spans — a floating reference card doesn't need (or want) to stretch
+// edge-to-edge on a wide terminal the way the old scrollback-embedded box
+// did; centered and modestly sized reads more like a help card than a wall
+// of text.
+const (
+	helpOverlayWidthFrac = 0.9
+	helpOverlayMinWidth  = 40
+	helpOverlayMaxWidth  = 110
+)
+
+// helpOverlayState is the state of an open /help overlay. A nil
+// *helpOverlayState on model means none is open — mirrors diffViewerState's
+// own nil-sentinel convention (see diff.go). Unlike the box's previous
+// scrollback-embedded incarnation, opening /help again just replaces this
+// state; nothing accumulates in history.
+type helpOverlayState struct {
+	expanded map[helpRowKey]bool
+}
+
+// helpOverlayWidth is the box width used for both rendering
+// (compositeHelpOverlay) and click hit-testing (handleHelpOverlayClick) —
+// the two MUST agree, or a click would hit-test against a differently laid
+// out box than the one actually on screen.
+func (m *model) helpOverlayWidth() int {
+	w := int(float64(m.width) * helpOverlayWidthFrac)
+	return max(helpOverlayMinWidth, min(w, helpOverlayMaxWidth))
+}
+
+// handleHelpOverlayKey handles keyboard input while the /help overlay is
+// open: any key closes it — see dispatchKey's doc comment on why, unlike
+// the diff viewer, there's nothing here worth routing keys into first.
+func (m *model) handleHelpOverlayKey(tea.KeyPressMsg) tea.Cmd {
+	m.helpOverlay = nil
+	return nil
+}
+
+// handleHelpOverlayClick resolves a left-click while the /help overlay is
+// open: inside a row toggles that row's expansion (see
+// toggleCommittedHelpAtLine's retired scrollback equivalent — same hit-test
+// shape, just against a freshly rendered box instead of a spliced one);
+// inside the box but not on a row is a no-op; outside the box closes it,
+// mirroring handleContextMenuClick's click-away-to-dismiss convention.
+func (m *model) handleHelpOverlayClick(x, y int) tea.Cmd {
+	width := m.helpOverlayWidth()
+	rendered, hits := renderHelpBox(width, m.helpOverlay.expanded)
+	bx, by := centerRect(m.width, m.height, lipgloss.Width(rendered), lipgloss.Height(rendered))
+
+	relX, relY := x-bx, y-by-1 // -1: body lines start after the top border
+	for _, h := range hits {
+		if relY < h.startY || relY > h.endY || relX < h.startX || relX > h.endX {
+			continue
+		}
+		m.helpOverlay.expanded[h.key] = !m.helpOverlay.expanded[h.key]
+		return nil
+	}
+
+	boxW, boxH := lipgloss.Width(rendered), lipgloss.Height(rendered)
+	if x < bx || x >= bx+boxW || y < by || y >= by+boxH {
+		m.helpOverlay = nil
+	}
+	return nil
+}
+
+// compositeHelpOverlay overlays the open /help box centered on top of base,
+// following compositeDiffViewer's lipgloss.Compositor shape (see
+// compositeContextMenu's doc comment for why a bare Layer.Draw isn't
+// enough).
+func (m *model) compositeHelpOverlay(base string) string {
+	rendered, _ := renderHelpBox(m.helpOverlayWidth(), m.helpOverlay.expanded)
+	bx, by := centerRect(m.width, m.height, lipgloss.Width(rendered), lipgloss.Height(rendered))
+
+	compositor := lipgloss.NewCompositor(
+		lipgloss.NewLayer(base).X(0).Y(0),
+		lipgloss.NewLayer(rendered).X(bx).Y(by).Z(1),
+	)
+	canvas := lipgloss.NewCanvas(m.width, m.height)
+	canvas.Compose(compositor)
+	return canvas.Render()
 }

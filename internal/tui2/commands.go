@@ -273,23 +273,19 @@ func (m *model) cmdClear(_ string) tea.Cmd {
 	)
 }
 
-// cmdHelp renders the keybinding reference as a bordered box (see help.go)
-// and registers it as a committedHelpBox so a click can expand a truncated
-// row's description in place (see toggleCommittedHelpAtLine). Slash
-// commands live in the "/" completions dropdown and are deliberately not
-// repeated here. It bypasses appendMessage — the "system" role there
-// returns content unstyled (renderLine's default case), which would strip
-// the box's own lipgloss styling — following the same direct-append pattern
-// SkillsChangedEvent uses for its glamour-rendered output.
+// cmdHelp opens the keybinding reference as a floating overlay (see
+// help.go), centered on top of the current view rather than appended to
+// scrollback — a reference card isn't conversation history, and baking it
+// into renderedLines just left a permanent, ever-growing block behind every
+// time it was opened. It closes on any keypress or a click outside it (see
+// handleHelpOverlayKey/handleHelpOverlayClick), and clicking a row inside it
+// expands that row's description in place, same as before. Slash commands
+// live in the "/" completions dropdown and are deliberately not repeated
+// here. Opening it also closes any context menu, matching openDiffViewer's
+// same "opening a modal always wins" convention.
 func (m *model) cmdHelp(_ string) tea.Cmd {
-	g := &committedHelpBox{width: m.width, expanded: map[helpRowKey]bool{}, lineIdx: len(m.renderedLines)}
-	rendered, _ := renderHelpBox(g.width, g.expanded)
-	lines := strings.Split(rendered, "\n")
-	g.lineCount = len(lines)
-
-	m.renderedLines = append(m.renderedLines, lines...)
-	m.committedHelp = append(m.committedHelp, g)
-	m.viewport.SetContentLines(m.renderedLines)
+	m.contextMenu = nil
+	m.helpOverlay = &helpOverlayState{expanded: map[helpRowKey]bool{}}
 	return nil
 }
 

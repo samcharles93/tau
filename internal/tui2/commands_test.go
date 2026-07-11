@@ -7,6 +7,8 @@ import (
 	"testing"
 	"time"
 
+	"charm.land/lipgloss/v2"
+
 	tauchat "github.com/samcharles93/tau/internal/chat"
 	"github.com/samcharles93/tau/internal/config"
 )
@@ -369,142 +371,79 @@ func TestCmdClearSendsReset(t *testing.T) {
 
 // --- cmdHelp ----------------------------------------------------------------
 
-func TestCmdHelpAppendsMessage(t *testing.T) {
+func TestCmdHelpOpensOverlayWithoutTouchingScrollback(t *testing.T) {
 	m := newTestModel(&fakeRuntime{}, nil)
 	m.renderedLines = nil
 
 	drainCmd(m.cmdHelp(""))
 
-	// Should append the help box, titled in its top border.
-	found := false
-	for _, line := range m.renderedLines {
-		if strings.Contains(stripANSI(line), "Help: Keybindings & Controls") {
-			found = true
-			break
+	if m.helpOverlay == nil {
+		t.Fatal("expected cmdHelp to open a help overlay")
+	}
+	if len(m.renderedLines) != 0 {
+		t.Errorf("renderedLines = %v, want untouched — /help is an overlay, not a scrollback message", m.renderedLines)
+	}
+}
+
+func TestCmdHelpOverlayShowsKeybindings(t *testing.T) {
+	m := newTestModel(&fakeRuntime{}, nil)
+	drainCmd(m.cmdHelp(""))
+
+	rendered, _ := renderHelpBox(m.helpOverlayWidth(), m.helpOverlay.expanded)
+	plain := stripANSI(rendered)
+	for _, want := range []string{"Help: Keybindings & Controls", "Ctrl+S", "Ctrl+Home / Ctrl+End"} {
+		if !strings.Contains(plain, want) {
+			t.Errorf("expected help overlay to contain %q", want)
 		}
 	}
-	if !found {
-		t.Error("expected help text to be appended to renderedLines")
+}
+
+func TestAnyKeyClosesHelpOverlay(t *testing.T) {
+	m := newTestModel(&fakeRuntime{}, nil)
+	drainCmd(m.cmdHelp(""))
+	if m.helpOverlay == nil {
+		t.Fatal("setup: expected the overlay to be open")
+	}
+
+	m.handleHelpOverlayKey(charKey('x'))
+
+	if m.helpOverlay != nil {
+		t.Error("expected any keypress to close the help overlay")
 	}
 }
 
-func TestCmdHelpShowsCtrlS(t *testing.T) {
+func TestHelpOverlayClickExpandsAndCollapsesRow(t *testing.T) {
 	m := newTestModel(&fakeRuntime{}, nil)
-
+	m.width, m.height = 70, 40 // single-column layout — simpler, deterministic hit coordinates
 	drainCmd(m.cmdHelp(""))
 
-	found := false
-	for _, line := range m.renderedLines {
-		if strings.Contains(stripANSI(line), "Ctrl+S") {
-			found = true
-			break
-		}
-	}
-	if !found {
-		t.Error("expected Ctrl+S steer hint in help output")
-	}
-}
-
-func TestCmdHelpShowsConversationJumpKeys(t *testing.T) {
-	m := newTestModel(&fakeRuntime{}, nil)
-
-	drainCmd(m.cmdHelp(""))
-
-	for _, line := range m.renderedLines {
-		if strings.Contains(stripANSI(line), "Ctrl+Home / Ctrl+End") {
-			return
-		}
-	}
-	t.Error("expected conversation jump keys in help output")
-}
-
-func TestCmdHelpRegistersCommittedHelpBox(t *testing.T) {
-	m := newTestModel(&fakeRuntime{}, nil)
-
-	drainCmd(m.cmdHelp(""))
-
-	if len(m.committedHelp) != 1 {
-		t.Fatalf("committedHelp = %d entries, want 1", len(m.committedHelp))
-	}
-	g := m.committedHelp[0]
-	if g.lineIdx != 0 || g.lineCount != len(m.renderedLines) {
-		t.Fatalf("committedHelp[0] = {lineIdx: %d, lineCount: %d}, want {0, %d}", g.lineIdx, g.lineCount, len(m.renderedLines))
-	}
-}
-
-func TestToggleCommittedHelpAtLineExpandsAndCollapsesRow(t *testing.T) {
-	m := newTestModel(&fakeRuntime{}, nil)
-	m.width = 70 // single-column layout — simpler, deterministic hit coordinates
-
-	drainCmd(m.cmdHelp(""))
-	g := m.committedHelp[0]
-	beforeCount := g.lineCount
-
-	_, hits := renderHelpBox(g.width, g.expanded)
+	width := m.helpOverlayWidth()
+	rendered, hits := renderHelpBox(width, m.helpOverlay.expanded)
 	if len(hits) == 0 {
 		t.Fatal("expected at least one clickable row")
 	}
 	h := hits[0]
-	idx := g.lineIdx + 1 + h.startY // +1: body lines start after the top border
+	bx, by := centerRect(m.width, m.height, lipgloss.Width(rendered), lipgloss.Height(rendered))
 
-	if !m.toggleCommittedHelpAtLine(idx, h.startX) {
-		t.Fatal("expected the click to be handled by the help box")
-	}
-	if !g.expanded[h.key] {
-		t.Error("expected the clicked row to be marked expanded")
+	m.handleHelpOverlayClick(bx+h.startX, by+1+h.startY)
+	if !m.helpOverlay.expanded[h.key] {
+		t.Fatal("expected the clicked row to be marked expanded")
 	}
 
-	// A second click on the same row (now possibly at a shifted line, since
-	// expanding can grow lineCount) collapses it back.
-	_, hits = renderHelpBox(g.width, g.expanded)
-	var h2 helpRowHit
-	for _, hh := range hits {
-		if hh.key == h.key {
-			h2 = hh
-			break
-		}
-	}
-	idx2 := g.lineIdx + 1 + h2.startY
-	if !m.toggleCommittedHelpAtLine(idx2, h2.startX) {
-		t.Fatal("expected the second click to also be handled")
-	}
-	if g.expanded[h.key] {
-		t.Error("expected the row to collapse back on a second click")
-	}
-	if g.lineCount != beforeCount {
-		t.Errorf("lineCount = %d, want back to %d after collapsing", g.lineCount, beforeCount)
+	m.handleHelpOverlayClick(bx+h.startX, by+1+h.startY)
+	if m.helpOverlay.expanded[h.key] {
+		t.Error("expected a second click on the same row to collapse it back")
 	}
 }
 
-func TestToggleCommittedHelpAtLineSwallowsNonRowClick(t *testing.T) {
+func TestHelpOverlayClickOutsideBoxCloses(t *testing.T) {
 	m := newTestModel(&fakeRuntime{}, nil)
+	m.width, m.height = 70, 40
 	drainCmd(m.cmdHelp(""))
-	g := m.committedHelp[0]
 
-	// The box's own top border line — inside the box's line range, but not
-	// on any row.
-	if !m.toggleCommittedHelpAtLine(g.lineIdx, 0) {
-		t.Fatal("expected a click inside the box's bounds to be handled")
-	}
-	if len(g.expanded) != 0 {
-		t.Errorf("expanded = %v, want empty — a border click shouldn't toggle a row", g.expanded)
-	}
-}
-
-func TestApplySnapshotClearsStaleCommittedHelp(t *testing.T) {
-	m := newTestModel(&fakeRuntime{}, nil)
-	drainCmd(m.cmdHelp(""))
-	if len(m.committedHelp) == 0 {
-		t.Fatal("setup: expected a committed help box")
-	}
-
-	// /help is a local-only echo, not part of session history — a snapshot
-	// rebuild (e.g. after submitting a prompt) must drop it rather than
-	// leave a stale lineIdx pointing into the rebuilt renderedLines.
-	m.applySnapshot(tauchat.ChatSessionSnapshotEvent{})
-
-	if len(m.committedHelp) != 0 {
-		t.Errorf("committedHelp = %v, want cleared after a snapshot rebuild", m.committedHelp)
+	m.handleHelpOverlayClick(0, m.height-1) // bottom-left corner, well outside a centered box
+	if m.helpOverlay != nil {
+		t.Error("expected a click outside the box to close the overlay")
 	}
 }
 
