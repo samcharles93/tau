@@ -56,6 +56,19 @@ type model struct {
 	tools           []toolState           // active tool calls in display order
 	committedGroups []*committedToolGroup // multi-call batches already in scrollback, still foldable — see committedToolGroup
 
+	// Reasoning state. committedReasoning holds completed reasoning blocks
+	// already in scrollback, still collapsible/expandable — see
+	// committedReasoningBlock. lastReasoningKey is the most recently
+	// committed block's key, the target of the ctrl+r toggle (see
+	// dispatchKey) — reasoning has no per-block focus-navigation the way
+	// tools do, so ctrl+r always reaches the block from the turn that just
+	// finished. reasoningKeySeq generates a fallback key (see
+	// committedReasoningKey) for the rare turn that commits reasoning
+	// before the owning message has a real ID.
+	committedReasoning []*committedReasoningBlock
+	lastReasoningKey   string
+	reasoningKeySeq    int
+
 	// helpOverlay is the currently open /help overlay, or nil if none — see
 	// help.go. Unlike a committed scrollback message, it's redrawn fresh
 	// every frame and never touches renderedLines, so it doesn't clutter
@@ -142,13 +155,6 @@ type model struct {
 	turnQueue    []string // queued prompts behind a running turn
 	lastSubmit   time.Time
 	spinnerFrame int // frame index for working indicator animation
-
-	// turnStartedAt is when the current response began
-	// (ChatResponseStartedEvent), driving the live elapsed clock in the
-	// working indicator; turnSeed varies the opening thinking-verb per turn so
-	// two consecutive turns don't repeat the same word.
-	turnStartedAt time.Time
-	turnSeed      int64
 
 	// Markdown rendering (P3 enhancement) — reusable glamour term renderers
 	// keyed by terminal width so resize doesn't allocate a new renderer for
@@ -414,6 +420,42 @@ func committedGroupKey(tools []toolState) string {
 		ids[i] = t.id
 	}
 	return strings.Join(ids, "\x00")
+}
+
+// committedReasoningBlock is a completed reasoning block already committed
+// to permanent scrollback that can still be collapsed/expanded afterward —
+// mirroring committedToolGroup's same "stay interactive after it scrolls
+// into history" shape (see spliceCommittedReasoning). Only a finished turn's
+// reasoning gets one of these; the in-progress turn's reasoning is rendered
+// fresh every frame straight from m.reasoning (see viewportLinesForView) and
+// is never a candidate for collapse — "streaming reasoning stays visible
+// while active" falls out of that split for free, no separate flag needed.
+type committedReasoningBlock struct {
+	key       string // stable across an applySnapshot rebuild — see committedReasoningKey
+	text      string // raw reasoning text; unaffected by collapse (presentation-only)
+	collapsed bool
+
+	// lineIdx/lineCount mirror committedToolGroup's own fields — see
+	// spliceCommittedReasoning.
+	lineIdx   int
+	lineCount int
+}
+
+// committedReasoningKey derives a stable key for a completed reasoning
+// block so its collapse state survives an applySnapshot rebuild instead of
+// resetting to expanded every time the user submits another prompt —
+// mirrors committedGroupKey. id is the owning assistant ChatMessage's ID
+// when known: applySnapshot's msg.ID, or finalizeResponse's id param, which
+// is the same persisted ID once the turn completes (see messageRanges). seq
+// is a fallback ordinal (m.reasoningKeySeq) for the rare case a message
+// commits reasoning before it has a real ID — that block's collapse state
+// won't survive a later rebuild, same known limitation as any other
+// synthetic key in this file (e.g. the "bash-%d" tool IDs in applySnapshot).
+func committedReasoningKey(id string, seq int) string {
+	if id != "" {
+		return id
+	}
+	return fmt.Sprintf("reasoning-seq-%d", seq)
 }
 
 type pluginPanel struct {
@@ -1119,6 +1161,20 @@ func (m *model) dispatchKey(msg tea.KeyPressMsg) tea.Cmd {
 	case "ctrl+shift+g":
 		return m.cmdCopy("")
 
+	case "ctrl+r":
+		// Toggles the reasoning block from the turn that just finished —
+		// there's no per-block focus-navigation the way tools have
+		// (focusNextTool), so this always reaches the most recent one
+		// (m.lastReasoningKey). A no-op while reasoning is off, before any
+		// turn has completed, or while the current turn's reasoning is
+		// still streaming (nothing committed yet to toggle).
+		if m.showReasoning && m.lastReasoningKey != "" {
+			if m.toggleReasoningBlock(m.lastReasoningKey) {
+				m.clearAllSelections()
+			}
+		}
+		return nil
+
 	case "pgup":
 		m.viewport.HalfPageUp()
 		m.autoFollow = false
@@ -1305,6 +1361,7 @@ func (m *model) clearInput() {
 func (m *model) clearScreen() {
 	m.renderedLines = m.renderedLines[:0]
 	m.committedGroups = m.committedGroups[:0]
+	m.committedReasoning = m.committedReasoning[:0]
 	m.viewport.SetContentLines(m.renderedLines)
 	m.autoFollow = true
 	m.viewportSel.clear()
@@ -1512,6 +1569,7 @@ func (m *model) renderInputArea() string {
 	}
 	innerWidth := max(boxWidth-2, 1)
 	body := make([]string, 0, len(lines))
+	cursorBodyIdx := 0
 	for i, ln := range lines {
 		prefix := inputPromptStyle.Render("> ")
 		if m.inResponse {
@@ -1550,6 +1608,9 @@ func (m *model) renderInputArea() string {
 			if i == curLine && curCol == len(ln) && j == len(chunks)-1 {
 				hasCursor = true
 			}
+			if hasCursor {
+				cursorBodyIdx = len(body)
+			}
 			switch {
 			case !hasCursor && !lineHasSel:
 				body = append(body, rowPrefix+inputStyle.Render(string(ln[chunk.start:chunk.end])))
@@ -1567,7 +1628,8 @@ func (m *model) renderInputArea() string {
 	}
 
 	title := m.inputModeTitle()
-	return renderInputBox(m.width, title, body, "")
+	body, hint := m.clipInputBody(body, cursorBodyIdx)
+	return renderInputBox(m.width, title, body, hint)
 }
 
 // steerHint renders the "[Ctrl+C] stop | [Enter] steer" hint shown in the
@@ -1800,6 +1862,118 @@ func renderReasoningLines(text string, width int) []string {
 	return lines
 }
 
+// reasoningCollapsedGlyph marks a folded reasoning block with the same Warm
+// Ochre accent as an expanded block's bar, so collapsed and expanded read as
+// one affordance rather than two different UI elements.
+const reasoningCollapsedGlyph = "▸ "
+
+// renderReasoningCollapsedLine renders the single-line, subtle stand-in for
+// a folded reasoning block: a small accent glyph plus a muted line count, no
+// border or panel, and deliberately no keybinding hint inline — that lives
+// in /help (see help.go) instead of repeating on every collapsed block.
+func renderReasoningCollapsedLine(lineCount int) string {
+	noun := "line"
+	if lineCount != 1 {
+		noun = "lines"
+	}
+	glyph := reasoningLabelStyle.Render(reasoningCollapsedGlyph)
+	body := reasoningStyle.Render(fmt.Sprintf("reasoning collapsed (%d %s)", lineCount, noun))
+	return glyph + body
+}
+
+// renderCommittedReasoning renders b in its current collapsed/expanded
+// state — the single place that decides between the full block and the
+// one-line stand-in, so commitReasoningBlock and spliceCommittedReasoning
+// can't drift apart on how a block looks.
+func (m *model) renderCommittedReasoning(b *committedReasoningBlock) string {
+	lines := renderReasoningLines(b.text, m.width)
+	if b.collapsed {
+		return renderReasoningCollapsedLine(len(lines))
+	}
+	return strings.Join(lines, "\n")
+}
+
+// commitReasoningBlock appends a completed reasoning block to scrollback and
+// registers a committedReasoningBlock so it can still be collapsed/expanded
+// afterward (see toggleReasoningBlock). autoCollapse is the block's initial
+// fold state for a brand-new commit — finalizeResponse and applySnapshot
+// both pass "the turn produced a trailing answer", so a block collapses the
+// moment final-answer generation actually happened (there's something to
+// fold *into*), while a reasoning-only turn stays expanded, since collapsing
+// it would just hide the entire response. restore, when key matches a prior
+// block, always wins over autoCollapse — a user's manual toggle survives a
+// snapshot rebuild regardless of what the message shape defaults to. restore
+// is nil for a fresh live-turn commit, which has no prior state to inherit.
+func (m *model) commitReasoningBlock(text, key string, autoCollapse bool, restore map[string]*committedReasoningBlock) {
+	if text == "" {
+		return
+	}
+	lineIdx := len(m.renderedLines)
+	b := &committedReasoningBlock{key: key, text: text, collapsed: autoCollapse}
+	if old, ok := restore[key]; ok {
+		b.collapsed = old.collapsed
+	}
+	rendered := m.renderCommittedReasoning(b)
+	b.lineIdx = lineIdx
+	b.lineCount = visualLineCount(rendered)
+	m.committedReasoning = append(m.committedReasoning, b)
+	m.renderedLines = append(m.renderedLines, strings.Split(rendered, "\n")...)
+	m.lastReasoningKey = key
+}
+
+// toggleReasoningBlock flips the collapse state of the committed reasoning
+// block identified by key and splices its re-rendered replacement into
+// renderedLines. Returns false if no block with that key is currently
+// committed (e.g. reasoning got disabled, or nothing has completed yet).
+func (m *model) toggleReasoningBlock(key string) bool {
+	for _, b := range m.committedReasoning {
+		if b.key != key {
+			continue
+		}
+		b.collapsed = !b.collapsed
+		m.spliceCommittedReasoning(b)
+		return true
+	}
+	return false
+}
+
+// spliceCommittedReasoning re-renders b after a collapse/expand toggle and
+// splices the result into m.renderedLines in place of its previous lines —
+// shifting every committed tool group, message range, and other reasoning
+// block that comes after it by the resulting line-count delta, exactly like
+// spliceCommittedGroup (see its doc comment: this is the second of the two
+// places that mutate renderedLines in place after initial construction, and
+// anything added to renderedLines' bookkeeping in the future needs the same
+// shift treatment in both).
+func (m *model) spliceCommittedReasoning(b *committedReasoningBlock) {
+	rendered := m.renderCommittedReasoning(b)
+	newLines := strings.Split(rendered, "\n")
+	delta := len(newLines) - b.lineCount
+
+	tail := append([]string(nil), m.renderedLines[b.lineIdx+b.lineCount:]...)
+	m.renderedLines = append(m.renderedLines[:b.lineIdx], newLines...)
+	m.renderedLines = append(m.renderedLines, tail...)
+
+	b.lineCount = len(newLines)
+	for _, other := range m.committedReasoning {
+		if other != b && other.lineIdx > b.lineIdx {
+			other.lineIdx += delta
+		}
+	}
+	for _, g := range m.committedGroups {
+		if g.lineIdx > b.lineIdx {
+			g.lineIdx += delta
+		}
+	}
+	for i := range m.messageRanges {
+		if m.messageRanges[i].startLine > b.lineIdx {
+			m.messageRanges[i].startLine += delta
+			m.messageRanges[i].endLine += delta
+		}
+	}
+	m.viewport.SetContentLines(m.renderedLines)
+}
+
 func (m *model) viewportLinesForView(visibleReasoning bool) []string {
 	lines := make([]string, 0, len(m.renderedLines)+4)
 	lines = append(lines, m.renderedLines...)
@@ -1818,6 +1992,57 @@ func (m *model) viewportLinesForView(visibleReasoning bool) []string {
 		}
 	}
 	return lines
+}
+
+// inputBoxHeightFrac caps how much of the terminal height the input box may
+// grow to before its body scrolls, instead of pushing the viewport off the
+// top of the screen — mirrors help.go's helpOverlayHeightFrac, the same
+// "clip to a fraction of the terminal" idea. Unlike the /help overlay, the
+// input box has no user-driven scroll state: it's an active text buffer, not
+// a static reference panel, so the visible window just follows the cursor
+// (see clipInputBody) rather than tracking a scrollOffset field.
+const inputBoxHeightFrac = 0.6
+
+// inputBoxChromeLines is the input box's fixed border overhead that a
+// height cap must leave room for: top border, hint row, blank padding row,
+// bottom border — see renderInputBox. The body itself is whatever's left.
+const inputBoxChromeLines = 4
+
+// clipInputBody windows body (already word-wrapped input rows) down to
+// whatever fits within inputBoxHeightFrac of the terminal, keeping
+// cursorIdx (body's index of the row the cursor is on) inside the visible
+// window — so a long pasted block or many wrapped lines scrolls instead of
+// growing the input box past most of the screen (and shoving the viewport
+// off the top). Returns body unchanged with an empty hint when it already
+// fits, or m.height is unset (0, e.g. before the first WindowSizeMsg).
+func (m *model) clipInputBody(body []string, cursorIdx int) (clipped []string, hint string) {
+	if m.height <= 0 {
+		return body, ""
+	}
+	maxBoxHeight := max(int(float64(m.height)*inputBoxHeightFrac), inputBoxChromeLines+1)
+	maxBodyLines := maxBoxHeight - inputBoxChromeLines
+	if maxBodyLines >= len(body) {
+		return body, ""
+	}
+	maxBodyLines = max(maxBodyLines, 1)
+
+	// Bias the window toward showing up to the cursor (classic "scroll
+	// minimally to keep the cursor in view" behavior) rather than centering
+	// it, since the cursor is usually at the end while actively typing.
+	start := cursorIdx - maxBodyLines + 1
+	start = max(start, 0)
+	start = min(start, len(body)-maxBodyLines)
+	end := start + maxBodyLines
+
+	switch {
+	case start > 0 && end < len(body):
+		hint = inputPlaceholderStyle.Render("⋮ scrolled — more above and below")
+	case start > 0:
+		hint = inputPlaceholderStyle.Render("⋮ more above")
+	case end < len(body):
+		hint = inputPlaceholderStyle.Render("⋮ more below")
+	}
+	return body[start:end], hint
 }
 
 func renderInputBox(width int, title string, lines []string, hint string) string {
@@ -2172,11 +2397,6 @@ func (m *model) handleChatEvent(evt tauchat.ChatEvent) tea.Cmd {
 		m.toolGroupCollapsed = m.toolCallsDefaultCollapsed
 		m.inResponse = true
 		m.spinnerFrame = 0
-		m.turnStartedAt = time.Now()
-		// Seed the verb rotation from the turn's start so each turn opens on a
-		// different word; the low bits of the nanosecond clock are plenty of
-		// spread for a cosmetic choice.
-		m.turnSeed = m.turnStartedAt.UnixNano()
 		return spinTick()
 
 	case tauchat.ChatResponseDeltaEvent:
@@ -2398,6 +2618,15 @@ func (m *model) applySnapshot(e tauchat.ChatSessionSnapshotEvent) {
 	}
 	m.committedGroups = m.committedGroups[:0]
 
+	// oldReasoning is the same fold-survival mechanism as oldGroups, for
+	// completed reasoning blocks — keyed by committedReasoningKey.
+	oldReasoning := make(map[string]*committedReasoningBlock, len(m.committedReasoning))
+	for _, b := range m.committedReasoning {
+		oldReasoning[b.key] = b
+	}
+	m.committedReasoning = m.committedReasoning[:0]
+	m.lastReasoningKey = ""
+
 	toolCallsByID := map[string]tauchat.ChatToolCall{}
 	var pendingTools []toolState
 	flushPendingTools := func() {
@@ -2449,7 +2678,8 @@ func (m *model) applySnapshot(e tauchat.ChatSessionSnapshotEvent) {
 			// this function is the sole source of truth for renderedLines.
 			if msg.ReasoningContent != "" && m.showReasoning {
 				flushPendingTools()
-				m.renderedLines = append(m.renderedLines, renderReasoningLines(msg.ReasoningContent, m.width)...)
+				key := committedReasoningKey(msg.ID, idx)
+				m.commitReasoningBlock(msg.ReasoningContent, key, msg.Content != "", oldReasoning)
 			}
 			if msg.Content != "" {
 				flushPendingTools()
@@ -2500,8 +2730,18 @@ func (m *model) finalizeResponse(id string) string {
 	// existed in the live view and was discarded here unread — on a fast
 	// model, reasoning and the answer can both finish inside a second, so
 	// it would flash on screen and vanish before anyone could read it.
+	//
+	// autoCollapse: fold the block automatically only when the turn also
+	// produced a trailing answer — final-answer generation actually began,
+	// so there's an answer for the block to sit above once folded. A
+	// reasoning-only turn (no answer) stays expanded, matching the existing
+	// "reasoning-only" regression behavior.
 	if m.reasoning != "" && m.showReasoning {
-		m.renderedLines = append(m.renderedLines, renderReasoningLines(m.reasoning, m.width)...)
+		if id == "" {
+			m.reasoningKeySeq++
+		}
+		key := committedReasoningKey(id, m.reasoningKeySeq)
+		m.commitReasoningBlock(m.reasoning, key, m.streaming != "", nil)
 	}
 	content := m.streaming
 	if content != "" {
@@ -3262,6 +3502,11 @@ func (m *model) spliceCommittedGroup(g *committedToolGroup) {
 	for _, other := range m.committedGroups {
 		if other != g && other.lineIdx > g.lineIdx {
 			other.lineIdx += delta
+		}
+	}
+	for _, rb := range m.committedReasoning {
+		if rb.lineIdx > g.lineIdx {
+			rb.lineIdx += delta
 		}
 	}
 	for i := range m.messageRanges {
@@ -4845,13 +5090,14 @@ var (
 	compMoreStyle        = lipgloss.NewStyle().Faint(true).Italic(true)
 	panelStyle           = lipgloss.NewStyle().Foreground(themeHex(theme.AccentColor))
 
-	// Muted trailing metadata — the elapsed clock and interrupt hint on the
-	// working indicator, and the per-tool elapsed suffix. Faint (terminal-
-	// native dim) rather than a fixed color, so the verb / tool name stays
-	// the focus and the timing reads as ambient against whatever foreground
-	// the user's terminal actually has.
-	workingMetaStyle = lipgloss.NewStyle().Faint(true)
-	toolMetaStyle    = lipgloss.NewStyle().Faint(true)
+	// thinkingIndicatorStyle renders the calm dot animation in Warm Ochre.
+	thinkingIndicatorStyle = lipgloss.NewStyle().Foreground(themeHex(theme.AccentColor))
+
+	// Muted trailing metadata — the per-tool elapsed suffix. Faint (terminal-
+	// native dim) rather than a fixed color, so the tool name stays the focus
+	// and the timing reads as ambient against whatever foreground the user's
+	// terminal actually has.
+	toolMetaStyle = lipgloss.NewStyle().Faint(true)
 
 	// Tool status styles — per-state foreground colors for tool call rows.
 	toolRunningStyle = lipgloss.NewStyle().Foreground(themeHex(theme.ToolRunning.FG))

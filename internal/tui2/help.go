@@ -52,6 +52,12 @@ var helpSections = []helpSection{
 		},
 	},
 	{
+		title: "Reasoning",
+		rows: []helpRow{
+			{"Ctrl+R", "collapse/expand the last completed reasoning block"},
+		},
+	},
+	{
 		title: "Screen & Navigation",
 		rows: []helpRow{
 			{"Ctrl+Shift+L", "clear the screen (keeps the session)"},

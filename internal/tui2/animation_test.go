@@ -1,114 +1,63 @@
 package tui2
 
 import (
+	"fmt"
 	"slices"
 	"strings"
 	"testing"
 	"time"
 
-	"github.com/samcharles93/tau/pkg/taui/termkit"
+	"github.com/samcharles93/tau/internal/theme"
 )
 
-// --- thinkingVerb ---
+// --- thinkingDots ---
 
-func TestThinkingVerbStableWithinRotateWindow(t *testing.T) {
-	// Within a single verbRotate window the verb must not change, so the word
-	// doesn't flicker frame-to-frame while the clock ticks sub-second.
-	seed := int64(42)
-	a := thinkingVerb(seed, 100*time.Millisecond)
-	b := thinkingVerb(seed, verbRotate-time.Millisecond)
-	if a != b {
-		t.Fatalf("verb changed within one rotate window: %q vs %q", a, b)
-	}
-}
-
-func TestThinkingVerbAdvancesAcrossWindows(t *testing.T) {
-	seed := int64(0)
-	first := thinkingVerb(seed, 0)
-	next := thinkingVerb(seed, verbRotate)
-	if first == next {
-		t.Fatalf("verb did not advance after one rotate window (both %q)", first)
-	}
-}
-
-func TestThinkingVerbSeedVariesOpeningWord(t *testing.T) {
-	// Two different seeds should be able to open on different words; check that
-	// at least one offset in a small sweep differs (guards against the seed
-	// being ignored entirely).
-	base := thinkingVerb(0, 0)
-	differs := false
-	for s := int64(1); s < int64(len(thinkingVerbs)); s++ {
-		if thinkingVerb(s, 0) != base {
-			differs = true
-			break
+func TestThinkingDotsThreeFrameSequence(t *testing.T) {
+	// Frame 0 → "●", frame 6 → "●●", frame 12 → "●●●", frame 18 → "●" (wrap).
+	want := []string{"●", "●●", "●●●"}
+	for i := range 3 {
+		got := thinkingDots(i * thinkingDotFrameTicks)
+		if got != want[i] {
+			t.Errorf("thinkingDots(%d) = %q, want %q", i*thinkingDotFrameTicks, got, want[i])
 		}
 	}
-	if !differs {
-		t.Fatal("seed never changed the opening verb")
+}
+
+func TestThinkingDotsWraps(t *testing.T) {
+	// After three frames, it should wrap back to the first.
+	first := thinkingDots(0)
+	wrapped := thinkingDots(3 * thinkingDotFrameTicks)
+	if first != wrapped {
+		t.Errorf("thinkingDots did not wrap: %q vs %q", first, wrapped)
 	}
 }
 
-func TestThinkingVerbTotalOnEdgeInputs(t *testing.T) {
-	// Negative seed and zero elapsed must index safely, never panic.
-	if got := thinkingVerb(-1, 0); got == "" {
-		t.Fatal("negative seed produced empty verb")
-	}
-	if got := thinkingVerb(-999999, 10*time.Minute); got == "" {
-		t.Fatal("large elapsed produced empty verb")
-	}
-}
-
-// --- shimmer ---
-
-func TestShimmerPreservesPlainText(t *testing.T) {
-	termkit.ForceColor() // ensure SGR is emitted so stripping is exercised
-	in := "⠹ Percolating…"
-	out := shimmer(in, 3)
-	if got := stripANSI(out); got != in {
-		t.Fatalf("shimmer altered visible text: got %q, want %q", got, in)
+func TestThinkingDotsStableWithinTickWindow(t *testing.T) {
+	// Within a single thinkingDotFrameTicks window, the dot frame must not
+	// change, so the dot count doesn't flicker frame-to-frame.
+	a := thinkingDots(0)
+	for i := 1; i < thinkingDotFrameTicks; i++ {
+		if got := thinkingDots(i); got != a {
+			t.Fatalf("thinkingDots changed within tick window at frame %d: %q vs %q", i, got, a)
+		}
 	}
 }
 
-func TestShimmerAnimatesBetweenFrames(t *testing.T) {
-	termkit.ForceColor()
-	in := "Converging…"
-	// Different phases should generally colour the runes differently, so the
-	// sweep visibly moves; compare raw (styled) output across a phase step.
-	if shimmer(in, 0) == shimmer(in, 4) {
-		t.Fatal("shimmer output identical across phases — no visible motion")
+func TestThinkingDotsNegativeFrame(t *testing.T) {
+	// Negative frame values must index safely, never panic.
+	if got := thinkingDots(-1); got == "" {
+		t.Fatal("negative frame produced empty string")
+	}
+	if got := thinkingDots(-999999); got == "" {
+		t.Fatal("large negative frame produced empty string")
 	}
 }
 
-func TestShimmerEmptyString(t *testing.T) {
-	if out := shimmer("", 7); out != "" {
-		t.Fatalf("shimmer(\"\") = %q, want empty", out)
-	}
-}
-
-// --- lerpColor ---
-
-func TestLerpColorEndpoints(t *testing.T) {
-	a := termkit.Color{0, 0, 0}
-	b := termkit.Color{255, 255, 255}
-	if got := lerpColor(a, b, 0); got != a {
-		t.Fatalf("t=0 gave %v, want %v", got, a)
-	}
-	if got := lerpColor(a, b, 1); got != b {
-		t.Fatalf("t=1 gave %v, want %v", got, b)
-	}
-	if got := lerpColor(a, b, 0.5); got != (termkit.Color{128, 128, 128}) {
-		t.Fatalf("t=0.5 gave %v, want {128,128,128}", got)
-	}
-}
-
-func TestLerpColorClampsOutOfRange(t *testing.T) {
-	a := termkit.Color{10, 20, 30}
-	b := termkit.Color{40, 50, 60}
-	if got := lerpColor(a, b, -5); got != a {
-		t.Fatalf("t<0 not clamped: %v", got)
-	}
-	if got := lerpColor(a, b, 5); got != b {
-		t.Fatalf("t>1 not clamped: %v", got)
+func TestThinkingDotsCadence(t *testing.T) {
+	// At 80ms per tick and thinkingDotFrameTicks=6, each visual frame lasts
+	// ~480ms. Verify the divisor relationship.
+	if thinkingDotFrameTicks*80 != 480 {
+		t.Errorf("thinkingDotFrameTicks=%d * 80ms = %dms, want 480ms", thinkingDotFrameTicks, thinkingDotFrameTicks*80)
 	}
 }
 
@@ -160,21 +109,65 @@ func TestToolGlyph(t *testing.T) {
 
 // --- workingIndicator ---
 
-func TestWorkingIndicatorContainsVerbAndClock(t *testing.T) {
+func TestWorkingIndicatorShowsDots(t *testing.T) {
 	m := &model{
-		turnStartedAt: time.Now().Add(-4 * time.Second),
-		turnSeed:      1,
-		spinnerFrame:  2,
+		spinnerFrame: 0,
 	}
 	out := stripANSI(m.workingIndicator())
-	if !strings.Contains(out, "4s") {
-		t.Errorf("indicator missing elapsed clock: %q", out)
+	if !strings.Contains(out, "Thinking ") {
+		t.Errorf("indicator missing label: %q", out)
 	}
-	if !strings.Contains(out, "ctrl+c to interrupt") {
-		t.Errorf("indicator missing interrupt hint: %q", out)
+	if !strings.Contains(out, "●") {
+		t.Errorf("indicator missing dot: %q", out)
 	}
-	if !strings.Contains(out, "…") {
-		t.Errorf("indicator missing verb ellipsis: %q", out)
+}
+
+func TestWorkingIndicatorNoVerbOrClock(t *testing.T) {
+	m := &model{
+		spinnerFrame: 0,
+	}
+	out := stripANSI(m.workingIndicator())
+	for _, banned := range []string{"4s", "ctrl+c", "Cogitating", "Percolating", "…"} {
+		if strings.Contains(out, banned) {
+			t.Errorf("indicator contains removed element %q: %q", banned, out)
+		}
+	}
+}
+
+func TestWorkingIndicatorAnimates(t *testing.T) {
+	m := &model{spinnerFrame: 0}
+	a := m.workingIndicator()
+	m.spinnerFrame = thinkingDotFrameTicks
+	b := m.workingIndicator()
+	if a == b {
+		t.Fatal("workingIndicator did not change across dot frames")
+	}
+}
+
+// TestWorkingIndicatorAccentsOnlyTheDots guards the "accent is sparing"
+// convention this codebase otherwise follows everywhere (reasoningLabelStyle
+// on just the bar, userGlyphStyle on just the "⏎" glyph): the static
+// "Thinking " label must stay unstyled/inherit the terminal's default
+// foreground, since it's the only element on screen for the entire thinking
+// phase of every turn — only the dot glyphs after it should carry Warm
+// Ochre.
+func TestWorkingIndicatorAccentsOnlyTheDots(t *testing.T) {
+	m := &model{spinnerFrame: 0}
+	out := m.workingIndicator()
+
+	idx := strings.Index(out, "Thinking ")
+	if idx < 0 {
+		t.Fatalf("indicator missing label: %q", out)
+	}
+	label := out[idx : idx+len("Thinking ")]
+	if label != stripANSI(label) {
+		t.Fatalf("label carries styling, want it unstyled: %q", label)
+	}
+
+	accentSGR := fmt.Sprintf("38;2;%d;%d;%d", theme.AccentColor[0], theme.AccentColor[1], theme.AccentColor[2])
+	dotsPortion := out[idx+len("Thinking "):]
+	if !strings.Contains(dotsPortion, accentSGR) {
+		t.Fatalf("dot sequence missing the Warm Ochre accent: %q", out)
 	}
 }
 

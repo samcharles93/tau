@@ -1235,6 +1235,13 @@ func TestReasoningStyleDistinctFromFinalAnswer(t *testing.T) {
 
 	m.finalizeResponse("")
 
+	// The turn produced a trailing answer, so the block auto-collapses (see
+	// commitReasoningBlock) — expand it to inspect the expanded styling this
+	// test is actually about.
+	if !m.toggleReasoningBlock(m.lastReasoningKey) {
+		t.Fatal("expected toggleReasoningBlock to find the just-committed block")
+	}
+
 	// lipgloss renders an explicit truecolor Foreground as a decimal
 	// "38;2;R;G;B" SGR sequence, not hex.
 	accentSGR := fmt.Sprintf("38;2;%d;%d;%d", theme.AccentColor[0], theme.AccentColor[1], theme.AccentColor[2])
@@ -1281,6 +1288,158 @@ func TestReasoningStyleDistinctFromFinalAnswer(t *testing.T) {
 	}
 	if strings.Contains(answerLine, accentSGR) {
 		t.Fatalf("final answer line should not carry the reasoning accent color, got %q", answerLine)
+	}
+}
+
+// TestReasoningBlockCollapsedAndExpandedRendering checks the two render
+// states directly: collapsed shows a single subtle line (no raw reasoning
+// text, no keybinding hint baked in — that's /help's job), expanded shows
+// the full multi-line body with the raw text intact.
+func TestReasoningBlockCollapsedAndExpandedRendering(t *testing.T) {
+	m := newTestModel(&fakeRuntime{}, nil)
+	m.width = 80
+
+	b := &committedReasoningBlock{key: "k", text: "the raw reasoning text", collapsed: true}
+	collapsed := m.renderCommittedReasoning(b)
+	if strings.Contains(collapsed, "the raw reasoning text") {
+		t.Fatalf("collapsed rendering should not include the raw text, got %q", collapsed)
+	}
+	if strings.Contains(collapsed, "ctrl+r") || strings.Contains(strings.ToLower(collapsed), "ctrl+r") {
+		t.Fatalf("collapsed rendering should not bake in the keybinding hint (belongs in /help only), got %q", collapsed)
+	}
+	if got := len(strings.Split(collapsed, "\n")); got != 1 {
+		t.Fatalf("collapsed rendering should be a single line, got %d lines: %q", got, collapsed)
+	}
+	if !strings.Contains(stripANSI(collapsed), "reasoning collapsed") {
+		t.Fatalf("collapsed rendering should carry a clear indicator, got %q", stripANSI(collapsed))
+	}
+
+	b.collapsed = false
+	expanded := m.renderCommittedReasoning(b)
+	if !strings.Contains(expanded, "the raw reasoning text") {
+		t.Fatalf("expanded rendering should include the raw text, got %q", expanded)
+	}
+}
+
+// TestReasoningBlockContentPreservedAcrossCollapse guards the "presentation
+// state only" requirement: toggling collapse must never mutate the block's
+// underlying text, and the persisted ChatMessage.ReasoningContent (re-read
+// on every applySnapshot rebuild) is what's authoritative — collapsing is
+// purely a rendering decision layered on top.
+func TestReasoningBlockContentPreservedAcrossCollapse(t *testing.T) {
+	m := newTestModel(&fakeRuntime{}, nil)
+	m.width = 80
+	m.streaming = "the final answer"
+	m.reasoning = "the original reasoning text"
+	m.inResponse = true
+	m.finalizeResponse("msg-1")
+
+	if len(m.committedReasoning) != 1 {
+		t.Fatalf("expected one committed reasoning block, got %d", len(m.committedReasoning))
+	}
+	original := m.committedReasoning[0].text
+	if original != "the original reasoning text" {
+		t.Fatalf("unexpected initial text %q", original)
+	}
+
+	// Toggle collapsed -> expanded -> collapsed again.
+	for range 2 {
+		if !m.toggleReasoningBlock("msg-1") {
+			t.Fatal("expected toggleReasoningBlock to find block \"msg-1\"")
+		}
+		if m.committedReasoning[0].text != original {
+			t.Fatalf("collapse toggle mutated the underlying text: got %q, want %q", m.committedReasoning[0].text, original)
+		}
+	}
+
+	// A snapshot rebuild re-reads ReasoningContent from the persisted
+	// message, independent of whatever presentation state the toggles left
+	// behind — collapsing never alters the message that would be sent back
+	// to the model or saved to disk.
+	m.applySnapshot(tauchat.ChatSessionSnapshotEvent{
+		State: tauchat.ChatSessionState{
+			Messages: []tauchat.ChatMessage{
+				{ID: "msg-1", Role: tauchat.ChatRoleAssistant, ReasoningContent: original, Content: "the final answer"},
+			},
+		},
+	})
+	if len(m.committedReasoning) != 1 || m.committedReasoning[0].text != original {
+		t.Fatalf("expected persisted reasoning text to survive rebuild unchanged, got %+v", m.committedReasoning)
+	}
+}
+
+// TestCtrlRTogglesLastReasoningBlock checks the keyboard toggle end to end:
+// ctrl+r flips the most recently committed block's collapse state and
+// re-renders it in place, and is a no-op with reasoning disabled or before
+// anything has completed.
+func TestCtrlRTogglesLastReasoningBlock(t *testing.T) {
+	m := newTestModel(&fakeRuntime{}, nil)
+	m.width = 80
+
+	// No completed block yet: ctrl+r is a no-op, not a panic.
+	m.dispatchKey(key('r', tea.ModCtrl))
+	if len(m.committedReasoning) != 0 {
+		t.Fatalf("expected no committed reasoning blocks yet, got %d", len(m.committedReasoning))
+	}
+
+	m.streaming = "the final answer"
+	m.reasoning = "weighing the options"
+	m.inResponse = true
+	m.finalizeResponse("msg-1")
+
+	if !m.committedReasoning[0].collapsed {
+		t.Fatal("expected the block to auto-collapse (turn produced a trailing answer)")
+	}
+
+	m.dispatchKey(key('r', tea.ModCtrl))
+	if m.committedReasoning[0].collapsed {
+		t.Fatal("expected ctrl+r to expand the collapsed block")
+	}
+	if !strings.Contains(strings.Join(m.renderedLines, "\n"), "weighing the options") {
+		t.Fatal("expected expanding via ctrl+r to reveal the raw reasoning text in renderedLines")
+	}
+
+	m.dispatchKey(key('r', tea.ModCtrl))
+	if !m.committedReasoning[0].collapsed {
+		t.Fatal("expected a second ctrl+r to collapse the block again")
+	}
+
+	// Reasoning disabled: ctrl+r must not touch the (still-persisted) block.
+	m.showReasoning = false
+	m.dispatchKey(key('r', tea.ModCtrl))
+	if !m.committedReasoning[0].collapsed {
+		t.Fatal("expected ctrl+r to be a no-op while reasoning is disabled")
+	}
+}
+
+// TestStreamingReasoningRemainsVisibleWhileActive checks the split this
+// feature relies on: only *completed* reasoning is collapsible — the
+// in-progress turn's reasoning is rendered fresh from m.reasoning every
+// frame and is never folded, even after a sibling turn's block has already
+// been committed and auto-collapsed.
+func TestStreamingReasoningRemainsVisibleWhileActive(t *testing.T) {
+	m := newTestModel(&fakeRuntime{}, nil)
+	m.width = 80
+
+	// A prior, completed turn: auto-collapses since it has a trailing answer.
+	m.streaming = "prior answer"
+	m.reasoning = "prior reasoning"
+	m.inResponse = true
+	m.finalizeResponse("msg-1")
+	if !m.committedReasoning[0].collapsed {
+		t.Fatal("expected the prior turn's reasoning to auto-collapse")
+	}
+
+	// A new turn starts streaming reasoning — must render in full, live,
+	// regardless of the previous block's collapsed state.
+	m.inResponse = true
+	m.reasoning = "currently streaming reasoning"
+	m.streaming = ""
+
+	view := m.viewportLinesForView(true)
+	joined := strings.Join(view, "\n")
+	if !strings.Contains(joined, "currently streaming reasoning") {
+		t.Fatalf("expected live streaming reasoning to render in full, got %q", stripANSI(joined))
 	}
 }
 
@@ -2846,6 +3005,11 @@ func TestApplySnapshotRendersAssistantMarkdown(t *testing.T) {
 // scrollback would render correctly for one turn, then vanish the moment
 // the next prompt triggered a rebuild here, since this function is the sole
 // source of truth for renderedLines.
+//
+// Since this message has a trailing answer, the block auto-collapses (see
+// commitReasoningBlock) — the raw text must still survive uncollapsed in
+// m.committedReasoning (collapsing is presentation-only, never touches the
+// persisted/source content), and expanding it must reveal the exact text.
 func TestApplySnapshotRendersPersistedReasoning(t *testing.T) {
 	m := newTestModel(&fakeRuntime{}, nil)
 	m.width = 80
@@ -2858,12 +3022,29 @@ func TestApplySnapshotRendersPersistedReasoning(t *testing.T) {
 		},
 	})
 
+	if len(m.committedReasoning) != 1 {
+		t.Fatalf("expected one committed reasoning block, got %d", len(m.committedReasoning))
+	}
+	if m.committedReasoning[0].text != "carefully considering" {
+		t.Fatalf("expected raw reasoning text preserved, got %q", m.committedReasoning[0].text)
+	}
+	if !m.committedReasoning[0].collapsed {
+		t.Fatalf("expected block to auto-collapse since the message has a trailing answer")
+	}
 	joined := strings.Join(m.renderedLines, "\n")
-	if !strings.Contains(joined, "carefully considering") {
-		t.Fatalf("expected persisted reasoning to survive applySnapshot, got %q", joined)
+	if strings.Contains(joined, "carefully considering") {
+		t.Fatalf("expected collapsed block not to show its raw text yet, got %q", joined)
 	}
 	if !strings.Contains(stripANSI(joined), "the answer") {
 		t.Fatalf("expected assistant content to still render, got %q", stripANSI(joined))
+	}
+
+	if !m.toggleReasoningBlock(m.committedReasoning[0].key) {
+		t.Fatal("expected toggleReasoningBlock to find the committed block")
+	}
+	joined = strings.Join(m.renderedLines, "\n")
+	if !strings.Contains(joined, "carefully considering") {
+		t.Fatalf("expected expanding the block to reveal the raw reasoning text, got %q", joined)
 	}
 }
 
@@ -4513,6 +4694,61 @@ func TestRenderInputAreaWrapsCursorOntoContinuationLine(t *testing.T) {
 		if visibleWidth(line) > m.width {
 			t.Fatalf("input line width = %d, want <= %d: %q\n%s", visibleWidth(line), m.width, line, plain)
 		}
+	}
+}
+
+// TestRenderInputAreaCapsHeightAndScrollsOverflow guards against the input
+// box growing past inputBoxHeightFrac of the terminal and pushing the
+// viewport off the top — a long multi-line paste must scroll inside a
+// capped box instead of rendering every line.
+func TestRenderInputAreaCapsHeightAndScrollsOverflow(t *testing.T) {
+	m := newTestModel(&fakeRuntime{}, nil)
+	m.width, m.height = 80, 20 // 60% cap -> max box height 12 -> max body 8 rows
+
+	var sb strings.Builder
+	for i := 1; i <= 30; i++ {
+		if i > 1 {
+			sb.WriteString("\n")
+		}
+		fmt.Fprintf(&sb, "line %02d", i)
+	}
+	m.input = sb.String()
+	m.inputCursor = 0 // cursor on the first line
+
+	area := m.renderInputArea()
+	lines := strings.Split(area, "\n")
+	maxBoxHeight := int(float64(m.height) * inputBoxHeightFrac)
+	if len(lines) > maxBoxHeight {
+		t.Fatalf("input box height = %d lines, want <= %d (60%% of terminal height %d)", len(lines), maxBoxHeight, m.height)
+	}
+
+	plain := stripANSI(area)
+	if !strings.Contains(plain, "line 01") {
+		t.Fatalf("expected the cursor's line (line 01) to stay visible, got:\n%s", plain)
+	}
+	if strings.Contains(plain, "line 30") {
+		t.Fatalf("expected lines far past the cursor to scroll out of view, got:\n%s", plain)
+	}
+	if !strings.Contains(plain, "more below") {
+		t.Fatalf("expected a scroll indicator when content overflows, got:\n%s", plain)
+	}
+}
+
+// TestRenderInputAreaFitsWithoutClipping checks the common case is
+// unaffected: input short enough to fit within the height cap renders every
+// line with no scroll indicator.
+func TestRenderInputAreaFitsWithoutClipping(t *testing.T) {
+	m := newTestModel(&fakeRuntime{}, nil)
+	m.width, m.height = 80, 40
+	m.input = "line one\nline two\nline three"
+	m.inputCursor = 0
+
+	plain := stripANSI(m.renderInputArea())
+	if !strings.Contains(plain, "line one") || !strings.Contains(plain, "line two") || !strings.Contains(plain, "line three") {
+		t.Fatalf("expected all lines to render unclipped, got:\n%s", plain)
+	}
+	if strings.Contains(plain, "more above") || strings.Contains(plain, "more below") {
+		t.Fatalf("expected no scroll indicator when content fits, got:\n%s", plain)
 	}
 }
 
