@@ -10,6 +10,7 @@ import (
 	"sync"
 	"testing"
 	"time"
+	"unicode/utf8"
 
 	tea "charm.land/bubbletea/v2"
 
@@ -3139,6 +3140,39 @@ func TestViewPreservesIdleManualScrollback(t *testing.T) {
 	}
 	if lineContaining(strings.Split(view.Content, "\n"), "line 80") >= 0 {
 		t.Fatalf("latest line should not be forced into view while idle after manual scroll:\n%s", stripANSI(view.Content))
+	}
+}
+
+func TestCtrlHomeEndJumpConversationAndControlAutoFollow(t *testing.T) {
+	m := newTestModel(&fakeRuntime{}, nil)
+	m.Update(tea.WindowSizeMsg{Width: 100, Height: 24})
+	for i := 1; i <= 80; i++ {
+		m.appendMessage("user", fmt.Sprintf("line %02d", i))
+	}
+	m.input = "keep this draft"
+	m.inputCursor = utf8.RuneCountInString(m.input)
+	m.View()
+
+	m.dispatchKey(key(tea.KeyHome, tea.ModCtrl))
+	if got := m.viewport.YOffset(); got != 0 {
+		t.Fatalf("Ctrl+Home YOffset = %d, want 0", got)
+	}
+	if m.autoFollow {
+		t.Fatal("Ctrl+Home should disable auto-follow while viewing old content")
+	}
+	if m.input != "keep this draft" {
+		t.Fatalf("Ctrl+Home changed draft input to %q", m.input)
+	}
+
+	m.dispatchKey(key(tea.KeyEnd, tea.ModCtrl))
+	if !m.viewport.AtBottom() {
+		t.Fatal("Ctrl+End should jump to the newest conversation content")
+	}
+	if !m.autoFollow {
+		t.Fatal("Ctrl+End should resume auto-follow")
+	}
+	if m.input != "keep this draft" {
+		t.Fatalf("Ctrl+End changed draft input to %q", m.input)
 	}
 }
 

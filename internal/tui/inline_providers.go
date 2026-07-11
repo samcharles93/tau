@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"slices"
@@ -269,7 +270,12 @@ func (c *inlineChat) refreshAfterProviderChange(displayName string, enabled bool
 	}()
 }
 
-func (c *inlineChat) providerCfg() config.Config { cfg, _, _ := providers.Effective(); return cfg }
+// providerCfg re-resolves provider config. inlineChat (the legacy TUI) has no
+// request-scoped context to thread through, so this uses Background directly.
+func (c *inlineChat) providerCfg() config.Config {
+	cfg, _, _ := providers.Effective(context.Background())
+	return cfg
+}
 
 func (c *inlineChat) providerState() providers.State {
 	s, _ := providers.LoadState()

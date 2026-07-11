@@ -405,6 +405,19 @@ func TestCmdHelpShowsCtrlS(t *testing.T) {
 	}
 }
 
+func TestCmdHelpShowsConversationJumpKeys(t *testing.T) {
+	m := newTestModel(&fakeRuntime{}, nil)
+
+	drainCmd(m.cmdHelp(""))
+
+	for _, line := range m.renderedLines {
+		if strings.Contains(stripANSI(line), "Ctrl+Home / Ctrl+End") {
+			return
+		}
+	}
+	t.Error("expected conversation jump keys in help output")
+}
+
 // --- cmdSession -------------------------------------------------------------
 
 func TestCmdSessionListSendsCommand(t *testing.T) {

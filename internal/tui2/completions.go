@@ -365,7 +365,7 @@ func (m *model) effortCompletions(argsBefore int) []compGroup {
 // catalog provider IDs again as that sub-verb's argument. Mirrors
 // internal/tui/inline_providers.go's argProvider.
 func (m *model) providerCompletions(fields []string, argsBefore int) []compGroup {
-	menu := providers.Menu(providerCfg(), providerState(), nil)
+	menu := providers.Menu(providerCfg(m.ctx), providerState(), nil)
 	providerMatches := make([]compMatch, 0, len(menu))
 	for _, e := range menu {
 		desc := e.DisplayName

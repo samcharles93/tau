@@ -1,6 +1,7 @@
 package tui2
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"slices"
@@ -315,6 +316,7 @@ func (m *model) cmdHelp(_ string) tea.Cmd {
 	fmt.Fprintf(&b, "\n  %-38s %s", "Ctrl+L", "clear the screen (keeps the session)")
 	fmt.Fprintf(&b, "\n  %-38s %s", "Ctrl+Shift+G", "copy the assistant's last response")
 	fmt.Fprintf(&b, "\n  %-38s %s", "PageUp / PageDown", "scroll through conversation history")
+	fmt.Fprintf(&b, "\n  %-38s %s", "Ctrl+Home / Ctrl+End", "jump to oldest / newest conversation content")
 	fmt.Fprintf(&b, "\n  %-38s %s", "Tab", "cycle tab-completions when dropdown is visible")
 
 	m.appendMessage("system", b.String())
@@ -491,7 +493,7 @@ func (m *model) cmdCopy(_ string) tea.Cmd {
 func (m *model) cmdProvider(args string) tea.Cmd {
 	args = strings.TrimSpace(args)
 	if args == "" {
-		m.appendMessage("system", providerMenuText())
+		m.appendMessage("system", providerMenuText(m.ctx))
 		return nil
 	}
 
@@ -528,7 +530,7 @@ func (m *model) providerToggle(name string) tea.Cmd {
 	}
 
 	enabled := false
-	for _, e := range providers.Menu(providerCfg(), state, nil) {
+	for _, e := range providers.Menu(providerCfg(m.ctx), state, nil) {
 		if e.ID == entry.ID {
 			enabled = e.Enabled
 			break
@@ -703,7 +705,10 @@ type providerLoginResultMsg struct {
 
 // providerCfg/providerState mirror internal/tui/inline_providers.go's helpers
 // of the same name.
-func providerCfg() config.Config { cfg, _, _ := providers.Effective(); return cfg }
+func providerCfg(ctx context.Context) config.Config {
+	cfg, _, _ := providers.Effective(ctx)
+	return cfg
+}
 
 func providerState() providers.State {
 	s, _ := providers.LoadState()
@@ -712,8 +717,8 @@ func providerState() providers.State {
 
 // providerMenuText renders the catalog with each provider's current state —
 // mirrors internal/tui/inline_providers.go's printProviderMenu.
-func providerMenuText() string {
-	menu := providers.Menu(providerCfg(), providerState(), nil)
+func providerMenuText(ctx context.Context) string {
+	menu := providers.Menu(providerCfg(ctx), providerState(), nil)
 	var b strings.Builder
 	b.WriteString("Providers (use /provider <name> to toggle, /provider login <name> for OAuth):")
 	for _, e := range menu {

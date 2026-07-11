@@ -1101,6 +1101,16 @@ func (m *model) dispatchKey(msg tea.KeyPressMsg) tea.Cmd {
 		}
 		return nil
 
+	case "ctrl+home":
+		m.viewport.GotoTop()
+		m.autoFollow = false
+		return nil
+
+	case "ctrl+end":
+		m.viewport.GotoBottom()
+		m.autoFollow = true
+		return nil
+
 	case "ctrl+l":
 		m.clearScreen()
 		return nil
