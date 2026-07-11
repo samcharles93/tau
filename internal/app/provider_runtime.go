@@ -51,7 +51,7 @@ func (p *providerRuntime) reload(ctx context.Context) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
-	cfg, _, err := providers.Effective()
+	cfg, _, err := providers.Effective(ctx)
 	if err != nil {
 		return err
 	}

@@ -117,6 +117,11 @@ func (s *Streamer) StreamChatCompletionFull(
 	}
 
 	result.ToolCalls = buildToolCalls(calls)
+	for i, call := range result.ToolCalls {
+		if strings.TrimSpace(call.Function.Name) == "" {
+			return result, fmt.Errorf("stream tool call %d (%q) has no function name", i, call.ID)
+		}
+	}
 	return result, nil
 }
 

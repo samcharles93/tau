@@ -224,7 +224,13 @@ func codexSSEChunk(data []byte) (aisdkchat.Chunk, bool) {
 		Name      string `json:"name"`
 		Arguments string `json:"arguments"`
 		Index     int    `json:"output_index"`
-		Usage     *struct {
+		Item      *struct {
+			ID        string `json:"id"`
+			CallID    string `json:"call_id"`
+			Name      string `json:"name"`
+			Arguments string `json:"arguments"`
+		} `json:"item"`
+		Usage *struct {
 			InputTokens  int `json:"input_tokens"`
 			OutputTokens int `json:"output_tokens"`
 			TotalTokens  int `json:"total_tokens"`
@@ -254,11 +260,19 @@ func codexSSEChunk(data []byte) (aisdkchat.Chunk, bool) {
 			ArgsDelta: firstNonEmpty(event.Delta, event.Arguments),
 		}}
 	case "response.output_item.added":
-		if event.Name != "" || event.CallID != "" {
+		name, callID, itemID, arguments := event.Name, event.CallID, event.ItemID, event.Arguments
+		if event.Item != nil {
+			name = firstNonEmpty(name, event.Item.Name)
+			callID = firstNonEmpty(callID, event.Item.CallID)
+			itemID = firstNonEmpty(itemID, event.Item.ID)
+			arguments = firstNonEmpty(arguments, event.Item.Arguments)
+		}
+		if name != "" || callID != "" {
 			chunk.ToolCallDeltas = []aisdkchat.ToolCallDelta{{
-				Index: event.Index,
-				ID:    firstNonEmpty(event.CallID, event.ItemID),
-				Name:  event.Name,
+				Index:     event.Index,
+				ID:        firstNonEmpty(callID, itemID),
+				Name:      name,
+				ArgsDelta: arguments,
 			}}
 		}
 	case "response.completed":
