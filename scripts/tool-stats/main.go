@@ -20,6 +20,7 @@ import (
 	"flag"
 	"fmt"
 	"html/template"
+	"maps"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -104,6 +105,7 @@ type reportData struct {
 	// MetricsSkipped counts metric events for sessions not present in the
 	// sessions dir (excluded so both sources describe the same population).
 	MetricsSkipped int            `json:"metricsSkipped,omitempty"`
+	SearchBackends map[string]int `json:"searchBackends,omitempty"`
 	Buckets        []string       `json:"bucketLabels"`
 	Tools          []*toolStat    `json:"tools"`
 	Shell          []*toolStat    `json:"shellCommands"`
@@ -430,6 +432,12 @@ func joinMetrics(path string, sessionIDs map[string]bool, tools map[string]*tool
 			t.MetricErrors++
 		}
 		t.durations = append(t.durations, int(e.Value))
+		if backend := e.Labels["search_backend"]; backend != "" {
+			if data.SearchBackends == nil {
+				data.SearchBackends = map[string]int{}
+			}
+			data.SearchBackends[backend]++
+		}
 	}
 	if sc.Err() != nil {
 		data.ParseErrors++
@@ -748,7 +756,6 @@ func readArgs(raw string) (path string, offset, limit int) {
 		Offset int    `json:"offset"`
 		Limit  int    `json:"limit"`
 		Full   bool   `json:"full"`
-		Symbol string `json:"symbol"`
 	}
 	if json.Unmarshal([]byte(raw), &args) != nil {
 		return "", 0, 0
@@ -758,7 +765,7 @@ func readArgs(raw string) (path string, offset, limit int) {
 	} else {
 		path = args.File
 	}
-	if args.Limit == 0 && !args.Full && args.Symbol == "" {
+	if args.Limit == 0 && !args.Full {
 		args.Limit = tools.DefaultReadLines
 	}
 	return path, args.Offset, args.Limit
@@ -855,6 +862,13 @@ func printSummary(data *reportData) {
 	withMetrics := data.MetricsPath != ""
 	if withMetrics {
 		fmt.Printf("metrics join: %s (%d events outside sessions dir skipped)\n", data.MetricsPath, data.MetricsSkipped)
+	}
+	if len(data.SearchBackends) > 0 {
+		fmt.Printf("search backends:")
+		for _, backend := range slices.Sorted(maps.Keys(data.SearchBackends)) {
+			fmt.Printf(" %s=%d", backend, data.SearchBackends[backend])
+		}
+		fmt.Println()
 	}
 
 	fmt.Printf("\n%-24s %7s %6s %6s %10s %6s %8s %8s %9s",
@@ -1038,6 +1052,9 @@ const meta = document.getElementById("meta");
 meta.textContent += withMetrics
   ? " · metrics join: " + data.metricsPath + " (m.* columns are ground truth only where covered; " + (data.metricsSkipped || 0) + " events outside sessions dir skipped)"
   : " · error detection is heuristic (no metrics.jsonl found; set metrics.dir in the tau config for ground truth)";
+if (data.searchBackends) {
+  meta.textContent += " · search backends: " + Object.entries(data.searchBackends).map(([name, count]) => name + "=" + count).join(", ");
+}
 
 const toolsTable = document.getElementById("tools-table");
 if (withMetrics) {
