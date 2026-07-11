@@ -43,6 +43,7 @@ require (
 	github.com/dustin/go-humanize v1.0.1 // indirect
 	github.com/fatih/color v1.19.0 // indirect
 	github.com/golang/protobuf v1.5.4 // indirect
+	github.com/google/codesearch v1.3.0-rc.1 // indirect
 	github.com/gorilla/css v1.0.1 // indirect
 	github.com/hashicorp/yamux v0.1.2 // indirect
 	github.com/lucasb-eyer/go-colorful v1.4.0 // indirect
