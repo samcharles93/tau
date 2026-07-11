@@ -56,8 +56,8 @@ func osGetenv(name string) string { return os.Getenv(name) }
 // providers first (in declared order), then enabled env providers, then OAuth
 // providers, both alphabetical. getenv may be nil to use the process
 // environment.
-func Resolve(cfg config.Config, state State, getenv func(string) string) []ResolvedProvider {
-	resolved, _ := ResolveWithRefresh(context.Background(), cfg, state, getenv)
+func Resolve(ctx context.Context, cfg config.Config, state State, getenv func(string) string) []ResolvedProvider {
+	resolved, _ := ResolveWithRefresh(ctx, cfg, state, getenv)
 	return resolved
 }
 

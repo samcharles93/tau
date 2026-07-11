@@ -32,6 +32,20 @@ func TestGrepUsesIndexCandidatesAsAdvisoryFileSet(t *testing.T) {
 	}
 }
 
+func TestGrepRetriesDirectSearchWhenIndexedCandidatesAreStale(t *testing.T) {
+	tmp := t.TempDir()
+	createGrepTestFile(t, tmp, "live.txt", "needle\n")
+	missing := filepath.Join(tmp, "deleted.txt")
+	tool := NewGrepTool(tmp, staticGrepIndex{files: []string{missing}})
+	result, err := tool.Execute(context.Background(), json.RawMessage(`{"pattern":"needle"}`), nil)
+	if err != nil || result.IsError {
+		t.Fatalf("grep result = %#v, err = %v", result, err)
+	}
+	if !strings.Contains(result.Content, "live.txt") || result.MetricLabels["search_backend"] != "direct" {
+		t.Fatalf("fallback output = %s, labels = %v", result.Content, result.MetricLabels)
+	}
+}
+
 func TestGrepFallback(t *testing.T) {
 	// Create a temporary directory with test files.
 	tmp := t.TempDir()

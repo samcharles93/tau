@@ -88,8 +88,12 @@ func TestManagerCandidatesIncludeFilesChangedSinceSnapshot(t *testing.T) {
 	}
 	indexPath := filepath.Join(t.TempDir(), "workspace.csearch")
 	writeTestFile(t, filepath.Dir(indexPath), filepath.Base(indexPath), "placeholder")
+	outside := filepath.Join(t.TempDir(), "outside.txt")
+	if err := os.WriteFile(outside, []byte("outside"), 0o600); err != nil {
+		t.Fatal(err)
+	}
 	dbPath := filepath.Join(t.TempDir(), "indexes.db")
-	m := &Manager{root: root, indexPath: indexPath, dbPath: dbPath, runner: fakeRunner{files: []string{oldPath}}}
+	m := &Manager{root: root, indexPath: indexPath, dbPath: dbPath, runner: fakeRunner{files: []string{oldPath, outside}}}
 	if err := m.ensureSchema(context.Background()); err != nil {
 		t.Fatal(err)
 	}
@@ -100,6 +104,9 @@ func TestManagerCandidatesIncludeFilesChangedSinceSnapshot(t *testing.T) {
 	files, ok := m.Candidates(context.Background(), "new", false, false)
 	if !ok || !slices.Contains(files, oldPath) || !slices.Contains(files, newPath) {
 		t.Fatalf("Candidates() = %v, %v", files, ok)
+	}
+	if slices.Contains(files, outside) {
+		t.Fatalf("outside candidate accepted: %v", files)
 	}
 }
 

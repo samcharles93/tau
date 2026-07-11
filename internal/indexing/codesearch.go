@@ -29,8 +29,8 @@ const (
 	// MaxCandidateFiles bounds helper output and grep argv construction.
 	MaxCandidateFiles    = 2000
 	maxCandidateArgBytes = 24 * 1024
-	buildTimeout      = 10 * time.Minute
-	metadataTimeout   = 5 * time.Second
+	buildTimeout         = 10 * time.Minute
+	metadataTimeout      = 5 * time.Second
 )
 
 // CandidateProvider returns files which may match a grep query. A false
