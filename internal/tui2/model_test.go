@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"os"
 	"reflect"
+	"regexp"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -18,6 +20,7 @@ import (
 	"github.com/samcharles93/tau/internal/eventbus"
 	"github.com/samcharles93/tau/internal/metrics"
 	"github.com/samcharles93/tau/internal/providers"
+	"github.com/samcharles93/tau/internal/theme"
 	"github.com/samcharles93/tau/internal/tui/notify"
 	"github.com/samcharles93/tau/pkg/taui/termkit"
 )
@@ -1215,6 +1218,83 @@ func TestHandleChatEventResponseCompletedReasoningOnly(t *testing.T) {
 	if m.reasoning != "" {
 		t.Fatalf("m.reasoning = %q, want cleared after finalizeResponse", m.reasoning)
 	}
+}
+
+// TestReasoningStyleDistinctFromFinalAnswer guards the visual-hierarchy
+// contract: reasoning must render with a style distinct from (and dimmer
+// than) the final answer, the answer must remain unstyled/full-brightness
+// so it stays the strongest element on screen, and the Warm Ochre accent
+// must appear only on the "│ " bar prefixed to every reasoning line — never
+// painted across the reasoning text itself, and never on the answer.
+func TestReasoningStyleDistinctFromFinalAnswer(t *testing.T) {
+	m := newTestModel(&fakeRuntime{}, nil)
+	m.width = 20 // narrow enough to force reasoning across multiple lines
+	m.streaming = "the final answer"
+	m.reasoning = "weighing several possible options carefully"
+	m.inResponse = true
+
+	m.finalizeResponse("")
+
+	// lipgloss renders an explicit truecolor Foreground as a decimal
+	// "38;2;R;G;B" SGR sequence, not hex.
+	accentSGR := fmt.Sprintf("38;2;%d;%d;%d", theme.AccentColor[0], theme.AccentColor[1], theme.AccentColor[2])
+	mutedSGR := fmt.Sprintf("38;2;%d;%d;%d", theme.ToneMuted[0], theme.ToneMuted[1], theme.ToneMuted[2])
+
+	var reasoningLines []string
+	var answerLine string
+	for _, line := range m.renderedLines {
+		switch {
+		case strings.Contains(line, "│"):
+			reasoningLines = append(reasoningLines, line)
+		case strings.Contains(stripANSI(line), "final"):
+			// The answer goes through glamour, which may style/wrap each
+			// word separately, so match on stripped content rather than a
+			// literal substring of the raw ANSI-laden line.
+			answerLine = line
+		}
+	}
+	if len(reasoningLines) < 2 {
+		t.Fatalf("renderedLines = %q, want reasoning wrapped across multiple bar-prefixed lines", m.renderedLines)
+	}
+	if answerLine == "" {
+		t.Fatalf("renderedLines = %q, want a line containing the final answer", m.renderedLines)
+	}
+
+	for _, reasoningLine := range reasoningLines {
+		if !strings.Contains(reasoningLine, accentSGR) {
+			t.Fatalf("every reasoning line should carry the Warm Ochre bar, got %q", reasoningLine)
+		}
+		if strings.Count(reasoningLine, accentSGR) != 1 {
+			t.Fatalf("Warm Ochre accent should appear exactly once per line (on the bar), not across the body: %q", reasoningLine)
+		}
+		if !strings.Contains(reasoningLine, mutedSGR) {
+			t.Fatalf("reasoning body should carry the explicit muted foreground (not rely on Faint alone), got %q", reasoningLine)
+		}
+		if !containsFaintSGR(reasoningLine) {
+			t.Fatalf("reasoning body should also carry the faint (dim) SGR code as a secondary cue, got %q", reasoningLine)
+		}
+	}
+
+	// The final answer must never inherit reasoning's muted/dim treatment.
+	if strings.Contains(answerLine, mutedSGR) || containsFaintSGR(answerLine) {
+		t.Fatalf("final answer line should not be dimmed like reasoning, got %q", answerLine)
+	}
+	if strings.Contains(answerLine, accentSGR) {
+		t.Fatalf("final answer line should not carry the reasoning accent color, got %q", answerLine)
+	}
+}
+
+// containsFaintSGR reports whether s contains the ANSI "faint" SGR code (2),
+// either alone (\x1b[2m) or combined with other attributes in one escape
+// (e.g. \x1b[2;3m for faint+italic).
+func containsFaintSGR(s string) bool {
+	for _, seq := range regexp.MustCompile(`\x1b\[[0-9;]*m`).FindAllString(s, -1) {
+		body := strings.TrimSuffix(strings.TrimPrefix(seq, "\x1b["), "m")
+		if slices.Contains(strings.Split(body, ";"), "2") {
+			return true
+		}
+	}
+	return false
 }
 
 func TestHandleChatEventResponseCompletedNoContentNoTools(t *testing.T) {

@@ -1767,6 +1767,39 @@ func (m *model) currentInputModeIndex(modes []inputMode) (int, string) {
 	return 0, text
 }
 
+// reasoningBar prefixes every wrapped line of a reasoning block in Warm
+// Ochre, blockquote-style. A single first-line glyph read as too subtle in
+// testing — barely distinguishable from body text at a glance — so the bar
+// runs the full height of the block instead, giving reasoning its own
+// visual lane next to the user message above and the answer below, without
+// tinting the body text itself or using a repeated "Reasoning"/"Tau" label.
+const reasoningBar = "│ "
+
+// renderReasoningLines wraps and styles reasoning text for display. The body
+// uses an explicit muted foreground (not just ANSI faint, which several
+// terminals render as visually identical to normal weight) paired with
+// italic, so it reads as clearly secondary to the (unstyled, full-brightness)
+// final answer even where faint has no effect. reasoningBar is the only
+// place Warm Ochre accent appears. Shared by the live view, turn finalize,
+// and snapshot rebuild so all three stay visually identical.
+func renderReasoningLines(text string, width int) []string {
+	// Mirror wrapWords' own "<=0 means unset, default to 80" rule before
+	// subtracting the bar's width, so an unset/zero width (e.g. before the
+	// first WindowSizeMsg) still wraps at a sane column count instead of
+	// collapsing toward 1.
+	if width <= 0 {
+		width = 80
+	}
+	barWidth := lipgloss.Width(reasoningBar)
+	wrapped := wrapWords(text, max(width-barWidth, 1))
+	lines := make([]string, len(wrapped))
+	bar := reasoningLabelStyle.Render(reasoningBar)
+	for i, line := range wrapped {
+		lines[i] = bar + reasoningStyle.Render(line)
+	}
+	return lines
+}
+
 func (m *model) viewportLinesForView(visibleReasoning bool) []string {
 	lines := make([]string, 0, len(m.renderedLines)+4)
 	lines = append(lines, m.renderedLines...)
@@ -1777,9 +1810,7 @@ func (m *model) viewportLinesForView(visibleReasoning bool) []string {
 		return lines
 	}
 	if visibleReasoning {
-		for _, line := range wrapWords(m.reasoning, m.width) {
-			lines = append(lines, reasoningStyle.Render(line))
-		}
+		lines = append(lines, renderReasoningLines(m.reasoning, m.width)...)
 	}
 	if m.streaming != "" {
 		for _, line := range wrapWords(m.streaming, m.width) {
@@ -2418,9 +2449,7 @@ func (m *model) applySnapshot(e tauchat.ChatSessionSnapshotEvent) {
 			// this function is the sole source of truth for renderedLines.
 			if msg.ReasoningContent != "" && m.showReasoning {
 				flushPendingTools()
-				for _, line := range wrapWords(msg.ReasoningContent, m.width) {
-					m.renderedLines = append(m.renderedLines, reasoningStyle.Render(line))
-				}
+				m.renderedLines = append(m.renderedLines, renderReasoningLines(msg.ReasoningContent, m.width)...)
 			}
 			if msg.Content != "" {
 				flushPendingTools()
@@ -2472,9 +2501,7 @@ func (m *model) finalizeResponse(id string) string {
 	// model, reasoning and the answer can both finish inside a second, so
 	// it would flash on screen and vanish before anyone could read it.
 	if m.reasoning != "" && m.showReasoning {
-		for _, line := range wrapWords(m.reasoning, m.width) {
-			m.renderedLines = append(m.renderedLines, reasoningStyle.Render(line))
-		}
+		m.renderedLines = append(m.renderedLines, renderReasoningLines(m.reasoning, m.width)...)
 	}
 	content := m.streaming
 	if content != "" {
@@ -4776,15 +4803,25 @@ var (
 	// block of content, matching Tau's rule of never overriding the user's
 	// terminal theme. Only the small "⏎ " user-message glyph gets an
 	// explicit accent, via userGlyphStyle below.
-	reasoningColor = themeHex(theme.ToneWarn)
-	inputColor     = themeHex(theme.ShimmerHighlight)
+	inputColor = themeHex(theme.ShimmerHighlight)
 
 	userGlyphStyle = lipgloss.NewStyle().Foreground(themeHex(theme.AccentColor)).Bold(true)
 	userStyle      = lipgloss.NewStyle()
 	assistantStyle = lipgloss.NewStyle()
-	reasoningStyle = lipgloss.NewStyle().Foreground(reasoningColor).Italic(true)
-	streamStyle    = lipgloss.NewStyle()
-	inputStyle     = lipgloss.NewStyle().Foreground(inputColor)
+	// reasoningLabelStyle colors the "│ " bar prefixed to every line of a
+	// reasoning block — the one deliberate, sparing use of Warm Ochre in
+	// reasoning output, giving the whole block its own visual lane next to
+	// the (unstyled) user/assistant text around it. reasoningStyle is the
+	// body: an explicit muted grey (theme.ToneMuted) is used instead of
+	// relying on ANSI Faint alone, since several terminals render faint as
+	// visually identical to normal weight — pairing it with Faint still
+	// helps on terminals that do support it, and Italic adds a second cue
+	// so the block stays clearly secondary to the un-styled, full-brightness
+	// final answer even in terminals with little contrast headroom.
+	reasoningLabelStyle = lipgloss.NewStyle().Foreground(themeHex(theme.AccentColor))
+	reasoningStyle      = lipgloss.NewStyle().Foreground(themeHex(theme.ToneMuted)).Faint(true).Italic(true)
+	streamStyle         = lipgloss.NewStyle()
+	inputStyle          = lipgloss.NewStyle().Foreground(inputColor)
 
 	userContinuationStyle      = lipgloss.NewStyle().PaddingLeft(6)
 	assistantContinuationStyle = lipgloss.NewStyle().PaddingLeft(6)
