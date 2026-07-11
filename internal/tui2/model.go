@@ -2211,20 +2211,31 @@ func (m *model) handleChatEvent(evt tauchat.ChatEvent) tea.Cmd {
 		// The turn cannot continue, but any text/tools that already streamed
 		// are still useful scrollback. Commit them before clearing the live
 		// buffers so failed in-flight tool groups do not vanish when the next
-		// prompt starts.
+		// prompt starts. hadLoneTool is captured before flushing (which
+		// clears m.tools) so the appendMessage call below knows whether that
+		// commit already put this exact reason in scrollback — a lone tool
+		// box (renderCommittedGroup/renderToolBox: len(tools)==1) shows a
+		// compact result summary inline with nothing to expand, so it
+		// already displays the reason; a MULTI-tool group instead collapses
+		// to a bare count ("2 tool calls (1 error)") until clicked open, so
+		// the reason isn't visible there without the echo below.
+		hadLoneTool := len(m.tools) == 1
 		m.flushInterruptedTurn(e.Message)
 		m.steering = false
 		m.inResponse = false
 		// Shown via the notification banner (above the input area) at error
 		// level with duration 0 (persists until dismissed rather than
-		// silently expiring), and also printed to the scrollback so it
-		// isn't lost if overtaken by a later notice. Truncated: some
-		// providers return an unbounded error body (e.g. a full HTML edge
-		// error page) that would otherwise flood scrollback and bury the
-		// prompt (N-something).
+		// silently expiring). Also printed to the scrollback so it isn't
+		// lost if overtaken by a later notice — but only when nothing else
+		// in scrollback already shows it (see hadLoneTool above). Truncated:
+		// some providers return an unbounded error body (e.g. a full HTML
+		// edge error page) that would otherwise flood scrollback and bury
+		// the prompt (N-something).
 		msg := truncateErrorText(e.Message)
 		cmd := m.setNotificationWithLevel(msg, notify.LevelError, 0)
-		m.appendMessage("system", "✗ "+msg)
+		if !hadLoneTool {
+			m.appendMessage("system", "✗ "+msg)
+		}
 		return cmd
 
 	case tauchat.ChatNotificationEvent:

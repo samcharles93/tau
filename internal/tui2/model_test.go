@@ -1312,6 +1312,36 @@ func TestHandleChatEventRuntimeError(t *testing.T) {
 	}
 }
 
+// TestHandleChatEventRuntimeErrorSkipsRedundantEchoForLoneTool is a
+// regression test: a single in-flight tool call failing (e.g. a provider
+// streaming a tool-call delta with no function name) previously showed the
+// exact same error text three times — the committed lone tool box's compact
+// summary, a duplicate "✗ <message>" scrollback line, and the notification
+// banner. The scrollback echo is now skipped whenever a lone tool box
+// already displays the reason inline (see ChatRuntimeErrorEvent's
+// hadLoneTool); the banner (m.notification) and the tool box itself are
+// unaffected — this only removes the redundant middle copy.
+func TestHandleChatEventRuntimeErrorSkipsRedundantEchoForLoneTool(t *testing.T) {
+	m := newTestModel(&fakeRuntime{}, nil)
+	m.inResponse = true
+	m.tools = []toolState{
+		{id: "fc1", name: "shell", status: "pending", startedAt: time.Now()},
+	}
+
+	m.handleChatEvent(tauchat.ChatRuntimeErrorEvent{Message: "stream tool call 0 has no function name"})
+
+	if m.notification != "stream tool call 0 has no function name" {
+		t.Fatalf("expected the notification banner to still show the error, got %q", m.notification)
+	}
+	joined := stripANSI(strings.Join(m.renderedLines, "\n"))
+	if got := strings.Count(joined, "stream tool call 0 has no function name"); got != 1 {
+		t.Errorf("error text appears %d times in scrollback, want exactly 1 (the tool box) — got:\n%s", got, joined)
+	}
+	if strings.Contains(joined, "✗ stream tool call") {
+		t.Error("expected no redundant '✗ <message>' scrollback echo when the lone tool box already shows the reason")
+	}
+}
+
 func TestHandleChatEventNotification(t *testing.T) {
 	m := newTestModel(&fakeRuntime{}, nil)
 
