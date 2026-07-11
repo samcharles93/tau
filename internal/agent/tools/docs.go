@@ -129,7 +129,7 @@ func searchDocs(query string, pluginDocs PluginDocsProvider) Result {
 	}
 
 	tr := TruncateHead(strings.Join(matches, "\n"), DefaultMaxLines, DefaultMaxBytes)
-	return Result{Content: tr.Content}
+	return Result{Content: tr.Content, Truncated: tr.Truncated, ResultBytes: tr.OriginalSize}
 }
 
 func listDocs(pluginDocs PluginDocsProvider) Result {
@@ -147,7 +147,7 @@ func listDocs(pluginDocs PluginDocsProvider) Result {
 	}
 
 	tr := TruncateHead(strings.Join(paths, "\n"), DefaultMaxLines, DefaultMaxBytes)
-	return Result{Content: tr.Content}
+	return Result{Content: tr.Content, Truncated: tr.Truncated, ResultBytes: tr.OriginalSize}
 }
 
 // walkDocs visits every documentation file in the embedded FS, skipping

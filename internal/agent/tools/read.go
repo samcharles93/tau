@@ -4,6 +4,9 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"go/ast"
+	"go/parser"
+	"go/token"
 	"os"
 	"strings"
 	"unicode/utf8"
@@ -12,13 +15,20 @@ import (
 // ReadParams are the parameters for the read tool.
 type ReadParams struct {
 	Path   string `json:"path"`
+	File   string `json:"file,omitempty"`   // compatibility alias used by some providers
 	Offset int    `json:"offset,omitempty"` // start line (1-based)
 	Limit  int    `json:"limit,omitempty"`  // max lines to read
+	Full   bool   `json:"full,omitempty"`   // explicitly allow a full-file response
+	Symbol string `json:"symbol,omitempty"` // Go declaration name to read
 }
+
+// DefaultReadLines is the bounded line count used when no explicit read limit
+// or full-file request is supplied.
+const DefaultReadLines = 400
 
 var readSchema = Schema{
 	Name:        "read",
-	Description: fmt.Sprintf("Read file contents. Output is truncated to %d lines or %s (whichever is hit first); truncated output ends with a notice giving the offset to continue from. Use offset and limit to page through large files.", DefaultMaxLines, FormatSize(DefaultMaxBytes)),
+	Description: fmt.Sprintf("Read file contents. For Go files, symbol reads one named declaration without paging. Omitted limits return at most %d lines; set full:true only when the complete file is genuinely needed. Output is always capped at %d lines or %s and includes a continuation offset.", DefaultReadLines, DefaultMaxLines, FormatSize(DefaultMaxBytes)),
 	Parameters: json.RawMessage(`{
 		"type": "object",
 		"properties": {
@@ -26,16 +36,28 @@ var readSchema = Schema{
 				"type": "string",
 				"description": "Absolute or relative file path to read"
 			},
+			"file": {
+				"type": "string",
+				"description": "Compatibility alias for path. Prefer path."
+			},
 			"offset": {
 				"type": "integer",
 				"description": "Start reading from this line number (1-based). Defaults to 1."
 			},
 			"limit": {
 				"type": "integer",
-				"description": "Maximum number of lines to read. Defaults to all."
+				"description": "Maximum number of lines to read. Defaults to 400 unless full is true."
+			},
+			"full": {
+				"type": "boolean",
+				"description": "Return the whole file up to the global safety cap. Defaults to false."
+			},
+			"symbol": {
+				"type": "string",
+				"description": "For a Go file, read the declaration named by this function, method, type, variable, or constant."
 			}
 		},
-		"required": ["path"]
+		"anyOf": [{"required": ["path"]}, {"required": ["file"]}]
 	}`),
 }
 
@@ -61,6 +83,15 @@ func makeReadExecutor(cwd string, rt *ReadTracker) Executor {
 		if p.Limit < 0 {
 			return Result{Content: "limit must be >= 0", IsError: true}, nil
 		}
+		if strings.TrimSpace(p.Path) == "" {
+			p.Path = p.File
+		}
+		if strings.TrimSpace(p.Path) == "" {
+			return Result{Content: "path is required (file is accepted as an alias)", IsError: true, ErrorKind: "invalid_arguments"}, nil
+		}
+		if p.Limit == 0 && !p.Full {
+			p.Limit = DefaultReadLines
+		}
 
 		_, cancel := context.WithTimeout(ctx, DefaultToolTimeout)
 		defer cancel()
@@ -68,7 +99,7 @@ func makeReadExecutor(cwd string, rt *ReadTracker) Executor {
 		path := resolvePath(cwd, p.Path)
 
 		if !isConfined(cwd, path) {
-			return Result{Content: "path escapes working directory", IsError: true}, nil
+			return Result{Content: "path escapes working directory; for Go dependencies, use shell with `go env GOMODCACHE` and inspect the resolved module path", IsError: true, ErrorKind: "sandbox_escape"}, nil
 		}
 
 		info, err := os.Stat(path)
@@ -101,6 +132,15 @@ func makeReadExecutor(cwd string, rt *ReadTracker) Executor {
 		content := string(data)
 		lines := strings.Split(content, "\n")
 		totalLines := len(lines)
+		if p.Symbol != "" {
+			start, end, err := goSymbolRange(path, data, p.Symbol)
+			if err != nil {
+				return Result{Content: err.Error(), IsError: true, ErrorKind: "symbol_not_found"}, nil
+			}
+			p.Offset = start
+			p.Limit = end - start + 1
+			p.Full = false
+		}
 
 		// Apply offset (1-based).
 		startLine := 1
@@ -144,6 +184,36 @@ func makeReadExecutor(cwd string, rt *ReadTracker) Executor {
 			)
 		}
 
-		return Result{Content: output}, nil
+		return Result{Content: output, Truncated: tr.Truncated || endLine < totalLines, ResultBytes: tr.OriginalSize}, nil
 	}
+}
+
+func goSymbolRange(path string, data []byte, symbol string) (int, int, error) {
+	fset := token.NewFileSet()
+	file, err := parser.ParseFile(fset, path, data, 0)
+	if err != nil {
+		return 0, 0, fmt.Errorf("parse Go file for symbol %q: %w", symbol, err)
+	}
+	for _, decl := range file.Decls {
+		matched := false
+		switch d := decl.(type) {
+		case *ast.FuncDecl:
+			matched = d.Name.Name == symbol
+		case *ast.GenDecl:
+			for _, spec := range d.Specs {
+				switch s := spec.(type) {
+				case *ast.TypeSpec:
+					matched = matched || s.Name.Name == symbol
+				case *ast.ValueSpec:
+					for _, name := range s.Names {
+						matched = matched || name.Name == symbol
+					}
+				}
+			}
+		}
+		if matched {
+			return fset.Position(decl.Pos()).Line, fset.Position(decl.End()).Line, nil
+		}
+	}
+	return 0, 0, fmt.Errorf("Go symbol %q not found in %s", symbol, path)
 }

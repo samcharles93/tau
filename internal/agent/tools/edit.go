@@ -168,7 +168,15 @@ func makeEditExecutor(cwd string, mq *MutationQueue, rt *ReadTracker) Executor {
 
 		newContent, err := applyEdits(content, p.Edits)
 		if err != nil {
-			return Result{Content: err.Error(), IsError: true}, nil
+			errorKind := "invalid_arguments"
+			if strings.Contains(err.Error(), "old_text not found") {
+				errorKind = "stale_edit"
+			}
+			return Result{
+				Content:   err.Error() + "; no edits were written; reread the smallest affected range before retrying",
+				IsError:   true,
+				ErrorKind: errorKind,
+			}, nil
 		}
 		if newContent == content {
 			return Result{Content: fmt.Sprintf("no changes made to %s: the edits produced identical content", path), IsError: true}, nil

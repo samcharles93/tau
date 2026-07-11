@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"strings"
 	"sync"
+	"time"
 )
 
 // Schema describes a tool's interface for LLM function-calling.
@@ -20,9 +21,18 @@ type Schema struct {
 
 // Result is the output of a tool execution.
 type Result struct {
-	Content string `json:"content"`
-	Details any    `json:"details,omitempty"`
-	IsError bool   `json:"is_error,omitempty"`
+	Content   string `json:"content"`
+	Details   any    `json:"details,omitempty"`
+	IsError   bool   `json:"is_error,omitempty"`
+	ErrorKind string `json:"error_kind,omitempty"`
+
+	// Execution fields are populated by the coordinator after execution so
+	// the same facts drive events, metrics, and persisted tool messages.
+	Duration    time.Duration `json:"duration,omitempty"`
+	ResultBytes int           `json:"result_bytes,omitempty"`
+	Truncated   bool          `json:"truncated,omitempty"`
+	StartedAt   time.Time     `json:"started_at,omitzero"`
+	CompletedAt time.Time     `json:"completed_at,omitzero"`
 }
 
 // DiffDetails is carried in Result.Details by tools that replace file

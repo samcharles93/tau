@@ -36,6 +36,40 @@ func TestReadTool_RawContentNoGutter(t *testing.T) {
 	}
 }
 
+func TestReadToolAcceptsFileAlias(t *testing.T) {
+	tmp := t.TempDir()
+	writeReadTestFile(t, tmp, "f.txt", "alpha\nbeta\n")
+
+	res := execRead(t, tmp, `{"file":"f.txt"}`)
+	if res.IsError || !strings.HasPrefix(res.Content, "alpha\nbeta") {
+		t.Fatalf("file alias result = %#v", res)
+	}
+}
+
+func TestReadToolDefaultsToBoundedOutput(t *testing.T) {
+	tmp := t.TempDir()
+	lines := make([]string, DefaultReadLines+10)
+	for i := range lines {
+		lines[i] = fmt.Sprintf("line %d", i+1)
+	}
+	writeReadTestFile(t, tmp, "f.txt", strings.Join(lines, "\n"))
+
+	res := execRead(t, tmp, `{"path":"f.txt"}`)
+	if res.IsError || !strings.Contains(res.Content, fmt.Sprintf("Use offset=%d to continue", DefaultReadLines+1)) {
+		t.Fatalf("bounded read result = %s", res.Content)
+	}
+}
+
+func TestReadToolReadsGoSymbol(t *testing.T) {
+	tmp := t.TempDir()
+	writeReadTestFile(t, tmp, "f.go", "package sample\n\nfunc first() {}\n\nfunc target() {\n\tprintln(\"yes\")\n}\n\nfunc last() {}\n")
+
+	res := execRead(t, tmp, `{"path":"f.go","symbol":"target"}`)
+	if res.IsError || !strings.Contains(res.Content, "func target()") || strings.Contains(res.Content, "func first()") || strings.Contains(res.Content, "func last()") {
+		t.Fatalf("symbol read result = %s", res.Content)
+	}
+}
+
 func TestReadTool_UserLimitContinuationNotice(t *testing.T) {
 	tmp := t.TempDir()
 	var lines []string
@@ -67,7 +101,7 @@ func TestReadTool_TruncationContinuationNotice(t *testing.T) {
 	}
 	writeReadTestFile(t, tmp, "f.txt", strings.Join(lines, "\n"))
 
-	res := execRead(t, tmp, `{"path": "f.txt"}`)
+	res := execRead(t, tmp, `{"path": "f.txt", "full": true}`)
 	if res.IsError {
 		t.Fatalf("unexpected tool error: %s", res.Content)
 	}

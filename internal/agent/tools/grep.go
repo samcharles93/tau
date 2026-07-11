@@ -20,6 +20,7 @@ const (
 
 	// grepDefaultLimit is the default maximum number of matches returned.
 	grepDefaultLimit = 100
+	grepMaxBytes     = 24 * 1024
 )
 
 // grepMatchLineRe recognises a match line in ripgrep-style output
@@ -110,7 +111,7 @@ func makeGrepExecutor(cwd string) Executor {
 		}
 
 		if !isConfined(cwd, searchPath) {
-			return Result{Content: "error: path escapes working directory", IsError: true}, nil
+			return Result{Content: "error: path escapes working directory; for Go dependencies, use shell with `go env GOMODCACHE` and inspect the resolved module path", IsError: true, ErrorKind: "sandbox_escape"}, nil
 		}
 
 		args := buildGrepArgs(p)
@@ -131,7 +132,7 @@ func makeGrepExecutor(cwd string) Executor {
 			if output == "" {
 				return Result{Content: "no matches found"}, nil
 			}
-			return Result{Content: capGrepOutput(output, limit)}, nil
+			return capGrepResult(output, limit), nil
 		}
 
 		cmd := exec.CommandContext(ctx, binary, args...)
@@ -155,7 +156,7 @@ func makeGrepExecutor(cwd string) Executor {
 			return Result{Content: fmt.Sprintf("grep error: %s", errMsg), IsError: true}, nil
 		}
 
-		return Result{Content: capGrepOutput(output, limit)}, nil
+		return capGrepResult(output, limit), nil
 	}
 }
 
@@ -163,6 +164,10 @@ func makeGrepExecutor(cwd string) Executor {
 // ripgrep-style output, then applies the global size truncation. Notices for
 // each cap that fired are appended so the model knows how to narrow the search.
 func capGrepOutput(output string, limit int) string {
+	return capGrepResult(output, limit).Content
+}
+
+func capGrepResult(output string, limit int) Result {
 	lines := strings.Split(strings.TrimSuffix(output, "\n"), "\n")
 	kept := make([]string, 0, len(lines))
 	matches := 0
@@ -184,7 +189,7 @@ func capGrepOutput(output string, limit int) string {
 		kept = append(kept, line)
 	}
 
-	tr := TruncateHead(strings.Join(kept, "\n"), DefaultMaxLines, DefaultMaxBytes)
+	tr := TruncateHead(strings.Join(kept, "\n"), DefaultMaxLines, grepMaxBytes)
 	content := tr.Content
 	if limitHit {
 		content += fmt.Sprintf("\n\n[showing first %d matches; refine the pattern or raise limit]", limit)
@@ -192,7 +197,10 @@ func capGrepOutput(output string, limit int) string {
 	if linesTruncated {
 		content += fmt.Sprintf("\n[some lines truncated to %d chars]", grepMaxLineChars)
 	}
-	return content
+	if tr.Truncated {
+		content += fmt.Sprintf("\n[output truncated at %s; refine the pattern, search a narrower path, or use jq for structured JSON]", FormatSize(grepMaxBytes))
+	}
+	return Result{Content: content, Truncated: tr.Truncated || limitHit || linesTruncated, ResultBytes: len(output)}
 }
 
 // truncationBoundary returns the largest cut point <= max that does not split

@@ -120,7 +120,7 @@ func makeFindExecutor(cwd string) Executor {
 		}
 
 		tr := TruncateHead(output, DefaultMaxLines, DefaultMaxBytes)
-		return Result{Content: tr.Content}, nil
+		return Result{Content: tr.Content, Truncated: tr.Truncated, ResultBytes: tr.OriginalSize}, nil
 	}
 }
 
@@ -240,7 +240,7 @@ func runFindGoFallback(ctx context.Context, cwd, searchPath string, p FindParams
 	sort.Strings(matches)
 	output := strings.Join(matches, "\n")
 	tr := TruncateHead(output, DefaultMaxLines, DefaultMaxBytes)
-	return Result{Content: tr.Content}, nil
+	return Result{Content: tr.Content, Truncated: tr.Truncated, ResultBytes: tr.OriginalSize}, nil
 }
 
 func isFdBinary(binary string) bool {

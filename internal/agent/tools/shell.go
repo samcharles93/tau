@@ -144,22 +144,22 @@ func makeShellExecutor(cwd string, mq *MutationQueue) Executor {
 			// timeout rather than a misleading exit code.
 			if ctx.Err() != nil {
 				return Result{
-					Content: fmt.Sprintf("[timeout after: %s]\n%s", timeout, content),
-					IsError: true,
+					Content: fmt.Sprintf("[timeout after: %s]\n%s", timeout, content), IsError: true,
+					ErrorKind: "timeout", Truncated: tr.Truncated, ResultBytes: len(output),
 				}, nil
 			}
 
 			if exitErr, ok := err.(*exec.ExitError); ok {
 				return Result{
-					Content: fmt.Sprintf("[exit code: %d]\n%s", exitErr.ExitCode(), content),
-					IsError: true,
+					Content: fmt.Sprintf("[exit code: %d]\n%s", exitErr.ExitCode(), content), IsError: true,
+					ErrorKind: "command_exit", Truncated: tr.Truncated, ResultBytes: len(output),
 				}, nil
 			}
 
 			return Result{Content: fmt.Sprintf("error executing command: %v", err), IsError: true}, nil
 		}
 
-		return Result{Content: content}, nil
+		return Result{Content: content, Truncated: tr.Truncated, ResultBytes: len(output)}, nil
 	}
 }
 
