@@ -14,7 +14,7 @@ import (
 //
 // Unlike config.LoadConfig, a missing config file and zero hand-written
 // providers are not errors: env-detected and OAuth providers stand in.
-func Effective() (config.Config, []ResolvedProvider, error) {
+func Effective(ctx context.Context) (config.Config, []ResolvedProvider, error) {
 	cfg, err := config.LoadConfigAllowEmpty()
 	if err != nil {
 		return config.Config{}, nil, err
@@ -23,7 +23,7 @@ func Effective() (config.Config, []ResolvedProvider, error) {
 	if err != nil {
 		return config.Config{}, nil, err
 	}
-	resolved, _ := ResolveWithRefresh(context.Background(), cfg, state, nil)
+	resolved, _ := ResolveWithRefresh(ctx, cfg, state, nil)
 
 	merged := cfg
 	merged.Providers = usableProviders(resolved)

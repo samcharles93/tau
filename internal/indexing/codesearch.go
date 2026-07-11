@@ -26,7 +26,8 @@ import (
 )
 
 const (
-	maxCandidateFiles = 2000
+	// MaxCandidateFiles bounds helper output and grep argv construction.
+	MaxCandidateFiles    = 2000
 	maxCandidateArgBytes = 24 * 1024
 	buildTimeout      = 10 * time.Minute
 	metadataTimeout   = 5 * time.Second
@@ -124,7 +125,7 @@ func (m *Manager) Candidates(ctx context.Context, pattern string, literal, caseS
 			add(path)
 		}
 	}
-	if len(merged) == 0 || len(merged) > maxCandidateFiles || argumentBytes > maxCandidateArgBytes {
+	if len(merged) == 0 || len(merged) > MaxCandidateFiles || argumentBytes > maxCandidateArgBytes {
 		return nil, false
 	}
 	slices.Sort(merged)

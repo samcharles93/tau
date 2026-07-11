@@ -118,14 +118,22 @@ func TestManagerRefreshBuildsAtomicallyAndRecordsGeneration(t *testing.T) {
 	m.refreshAsync(ctx)
 
 	deadline := time.Now().Add(2 * time.Second)
+	var installedPath string
 	for {
-		if _, err := os.Stat(m.indexPath); err == nil {
-			break
+		state, stateErr := m.state(context.Background())
+		if stateErr == nil && !state.IndexedAt.IsZero() {
+			if _, err := os.Stat(state.IndexPath); err == nil {
+				installedPath = state.IndexPath
+				break
+			}
 		}
 		if time.Now().After(deadline) {
 			t.Fatal("index was not atomically installed")
 		}
 		time.Sleep(10 * time.Millisecond)
+	}
+	if installedPath == m.indexPath {
+		t.Fatalf("build did not install a generation-specific sidecar: %s", installedPath)
 	}
 	db, err := openIndexDB(m.dbPath)
 	if err != nil {
@@ -139,6 +147,35 @@ func TestManagerRefreshBuildsAtomicallyAndRecordsGeneration(t *testing.T) {
 	}
 	if status != "ready" || generation != 1 {
 		t.Fatalf("state = %q generation %d", status, generation)
+	}
+}
+
+func TestStaleBuilderCannotCompleteNewerLease(t *testing.T) {
+	dir := t.TempDir()
+	m := &Manager{root: t.TempDir(), indexPath: filepath.Join(dir, "workspace.csearch"), dbPath: filepath.Join(dir, "indexes.db")}
+	if err := m.ensureSchema(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	oldStart := time.Now().UTC().Add(-2 * buildTimeout)
+	claimed, err := m.claimBuild(context.Background(), oldStart, "build-a")
+	if err != nil || !claimed {
+		t.Fatalf("first claim = %v, %v", claimed, err)
+	}
+	newStart := time.Now().UTC()
+	claimed, err = m.claimBuild(context.Background(), newStart, "build-b")
+	if err != nil || !claimed {
+		t.Fatalf("replacement claim = %v, %v", claimed, err)
+	}
+	if m.finishBuild(context.Background(), "build-a", "ready", oldStart, filepath.Join(dir, "a"), "") {
+		t.Fatal("stale builder completed replacement lease")
+	}
+	pathB := filepath.Join(dir, "b")
+	if !m.finishBuild(context.Background(), "build-b", "ready", newStart, pathB, "") {
+		t.Fatal("current builder could not complete lease")
+	}
+	state, err := m.state(context.Background())
+	if err != nil || state.IndexPath != pathB {
+		t.Fatalf("state = %#v, %v", state, err)
 	}
 }
 

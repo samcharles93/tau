@@ -41,6 +41,9 @@ func workspaceCodesearchCmd() *urfavecli.Command {
 					if err != nil {
 						return fmt.Errorf("query workspace index: %w", err)
 					}
+					if len(files) > indexing.MaxCandidateFiles+1 {
+						files = files[:indexing.MaxCandidateFiles+1]
+					}
 					return json.NewEncoder(os.Stdout).Encode(files)
 				},
 			},

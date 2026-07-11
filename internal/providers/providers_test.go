@@ -1,6 +1,7 @@
 package providers
 
 import (
+	"context"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -118,7 +119,7 @@ func TestResolvePrecedence(t *testing.T) {
 		// GROQ_API_KEY intentionally unset -> enabled but unavailable.
 	})
 
-	got := Resolve(cfg, state, env)
+	got := Resolve(context.Background(), cfg, state, env)
 
 	// Config provider wins over the catalog enable (custom base URL preserved).
 	require.GreaterOrEqual(t, len(got), 4)
