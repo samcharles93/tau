@@ -77,10 +77,10 @@ var helpSections = []helpSection{
 const helpTwoColumnMinWidth = 90
 
 var (
-	helpTitleStyle   = lipgloss.NewStyle().Foreground(themeHex(theme.CommandFG)).Bold(true)
-	helpDividerStyle = lipgloss.NewStyle().Foreground(themeHex(theme.ToneMuted))
+	helpTitleStyle   = lipgloss.NewStyle().Foreground(themeHex(theme.AccentColor)).Bold(true)
+	helpDividerStyle = lipgloss.NewStyle().Faint(true)
 	helpKeyStyle     = lipgloss.NewStyle().Foreground(themeHex(theme.ToneBody)).Bold(true)
-	helpDescStyle    = lipgloss.NewStyle().Foreground(themeHex(theme.ToneMuted))
+	helpDescStyle    = lipgloss.NewStyle().Faint(true)
 )
 
 // helpRowKey identifies one row of helpSections[section].rows[row] — the

@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"charm.land/lipgloss/v2"
+	"github.com/samcharles93/tau/internal/theme"
 	"github.com/samcharles93/tau/pkg/taui/termkit"
 )
 
@@ -30,7 +31,11 @@ const (
 
 const statusSep = " · "
 
-func statusGrey(s string) string { return termkit.FgOnly(s, termkit.ColorGrey) }
+// statusGrey renders secondary status-bar text (separators, unstyled
+// segments) using terminal-native dim rather than a fixed grey — it dims
+// whatever foreground the user's terminal actually has instead of
+// overriding it.
+func statusGrey(s string) string { return lipgloss.NewStyle().Faint(true).Render(s) }
 
 // --- rendering -------------------------------------------------------------
 
@@ -153,7 +158,7 @@ func (m *model) computeStatusBar() string {
 		steerText := "steering" + strings.Repeat(".", dots)
 		left = append(left, statusSeg{
 			text:  steerText,
-			style: func(s string) string { return termkit.FgOnly(s, termkit.ColorAmber) },
+			style: func(s string) string { return termkit.FgOnly(s, theme.ToneWarn) },
 		})
 	}
 
@@ -235,9 +240,9 @@ func formatContextPct(promptTok, ctxWindow int) string {
 func contextStyle(pct int) func(string) string {
 	switch {
 	case pct >= 90:
-		return func(s string) string { return termkit.FgOnly(s, termkit.ColorRed) }
+		return func(s string) string { return termkit.FgOnly(s, theme.ErrorColor) }
 	case pct >= 75:
-		return func(s string) string { return termkit.FgOnly(s, termkit.ColorAmber) }
+		return func(s string) string { return termkit.FgOnly(s, theme.ToneWarn) }
 	default:
 		return nil
 	}

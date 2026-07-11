@@ -135,3 +135,44 @@ func ToolBox(ts ToolStatus, borderColor termkit.Color) ToolBoxStyle {
 		Border: borderColor,
 	}
 }
+
+// --- Brand palette (tui2) ---------------------------------------------------
+//
+// A small, named palette for tui2's UI chrome, kept separate from the tone/
+// status colors above so existing consumers (the legacy taui-based
+// internal/tui) are unaffected — those packages reference the constants
+// above directly and keep their current look.
+//
+// The palette is deliberately narrow: five roles, not a general-purpose
+// color system. Chat/message content itself should not use any of these —
+// it should inherit the terminal's own default foreground, per Tau's rule
+// of never fighting the user's configured theme. Reach for PrimaryColor only
+// when text sits on an explicit non-default background where the terminal's
+// own foreground can't be trusted to contrast (e.g. text inside a filled
+// badge).
+var (
+	// AccentColor (Warm Ochre #D19A66) is Tau's signature accent — used for
+	// interactive/selection state: focus markers, selected menu/completion
+	// items, the input prompt glyph, and command echo.
+	AccentColor = termkit.Color{0xD1, 0x9A, 0x66}
+
+	// SuccessColor (Sage Green #7C9C72) marks completed operations and
+	// success states.
+	SuccessColor = termkit.Color{0x7C, 0x9C, 0x72}
+
+	// ErrorColor (Salmon Pink #E06C75) marks errors and destructive
+	// warnings.
+	ErrorColor = termkit.Color{0xE0, 0x6C, 0x75}
+
+	// PrimaryColor (Soft Off-White #ABB2BF) is a fallback foreground for
+	// primary content, for the narrow case where the terminal's own default
+	// foreground would be unsuitable. Most primary content should set no
+	// foreground at all so it inherits the user's terminal default.
+	PrimaryColor = termkit.Color{0xAB, 0xB2, 0xBF}
+
+	// SecondaryColor (Slate Blue-Grey #283347) tints secondary UI chrome —
+	// muted borders and dividers. For muted/secondary *text* prefer
+	// terminal-native dim (faint) styling instead, since dimming the user's
+	// actual foreground adapts to their theme rather than overriding it.
+	SecondaryColor = termkit.Color{0x28, 0x33, 0x47}
+)

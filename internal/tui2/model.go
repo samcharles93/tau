@@ -1575,9 +1575,9 @@ func (m *model) renderInputArea() string {
 // notification area (not the input box itself, which would otherwise grow
 // by a row for it) while a response is in flight.
 func steerHint() string {
-	ctrlC := lipgloss.NewStyle().Foreground(themeHex(theme.ToneError)).Bold(true).Render("Ctrl+C")
-	enter := lipgloss.NewStyle().Foreground(themeHex(theme.CommandFG)).Bold(true).Render("Enter")
-	return lipgloss.NewStyle().Foreground(themeHex(theme.ToneMuted)).Italic(true).Render(
+	ctrlC := lipgloss.NewStyle().Foreground(themeHex(theme.ErrorColor)).Bold(true).Render("Ctrl+C")
+	enter := lipgloss.NewStyle().Foreground(themeHex(theme.AccentColor)).Bold(true).Render("Enter")
+	return lipgloss.NewStyle().Faint(true).Italic(true).Render(
 		fmt.Sprintf("[%s] stop | [%s] steer", ctrlC, enter),
 	)
 }
@@ -3597,7 +3597,7 @@ func truncateErrorText(s string) string {
 func notifyStyleForLevel(level notify.Level) lipgloss.Style {
 	switch level {
 	case notify.LevelError:
-		return lipgloss.NewStyle().Foreground(themeHex(theme.ToneError)).Bold(true)
+		return lipgloss.NewStyle().Foreground(themeHex(theme.ErrorColor)).Bold(true)
 	case notify.LevelWarn:
 		return lipgloss.NewStyle().Foreground(themeHex(theme.ToneWarn)).Bold(true)
 	default:
@@ -3644,7 +3644,7 @@ func (m *model) appendMessage(role, content string) {
 func renderLine(role, content string) string {
 	switch role {
 	case "user":
-		return userStyle.Render("⏎ " + content)
+		return userGlyphStyle.Render("⏎") + " " + userStyle.Render(content)
 	case "assistant":
 		return assistantStyle.Render(content)
 	default:
@@ -3898,7 +3898,7 @@ func (m *model) renderToolBox(t toolState, expanded bool, _ int) string {
 	}
 	focused := m.focusedTool >= 0 && m.focusedTool < len(m.tools) && m.tools[m.focusedTool].id == t.id
 	if focused {
-		boxStyle = boxStyle.BorderForeground(themeHex(theme.CommandFG)).Bold(true)
+		boxStyle = boxStyle.BorderForeground(themeHex(theme.AccentColor)).Bold(true)
 	}
 
 	width := m.width
@@ -3921,7 +3921,7 @@ func (m *model) renderToolBox(t toolState, expanded bool, _ int) string {
 		)
 		innerStyle := lipgloss.NewStyle().
 			Border(lipgloss.RoundedBorder()).
-			BorderForeground(themeHex(theme.ToneMuted)).
+			BorderForeground(themeHex(theme.SecondaryColor)).
 			Width(innerWidth).
 			Padding(0, 1)
 		var innerContent strings.Builder
@@ -4746,21 +4746,26 @@ func themeHex(c termkit.Color) color.Color {
 
 var (
 	// Semantic colors sourced from internal/theme.
-	userColor      = themeHex(theme.CommandFG)
-	assistantColor = themeHex(theme.ToolSuccess.FG)
+	//
+	// Chat message bodies (user/assistant/streaming) deliberately set no
+	// Foreground at all: that lets the text inherit the terminal's own
+	// default foreground instead of forcing a brand color across a large
+	// block of content, matching Tau's rule of never overriding the user's
+	// terminal theme. Only the small "⏎ " user-message glyph gets an
+	// explicit accent, via userGlyphStyle below.
 	reasoningColor = themeHex(theme.ToneWarn)
-	streamColor    = themeHex(theme.TonePrimary)
 	inputColor     = themeHex(theme.ShimmerHighlight)
 
-	userStyle      = lipgloss.NewStyle().Foreground(userColor)
-	assistantStyle = lipgloss.NewStyle().Foreground(assistantColor)
+	userGlyphStyle = lipgloss.NewStyle().Foreground(themeHex(theme.AccentColor)).Bold(true)
+	userStyle      = lipgloss.NewStyle()
+	assistantStyle = lipgloss.NewStyle()
 	reasoningStyle = lipgloss.NewStyle().Foreground(reasoningColor).Italic(true)
-	streamStyle    = lipgloss.NewStyle().Foreground(streamColor)
+	streamStyle    = lipgloss.NewStyle()
 	inputStyle     = lipgloss.NewStyle().Foreground(inputColor)
 
-	userContinuationStyle      = lipgloss.NewStyle().Foreground(userColor).PaddingLeft(6)
-	assistantContinuationStyle = lipgloss.NewStyle().Foreground(assistantColor).PaddingLeft(6)
-	continuationStyle          = lipgloss.NewStyle().Foreground(themeHex(theme.ToneMuted)).PaddingLeft(6)
+	userContinuationStyle      = lipgloss.NewStyle().PaddingLeft(6)
+	assistantContinuationStyle = lipgloss.NewStyle().PaddingLeft(6)
+	continuationStyle          = lipgloss.NewStyle().Faint(true).PaddingLeft(6)
 
 	// inputCursorStyle is the block-cursor background — matches the default
 	// mid-grey pkg/taui/lineinput.go uses (\x1b[48;2;128;134;150m).
@@ -4770,76 +4775,75 @@ var (
 	// Prompt / completion styles.
 	promptTitleStyle     = lipgloss.NewStyle().Bold(true).Foreground(themeHex(theme.ShimmerHighlight))
 	promptTextStyle      = lipgloss.NewStyle().Foreground(themeHex(theme.TonePrimary))
-	promptHintStyle      = lipgloss.NewStyle().Foreground(themeHex(theme.ToneMuted)).Italic(true)
+	promptHintStyle      = lipgloss.NewStyle().Faint(true).Italic(true)
 	promptHighlightStyle = lipgloss.NewStyle().Bold(true).Underline(true)
-	compTitleStyle       = lipgloss.NewStyle().Foreground(themeHex(theme.ToneMuted)).Bold(true)
+	compTitleStyle       = lipgloss.NewStyle().Faint(true).Bold(true)
 	compItemStyle        = lipgloss.NewStyle().Foreground(themeHex(theme.ToneBody))
-	compSelectedStyle    = lipgloss.NewStyle().Foreground(themeHex(theme.CommandFG)).Bold(true)
+	compSelectedStyle    = lipgloss.NewStyle().Foreground(themeHex(theme.AccentColor)).Bold(true)
 	compHighlightStyle   = lipgloss.NewStyle().Foreground(themeHex(theme.TonePrimary)).Bold(true).Underline(true)
-	compDescStyle        = lipgloss.NewStyle().Foreground(themeHex(theme.ToneMuted))
-	compMoreStyle        = lipgloss.NewStyle().Foreground(themeHex(theme.ToneMuted)).Italic(true)
-	panelStyle           = lipgloss.NewStyle().Foreground(themeHex(theme.CommandFG))
+	compDescStyle        = lipgloss.NewStyle().Faint(true)
+	compMoreStyle        = lipgloss.NewStyle().Faint(true).Italic(true)
+	panelStyle           = lipgloss.NewStyle().Foreground(themeHex(theme.AccentColor))
 
 	// Muted trailing metadata — the elapsed clock and interrupt hint on the
-	// working indicator, and the per-tool elapsed suffix. Kept dim so the
-	// verb / tool name stays the focus and the timing reads as ambient.
-	workingMetaStyle = lipgloss.NewStyle().Foreground(themeHex(theme.ToneMuted))
-	toolMetaStyle    = lipgloss.NewStyle().Foreground(themeHex(theme.ToneMuted))
+	// working indicator, and the per-tool elapsed suffix. Faint (terminal-
+	// native dim) rather than a fixed color, so the verb / tool name stays
+	// the focus and the timing reads as ambient against whatever foreground
+	// the user's terminal actually has.
+	workingMetaStyle = lipgloss.NewStyle().Faint(true)
+	toolMetaStyle    = lipgloss.NewStyle().Faint(true)
 
 	// Tool status styles — per-state foreground colors for tool call rows.
-	// Use theme colors matching legacy's inline_chat.go tool box backgrounds.
 	toolRunningStyle = lipgloss.NewStyle().Foreground(themeHex(theme.ToolRunning.FG))
-	toolSuccessStyle = lipgloss.NewStyle().Foreground(themeHex(theme.ToolSuccess.FG))
-	toolErrorStyle   = lipgloss.NewStyle().Foreground(themeHex(theme.ToolFailed.FG))
+	toolSuccessStyle = lipgloss.NewStyle().Foreground(themeHex(theme.SuccessColor))
+	toolErrorStyle   = lipgloss.NewStyle().Foreground(themeHex(theme.ErrorColor))
 	// Skill tool gets lilac variants — same as theme.SkillRunning/SkillSuccess/SkillFailed.
 	skillRunningStyle = lipgloss.NewStyle().Foreground(themeHex(theme.SkillRunning.FG))
 	skillSuccessStyle = lipgloss.NewStyle().Foreground(themeHex(theme.SkillSuccess.FG))
 	skillFailedStyle  = lipgloss.NewStyle().Foreground(themeHex(theme.SkillFailed.FG))
 
 	// Styled input prompt and divider styles.
-	inputPromptStyle      = lipgloss.NewStyle().Foreground(themeHex(theme.CommandFG)).Bold(true)
+	inputPromptStyle      = lipgloss.NewStyle().Foreground(themeHex(theme.AccentColor)).Bold(true)
 	inputSteerPromptStyle = lipgloss.NewStyle().Foreground(themeHex(theme.ToneWarn)).Bold(true)
-	inputPlaceholderStyle = lipgloss.NewStyle().Foreground(themeHex(theme.ToneMuted)).Italic(true)
-	inputBoxStyle         = lipgloss.NewStyle().Foreground(themeHex(theme.ToneMuted))
-	separatorStyle        = lipgloss.NewStyle().Foreground(themeHex(theme.ToneMuted))
+	inputPlaceholderStyle = lipgloss.NewStyle().Faint(true).Italic(true)
+	inputBoxStyle         = lipgloss.NewStyle().Foreground(themeHex(theme.SecondaryColor))
+	separatorStyle        = lipgloss.NewStyle().Foreground(themeHex(theme.SecondaryColor))
 
-	// Phase 1: tool box styles — background-colored bordered boxes for each
-	// lifecycle state. Width is set dynamically at render time via .Width().
+	// Phase 1: tool box styles — bordered boxes for each lifecycle state,
+	// foreground/border only (no Background fill): a tool box can span many
+	// lines of live tail output or expanded result content, and painting a
+	// saturated background across that much text is exactly the "large
+	// block of text" coloring the palette rules out. Same rationale as
+	// contextMenuStyle below.
 	toolBoxRunningStyle = lipgloss.NewStyle().
 				Border(lipgloss.RoundedBorder()).
 				BorderForeground(themeHex(theme.ToolRunning.FG)).
-				Background(themeHex(theme.ToolRunning.BG)).
 				Foreground(themeHex(theme.ToolRunning.FG)).
 				Padding(0, 1)
 	toolBoxSuccessStyle = lipgloss.NewStyle().
 				Border(lipgloss.RoundedBorder()).
-				BorderForeground(themeHex(theme.ToolSuccess.FG)).
-				Background(themeHex(theme.ToolSuccess.BG)).
-				Foreground(themeHex(theme.ToolSuccess.FG)).
+				BorderForeground(themeHex(theme.SuccessColor)).
+				Foreground(themeHex(theme.SuccessColor)).
 				Padding(0, 1)
 	toolBoxErrorStyle = lipgloss.NewStyle().
 				Border(lipgloss.RoundedBorder()).
-				BorderForeground(themeHex(theme.ToolFailed.FG)).
-				Background(themeHex(theme.ToolFailed.BG)).
-				Foreground(themeHex(theme.ToolFailed.FG)).
+				BorderForeground(themeHex(theme.ErrorColor)).
+				Foreground(themeHex(theme.ErrorColor)).
 				Padding(0, 1)
 	// Skill tool gets lilac variants.
 	toolBoxSkillRunningStyle = lipgloss.NewStyle().
 					Border(lipgloss.RoundedBorder()).
 					BorderForeground(themeHex(theme.SkillRunning.FG)).
-					Background(themeHex(theme.SkillRunning.BG)).
 					Foreground(themeHex(theme.SkillRunning.FG)).
 					Padding(0, 1)
 	toolBoxSkillSuccessStyle = lipgloss.NewStyle().
 					Border(lipgloss.RoundedBorder()).
 					BorderForeground(themeHex(theme.SkillSuccess.FG)).
-					Background(themeHex(theme.SkillSuccess.BG)).
 					Foreground(themeHex(theme.SkillSuccess.FG)).
 					Padding(0, 1)
 	toolBoxSkillFailedStyle = lipgloss.NewStyle().
 				Border(lipgloss.RoundedBorder()).
 				BorderForeground(themeHex(theme.SkillFailed.FG)).
-				Background(themeHex(theme.SkillFailed.BG)).
 				Foreground(themeHex(theme.SkillFailed.FG)).
 				Padding(0, 1)
 
@@ -4852,24 +4856,24 @@ var (
 	// family) reads as a cleaner floating outline instead.
 	contextMenuStyle = lipgloss.NewStyle().
 				Border(lipgloss.RoundedBorder()).
-				BorderForeground(themeHex(theme.ToneMuted)).
+				BorderForeground(themeHex(theme.SecondaryColor)).
 				Foreground(themeHex(theme.ToneBody)).
 				Padding(0, 1)
 	// Selected-item highlight follows the completions dropdown's convention:
 	// foreground color + bold, no background swap.
-	contextMenuSelectedStyle = lipgloss.NewStyle().Foreground(themeHex(theme.CommandFG)).Bold(true)
+	contextMenuSelectedStyle = lipgloss.NewStyle().Foreground(themeHex(theme.AccentColor)).Bold(true)
 
 	// toolBoxExpandedStyle is the style for an expanded tool box (subtle border).
 	toolBoxExpandedStyle = lipgloss.NewStyle().
 				Border(lipgloss.RoundedBorder(), false, false, false, true).
-				BorderForeground(themeHex(theme.ToneMuted)).
+				BorderForeground(themeHex(theme.SecondaryColor)).
 				Padding(0, 1)
 
 	// toolGroupBoxStyle wraps a live multi-tool-call batch (renderToolGroup)
 	// — neutral (not status-colored, since it holds a mix of statuses).
-	toolGroupBoxStyle      = lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).BorderForeground(themeHex(theme.ToneMuted))
-	toolGroupHeaderStyle   = lipgloss.NewStyle().Foreground(themeHex(theme.ToneMuted)).Bold(true)
-	toolFocusMarkerStyle   = lipgloss.NewStyle().Foreground(themeHex(theme.CommandFG)).Bold(true)
-	toolGroupSummaryStyle  = lipgloss.NewStyle().Foreground(themeHex(theme.ToneMuted))
-	toolGroupOverflowStyle = lipgloss.NewStyle().Foreground(themeHex(theme.ToneMuted)).Italic(true)
+	toolGroupBoxStyle      = lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).BorderForeground(themeHex(theme.SecondaryColor))
+	toolGroupHeaderStyle   = lipgloss.NewStyle().Faint(true).Bold(true)
+	toolFocusMarkerStyle   = lipgloss.NewStyle().Foreground(themeHex(theme.AccentColor)).Bold(true)
+	toolGroupSummaryStyle  = lipgloss.NewStyle().Faint(true)
+	toolGroupOverflowStyle = lipgloss.NewStyle().Faint(true).Italic(true)
 )

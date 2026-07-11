@@ -103,7 +103,7 @@ func (m *model) handleDiffViewerKey(msg tea.KeyPressMsg) tea.Cmd {
 func (m *model) compositeDiffViewer(base string) string {
 	boxStyle := lipgloss.NewStyle().
 		Border(lipgloss.RoundedBorder()).
-		BorderForeground(themeHex(theme.ToneMuted)).
+		BorderForeground(themeHex(theme.SecondaryColor)).
 		Padding(0, 1)
 
 	title := m.diffViewer.title

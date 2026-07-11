@@ -4800,7 +4800,7 @@ func TestAppendMessageMultiLine(t *testing.T) {
 	}
 }
 
-func TestAppendMessageMultiLineUserContinuationKeepsUserStyle(t *testing.T) {
+func TestAppendMessageMultiLineUserContinuationInheritsTerminalForeground(t *testing.T) {
 	m := newTestModel(&fakeRuntime{}, nil)
 
 	m.appendMessage("user", "line one\nline two")
@@ -4808,11 +4808,16 @@ func TestAppendMessageMultiLineUserContinuationKeepsUserStyle(t *testing.T) {
 	if len(m.renderedLines) != 2 {
 		t.Fatalf("expected 2 rendered lines, got %d", len(m.renderedLines))
 	}
-	if !strings.Contains(m.renderedLines[1], "38;2;120;170;255") {
-		t.Fatalf("continuation line = %q, want user foreground style", m.renderedLines[1])
+	// Chat message bodies must not force a truecolor foreground: they
+	// should inherit the terminal's own default foreground rather than
+	// overriding the user's theme.
+	if strings.Contains(m.renderedLines[1], "38;2;") {
+		t.Fatalf("continuation line = %q, user message body should not force a foreground color", m.renderedLines[1])
 	}
-	if strings.Contains(m.renderedLines[1], "38;2;128;134;150") {
-		t.Fatalf("continuation line = %q, should not use muted metadata style", m.renderedLines[1])
+	// It should also not fall back to the generic/tool continuation's dim
+	// styling — a user message reads as plain content, not muted metadata.
+	if strings.Contains(m.renderedLines[1], "\x1b[2m") {
+		t.Fatalf("continuation line = %q, should not use faint/dim styling", m.renderedLines[1])
 	}
 }
 

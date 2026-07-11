@@ -246,13 +246,13 @@ func resolveTone(tone tauchat.StyleTone) (termkit.Color, bool) {
 	case tauchat.ToneInfo:
 		return theme.ToneInfo, true
 	case tauchat.ToneSuccess:
-		return theme.ToneSuccess, true
+		return theme.SuccessColor, true
 	case tauchat.ToneWarn:
 		return theme.ToneWarn, true
 	case tauchat.ToneError:
-		return theme.ToneError, true
+		return theme.ErrorColor, true
 	case tauchat.ToneMuted:
-		return theme.ToneMuted, true
+		return theme.SecondaryColor, true
 	default:
 		return termkit.Color{}, false
 	}
