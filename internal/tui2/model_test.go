@@ -2176,7 +2176,7 @@ func TestClearInputResetsBothFieldAndCursor(t *testing.T) {
 	}
 }
 
-// --- clearScreen (Ctrl+L) ---
+// --- clearScreen (Ctrl+Shift+L) ---
 
 func TestClearScreenWipesRenderedLinesNotSession(t *testing.T) {
 	m := newTestModel(&fakeRuntime{}, nil)
@@ -2194,16 +2194,16 @@ func TestClearScreenWipesRenderedLinesNotSession(t *testing.T) {
 	}
 }
 
-func TestDispatchKeyCtrlLClearsScreen(t *testing.T) {
+func TestDispatchKeyCtrlShiftLClearsScreen(t *testing.T) {
 	m := newTestModel(&fakeRuntime{}, nil)
 	m.appendMessage("user", "hello")
 
-	cmd := m.dispatchKey(key('l', tea.ModCtrl))
+	cmd := m.dispatchKey(key('l', tea.ModCtrl|tea.ModShift))
 	if cmd != nil {
-		t.Fatal("expected nil Cmd from Ctrl+L")
+		t.Fatal("expected nil Cmd from Ctrl+Shift+L")
 	}
 	if len(m.renderedLines) != 0 {
-		t.Fatalf("renderedLines = %v, want empty after Ctrl+L", m.renderedLines)
+		t.Fatalf("renderedLines = %v, want empty after Ctrl+Shift+L", m.renderedLines)
 	}
 }
 

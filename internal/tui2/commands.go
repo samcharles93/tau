@@ -273,53 +273,23 @@ func (m *model) cmdClear(_ string) tea.Cmd {
 	)
 }
 
+// cmdHelp renders the keybinding reference as a bordered box (see help.go)
+// and registers it as a committedHelpBox so a click can expand a truncated
+// row's description in place (see toggleCommittedHelpAtLine). Slash
+// commands live in the "/" completions dropdown and are deliberately not
+// repeated here. It bypasses appendMessage — the "system" role there
+// returns content unstyled (renderLine's default case), which would strip
+// the box's own lipgloss styling — following the same direct-append pattern
+// SkillsChangedEvent uses for its glamour-rendered output.
 func (m *model) cmdHelp(_ string) tea.Cmd {
-	var b strings.Builder
+	g := &committedHelpBox{width: m.width, expanded: map[helpRowKey]bool{}, lineIdx: len(m.renderedLines)}
+	rendered, _ := renderHelpBox(g.width, g.expanded)
+	lines := strings.Split(rendered, "\n")
+	g.lineCount = len(lines)
 
-	// Slash commands.
-	b.WriteString("Slash commands:")
-	for i := range slashTable {
-		e := &slashTable[i]
-		label := "/" + e.name
-		if e.usage != "" {
-			label += " " + e.usage
-		}
-		fmt.Fprintf(&b, "\n  %-38s %s", label, e.description)
-	}
-
-	// Keyboard shortcuts — grouped by function.
-	b.WriteString("\n\nInput:")
-	fmt.Fprintf(&b, "\n  %-38s %s", "Ctrl+A / Home", "move cursor to start of line")
-	fmt.Fprintf(&b, "\n  %-38s %s", "Ctrl+E / End", "move cursor to end of line")
-	fmt.Fprintf(&b, "\n  %-38s %s", "Ctrl+Left / Alt+Left", "move cursor back one word")
-	fmt.Fprintf(&b, "\n  %-38s %s", "Ctrl+Right / Alt+Right", "move cursor forward one word")
-	fmt.Fprintf(&b, "\n  %-38s %s", "Ctrl+U", "delete from cursor to start of line")
-	fmt.Fprintf(&b, "\n  %-38s %s", "Ctrl+K", "delete from cursor to end of line")
-	fmt.Fprintf(&b, "\n  %-38s %s", "Ctrl+W / Ctrl+Backspace", "delete word before cursor")
-	fmt.Fprintf(&b, "\n  %-38s %s", "Shift+Enter / Ctrl+J", "insert newline (multi-line input)")
-	fmt.Fprintf(&b, "\n  %-38s %s", "Shift+Tab", "cycle chat and agent modes")
-	fmt.Fprintf(&b, "\n  %-38s %s", "Up / Down", "recall history (at first / last line)")
-	fmt.Fprintf(&b, "\n  %-38s %s", "Ctrl+D", "quit (when input is empty)")
-
-	b.WriteString("\nTurn control:")
-	fmt.Fprintf(&b, "\n  %-38s %s", "Ctrl+S", "steer the agent mid-turn")
-	fmt.Fprintf(&b, "\n  %-38s %s", "Ctrl+C", "cancel the current turn (double-tap to quit)")
-	fmt.Fprintf(&b, "\n  %-38s %s", "!", "run a shell command prefixed with ! (!! to hide from model)")
-
-	b.WriteString("\nTool interaction:")
-	fmt.Fprintf(&b, "\n  %-38s %s", "Tab", "navigate focus through completed tools")
-	fmt.Fprintf(&b, "\n  %-38s %s", "Enter", "expand/collapse the focused tool's full output")
-	fmt.Fprintf(&b, "\n  %-38s %s", "Esc", "collapse tool → clear focus → clear input")
-	fmt.Fprintf(&b, "\n  %-38s %s", "Up / Down", "navigate tool focus (input empty, no history)")
-
-	b.WriteString("\nScreen:")
-	fmt.Fprintf(&b, "\n  %-38s %s", "Ctrl+L", "clear the screen (keeps the session)")
-	fmt.Fprintf(&b, "\n  %-38s %s", "Ctrl+Shift+G", "copy the assistant's last response")
-	fmt.Fprintf(&b, "\n  %-38s %s", "PageUp / PageDown", "scroll through conversation history")
-	fmt.Fprintf(&b, "\n  %-38s %s", "Ctrl+Home / Ctrl+End", "jump to oldest / newest conversation content")
-	fmt.Fprintf(&b, "\n  %-38s %s", "Tab", "cycle tab-completions when dropdown is visible")
-
-	m.appendMessage("system", b.String())
+	m.renderedLines = append(m.renderedLines, lines...)
+	m.committedHelp = append(m.committedHelp, g)
+	m.viewport.SetContentLines(m.renderedLines)
 	return nil
 }
 

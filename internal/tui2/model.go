@@ -56,6 +56,17 @@ type model struct {
 	tools           []toolState           // active tool calls in display order
 	committedGroups []*committedToolGroup // multi-call batches already in scrollback, still foldable — see committedToolGroup
 
+	// committedHelp holds every /help box already in scrollback, still
+	// click-to-expand — see committedHelpBox.
+	committedHelp []*committedHelpBox
+
+	// viewportClickX is the mouse X column recorded at press time for a
+	// click in the viewport region, alongside viewportSel.anchor (the line
+	// index) — plain line-granularity selection never needed X, but
+	// toggleCommittedHelpAtLine does, since a help box has two side-by-side
+	// columns sharing the same line.
+	viewportClickX int
+
 	// Input state. input may contain embedded '\n' (Shift+Enter/Ctrl+J
 	// inserts a newline rather than submitting) — inputCursor is a rune
 	// index into it, 0..len([]rune(input)). Editing/navigation mirror
@@ -391,6 +402,21 @@ type committedToolGroup struct {
 	// rendering lives, so a click can find it (toggleCommittedToolAtLine)
 	// and a toggle can splice its replacement in without disturbing any
 	// other content beyond a fixed line-count shift (spliceCommittedGroup).
+	lineIdx   int
+	lineCount int
+}
+
+// committedHelpBox is a /help box already committed to scrollback that can
+// still be clicked to expand a truncated row's description in place (see
+// toggleCommittedHelpAtLine, spliceCommittedHelpBox) — the same idea as
+// committedToolGroup, applied to help.go's renderHelpBox instead of a tool
+// group. width is fixed at the box's original render width (matching
+// committedToolGroup's own no-reflow-on-resize behavior — see CAT-41).
+type committedHelpBox struct {
+	width    int
+	expanded map[helpRowKey]bool
+
+	// lineIdx/lineCount mirror committedToolGroup's — see its comment.
 	lineIdx   int
 	lineCount int
 }
@@ -1118,7 +1144,7 @@ func (m *model) dispatchKey(msg tea.KeyPressMsg) tea.Cmd {
 		m.autoFollow = true
 		return nil
 
-	case "ctrl+l":
+	case "ctrl+shift+l":
 		m.clearScreen()
 		return nil
 
@@ -1270,7 +1296,7 @@ func (m *model) clearInput() {
 	m.compDismissedToken = ""
 }
 
-// clearScreen wipes the visible scrollback (Ctrl+L) without touching the
+// clearScreen wipes the visible scrollback (Ctrl+Shift+L) without touching the
 // underlying chat session — unlike /clear, which sends a
 // ResetChatSessionCommand and actually starts a new session, this only
 // clears what's rendered locally. The next ChatSessionSnapshotEvent (e.g.
@@ -1279,6 +1305,7 @@ func (m *model) clearInput() {
 func (m *model) clearScreen() {
 	m.renderedLines = m.renderedLines[:0]
 	m.committedGroups = m.committedGroups[:0]
+	m.committedHelp = m.committedHelp[:0]
 	m.viewport.SetContentLines(m.renderedLines)
 	m.autoFollow = true
 	m.viewportSel.clear()
@@ -1772,10 +1799,7 @@ func renderInputBox(width int, title string, lines []string, hint string) string
 	}
 
 	innerWidth := max(width-2, 1)
-	label := " " + title + " "
-	topRuleWidth := max(width-2-lipgloss.Width(label), 0)
-	top := inputBoxStyle.Render("╭" + label + strings.Repeat("─", topRuleWidth) + "╮")
-	bottom := inputBoxStyle.Render("╰" + strings.Repeat("─", width-2) + "╯")
+	top, bottom := titledBoxBorders(width, title)
 
 	out := make([]string, 0, len(lines)+2)
 	out = append(out, top)
@@ -1788,14 +1812,25 @@ func renderInputBox(width int, title string, lines []string, hint string) string
 	return strings.Join(out, "\n")
 }
 
+// titledBoxBorders builds the top/bottom rules for a box-drawn box with its
+// title embedded in the top rule (e.g. "╭ chat ─...─╮") — shared by
+// renderInputBox and renderBoxAround (help.go) so every bordered box in the
+// TUI draws its border the same way.
+func titledBoxBorders(width int, title string) (top, bottom string) {
+	label := " " + title + " "
+	topRuleWidth := max(width-2-lipgloss.Width(label), 0)
+	top = inputBoxStyle.Render("╭" + label + strings.Repeat("─", topRuleWidth) + "╮")
+	bottom = inputBoxStyle.Render("╰" + strings.Repeat("─", width-2) + "╯")
+	return top, bottom
+}
+
+// renderInputBoxLine pads/truncates a (possibly styled) line to innerWidth
+// and wraps it in the box's side borders, flush against the left edge — the
+// input box's own prompt/cursor anchors there, so no left pad is added. For
+// content with no such anchor, see padVisible (help.go), which pads/truncates
+// the same way without the border wrapping.
 func renderInputBoxLine(innerWidth int, line string) string {
-	plainWidth := visibleWidth(stripANSI(line))
-	if plainWidth > innerWidth {
-		line = truncateANSIToWidth(line, innerWidth, "…")
-		plainWidth = visibleWidth(stripANSI(line))
-	}
-	padding := strings.Repeat(" ", max(innerWidth-plainWidth, 0))
-	return inputBoxStyle.Render("│") + line + padding + inputBoxStyle.Render("│")
+	return inputBoxStyle.Render("│") + padVisible(line, innerWidth) + inputBoxStyle.Render("│")
 }
 
 // renderInputChunk renders ln[chunkStart:chunkEnd], applying the block
@@ -2334,6 +2369,12 @@ func (m *model) applySnapshot(e tauchat.ChatSessionSnapshotEvent) {
 
 	m.renderedLines = m.renderedLines[:0]
 	m.messageRanges = m.messageRanges[:0]
+	// /help boxes are a local-only UI echo, not part of session history, so
+	// nothing in this rebuild loop reproduces them (unlike committedGroups,
+	// which oldGroups above lets survive) — any committedHelp entry is
+	// necessarily stale (wrong or out-of-bounds lineIdx) once renderedLines
+	// is rebuilt from scratch, so it must be dropped here too.
+	m.committedHelp = m.committedHelp[:0]
 	m.viewportSel.clear()
 	for idx, msg := range state.Messages {
 		switch msg.Role {
@@ -2890,6 +2931,7 @@ func (m *model) handleMousePress(x, y int) tea.Cmd {
 		row := m.viewport.YOffset() + (y - geom.viewportStartY)
 		if idx, ok := m.logicalLineAtRow(row); ok {
 			m.viewportSel.press(idx)
+			m.viewportClickX = x
 		}
 
 	case y >= geom.inputStartY && y <= geom.inputEndY:
@@ -3008,13 +3050,16 @@ func (m *model) handleMouseRelease() tea.Cmd {
 
 	switch m.dragRegion {
 	case dragViewport:
-		// A plain click (no drag) landing on a committed tool-call group is
-		// the fold/unfold/row-expand action (see toggleCommittedToolAtLine),
-		// not a selection — finalizeSelection's generic "no-op on click"
-		// doesn't know about that, so it's checked here first. A click on
-		// ordinary text still just clears the selection, same as before.
+		// A plain click (no drag) landing on a committed tool-call group or
+		// help box is the fold/unfold/row-expand action (see
+		// toggleCommittedToolAtLine, toggleCommittedHelpAtLine), not a
+		// selection — finalizeSelection's generic "no-op on click" doesn't
+		// know about that, so it's checked here first. A click on ordinary
+		// text still just clears the selection, same as before.
 		if !m.viewportSel.dragging {
-			m.toggleCommittedToolAtLine(m.viewportSel.anchor)
+			if !m.toggleCommittedToolAtLine(m.viewportSel.anchor) {
+				m.toggleCommittedHelpAtLine(m.viewportSel.anchor, m.viewportClickX)
+			}
 			m.viewportSel.clear()
 			return nil
 		}
@@ -3141,12 +3186,9 @@ func (m *model) toggleCommittedToolAtLine(idx int) bool {
 // spliceCommittedGroup re-renders g after toggleCommittedToolAtLine folded,
 // unfolded, or expanded/collapsed one of its rows, and splices the result
 // into m.renderedLines in place of its previous lines — shifting every
-// other committed group AND every recorded messageRange that comes after it
-// by the resulting line-count delta so their recorded positions stay
-// accurate for the next click. This is the only place that mutates
-// renderedLines in place after initial construction (every other write is a
-// pure trailing append) — anything else added to renderedLines' bookkeeping
-// in the future needs the same shift treatment here.
+// other splice-able region's recorded position (see
+// shiftRenderedLineBookkeeping) by the resulting line-count delta so they
+// stay accurate for the next click.
 func (m *model) spliceCommittedGroup(g *committedToolGroup) {
 	rendered := m.renderCommittedGroup(g)
 	newLines := strings.Split(rendered, "\n")
@@ -3157,17 +3199,84 @@ func (m *model) spliceCommittedGroup(g *committedToolGroup) {
 	m.renderedLines = append(m.renderedLines, tail...)
 
 	g.lineCount = len(newLines)
+	m.shiftRenderedLineBookkeeping(g.lineIdx, delta)
+	m.viewport.SetContentLines(m.renderedLines)
+}
+
+// shiftRenderedLineBookkeeping adjusts every recorded position in
+// renderedLines' bookkeeping (committedGroups, committedHelp, messageRanges)
+// that comes after afterIdx by delta, after an in-place splice changed the
+// line count starting at afterIdx. Shared by spliceCommittedGroup and
+// spliceCommittedHelpBox — those are the only two places that mutate
+// renderedLines in place after initial construction (every other write is a
+// pure trailing append); anything else added to renderedLines' bookkeeping
+// in the future needs the same shift treatment here.
+func (m *model) shiftRenderedLineBookkeeping(afterIdx, delta int) {
+	if delta == 0 {
+		return
+	}
 	for _, other := range m.committedGroups {
-		if other != g && other.lineIdx > g.lineIdx {
+		if other.lineIdx > afterIdx {
+			other.lineIdx += delta
+		}
+	}
+	for _, other := range m.committedHelp {
+		if other.lineIdx > afterIdx {
 			other.lineIdx += delta
 		}
 	}
 	for i := range m.messageRanges {
-		if m.messageRanges[i].startLine > g.lineIdx {
+		if m.messageRanges[i].startLine > afterIdx {
 			m.messageRanges[i].startLine += delta
 			m.messageRanges[i].endLine += delta
 		}
 	}
+}
+
+// toggleCommittedHelpAtLine mirrors toggleCommittedToolAtLine for a /help
+// box already committed to scrollback: a click on a row's key or
+// description toggles that row between its truncated one-liner and a full,
+// word-wrapped description. idx is the absolute logical line index (see
+// logicalLineAtRow); x is the mouse column recorded alongside it (see
+// viewportClickX) — needed here, unlike the single-column tool boxes,
+// because a help box's two side-by-side columns share the same line
+// indices. Returns whether a help box actually handled the click, so the
+// caller can tell that apart from an ordinary click on plain text.
+func (m *model) toggleCommittedHelpAtLine(idx, x int) bool {
+	for _, g := range m.committedHelp {
+		if idx < g.lineIdx || idx >= g.lineIdx+g.lineCount {
+			continue
+		}
+		rel := idx - g.lineIdx - 1 // body lines start after the top border
+		_, hits := renderHelpBox(g.width, g.expanded)
+		for _, h := range hits {
+			if rel < h.startY || rel > h.endY || x < h.startX || x > h.endX {
+				continue
+			}
+			g.expanded[h.key] = !g.expanded[h.key]
+			m.spliceCommittedHelpBox(g)
+			return true
+		}
+		return true // inside the box, but not on a row (border/blank line) — swallow, no-op
+	}
+	return false
+}
+
+// spliceCommittedHelpBox re-renders g after toggleCommittedHelpAtLine
+// toggled one of its rows, and splices the result into m.renderedLines in
+// place — see spliceCommittedGroup, whose splice-and-shift shape this
+// mirrors exactly.
+func (m *model) spliceCommittedHelpBox(g *committedHelpBox) {
+	rendered, _ := renderHelpBox(g.width, g.expanded)
+	newLines := strings.Split(rendered, "\n")
+	delta := len(newLines) - g.lineCount
+
+	tail := append([]string(nil), m.renderedLines[g.lineIdx+g.lineCount:]...)
+	m.renderedLines = append(m.renderedLines[:g.lineIdx], newLines...)
+	m.renderedLines = append(m.renderedLines, tail...)
+
+	g.lineCount = len(newLines)
+	m.shiftRenderedLineBookkeeping(g.lineIdx, delta)
 	m.viewport.SetContentLines(m.renderedLines)
 }
 

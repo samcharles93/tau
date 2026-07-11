@@ -375,10 +375,10 @@ func TestCmdHelpAppendsMessage(t *testing.T) {
 
 	drainCmd(m.cmdHelp(""))
 
-	// Should append a system message with the help text.
+	// Should append the help box, titled in its top border.
 	found := false
 	for _, line := range m.renderedLines {
-		if strings.Contains(stripANSI(line), "Slash commands:") {
+		if strings.Contains(stripANSI(line), "Help: Keybindings & Controls") {
 			found = true
 			break
 		}
@@ -416,6 +416,96 @@ func TestCmdHelpShowsConversationJumpKeys(t *testing.T) {
 		}
 	}
 	t.Error("expected conversation jump keys in help output")
+}
+
+func TestCmdHelpRegistersCommittedHelpBox(t *testing.T) {
+	m := newTestModel(&fakeRuntime{}, nil)
+
+	drainCmd(m.cmdHelp(""))
+
+	if len(m.committedHelp) != 1 {
+		t.Fatalf("committedHelp = %d entries, want 1", len(m.committedHelp))
+	}
+	g := m.committedHelp[0]
+	if g.lineIdx != 0 || g.lineCount != len(m.renderedLines) {
+		t.Fatalf("committedHelp[0] = {lineIdx: %d, lineCount: %d}, want {0, %d}", g.lineIdx, g.lineCount, len(m.renderedLines))
+	}
+}
+
+func TestToggleCommittedHelpAtLineExpandsAndCollapsesRow(t *testing.T) {
+	m := newTestModel(&fakeRuntime{}, nil)
+	m.width = 70 // single-column layout — simpler, deterministic hit coordinates
+
+	drainCmd(m.cmdHelp(""))
+	g := m.committedHelp[0]
+	beforeCount := g.lineCount
+
+	_, hits := renderHelpBox(g.width, g.expanded)
+	if len(hits) == 0 {
+		t.Fatal("expected at least one clickable row")
+	}
+	h := hits[0]
+	idx := g.lineIdx + 1 + h.startY // +1: body lines start after the top border
+
+	if !m.toggleCommittedHelpAtLine(idx, h.startX) {
+		t.Fatal("expected the click to be handled by the help box")
+	}
+	if !g.expanded[h.key] {
+		t.Error("expected the clicked row to be marked expanded")
+	}
+
+	// A second click on the same row (now possibly at a shifted line, since
+	// expanding can grow lineCount) collapses it back.
+	_, hits = renderHelpBox(g.width, g.expanded)
+	var h2 helpRowHit
+	for _, hh := range hits {
+		if hh.key == h.key {
+			h2 = hh
+			break
+		}
+	}
+	idx2 := g.lineIdx + 1 + h2.startY
+	if !m.toggleCommittedHelpAtLine(idx2, h2.startX) {
+		t.Fatal("expected the second click to also be handled")
+	}
+	if g.expanded[h.key] {
+		t.Error("expected the row to collapse back on a second click")
+	}
+	if g.lineCount != beforeCount {
+		t.Errorf("lineCount = %d, want back to %d after collapsing", g.lineCount, beforeCount)
+	}
+}
+
+func TestToggleCommittedHelpAtLineSwallowsNonRowClick(t *testing.T) {
+	m := newTestModel(&fakeRuntime{}, nil)
+	drainCmd(m.cmdHelp(""))
+	g := m.committedHelp[0]
+
+	// The box's own top border line — inside the box's line range, but not
+	// on any row.
+	if !m.toggleCommittedHelpAtLine(g.lineIdx, 0) {
+		t.Fatal("expected a click inside the box's bounds to be handled")
+	}
+	if len(g.expanded) != 0 {
+		t.Errorf("expanded = %v, want empty — a border click shouldn't toggle a row", g.expanded)
+	}
+}
+
+func TestApplySnapshotClearsStaleCommittedHelp(t *testing.T) {
+	m := newTestModel(&fakeRuntime{}, nil)
+	drainCmd(m.cmdHelp(""))
+	if len(m.committedHelp) == 0 {
+		t.Fatal("setup: expected a committed help box")
+	}
+
+	// /help is a local-only echo, not part of session history — a snapshot
+	// rebuild (e.g. after submitting a prompt) must drop it rather than
+	// leave a stale lineIdx pointing into the rebuilt renderedLines.
+	m.applySnapshot(tauchat.ChatSessionSnapshotEvent{})
+
+	if len(m.committedHelp) != 0 {
+		t.Errorf("committedHelp = %v, want cleared after a snapshot rebuild", m.committedHelp)
+	}
 }
 
 // --- cmdSession -------------------------------------------------------------
