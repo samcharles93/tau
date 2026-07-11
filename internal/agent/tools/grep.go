@@ -165,7 +165,7 @@ func makeGrepExecutor(cwd string, workspaceIndex GrepIndex) Executor {
 		err = cmd.Run()
 
 		output := stdout.String()
-		if searchBackend == "codesearch" && output == "" && err != nil {
+		if searchBackend == "codesearch" && err != nil {
 			// Snapshot candidates can disappear, or an unusually large candidate
 			// argv can fail to spawn. Retry the authoritative workspace path.
 			searchBackend = "direct"

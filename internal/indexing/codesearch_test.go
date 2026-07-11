@@ -68,8 +68,21 @@ func TestWorkspaceFilesRejectsTrackedSymlinkOutsideRoot(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if slices.Contains(files, link) || safeWorkspaceFile(root, link) {
+	_, accepted := confinedWorkspaceFile(root, link)
+	if slices.Contains(files, link) || accepted {
 		t.Fatalf("outside symlink accepted: %v", files)
+	}
+}
+
+func TestConfinedWorkspaceFileRejectsIntermediateSymlinkEscape(t *testing.T) {
+	root := t.TempDir()
+	outside := t.TempDir()
+	writeTestFile(t, outside, "secret.txt", "secret")
+	if err := os.Symlink(outside, filepath.Join(root, "linkdir")); err != nil {
+		t.Fatal(err)
+	}
+	if path, ok := confinedWorkspaceFile(root, filepath.Join(root, "linkdir", "secret.txt")); ok {
+		t.Fatalf("intermediate symlink escape accepted as %s", path)
 	}
 }
 
@@ -120,8 +133,7 @@ func TestManagerRefreshBuildsAtomicallyAndRecordsGeneration(t *testing.T) {
 	if err := m.ensureSchema(context.Background()); err != nil {
 		t.Fatal(err)
 	}
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
+	ctx := t.Context()
 	m.refreshAsync(ctx)
 
 	deadline := time.Now().Add(2 * time.Second)
@@ -149,7 +161,7 @@ func TestManagerRefreshBuildsAtomicallyAndRecordsGeneration(t *testing.T) {
 	defer db.Close()
 	var status string
 	var generation int
-	if err := db.QueryRow(`SELECT status, generation FROM workspace_indexes WHERE root = ?`, root).Scan(&status, &generation); err != nil {
+	if err := db.QueryRowContext(context.Background(), `SELECT status, generation FROM workspace_indexes WHERE root = ?`, root).Scan(&status, &generation); err != nil {
 		t.Fatal(err)
 	}
 	if status != "ready" || generation != 1 {
@@ -214,7 +226,7 @@ func writeTestFile(t *testing.T, dir, name, content string) {
 
 func runGit(t *testing.T, dir string, args ...string) {
 	t.Helper()
-	cmd := exec.Command("git", append([]string{"-C", dir}, args...)...)
+	cmd := exec.CommandContext(context.Background(), "git", append([]string{"-C", dir}, args...)...)
 	if out, err := cmd.CombinedOutput(); err != nil {
 		t.Fatalf("git %v: %v: %s", args, err, out)
 	}

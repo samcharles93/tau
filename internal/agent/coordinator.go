@@ -10,6 +10,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"maps"
 	"os"
 	"sort"
 	"strconv"
@@ -2163,12 +2164,10 @@ func (c *Coordinator) emitToolCompleted(
 	c.emit(event)
 	state := c.getSessionState(sessionID)
 	metricLabels := make(map[string]string, len(result.MetricLabels)+9)
-	for key, value := range result.MetricLabels {
-		metricLabels[key] = value
-	}
+	maps.Copy(metricLabels, result.MetricLabels)
 	// Authoritative correlation fields are assigned last so tool-specific
 	// dimensions cannot override execution identity or status.
-	for key, value := range map[string]string{
+	maps.Copy(metricLabels, map[string]string{
 		"tool":         tc.Function.Name,
 		"status":       status,
 		"call_id":      tc.ID,
@@ -2178,9 +2177,7 @@ func (c *Coordinator) emitToolCompleted(
 		"result_bytes": strconv.Itoa(result.ResultBytes),
 		"provider":     state.ProviderName,
 		"model":        state.Model.ID,
-	} {
-		metricLabels[key] = value
-	}
+	})
 	c.emitMetrics(chat.MetricEvent{
 		Category:  chat.MetricCategoryTool,
 		Name:      "tool." + tc.Function.Name + ".duration",

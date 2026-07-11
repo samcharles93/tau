@@ -104,8 +104,8 @@ func (m *Manager) Candidates(ctx context.Context, pattern string, literal, caseS
 	merged := make([]string, 0, len(files))
 	argumentBytes := 0
 	add := func(path string) {
-		path = filepath.Clean(path)
-		if !safeWorkspaceFile(m.root, path) {
+		path, ok := confinedWorkspaceFile(m.root, path)
+		if !ok {
 			return
 		}
 		if _, ok := seen[path]; ok {
@@ -143,9 +143,12 @@ func changedGitFiles(ctx context.Context, root string) map[string]struct{} {
 		if err != nil {
 			return map[string]struct{}{}
 		}
-		for _, name := range strings.Split(string(out), "\x00") {
+		for name := range strings.SplitSeq(string(out), "\x00") {
 			if name != "" {
-				changed[filepath.Clean(filepath.Join(root, filepath.FromSlash(name)))] = struct{}{}
+				path := filepath.Join(root, filepath.FromSlash(name))
+				if confined, ok := confinedWorkspaceFile(root, path); ok {
+					changed[confined] = struct{}{}
+				}
 			}
 		}
 	}
@@ -428,8 +431,8 @@ func WorkspaceFiles(ctx context.Context, root string) ([]string, error) {
 		for _, part := range parts {
 			if part != "" {
 				path := filepath.Join(root, filepath.FromSlash(part))
-				if safeWorkspaceFile(root, path) {
-					files = append(files, path)
+				if confined, ok := confinedWorkspaceFile(root, path); ok {
+					files = append(files, confined)
 				}
 			}
 		}
@@ -448,8 +451,10 @@ func WorkspaceFiles(ctx context.Context, root string) ([]string, error) {
 			}
 			return nil
 		}
-		if !entry.IsDir() && entry.Type().IsRegular() && safeWorkspaceFile(root, path) {
-			files = append(files, path)
+		if !entry.IsDir() && entry.Type().IsRegular() {
+			if confined, ok := confinedWorkspaceFile(root, path); ok {
+				files = append(files, confined)
+			}
 		}
 		return nil
 	})
@@ -460,21 +465,37 @@ func WorkspaceFiles(ctx context.Context, root string) ([]string, error) {
 	return files, nil
 }
 
-func safeWorkspaceFile(root, path string) bool {
+func confinedWorkspaceFile(root, path string) (string, bool) {
 	absRoot, err := filepath.Abs(root)
 	if err != nil {
-		return false
+		return "", false
 	}
 	absPath, err := filepath.Abs(path)
 	if err != nil {
-		return false
+		return "", false
 	}
-	rel, err := filepath.Rel(absRoot, absPath)
-	if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
-		return false
-	}
+	// Reject a symlink at the final component before resolving parent links.
 	info, err := os.Lstat(absPath)
-	return err == nil && info.Mode().IsRegular()
+	if err != nil || !info.Mode().IsRegular() {
+		return "", false
+	}
+	resolvedRoot, err := filepath.EvalSymlinks(absRoot)
+	if err != nil {
+		return "", false
+	}
+	resolvedPath, err := filepath.EvalSymlinks(absPath)
+	if err != nil {
+		return "", false
+	}
+	rel, err := filepath.Rel(resolvedRoot, resolvedPath)
+	if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+		return "", false
+	}
+	resolvedInfo, err := os.Lstat(resolvedPath)
+	if err != nil || !resolvedInfo.Mode().IsRegular() {
+		return "", false
+	}
+	return filepath.Clean(resolvedPath), true
 }
 
 func hasUppercase(value string) bool {

@@ -46,6 +46,22 @@ func TestGrepRetriesDirectSearchWhenIndexedCandidatesAreStale(t *testing.T) {
 	}
 }
 
+func TestGrepDiscardsPartialIndexedOutputOnCandidateError(t *testing.T) {
+	tmp := t.TempDir()
+	live := filepath.Join(tmp, "live.txt")
+	createGrepTestFile(t, tmp, "live.txt", "needle\n")
+	createGrepTestFile(t, tmp, "also-live.txt", "needle\n")
+	missing := filepath.Join(tmp, "deleted.txt")
+	tool := NewGrepTool(tmp, staticGrepIndex{files: []string{live, missing}})
+	result, err := tool.Execute(context.Background(), json.RawMessage(`{"pattern":"needle"}`), nil)
+	if err != nil || result.IsError {
+		t.Fatalf("grep result = %#v, err = %v", result, err)
+	}
+	if !strings.Contains(result.Content, "also-live.txt") || result.MetricLabels["search_backend"] != "direct" {
+		t.Fatalf("partial indexed output was not replaced: %s, labels = %v", result.Content, result.MetricLabels)
+	}
+}
+
 func TestGrepFallback(t *testing.T) {
 	// Create a temporary directory with test files.
 	tmp := t.TempDir()
