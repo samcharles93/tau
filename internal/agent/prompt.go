@@ -3,6 +3,7 @@ package agent
 import (
 	_ "embed"
 	"fmt"
+	"html"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -22,16 +23,19 @@ var agentPromptTpl string
 
 // PromptConfig holds all inputs for building the system prompt.
 type PromptConfig struct {
-	// Tools are the registered tool schemas to expose to the LLM.
+	// Tools are registered capability metadata exposed to the LLM. Tool
+	// descriptions do not outrank the prompt's behavioral instructions.
 	Tools []tools.Schema
 
-	// Skills are the active skills discovered at session start.
+	// Skills are the active skill catalog discovered at session start. Full
+	// instructions are loaded separately when a skill applies.
 	Skills []*skills.Skill
 
-	// ContextFiles are project-level context documents (AGENTS.md, etc.).
+	// ContextFiles are trusted project-level instruction documents (AGENTS.md,
+	// etc.) whose precedence is below the current user request.
 	ContextFiles []ContextFile
 
-	// Guidelines are additional instruction lines (from extensions via hooks).
+	// Guidelines are additional instruction lines from trusted extensions.
 	Guidelines []string
 
 	// CWD is the working directory for the agent session.
@@ -41,7 +45,8 @@ type PromptConfig struct {
 	// Must be a valid Go text/template string.
 	CustomPrompt string
 
-	// AppendPrompt is appended after the generated prompt.
+	// AppendPrompt contains trusted host-level system instructions appended in a
+	// clearly delimited block after the generated prompt.
 	AppendPrompt string
 
 	// ModelName is the model identifier for this session (optional metadata).
@@ -110,7 +115,9 @@ func buildPromptData(cfg PromptConfig) promptData {
 }
 
 func renderPromptTemplate(templateName, source string, data promptData) string {
-	t, err := template.New(templateName).Parse(source)
+	t, err := template.New(templateName).Funcs(template.FuncMap{
+		"xml": html.EscapeString,
+	}).Parse(source)
 	if err != nil {
 		return fmt.Sprintf("<!-- prompt template parse error: %v -->\n%s", err, source)
 	}

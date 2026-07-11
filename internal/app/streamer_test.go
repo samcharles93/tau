@@ -3,6 +3,7 @@ package app
 import (
 	"context"
 	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -14,6 +15,77 @@ import (
 	tauchat "github.com/samcharles93/tau/internal/chat"
 	tauconfig "github.com/samcharles93/tau/internal/config"
 )
+
+type channelTestProvider struct {
+	chunks []aisdkchat.Chunk
+}
+
+func (p *channelTestProvider) Name() string { return "channel-test" }
+
+func (p *channelTestProvider) Chat(context.Context, aisdkchat.Request) (aisdkchat.Response, error) {
+	return aisdkchat.Response{}, nil
+}
+
+func (p *channelTestProvider) ChatStream(context.Context, aisdkchat.Request) (aisdkchat.Stream, error) {
+	return &channelTestStream{chunks: p.chunks}, nil
+}
+
+type channelTestStream struct {
+	chunks []aisdkchat.Chunk
+	next   int
+}
+
+func (s *channelTestStream) Next(context.Context) (aisdkchat.Chunk, error) {
+	if s.next >= len(s.chunks) {
+		return aisdkchat.Chunk{}, io.EOF
+	}
+	chunk := s.chunks[s.next]
+	s.next++
+	return chunk, nil
+}
+
+func (*channelTestStream) Close() error { return nil }
+
+func TestStreamerKeepsReasoningAndFinalContentSeparate(t *testing.T) {
+	provider := &channelTestProvider{chunks: []aisdkchat.Chunk{
+		{Delta: "Useful ", ReasoningDelta: "Need to inspect. "},
+		{ReasoningDelta: "Next action."},
+		{Delta: "answer.", FinishReason: "stop", Done: true},
+	}}
+	streamer := NewStreamer(provider, "test-model")
+
+	var finalContent strings.Builder
+	var visibleReasoning strings.Builder
+	result, err := streamer.StreamChatCompletionFull(
+		context.Background(),
+		tauchat.ChatSessionState{},
+		"",
+		nil,
+		tauchat.StreamCallbacks{
+			OnDelta: func(delta string) error {
+				finalContent.WriteString(delta)
+				return nil
+			},
+			OnReasoningDelta: func(delta string) error {
+				visibleReasoning.WriteString(delta)
+				return nil
+			},
+		},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if got, want := finalContent.String(), "Useful answer."; got != want {
+		t.Fatalf("final content = %q, want %q", got, want)
+	}
+	if got, want := visibleReasoning.String(), "Need to inspect. Next action."; got != want {
+		t.Fatalf("visible reasoning = %q, want %q", got, want)
+	}
+	if got, want := result.ReasoningContent, visibleReasoning.String(); got != want {
+		t.Fatalf("persisted reasoning = %q, want %q", got, want)
+	}
+}
 
 // TestDynamicStreamerNoSelection verifies the dynamic streamer returns a
 // friendly, actionable error (rather than a nil-provider panic) when the
