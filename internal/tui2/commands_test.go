@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
 
 	tauchat "github.com/samcharles93/tau/internal/chat"
@@ -409,6 +410,65 @@ func TestAnyKeyClosesHelpOverlay(t *testing.T) {
 
 	if m.helpOverlay != nil {
 		t.Error("expected any keypress to close the help overlay")
+	}
+}
+
+// TestHelpOverlayClipsAndScrollsOnShortTerminal is a regression test for the
+// bug report this whole overlay redesign was chasing: on a terminal shorter
+// than the help content, the box previously ran off the bottom of the
+// screen with no way to see or reach the rest of it. It must now clip to
+// the available height and let Up/Down/PgUp/PgDn scroll to the rest.
+func TestHelpOverlayClipsAndScrollsOnShortTerminal(t *testing.T) {
+	m := newTestModel(&fakeRuntime{}, nil)
+	m.width, m.height = 120, 15 // short enough that the full box can't fit
+	drainCmd(m.cmdHelp(""))
+
+	full, _ := renderHelpBox(m.helpOverlayWidth(), m.helpOverlay.expanded)
+	fullHeight := lipgloss.Height(full)
+
+	clipped, _ := m.renderHelpOverlayBox()
+	clippedHeight := lipgloss.Height(clipped)
+
+	if clippedHeight >= fullHeight {
+		t.Fatalf("clipped height = %d, want less than the full box's %d height on a %d-row terminal", clippedHeight, fullHeight, m.height)
+	}
+	if clippedHeight > m.height {
+		t.Errorf("clipped height = %d, want it to fit within the %d-row terminal", clippedHeight, m.height)
+	}
+
+	// Up/Down must actually move the visible window, not just be accepted.
+	before, _ := m.renderHelpOverlayBox()
+	m.handleHelpOverlayKey(key(tea.KeyDown, 0))
+	after, _ := m.renderHelpOverlayBox()
+	if before == after {
+		t.Error("expected scrolling down to change the visible content")
+	}
+	if m.helpOverlay == nil {
+		t.Error("expected a scroll key not to close the overlay")
+	}
+}
+
+func TestHelpOverlayScrollClampsToValidRange(t *testing.T) {
+	m := newTestModel(&fakeRuntime{}, nil)
+	m.width, m.height = 120, 15
+	drainCmd(m.cmdHelp(""))
+
+	m.handleHelpOverlayKey(key(tea.KeyUp, 0)) // scroll above the top before anything has scrolled down
+	m.renderHelpOverlayBox()                  // renderHelpOverlayBox is what actually clamps scrollOffset
+	if m.helpOverlay.scrollOffset < 0 {
+		t.Errorf("scrollOffset = %d, want clamped to >= 0", m.helpOverlay.scrollOffset)
+	}
+
+	for range 50 {
+		m.handleHelpOverlayKey(key(tea.KeyDown, 0))
+	}
+	m.renderHelpOverlayBox()
+	if m.helpOverlay == nil {
+		t.Fatal("expected scrolling far past the bottom not to close the overlay")
+	}
+	body, _ := renderHelpBody(m.helpOverlayWidth(), m.helpOverlay.expanded)
+	if m.helpOverlay.scrollOffset >= len(body) {
+		t.Errorf("scrollOffset = %d, want clamped below body length %d", m.helpOverlay.scrollOffset, len(body))
 	}
 }
 

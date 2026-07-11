@@ -104,28 +104,39 @@ type helpRowHit struct {
 	key          helpRowKey
 }
 
-// renderHelpBox builds the full /help output: a bordered box titled "Help:
-// Keybindings & Controls" containing every helpSections group, laid out as
-// two columns (Input & Editing on the left; Tool Interaction and Screen &
-// Navigation stacked on the right) with Turn Control & Shell spanning full
-// width below, mirroring the two side columns' combined height. Below
+// helpBoxTitle is the /help overlay's title, embedded in its top border.
+const helpBoxTitle = "Help: Keybindings & Controls"
+
+// renderHelpBox builds the full, unclipped /help output: a bordered box
+// containing every helpSections group, laid out as two columns (Input &
+// Editing on the left; Tool Interaction and Screen & Navigation stacked on
+// the right) with Turn Control & Shell spanning full width below,
+// mirroring the two side columns' combined height. Below
 // helpTwoColumnMinWidth it falls back to one section per row, stacked
-// top-to-bottom.
-//
-// expanded holds which rows are showing their full (word-wrapped)
-// description instead of a truncated one-liner — see committedHelpBox in
-// model.go, which owns this map for a box already in scrollback and lets a
-// click toggle entries in place. The returned hits describe where each row
-// landed, for that same click handling; callers that just want to render
-// (e.g. a fresh /help with everything collapsed) can ignore them.
+// top-to-bottom. Used directly by tests and anywhere the whole box (no
+// height clamping) is wanted; the live overlay instead calls
+// renderHelpBody + renderBoxAround itself so it can clip to the terminal's
+// available height — see renderHelpOverlayBox.
 func renderHelpBox(width int, expanded map[helpRowKey]bool) (rendered string, hits []helpRowHit) {
+	body, hits := renderHelpBody(width, expanded)
+	return renderBoxAround(width, helpBoxTitle, body), hits
+}
+
+// renderHelpBody builds the /help content lines (no border) for the given
+// outer box width — see renderHelpBox's doc comment for the layout this
+// produces. expanded holds which rows are showing their full (word-wrapped)
+// description instead of a truncated one-liner. The returned hits describe
+// where each row landed, in body-relative (unclipped) line coordinates —
+// callers that clip the body for a scrollable window (renderHelpOverlayBox)
+// must translate a click's Y by their own scroll offset before comparing
+// against these.
+func renderHelpBody(width int, expanded map[helpRowKey]bool) (body []string, hits []helpRowHit) {
 	if width <= 0 {
 		width = 80
 	}
 	innerWidth := max(width-4, 20) // 2 border cols + 1 padding col each side
 	const contentOffsetX = 2       // "│ " prefix added by renderBoxAround
 
-	var body []string
 	if innerWidth >= helpTwoColumnMinWidth-4 {
 		leftSecs := []int{0}
 		rightSecs := []int{1, 2}
@@ -180,7 +191,7 @@ func renderHelpBox(width int, expanded map[helpRowKey]bool) (rendered string, hi
 		}
 	}
 
-	return renderBoxAround(width, "Help: Keybindings & Controls", body), hits
+	return body, hits
 }
 
 // renderHelpColumn renders one or more helpSections (identified by index,
@@ -351,17 +362,29 @@ const (
 	helpOverlayMaxWidth  = 110
 )
 
+// helpOverlayHeightFrac caps the box height at a fraction of the terminal
+// (matching diffViewerHeightFrac's own margin, diff.go) rather than letting
+// it run edge-to-edge — content taller than that scrolls instead (see
+// renderHelpOverlayBox), keeping the surrounding chrome visible as context
+// that something is layered on top of it.
+const helpOverlayHeightFrac = 0.9
+
 // helpOverlayState is the state of an open /help overlay. A nil
 // *helpOverlayState on model means none is open — mirrors diffViewerState's
 // own nil-sentinel convention (see diff.go). Unlike the box's previous
 // scrollback-embedded incarnation, opening /help again just replaces this
-// state; nothing accumulates in history.
+// state; nothing accumulates in history. scrollOffset is the index of the
+// first visible body line when content is taller than the box's available
+// height; renderHelpOverlayBox clamps it to [0, maxScroll] on every render,
+// so an out-of-range value set by a key handler (e.g. scrolling past the
+// top) is always safe.
 type helpOverlayState struct {
-	expanded map[helpRowKey]bool
+	expanded     map[helpRowKey]bool
+	scrollOffset int
 }
 
 // helpOverlayWidth is the box width used for both rendering
-// (compositeHelpOverlay) and click hit-testing (handleHelpOverlayClick) —
+// (renderHelpOverlayBox) and click hit-testing (handleHelpOverlayClick) —
 // the two MUST agree, or a click would hit-test against a differently laid
 // out box than the one actually on screen.
 func (m *model) helpOverlayWidth() int {
@@ -369,26 +392,82 @@ func (m *model) helpOverlayWidth() int {
 	return max(helpOverlayMinWidth, min(w, helpOverlayMaxWidth))
 }
 
+// renderHelpOverlayBox renders the /help overlay clipped to fit within
+// helpOverlayHeightFrac of the terminal: when the full body (renderHelpBody)
+// is taller than that, it's clipped to m.helpOverlay.scrollOffset..+visible
+// rows and a scroll hint is appended as an extra row, exactly like
+// renderHelpBox's normal footer-less box when content already fits (a short
+// help box, the common case, renders byte-for-byte the same as before this
+// clipping existed — scrollOffset stays 0 and maxScroll is 0, so no hint
+// line is added and nothing is clipped).
+//
+// hits are returned in full-body (unclipped) coordinates, same as
+// renderHelpBody's — see handleHelpOverlayClick for how a click's Y is
+// translated back into that space via scrollOffset.
+func (m *model) renderHelpOverlayBox() (rendered string, hits []helpRowHit) {
+	width := m.helpOverlayWidth()
+	body, hits := renderHelpBody(width, m.helpOverlay.expanded)
+
+	maxBoxHeight := max(10, int(float64(m.height)*helpOverlayHeightFrac))
+	naturalHeight := len(body) + 2 // + top/bottom border
+	boxHeight := min(naturalHeight, maxBoxHeight)
+	visibleBodyLines := boxHeight - 2
+
+	overflow := len(body) > visibleBodyLines
+	if overflow {
+		visibleBodyLines-- // reserve a row for the scroll hint
+	}
+	visibleBodyLines = max(visibleBodyLines, 1)
+
+	maxScroll := max(len(body)-visibleBodyLines, 0)
+	m.helpOverlay.scrollOffset = min(max(m.helpOverlay.scrollOffset, 0), maxScroll)
+
+	end := min(m.helpOverlay.scrollOffset+visibleBodyLines, len(body))
+	visible := body[m.helpOverlay.scrollOffset:end]
+	if overflow {
+		visible = append(append([]string{}, visible...), helpDescStyle.Render("↑/↓  PgUp/PgDn to scroll  ·  any other key closes"))
+	}
+
+	return renderBoxAround(width, helpBoxTitle, visible), hits
+}
+
 // handleHelpOverlayKey handles keyboard input while the /help overlay is
-// open: any key closes it — see dispatchKey's doc comment on why, unlike
-// the diff viewer, there's nothing here worth routing keys into first.
-func (m *model) handleHelpOverlayKey(tea.KeyPressMsg) tea.Cmd {
+// open: Up/Down/PgUp/PgDn scroll it when content overflows (a no-op,
+// harmlessly clamped by renderHelpOverlayBox, when it doesn't); any other
+// key closes it — a reference card isn't something you type into, so
+// there's no reason to route other keys anywhere else.
+func (m *model) handleHelpOverlayKey(msg tea.KeyPressMsg) tea.Cmd {
+	switch msg.String() {
+	case "up":
+		m.helpOverlay.scrollOffset--
+		return nil
+	case "down":
+		m.helpOverlay.scrollOffset++
+		return nil
+	case "pgup":
+		m.helpOverlay.scrollOffset -= 10
+		return nil
+	case "pgdown":
+		m.helpOverlay.scrollOffset += 10
+		return nil
+	}
 	m.helpOverlay = nil
 	return nil
 }
 
 // handleHelpOverlayClick resolves a left-click while the /help overlay is
-// open: inside a row toggles that row's expansion (see
-// toggleCommittedHelpAtLine's retired scrollback equivalent — same hit-test
-// shape, just against a freshly rendered box instead of a spliced one);
-// inside the box but not on a row is a no-op; outside the box closes it,
-// mirroring handleContextMenuClick's click-away-to-dismiss convention.
+// open: inside a row toggles that row's expansion; inside the box but not
+// on a row is a no-op; outside the box closes it, mirroring
+// handleContextMenuClick's click-away-to-dismiss convention. relY is
+// translated from on-screen (clipped/scrolled) coordinates back into
+// renderHelpBody's full-body coordinate space — the same space hits is
+// already in — by adding the current scroll offset.
 func (m *model) handleHelpOverlayClick(x, y int) tea.Cmd {
-	width := m.helpOverlayWidth()
-	rendered, hits := renderHelpBox(width, m.helpOverlay.expanded)
+	rendered, hits := m.renderHelpOverlayBox()
 	bx, by := centerRect(m.width, m.height, lipgloss.Width(rendered), lipgloss.Height(rendered))
 
-	relX, relY := x-bx, y-by-1 // -1: body lines start after the top border
+	relX := x - bx
+	relY := y - by - 1 + m.helpOverlay.scrollOffset // -1: body lines start after the top border
 	for _, h := range hits {
 		if relY < h.startY || relY > h.endY || relX < h.startX || relX > h.endX {
 			continue
@@ -409,7 +488,7 @@ func (m *model) handleHelpOverlayClick(x, y int) tea.Cmd {
 // compositeContextMenu's doc comment for why a bare Layer.Draw isn't
 // enough).
 func (m *model) compositeHelpOverlay(base string) string {
-	rendered, _ := renderHelpBox(m.helpOverlayWidth(), m.helpOverlay.expanded)
+	rendered, _ := m.renderHelpOverlayBox()
 	bx, by := centerRect(m.width, m.height, lipgloss.Width(rendered), lipgloss.Height(rendered))
 
 	compositor := lipgloss.NewCompositor(

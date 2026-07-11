@@ -569,9 +569,17 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		mev := msg.Mouse()
 		switch mev.Button {
 		case tea.MouseWheelUp:
+			if m.helpOverlay != nil {
+				m.helpOverlay.scrollOffset -= 3
+				break
+			}
 			m.viewport.ScrollUp(3)
 			m.autoFollow = false
 		case tea.MouseWheelDown:
+			if m.helpOverlay != nil {
+				m.helpOverlay.scrollOffset += 3
+				break
+			}
 			m.viewport.ScrollDown(3)
 			if m.viewport.AtBottom() {
 				m.autoFollow = true
