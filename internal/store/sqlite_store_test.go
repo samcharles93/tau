@@ -128,6 +128,10 @@ func TestSQLiteStore_SaveWithToolCalls(t *testing.T) {
 			Role:       chat.ChatRoleTool,
 			Content:    "file contents here",
 			ToolCallID: "call_1",
+			ToolResult: &chat.ToolResultMetadata{
+				ToolName: "read", RequestID: "request_1", Status: "success",
+				Duration: 3 * time.Millisecond, ResultBytes: 18,
+			},
 		},
 		{Role: chat.ChatRoleAssistant, Content: "The file contains: file contents here"},
 	}
@@ -151,6 +155,10 @@ func TestSQLiteStore_SaveWithToolCalls(t *testing.T) {
 	tool := loaded.Messages[2]
 	assert.Equal(t, "call_1", tool.ToolCallID)
 	assert.Equal(t, "file contents here", tool.Content)
+	require.NotNil(t, tool.ToolResult)
+	assert.Equal(t, "read", tool.ToolResult.ToolName)
+	assert.Equal(t, "request_1", tool.ToolResult.RequestID)
+	assert.Equal(t, 3*time.Millisecond, tool.ToolResult.Duration)
 }
 
 func TestSQLiteStore_SaveUpdatesExisting(t *testing.T) {

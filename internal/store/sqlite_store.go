@@ -119,8 +119,8 @@ func (s *SQLiteStore) Save(ctx context.Context, state chat.ChatSessionState, dur
 	}
 
 	ins, err := tx.PrepareContext(ctx, `
-		INSERT INTO messages (session_id, seq, role, content, reasoning_content, tool_calls, tool_call_id, created_at, client_id)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+		INSERT INTO messages (session_id, seq, role, content, reasoning_content, tool_calls, tool_call_id, created_at, client_id, tool_result)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 	`)
 	if err != nil {
 		return fmt.Errorf("store: prepare message insert: %w", err)
@@ -129,6 +129,7 @@ func (s *SQLiteStore) Save(ctx context.Context, state chat.ChatSessionState, dur
 
 	for i, msg := range state.Messages {
 		tcJSON := encodeToolCalls(msg.ToolCalls)
+		resultJSON := encodeToolResult(msg.ToolResult)
 		msgTime := msg.CreatedAt
 		if msgTime.IsZero() {
 			// Fall back to synthesising from the session start for messages
@@ -146,6 +147,7 @@ func (s *SQLiteStore) Save(ctx context.Context, state chat.ChatSessionState, dur
 			msg.ToolCallID,
 			formatTime(msgTime),
 			msg.ID,
+			resultJSON,
 		); err != nil {
 			return fmt.Errorf("store: insert message %d: %w", i, err)
 		}
@@ -181,7 +183,7 @@ func (s *SQLiteStore) Load(ctx context.Context, id string) (chat.ChatSessionStat
 	updatedAt, _ := time.Parse(time.RFC3339, row.updatedStr)
 
 	msgRows, err := s.db.QueryContext(ctx, `
-		SELECT seq, role, content, reasoning_content, tool_calls, tool_call_id, created_at, client_id
+		SELECT seq, role, content, reasoning_content, tool_calls, tool_call_id, created_at, client_id, tool_result
 		FROM messages WHERE session_id = ? ORDER BY seq
 	`, id)
 	if err != nil {
@@ -192,11 +194,11 @@ func (s *SQLiteStore) Load(ctx context.Context, id string) (chat.ChatSessionStat
 	var messages []chat.ChatMessage
 	for msgRows.Next() {
 		var (
-			seq                                            int
-			role, content, reasoning                       string
-			toolCallsJSON, toolCallID, createdAt, clientID string
+			seq                                                            int
+			role, content, reasoning                                       string
+			toolCallsJSON, toolCallID, createdAt, clientID, toolResultJSON string
 		)
-		if err := msgRows.Scan(&seq, &role, &content, &reasoning, &toolCallsJSON, &toolCallID, &createdAt, &clientID); err != nil {
+		if err := msgRows.Scan(&seq, &role, &content, &reasoning, &toolCallsJSON, &toolCallID, &createdAt, &clientID, &toolResultJSON); err != nil {
 			return chat.ChatSessionState{}, fmt.Errorf("store: scan message: %w", err)
 		}
 		msgCreatedAt, _ := time.Parse(time.RFC3339, createdAt)
@@ -208,6 +210,7 @@ func (s *SQLiteStore) Load(ctx context.Context, id string) (chat.ChatSessionStat
 			ToolCalls:        decodeToolCalls(toolCallsJSON),
 			ToolCallID:       toolCallID,
 			CreatedAt:        msgCreatedAt,
+			ToolResult:       decodeToolResult(toolResultJSON),
 		}
 		messages = append(messages, msg)
 	}
@@ -321,7 +324,7 @@ func (s *SQLiteStore) ExportMessages(ctx context.Context, id string) (<-chan []b
 		defer close(errs)
 
 		rows, err := s.db.QueryContext(ctx, `
-			SELECT role, content, reasoning_content, tool_calls, tool_call_id
+			SELECT role, content, reasoning_content, tool_calls, tool_call_id, tool_result
 			FROM messages WHERE session_id = ? ORDER BY seq
 		`, id)
 		if err != nil {
@@ -355,8 +358,8 @@ func (s *SQLiteStore) buildJSONLLine(scanner interface {
 	Scan(dest ...any) error
 },
 ) ([]byte, error) {
-	var role, content, reasoning, toolCallsJSON, toolCallID string
-	if err := scanner.Scan(&role, &content, &reasoning, &toolCallsJSON, &toolCallID); err != nil {
+	var role, content, reasoning, toolCallsJSON, toolCallID, toolResultJSON string
+	if err := scanner.Scan(&role, &content, &reasoning, &toolCallsJSON, &toolCallID, &toolResultJSON); err != nil {
 		return nil, err
 	}
 
@@ -375,6 +378,12 @@ func (s *SQLiteStore) buildJSONLLine(scanner interface {
 	}
 	if toolCallID != "" {
 		line["tool_call_id"] = toolCallID
+	}
+	if toolResultJSON != "" {
+		var result chat.ToolResultMetadata
+		if err := json.Unmarshal([]byte(toolResultJSON), &result); err == nil {
+			line["tool_result"] = result
+		}
 	}
 
 	data, err := json.Marshal(line)
@@ -429,6 +438,28 @@ func decodeToolCalls(jsonStr string) []chat.ChatToolCall {
 		return nil
 	}
 	return calls
+}
+
+func encodeToolResult(result *chat.ToolResultMetadata) string {
+	if result == nil {
+		return ""
+	}
+	b, err := json.Marshal(result)
+	if err != nil {
+		return ""
+	}
+	return string(b)
+}
+
+func decodeToolResult(jsonStr string) *chat.ToolResultMetadata {
+	if jsonStr == "" {
+		return nil
+	}
+	var result chat.ToolResultMetadata
+	if err := json.Unmarshal([]byte(jsonStr), &result); err != nil {
+		return nil
+	}
+	return &result
 }
 
 // calculateCost estimates session cost from usage and model pricing.

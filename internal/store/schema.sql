@@ -44,6 +44,7 @@ CREATE TABLE IF NOT EXISTS messages (
     tool_call_id      TEXT    NOT NULL DEFAULT '',
     created_at        TEXT    NOT NULL,  -- ISO 8601
     client_id         TEXT    NOT NULL DEFAULT '',  -- stable app-assigned ChatMessage.ID (see chat.NewMessageID); '' for pre-migration rows
+    tool_result       TEXT    NOT NULL DEFAULT '',  -- JSON ToolResultMetadata, empty for non-tool and legacy rows
     UNIQUE(session_id, seq)
 );
 

@@ -9,7 +9,7 @@ import (
 
 // currentSchemaVersion is the latest migration number. Bump this when adding
 // new migrations and append the SQL to the migrations map below.
-const currentSchemaVersion = 4
+const currentSchemaVersion = 5
 
 // Migrate runs all pending schema migrations in order. It is idempotent —
 // already-applied migrations are skipped.
@@ -28,6 +28,7 @@ func Migrate(ctx context.Context, db *sql.DB) error {
 		2: migrationV2,
 		3: migrationV3,
 		4: migrationV4,
+		5: migrationV5,
 	}
 
 	for v := current + 1; v <= currentSchemaVersion; v++ {
@@ -123,4 +124,10 @@ ALTER TABLE sessions ADD COLUMN tool_errors INTEGER NOT NULL DEFAULT 0;
 var migrationV4 = strings.TrimSpace(`
 ALTER TABLE messages ADD COLUMN client_id TEXT NOT NULL DEFAULT '';
 CREATE INDEX IF NOT EXISTS idx_messages_client_id ON messages(session_id, client_id);
+`)
+
+// migrationV5 persists authoritative tool execution metadata rather than
+// requiring consumers to infer failures and durations from result prose.
+var migrationV5 = strings.TrimSpace(`
+ALTER TABLE messages ADD COLUMN tool_result TEXT NOT NULL DEFAULT '';
 `)
