@@ -6,6 +6,7 @@ import (
 
 	"charm.land/lipgloss/v2"
 	"github.com/samcharles93/tau/internal/theme"
+	"github.com/samcharles93/tau/pkg/taui/termkit"
 )
 
 // --- renderStatusBar --------------------------------------------------------
@@ -316,6 +317,66 @@ func TestStripANSINonEscapeCodes(t *testing.T) {
 	if plain != "helloworld" {
 		// The incomplete escape is still consumed.
 		t.Logf("stripANSI handles incomplete escape, got %q", plain)
+	}
+}
+
+// TestStripANSIOSC8Hyperlink guards against a regression where stripANSI
+// only recognised the SGR 'm' terminator: an OSC 8 hyperlink's ST
+// terminator (ESC '\') was never matched, so stripANSI kept "in escape"
+// hunting for a stray 'm' anywhere in the URL or link text, silently
+// eating real content (and corrupting width math for anything built from
+// it, like the status bar's "web" segment).
+func TestStripANSIOSC8Hyperlink(t *testing.T) {
+	link := termkit.Hyperlink("web", "http://127.0.0.1:8080")
+	if plain := stripANSI(link); plain != "web" {
+		t.Fatalf("stripANSI(OSC8 hyperlink) = %q, want %q", plain, "web")
+	}
+
+	// A URL containing 'm' (the old bug's exact trigger) must not change
+	// the outcome.
+	link = termkit.Hyperlink("web", "http://example.com:8080")
+	if plain := stripANSI(link); plain != "web" {
+		t.Fatalf("stripANSI(OSC8 hyperlink with 'm' in URL) = %q, want %q", plain, "web")
+	}
+}
+
+func TestStripANSIMalformedAndPrivateCSISequences(t *testing.T) {
+	tests := map[string]struct {
+		input string
+		want  string
+	}{
+		"unterminated OSC": {input: "visible\x1b]8;;https://example.test", want: "visible"},
+		"private CSI":      {input: "\x1b[?25lvisible", want: "visible"},
+	}
+	for name, tt := range tests {
+		t.Run(name, func(t *testing.T) {
+			if got := stripANSI(tt.input); got != tt.want {
+				t.Fatalf("stripANSI(%q) = %q, want %q", tt.input, got, tt.want)
+			}
+		})
+	}
+}
+
+// TestWebSegWidthMath guards against webSeg baking its OSC 8 escape
+// directly into statusSeg.text: joinSegs uses .text verbatim for width
+// math, so a segment whose text is itself an escape sequence makes every
+// width-pressure/truncation decision downstream wrong. webSeg must keep
+// .text as the plain "web" label and carry the hyperlink via
+// styledOverride instead.
+func TestWebSegWidthMath(t *testing.T) {
+	seg := webSeg("http://127.0.0.1:8080")
+	if seg.text != "web" {
+		t.Fatalf("webSeg.text = %q, want plain %q (styling belongs in styledOverride)", seg.text, "web")
+	}
+	if seg.styledOverride == "" {
+		t.Fatal("webSeg.styledOverride should carry the OSC8 hyperlink")
+	}
+	_, plain := joinSegs([]statusSeg{seg})
+	if plain != "web" {
+		t.Fatalf("joinSegs plain output = %q, want %q", plain, "web")
+	}
+	if w := visibleWidth(plain); w != 3 {
+		t.Fatalf("visibleWidth(%q) = %d, want 3", plain, w)
 	}
 }
 

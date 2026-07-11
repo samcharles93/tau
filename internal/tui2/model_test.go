@@ -962,8 +962,8 @@ func TestCommittedSingleToolOpensAndCloses(t *testing.T) {
 		t.Fatal("expected single tool to expand on click")
 	}
 	joined := stripANSI(strings.Join(m.renderedLines, "\n"))
-	if !strings.Contains(joined, "single output") || !strings.Contains(joined, "Press Enter to collapse") {
-		t.Fatalf("expected expanded single tool to show output and expanded controls, got %q", joined)
+	if !strings.Contains(joined, "single output") {
+		t.Fatalf("expected expanded single tool to show output, got %q", joined)
 	}
 
 	if !m.toggleCommittedToolAtLine(g.lineIdx) {
@@ -1441,6 +1441,169 @@ func TestStreamingReasoningRemainsVisibleWhileActive(t *testing.T) {
 	if !strings.Contains(joined, "currently streaming reasoning") {
 		t.Fatalf("expected live streaming reasoning to render in full, got %q", stripANSI(joined))
 	}
+}
+
+// TestStreamCursorAppearsWhileStreaming checks the cursor shows up on the
+// live view while text is actively streaming, and only there.
+func TestStreamCursorAppearsWhileStreaming(t *testing.T) {
+	m := newTestModel(&fakeRuntime{}, nil)
+	m.width = 80
+	m.inResponse = true
+	m.streaming = "the response so far"
+
+	view := m.viewportLinesForView(false)
+	joined := strings.Join(view, "\n")
+	if !strings.Contains(joined, streamCursor) {
+		t.Fatalf("expected the cursor while streaming, got %q", stripANSI(joined))
+	}
+}
+
+// TestStreamCursorAbsentBeforeStreamingStarts checks the working indicator
+// state (in response, nothing streamed yet) shows no cursor — there's no
+// content for it to sit after.
+func TestStreamCursorAbsentBeforeStreamingStarts(t *testing.T) {
+	m := newTestModel(&fakeRuntime{}, nil)
+	m.width = 80
+	m.inResponse = true
+	m.streaming = ""
+
+	view := m.viewportLinesForView(false)
+	joined := strings.Join(view, "\n")
+	if strings.Contains(joined, streamCursor) {
+		t.Fatalf("expected no cursor before any text has streamed, got %q", stripANSI(joined))
+	}
+}
+
+// TestStreamCursorAbsentOnCompletedMessage checks the cursor never survives
+// into committed scrollback — it's presentation-only, drawn fresh from
+// m.streaming each frame, never written into renderedLines.
+func TestStreamCursorAbsentOnCompletedMessage(t *testing.T) {
+	m := newTestModel(&fakeRuntime{}, nil)
+	m.width = 80
+	m.inResponse = true
+	m.streaming = "the finished response"
+	m.finalizeResponse("msg-1")
+
+	joined := strings.Join(m.renderedLines, "\n")
+	if strings.Contains(joined, streamCursor) {
+		t.Fatalf("expected no cursor in committed scrollback, got %q", joined)
+	}
+	view := m.viewportLinesForView(false)
+	if strings.Contains(strings.Join(view, "\n"), streamCursor) {
+		t.Fatalf("expected no cursor in the view once the turn is finalized, got %q", strings.Join(view, "\n"))
+	}
+}
+
+// TestStreamCursorIsPresentationOnly checks the cursor never leaks into any
+// of the places the raw streamed text feeds: the persisted/copyable text
+// (m.lastAssistantText, set in finalizeResponse), and m.streaming itself,
+// which is what would flow into token counts and the model's context on the
+// next turn if it were ever mutated in place.
+func TestStreamCursorIsPresentationOnly(t *testing.T) {
+	m := newTestModel(&fakeRuntime{}, nil)
+	m.width = 80
+	m.inResponse = true
+	m.streaming = "plain text response"
+
+	// While actively streaming, the raw buffer itself must stay untouched —
+	// rendering must never mutate the source string the cursor is drawn from.
+	_ = m.viewportLinesForView(false)
+	if strings.Contains(m.streaming, streamCursor) {
+		t.Fatalf("m.streaming was mutated to include the cursor: %q", m.streaming)
+	}
+
+	content := m.finalizeResponse("msg-1")
+	if strings.Contains(content, streamCursor) {
+		t.Fatalf("finalizeResponse's returned content includes the cursor: %q", content)
+	}
+	if strings.Contains(m.lastAssistantText, streamCursor) {
+		t.Fatalf("m.lastAssistantText (source for /copy) includes the cursor: %q", m.lastAssistantText)
+	}
+}
+
+// TestStreamCursorClearsOnToolTransition checks the cursor disappears the
+// instant a tool call starts mid-stream — upsertToolCall flushes streaming
+// text to scrollback and clears m.streaming, which is what the cursor's
+// visibility is keyed on.
+func TestStreamCursorClearsOnToolTransition(t *testing.T) {
+	m := newTestModel(&fakeRuntime{}, nil)
+	m.width = 80
+	m.inResponse = true
+	m.streaming = "text before the tool call"
+
+	m.upsertToolCall("call-1", "read", `{"path":"a.go"}`, "")
+
+	if m.streaming != "" {
+		t.Fatalf("expected m.streaming cleared on tool transition, got %q", m.streaming)
+	}
+	view := m.viewportLinesForView(false)
+	if strings.Contains(strings.Join(view, "\n"), streamCursor) {
+		t.Fatal("expected no cursor once a tool call has started")
+	}
+}
+
+// TestStreamCursorClearsOnCancelAndError checks the cursor disappears on
+// both interrupted-turn paths (flushInterruptedTurn -> flushStreamingText).
+func TestStreamCursorClearsOnCancelAndError(t *testing.T) {
+	m := newTestModel(&fakeRuntime{}, nil)
+	m.width = 80
+	m.inResponse = true
+	m.streaming = "an in-flight response"
+
+	m.flushInterruptedTurn("chat request cancelled")
+
+	if m.streaming != "" {
+		t.Fatalf("expected m.streaming cleared after an interrupted turn, got %q", m.streaming)
+	}
+	view := m.viewportLinesForView(false)
+	if strings.Contains(strings.Join(view, "\n"), streamCursor) {
+		t.Fatal("expected no cursor after the turn was interrupted")
+	}
+}
+
+// TestRenderStreamingLinesCursorPlacement checks the cursor lands correctly
+// after plain text, a wrapped multi-line response, and a trailing newline
+// (its own blank row) — and that reserving room for it never pushes any
+// line past the wrap width, which is what would cause terminal-level
+// reflow/jitter on every delta.
+func TestRenderStreamingLinesCursorPlacement(t *testing.T) {
+	t.Run("plain text", func(t *testing.T) {
+		lines := renderStreamingLines("hello", 40)
+		if len(lines) != 1 {
+			t.Fatalf("expected 1 line, got %d: %q", len(lines), lines)
+		}
+		if !strings.HasSuffix(stripANSI(lines[0]), streamCursor) {
+			t.Fatalf("expected cursor at end of line, got %q", stripANSI(lines[0]))
+		}
+	})
+
+	t.Run("wrapped lines", func(t *testing.T) {
+		width := 20
+		lines := renderStreamingLines("this is a long response that should wrap across several lines", width)
+		if len(lines) < 2 {
+			t.Fatalf("expected wrapping to produce multiple lines, got %d", len(lines))
+		}
+		for i, line := range lines {
+			plain := stripANSI(line)
+			if i < len(lines)-1 && strings.Contains(plain, streamCursor) {
+				t.Fatalf("cursor should only appear on the last line, found it on line %d: %q", i, plain)
+			}
+			if visibleWidth(plain) > width {
+				t.Fatalf("line %d width = %d, want <= %d (cursor pushed line past wrap width): %q", i, visibleWidth(plain), width, plain)
+			}
+		}
+		if !strings.HasSuffix(stripANSI(lines[len(lines)-1]), streamCursor) {
+			t.Fatalf("expected cursor at end of last line, got %q", stripANSI(lines[len(lines)-1]))
+		}
+	})
+
+	t.Run("trailing newline", func(t *testing.T) {
+		lines := renderStreamingLines("finished a line\n", 40)
+		last := stripANSI(lines[len(lines)-1])
+		if last != streamCursor {
+			t.Fatalf("expected the cursor alone on its own row after a trailing newline, got %q", last)
+		}
+	})
 }
 
 // containsFaintSGR reports whether s contains the ANSI "faint" SGR code (2),
@@ -2043,6 +2206,27 @@ func TestStartOrQueueTurnSendsWhenIdle(t *testing.T) {
 	// shipped once because no test asserted it was actually populated.
 	if sent.RequestID == "" {
 		t.Fatal("expected a non-empty RequestID")
+	}
+}
+
+func TestStartOrQueueTurnClearsPriorTerminalState(t *testing.T) {
+	for _, tt := range []struct {
+		name  string
+		state agentState
+	}{
+		{name: "cancelled", state: agentCancelled},
+		{name: "error", state: agentError},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			m := newTestModel(&fakeRuntime{}, nil)
+			m.agentState = tt.state
+
+			m.startOrQueueTurn("try again")
+
+			if m.agentState != agentThinking {
+				t.Fatalf("agentState = %v, want agentThinking after a new submission", m.agentState)
+			}
+		})
 	}
 }
 
@@ -3900,7 +4084,7 @@ func TestComputeLayoutRowsMatchRenderedContent(t *testing.T) {
 	if got := stripANSI(inputAreaLines); !strings.Contains(got, "/") {
 		t.Fatalf("geom.inputStartY..inputEndY=%d..%d, rendered lines = %q, want the typed text somewhere inside", geom.inputStartY, geom.inputEndY, got)
 	}
-	if got := line(geom.statusY); !strings.Contains(got, "tau") {
+	if got := line(geom.statusY); !strings.Contains(got, "τ") {
 		t.Fatalf("geom.statusY=%d, rendered line = %q, want it to contain the status bar identity segment", geom.statusY, got)
 	}
 }
@@ -5022,7 +5206,7 @@ func TestUpsertToolCallExisting(t *testing.T) {
 	m := newTestModel(&fakeRuntime{}, nil)
 	m.tools = []toolState{{id: "t1", name: "read", args: "old"}}
 
-	m.upsertToolCall("t1", "read", "new")
+	m.upsertToolCall("t1", "read", "new", "")
 
 	if m.tools[0].args != "oldnew" {
 		t.Fatalf("args = %q, want %q (appended)", m.tools[0].args, "oldnew")
@@ -5127,7 +5311,7 @@ func TestComputeStatusBarLabelsSessionTokenTotals(t *testing.T) {
 	m.width = 120
 
 	plain := stripANSI(m.computeStatusBar())
-	if !strings.Contains(plain, "20.0k session tok") {
+	if !strings.Contains(plain, "20.0k tok") {
 		t.Fatalf("status bar = %q, want session token label", plain)
 	}
 }
@@ -5172,12 +5356,374 @@ func TestComputeStatusBarContextUsesLatestPromptTokens(t *testing.T) {
 	}
 }
 
+// --- agentState transitions ---
+
+func TestAgentStateDefaultsToReady(t *testing.T) {
+	m := newTestModel(&fakeRuntime{}, nil)
+	m.width = 80
+	if m.agentState != agentReady {
+		t.Fatalf("agentState = %v, want agentReady (zero value)", m.agentState)
+	}
+	plain := stripANSI(m.computeStatusBar())
+	if !strings.Contains(plain, "Ready") {
+		t.Fatalf("status bar = %q, want the Ready label", plain)
+	}
+}
+
+func TestAgentStateResponseStartedTransitionsToThinking(t *testing.T) {
+	m := newTestModel(&fakeRuntime{}, nil)
+	m.width = 80
+	m.handleChatEvent(tauchat.ChatResponseStartedEvent{})
+
+	if m.agentState != agentThinking {
+		t.Fatalf("agentState = %v, want agentThinking", m.agentState)
+	}
+	plain := stripANSI(m.computeStatusBar())
+	if !strings.Contains(plain, "Thinking") {
+		t.Fatalf("status bar = %q, want 'Thinking'", plain)
+	}
+	if !strings.Contains(plain, "Ctrl+C Stop") {
+		t.Fatalf("status bar = %q, want the interrupt hint", plain)
+	}
+}
+
+func TestAgentStateReasoningDeltaStaysThinking(t *testing.T) {
+	m := newTestModel(&fakeRuntime{}, nil)
+	m.handleChatEvent(tauchat.ChatResponseStartedEvent{})
+	m.handleChatEvent(tauchat.ChatReasoningDeltaEvent{Delta: "considering..."})
+
+	if m.agentState != agentThinking {
+		t.Fatalf("agentState = %v, want agentThinking", m.agentState)
+	}
+}
+
+func TestAgentStateReasoningDeltaKeepsRunningTool(t *testing.T) {
+	m := newTestModel(&fakeRuntime{}, nil)
+	m.handleChatEvent(tauchat.ChatResponseStartedEvent{})
+	m.handleChatEvent(tauchat.ChatToolExecutionStartedEvent{CallID: "t1", ToolName: "read"})
+	m.handleChatEvent(tauchat.ChatReasoningDeltaEvent{Delta: "checking the result"})
+
+	if m.agentState != agentRunningTool {
+		t.Fatalf("agentState = %v, want agentRunningTool while a tool is executing", m.agentState)
+	}
+}
+
+func TestAgentStateToolExecutionStartedTransitionsToRunningTool(t *testing.T) {
+	m := newTestModel(&fakeRuntime{}, nil)
+	m.width = 80
+	m.handleChatEvent(tauchat.ChatResponseStartedEvent{})
+	m.handleChatEvent(tauchat.ChatToolExecutionStartedEvent{CallID: "t1", ToolName: "read"})
+
+	if m.agentState != agentRunningTool {
+		t.Fatalf("agentState = %v, want agentRunningTool", m.agentState)
+	}
+	plain := stripANSI(m.computeStatusBar())
+	if !strings.Contains(plain, "Running read") {
+		t.Fatalf("status bar = %q, want 'Running read'", plain)
+	}
+	if !strings.Contains(plain, "Ctrl+C Stop") {
+		t.Fatalf("status bar = %q, want the interrupt hint", plain)
+	}
+}
+
+func TestAgentStateRunningToolWithoutRunningEntryHasSafeFallback(t *testing.T) {
+	m := newTestModel(&fakeRuntime{}, nil)
+	m.width = 80
+	m.agentState = agentRunningTool
+
+	plain := stripANSI(m.computeStatusBar())
+	if !strings.Contains(plain, "Running") {
+		t.Fatalf("status bar = %q, want the defensive Running fallback", plain)
+	}
+}
+
+func TestToolExecutionStartResetsElapsedClock(t *testing.T) {
+	m := newTestModel(&fakeRuntime{}, nil)
+	oldStart := time.Now().Add(-time.Minute)
+	m.tools = []toolState{{id: "t1", name: "read", status: "pending", startedAt: oldStart}}
+	beforeStart := time.Now()
+
+	m.handleChatEvent(tauchat.ChatToolExecutionStartedEvent{CallID: "t1", ToolName: "read"})
+
+	if m.tools[0].startedAt.Before(beforeStart) {
+		t.Fatalf("startedAt = %v, want execution-start time after %v", m.tools[0].startedAt, beforeStart)
+	}
+	startedAt := m.tools[0].startedAt
+	m.handleChatEvent(tauchat.ChatToolExecutionStartedEvent{CallID: "t1", ToolName: "read"})
+	if !m.tools[0].startedAt.Equal(startedAt) {
+		t.Fatalf("duplicate execution-start reset startedAt: %v -> %v", startedAt, m.tools[0].startedAt)
+	}
+}
+
+// TestAgentStateToolExecutionCompletedKeepsRunningToolWhileSiblingActive
+// guards against the status bar flickering back to "Thinking" and forward
+// to "Running <tool>" again between two concurrently running tool calls —
+// it should stay on agentRunningTool until every call in the batch settles.
+func TestAgentStateToolExecutionCompletedKeepsRunningToolWhileSiblingActive(t *testing.T) {
+	m := newTestModel(&fakeRuntime{}, nil)
+	m.handleChatEvent(tauchat.ChatResponseStartedEvent{})
+	m.handleChatEvent(tauchat.ChatToolExecutionStartedEvent{CallID: "t1", ToolName: "read"})
+	m.handleChatEvent(tauchat.ChatToolExecutionStartedEvent{CallID: "t2", ToolName: "grep"})
+
+	m.handleChatEvent(tauchat.ChatToolExecutionCompletedEvent{CallID: "t1"})
+	if m.agentState != agentRunningTool {
+		t.Fatalf("agentState = %v, want agentRunningTool while t2 is still running", m.agentState)
+	}
+
+	m.handleChatEvent(tauchat.ChatToolExecutionCompletedEvent{CallID: "t2"})
+	if m.agentState != agentThinking {
+		t.Fatalf("agentState = %v, want agentThinking once every tool has settled", m.agentState)
+	}
+}
+
+func TestAgentStateResponseDeltaTransitionsToStreaming(t *testing.T) {
+	m := newTestModel(&fakeRuntime{}, nil)
+	m.width = 80
+	m.handleChatEvent(tauchat.ChatResponseStartedEvent{})
+	m.handleChatEvent(tauchat.ChatResponseDeltaEvent{Delta: "hello"})
+
+	if m.agentState != agentStreaming {
+		t.Fatalf("agentState = %v, want agentStreaming", m.agentState)
+	}
+	if m.streamStartedAt.IsZero() {
+		t.Fatal("expected streamStartedAt to be set on transition into Streaming")
+	}
+	plain := stripANSI(m.computeStatusBar())
+	if !strings.Contains(plain, "generating") {
+		t.Fatalf("status bar = %q, want 'generating'", plain)
+	}
+}
+
+// TestAgentStateResponseDeltaStreamStartedAtStableAcrossDeltas checks
+// streamStartedAt is set once per turn (on the transition into Streaming),
+// not reset on every subsequent delta — otherwise a live tok/s estimate
+// would never accumulate enough elapsed time to ever become available.
+func TestAgentStateResponseDeltaStreamStartedAtStableAcrossDeltas(t *testing.T) {
+	m := newTestModel(&fakeRuntime{}, nil)
+	m.handleChatEvent(tauchat.ChatResponseStartedEvent{})
+	m.handleChatEvent(tauchat.ChatResponseDeltaEvent{Delta: "hello "})
+	first := m.streamStartedAt
+	m.handleChatEvent(tauchat.ChatResponseDeltaEvent{Delta: "world"})
+	if !m.streamStartedAt.Equal(first) {
+		t.Fatalf("streamStartedAt changed across deltas: %v -> %v", first, m.streamStartedAt)
+	}
+}
+
+func TestAgentStateResponseCompletedReturnsToReady(t *testing.T) {
+	m := newTestModel(&fakeRuntime{}, nil)
+	m.handleChatEvent(tauchat.ChatResponseStartedEvent{})
+	m.handleChatEvent(tauchat.ChatResponseDeltaEvent{Delta: "hello"})
+	m.handleChatEvent(tauchat.ChatResponseCompletedEvent{})
+
+	if m.agentState != agentReady {
+		t.Fatalf("agentState = %v, want agentReady after completion", m.agentState)
+	}
+}
+
+func TestAgentStateResponseCancelledTransitionsToCancelled(t *testing.T) {
+	m := newTestModel(&fakeRuntime{}, nil)
+	m.handleChatEvent(tauchat.ChatResponseStartedEvent{})
+	m.handleChatEvent(tauchat.ChatResponseCancelledEvent{})
+
+	if m.agentState != agentCancelled {
+		t.Fatalf("agentState = %v, want agentCancelled", m.agentState)
+	}
+	plain := stripANSI(m.computeStatusBar())
+	if !strings.Contains(plain, "Cancelled") {
+		t.Fatalf("status bar = %q, want 'Cancelled'", plain)
+	}
+	if strings.Contains(plain, "Ctrl+C Stop") {
+		t.Fatalf("status bar = %q, should not show the interrupt hint once cancelled", plain)
+	}
+}
+
+func TestAgentStateRuntimeErrorTransitionsToError(t *testing.T) {
+	m := newTestModel(&fakeRuntime{}, nil)
+	m.width = 80
+	m.handleChatEvent(tauchat.ChatResponseStartedEvent{})
+	m.handleChatEvent(tauchat.ChatRuntimeErrorEvent{Message: "connection reset by peer"})
+
+	if m.agentState != agentError {
+		t.Fatalf("agentState = %v, want agentError", m.agentState)
+	}
+	plain := stripANSI(m.computeStatusBar())
+	if !strings.Contains(plain, "Error") {
+		t.Fatalf("status bar = %q, want 'Error'", plain)
+	}
+	// The message itself belongs to the notification banner/scrollback, not
+	// the status bar — see TestAgentStateRuntimeErrorStatusBarIsJustTheState.
+	if strings.Contains(plain, "connection reset by peer") {
+		t.Fatalf("status bar = %q, should not restate the error message", plain)
+	}
+}
+
+// TestAgentStateRuntimeErrorStatusBarIsJustTheState checks the status bar
+// shows only the "Error" state label, not the message itself — the full
+// message already has a home in the notification banner (persists until
+// dismissed) and scrollback, both on screen at the same time as this bar,
+// so restating it here would just be a third copy of the same text.
+func TestAgentStateRuntimeErrorStatusBarIsJustTheState(t *testing.T) {
+	m := newTestModel(&fakeRuntime{}, nil)
+	longMsg := strings.Repeat("x", 200) + "\nsecond line should never appear"
+	m.handleChatEvent(tauchat.ChatRuntimeErrorEvent{Message: longMsg})
+
+	plain := stripANSI(m.computeStatusBar())
+	if !strings.Contains(plain, "Error") {
+		t.Fatalf("expected status bar to show the Error state, got %q", plain)
+	}
+	if strings.Contains(plain, "second line") || strings.Contains(plain, strings.Repeat("x", 60)) {
+		t.Fatalf("status bar should not restate the error message, got %q", plain)
+	}
+}
+
+// --- computeStatusBar narrow-width rendering ---
+
+// TestComputeStatusBarNarrowWidthPrioritizesActiveState checks the core
+// width-pressure requirement: under a narrow terminal, the active-state
+// label and interrupt hint must survive while secondary metadata (session
+// tokens, cost, context %) gets dropped.
+func TestComputeStatusBarNarrowWidthPrioritizesActiveState(t *testing.T) {
+	bus := eventbus.New()
+	t.Cleanup(bus.Close)
+	tracker := metrics.NewUsageTracker(bus.Client("usage"))
+	t.Cleanup(tracker.Close)
+	pub := eventbus.Publish[tauchat.MetricEvent](bus.Client("coordinator"))
+	pub.Publish(tauchat.MetricEvent{
+		Category:  tauchat.MetricCategoryLLM,
+		Name:      "llm.response",
+		Value:     20_000,
+		Labels:    map[string]string{"prompt_tokens": "19000", "completion_tokens": "1000"},
+		SessionID: "sess",
+	})
+	for range 100 {
+		if totals := tracker.Snapshot("sess"); totals != nil && totals.TotalTokens == 20_000 {
+			break
+		}
+		time.Sleep(time.Millisecond)
+	}
+
+	m := newTestModel(&fakeRuntime{}, nil)
+	m.usage = tracker
+	m.ctxWindow = 200_000
+	m.handleChatEvent(tauchat.ChatResponseStartedEvent{})
+	m.handleChatEvent(tauchat.ChatResponseDeltaEvent{Delta: "hello"})
+
+	m.width = 18 // narrow enough to force dropping
+	plain := stripANSI(m.computeStatusBar())
+	if !strings.Contains(plain, "Ctrl+C") {
+		t.Fatalf("narrow status bar = %q, want the interrupt hint to survive", plain)
+	}
+	if strings.Contains(plain, "session tok") {
+		t.Fatalf("narrow status bar = %q, session token metadata should have been dropped first", plain)
+	}
+}
+
+// TestComputeStatusBarNarrowWidthReadyKeepsModelOverLabel checks Ready's own
+// degradation order: the model name (left, tail-truncated) survives longer
+// than the trailing "Ready" label (right, lowest priority) under pressure.
+// TestComputeStatusBarNarrowWidthReadyPrioritizesStateLabel checks Ready's
+// own degradation order under extreme width pressure: the right-hand group
+// (here, just the "Ready" state label) is never truncated away — only the
+// left identity blob (τ tau/model/provider) yields, via tail-truncation —
+// matching renderStatusBar's existing invariant and this feature's
+// "prioritize active state over secondary metadata" requirement, treating
+// "Ready" itself as Ready's active-state label.
+func TestComputeStatusBarNarrowWidthReadyPrioritizesStateLabel(t *testing.T) {
+	m := newTestModel(&fakeRuntime{}, nil)
+	m.modelName = "gpt-4"
+	// Wide enough for "τ · Ready" (the undroppable left floor) plus a
+	// little room, but too narrow for "gpt-4" to also fit on the right.
+	m.width = 14
+
+	plain := stripANSI(m.computeStatusBar())
+	if !strings.Contains(plain, "Ready") {
+		t.Fatalf("narrow status bar = %q, want the Ready state label to survive", plain)
+	}
+	if strings.Contains(plain, "gpt-4") {
+		t.Fatalf("narrow status bar = %q, want the model name dropped before the state label truncates", plain)
+	}
+}
+
+// TestComputeStatusBarExtremeNarrowWidthDoesNotPanic checks the true
+// rock-bottom case: even "τ tau · Ready" alone doesn't fit. There's nothing
+// left to drop at that point (both are prioTransient), so the
+// character-truncation fallback is the documented last resort — this just
+// guards it stays non-empty and never panics, not any particular content.
+func TestComputeStatusBarExtremeNarrowWidthDoesNotPanic(t *testing.T) {
+	m := newTestModel(&fakeRuntime{}, nil)
+	m.modelName = "gpt-4"
+	m.width = 5
+
+	if out := m.computeStatusBar(); out == "" {
+		t.Fatal("expected non-empty output even at extreme narrow width")
+	}
+}
+
+func TestComputeStatusBarNarrowThinkingStateDoesNotPanic(t *testing.T) {
+	m := newTestModel(&fakeRuntime{}, nil)
+	m.width = 10
+	m.modelName = "gpt-4"
+	m.agentState = agentThinking
+
+	plain := stripANSI(m.computeStatusBar())
+	if plain == "" {
+		t.Fatal("expected a non-empty narrow Thinking status bar")
+	}
+	if visibleWidth(plain) > m.width {
+		t.Fatalf("status bar width = %d, want <= %d: %q", visibleWidth(plain), m.width, plain)
+	}
+}
+
+func TestComputeStatusBarZeroWidthDoesNotPanic(t *testing.T) {
+	m := newTestModel(&fakeRuntime{}, nil)
+	m.modelName = "gpt-4"
+	m.width = 0
+
+	// Should not panic; content is unconstrained by an actual terminal width
+	// until the first WindowSizeMsg, same as the rest of the layout.
+	_ = m.computeStatusBar()
+}
+
+// --- approxTokensPerSecond ---
+
+func TestApproxTokensPerSecondUnavailableTooEarly(t *testing.T) {
+	if _, ok := approxTokensPerSecond("some streamed text", 100*time.Millisecond); ok {
+		t.Fatal("expected tok/s to be unavailable before enough elapsed time has passed")
+	}
+}
+
+func TestApproxTokensPerSecondUnavailableWithNoText(t *testing.T) {
+	if _, ok := approxTokensPerSecond("", 2*time.Second); ok {
+		t.Fatal("expected tok/s to be unavailable with no streamed text yet")
+	}
+}
+
+func TestApproxTokensPerSecondAvailable(t *testing.T) {
+	rate, ok := approxTokensPerSecond(strings.Repeat("word ", 100), 2*time.Second)
+	if !ok {
+		t.Fatal("expected tok/s to be available with enough text and elapsed time")
+	}
+	if rate <= 0 {
+		t.Fatalf("rate = %d, want > 0", rate)
+	}
+}
+
+func TestApproxTokensPerSecondCountsRunes(t *testing.T) {
+	rate, ok := approxTokensPerSecond("你好世界你好世界", time.Second)
+	if !ok {
+		t.Fatal("expected tok/s to be available for non-ASCII text")
+	}
+	if rate != 2 { // 8 runes / 4 estimated chars per token / 1 second.
+		t.Fatalf("rate = %d, want 2", rate)
+	}
+}
+
 // --- toolState tests ---
 
 func TestToolStateDefaultValues(t *testing.T) {
 	m := newTestModel(&fakeRuntime{}, nil)
 
-	m.upsertToolCall("new-id", "bash", "echo hi")
+	m.upsertToolCall("new-id", "bash", "echo hi", "")
 
 	if m.tools[0].status != "pending" {
 		t.Fatalf("new tool status = %q, want %q", m.tools[0].status, "pending")

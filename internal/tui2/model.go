@@ -52,6 +52,17 @@ type model struct {
 	reasoning  string // current reasoning delta
 	inResponse bool   // true while a response is in progress
 
+	// agentState is the explicit, typed state driving the status bar (see
+	// statusbar.go) — set at each transition point in handleChatEvent rather
+	// than re-derived by sniffing m.notification text or combining
+	// inResponse/streaming/tools ad hoc at render time. Zero value
+	// (agentReady) is correct for a freshly constructed model with no turn
+	// yet in flight. streamStartedAt marks when the active response's
+	// streaming phase began (set the moment agentState first becomes
+	// agentStreaming for a turn), used to derive a live tokens/sec estimate.
+	agentState      agentState
+	streamStartedAt time.Time
+
 	// Tool state.
 	tools           []toolState           // active tool calls in display order
 	committedGroups []*committedToolGroup // multi-call batches already in scrollback, still foldable — see committedToolGroup
@@ -359,9 +370,16 @@ type toolState struct {
 	result string
 	status string // "pending", "running", "done", "error"
 
-	// startedAt is when the call first appeared, and elapsed is frozen at
-	// completion so a settled row keeps showing how long it took rather than
-	// ticking on (or dropping to zero) after the turn ends.
+	// summary is a short, model-authored one-liner describing what this
+	// call is doing (see ChatToolExecutionStartedEvent.Summary), shown in
+	// the status bar while the tool runs. Empty when the model didn't
+	// supply one.
+	summary string
+
+	// startedAt is initialized when the call appears as a fallback, then reset
+	// when execution begins. elapsed is frozen at completion so a settled row
+	// keeps showing how long it took rather than ticking on (or dropping to
+	// zero) after the turn ends.
 	startedAt time.Time
 	elapsed   time.Duration
 
@@ -1987,9 +2005,42 @@ func (m *model) viewportLinesForView(visibleReasoning bool) []string {
 		lines = append(lines, renderReasoningLines(m.reasoning, m.width)...)
 	}
 	if m.streaming != "" {
-		for _, line := range wrapWords(m.streaming, m.width) {
-			lines = append(lines, streamStyle.Render(line))
+		lines = append(lines, renderStreamingLines(m.streaming, m.width)...)
+	}
+	return lines
+}
+
+// streamCursor is the block cursor shown immediately after the actively
+// streaming assistant response — presentation-only: it's computed fresh
+// from m.streaming on every frame by renderStreamingLines and never written
+// back into the string itself, so it never reaches persisted session
+// content, /copy (m.lastAssistantText is only ever set from the final,
+// cursor-free text — see finalizeResponse), markdown parsing (glamour only
+// ever renders the committed, cursor-free text), token counts, or the
+// model's context. It disappears the instant m.streaming is cleared, which
+// already happens immediately on completion (finalizeResponse), cancellation
+// and error (flushInterruptedTurn -> flushStreamingText), and a tool
+// transition (upsertToolCall -> flushStreamingText) — no separate handling
+// needed here for any of those.
+const streamCursor = "▋"
+
+// renderStreamingLines word-wraps the actively streaming response and
+// appends streamCursor to the very end — including on its own blank row
+// when text ends mid-trailing-newline, so the cursor always sits where the
+// next character would actually land. The wrap width reserves one column
+// for the cursor's own width so appending it to the last line can never push
+// that line past m.width and cause the terminal to reflow it — the one-off
+// jitter this guards against would otherwise show up on every single delta.
+func renderStreamingLines(text string, width int) []string {
+	cursorWidth := lipgloss.Width(streamCursor)
+	wrapped := wrapWords(text, max(width-cursorWidth, 1))
+	lines := make([]string, len(wrapped))
+	for i, line := range wrapped {
+		rendered := streamStyle.Render(line)
+		if i == len(wrapped)-1 {
+			rendered += streamCursorStyle.Render(streamCursor)
 		}
+		lines[i] = rendered
 	}
 	return lines
 }
@@ -2231,6 +2282,10 @@ func (m *model) startOrQueueTurn(text string) tea.Cmd {
 	m.appendMessage("user", text)
 	m.inResponse = true
 	m.steering = false
+	// Error and cancellation describe the prior turn, not the session. Clear
+	// either terminal label as soon as the user starts the next turn instead
+	// of waiting for the runtime's response-start event.
+	m.agentState = agentThinking
 
 	return sendCommand(m.runtime, tauchat.SubmitChatPromptCommand{
 		SessionID:   m.sessionID,
@@ -2397,6 +2452,7 @@ func (m *model) handleChatEvent(evt tauchat.ChatEvent) tea.Cmd {
 		m.toolGroupCollapsed = m.toolCallsDefaultCollapsed
 		m.inResponse = true
 		m.spinnerFrame = 0
+		m.agentState = agentThinking
 		return spinTick()
 
 	case tauchat.ChatResponseDeltaEvent:
@@ -2407,17 +2463,27 @@ func (m *model) handleChatEvent(evt tauchat.ChatEvent) tea.Cmd {
 		if len(m.tools) > 0 {
 			m.flushToolGroup()
 		}
+		if m.agentState != agentStreaming {
+			m.agentState = agentStreaming
+			m.streamStartedAt = time.Now()
+		}
 		m.streaming += e.Delta
 
 	case tauchat.ChatReasoningDeltaEvent:
 		m.reasoning += e.Delta
+		// Some providers can stream reasoning across tool boundaries. Keep the
+		// active tool visible until every tool in this batch has settled.
+		if !m.anyToolRunning() {
+			m.agentState = agentThinking
+		}
 
 	case tauchat.ChatToolCallDeltaEvent:
-		m.upsertToolCall(e.CallID, e.ToolName, e.ArgumentsSummary)
+		m.upsertToolCall(e.CallID, e.ToolName, e.ArgumentsSummary, "")
 
 	case tauchat.ChatToolExecutionStartedEvent:
-		m.upsertToolCall(e.CallID, e.ToolName, e.ArgumentsSummary)
+		m.upsertToolCall(e.CallID, e.ToolName, e.ArgumentsSummary, e.Summary)
 		m.setToolStatus(e.CallID, "running")
+		m.agentState = agentRunningTool
 
 	case tauchat.ChatToolExecutionCompletedEvent:
 		m.adoptToolCallID(e.CallID, e.ToolName)
@@ -2433,6 +2499,12 @@ func (m *model) handleChatEvent(evt tauchat.ChatEvent) tea.Cmd {
 			m.bashRunning = false
 			m.bashCallID = ""
 		}
+		// Back to Thinking only once every tool in this batch has settled —
+		// a still-running sibling call means the status bar should keep
+		// showing "Running <tool>", not flicker to Thinking and back.
+		if !m.anyToolRunning() {
+			m.agentState = agentThinking
+		}
 
 	case tauchat.ChatToolOutputEvent:
 		m.setToolResult(e.CallID, e.Chunk)
@@ -2440,6 +2512,7 @@ func (m *model) handleChatEvent(evt tauchat.ChatEvent) tea.Cmd {
 
 	case tauchat.ChatResponseCompletedEvent:
 		content := m.finalizeResponse(lastAssistantMessageID(e.State))
+		m.agentState = agentReady
 		// noopCmd guarantees a non-nil Batch even when there's no queued turn
 		// to drain and no desktop notification to fire.
 		cmds := []tea.Cmd{noopCmd, m.drainTurnQueue()}
@@ -2455,6 +2528,7 @@ func (m *model) handleChatEvent(evt tauchat.ChatEvent) tea.Cmd {
 		m.flushInterruptedTurn("chat request cancelled")
 		m.inResponse = false
 		m.steering = false
+		m.agentState = agentCancelled
 		return m.drainTurnQueue()
 
 	case tauchat.ChatRuntimeErrorEvent:
@@ -2474,15 +2548,17 @@ func (m *model) handleChatEvent(evt tauchat.ChatEvent) tea.Cmd {
 		m.steering = false
 		m.inResponse = false
 		// Shown via the notification banner (above the input area) at error
-		// level with duration 0 (persists until dismissed rather than
-		// silently expiring). Also printed to the scrollback so it isn't
-		// lost if overtaken by a later notice — but only when nothing else
-		// in scrollback already shows it (see hadLoneTool above). Truncated:
-		// some providers return an unbounded error body (e.g. a full HTML
-		// edge error page) that would otherwise flood scrollback and bury
-		// the prompt (N-something).
+		// level, auto-clearing after notificationClearDelay like any other
+		// notification — the scrollback line below is the permanent record,
+		// so the banner doesn't need to persist until dismissed too. Also
+		// printed to scrollback so it isn't lost once the banner clears —
+		// but only when nothing else in scrollback already shows it (see
+		// hadLoneTool above). Truncated: some providers return an unbounded
+		// error body (e.g. a full HTML edge error page) that would
+		// otherwise flood scrollback and bury the prompt (N-something).
 		msg := truncateErrorText(e.Message)
-		cmd := m.setNotificationWithLevel(msg, notify.LevelError, 0)
+		m.agentState = agentError
+		cmd := m.setNotificationWithLevel(msg, notify.LevelError, notificationClearDelay)
 		if !hadLoneTool {
 			m.appendMessage("system", "✗ "+msg)
 		}
@@ -2835,7 +2911,7 @@ func (m *model) renderMarkdown(content string) string {
 
 // --- tool state helpers ----------------------------------------------------
 
-func (m *model) upsertToolCall(callID, toolName, argumentsSummary string) {
+func (m *model) upsertToolCall(callID, toolName, argumentsSummary, summary string) {
 	for i := range m.tools {
 		if m.tools[i].id == callID {
 			if toolName != "" {
@@ -2843,6 +2919,9 @@ func (m *model) upsertToolCall(callID, toolName, argumentsSummary string) {
 			}
 			if argumentsSummary != "" {
 				m.tools[i].args += argumentsSummary
+			}
+			if summary != "" {
+				m.tools[i].summary = summary
 			}
 			return
 		}
@@ -2852,6 +2931,9 @@ func (m *model) upsertToolCall(callID, toolName, argumentsSummary string) {
 			if m.tools[i].id == callID {
 				if argumentsSummary != "" {
 					m.tools[i].args += argumentsSummary
+				}
+				if summary != "" {
+					m.tools[i].summary = summary
 				}
 				return
 			}
@@ -2866,6 +2948,7 @@ func (m *model) upsertToolCall(callID, toolName, argumentsSummary string) {
 		id:        callID,
 		name:      toolName,
 		args:      argumentsSummary,
+		summary:   summary,
 		status:    "pending",
 		startedAt: time.Now(),
 	})
@@ -2915,6 +2998,12 @@ func (m *model) adoptToolCallID(callID, toolName string) bool {
 func (m *model) setToolStatus(id, status string) {
 	for i := range m.tools {
 		if m.tools[i].id == id {
+			// A tool-call delta can arrive well before execution actually starts.
+			// Start the elapsed clock on the pending-to-running transition, while
+			// ignoring duplicate start events so they cannot reset it.
+			if status == "running" && m.tools[i].status != "running" {
+				m.tools[i].startedAt = time.Now()
+			}
 			m.tools[i].status = status
 			// Freeze the elapsed clock the moment a row settles so it reports
 			// how long the call actually took, rather than continuing to tick
@@ -2925,6 +3014,32 @@ func (m *model) setToolStatus(id, status string) {
 			return
 		}
 	}
+}
+
+// anyToolRunning reports whether any tool in the current batch is still
+// executing — used by handleChatEvent to decide whether completing one tool
+// call should drop the status bar back to agentThinking or leave it on
+// agentRunningTool for a still-running sibling.
+func (m *model) anyToolRunning() bool {
+	for i := range m.tools {
+		if m.tools[i].status == "running" {
+			return true
+		}
+	}
+	return false
+}
+
+// runningTool returns the first tool currently executing, for the status
+// bar's "Running <tool>" segment — and its elapsed time. ok is false when
+// nothing is running (agentRunningTool should never be the current state in
+// that case, but computeStatusBar stays defensive rather than assuming it).
+func (m *model) runningTool() (t toolState, ok bool) {
+	for i := range m.tools {
+		if m.tools[i].status == "running" {
+			return m.tools[i], true
+		}
+	}
+	return toolState{}, false
 }
 
 // setToolResult appends a streamed output chunk (ChatToolOutputEvent) to a
@@ -4243,7 +4358,6 @@ func (m *model) renderToolBox(t toolState, expanded bool, _ int) string {
 					for line := range strings.SplitSeq(innerRendered, "\n") {
 						bodyLines = append(bodyLines, line)
 					}
-					bodyLines = append(bodyLines, toolMetaStyle.Render("Press Enter to collapse"))
 					content := title + "\n" + strings.Join(bodyLines, "\n")
 					return boxStyle.Render(content)
 				}
@@ -4261,7 +4375,6 @@ func (m *model) renderToolBox(t toolState, expanded bool, _ int) string {
 		for line := range strings.SplitSeq(innerRendered, "\n") {
 			bodyLines = append(bodyLines, line)
 		}
-		bodyLines = append(bodyLines, toolMetaStyle.Render("Press Enter to collapse"))
 	} else {
 		// Compact mode: show first tail line if any, otherwise truncated result summary.
 		detail := ""
@@ -5092,6 +5205,14 @@ var (
 
 	// thinkingIndicatorStyle renders the calm dot animation in Warm Ochre.
 	thinkingIndicatorStyle = lipgloss.NewStyle().Foreground(themeHex(theme.AccentColor))
+
+	// streamCursorStyle marks the live streaming cursor — Warm Ochre, the
+	// same marker color already used for every other small interactive
+	// glyph in the UI (userGlyphStyle, reasoningLabelStyle,
+	// thinkingIndicatorStyle), at a mid-tone luminance legible against both
+	// light and dark terminal backgrounds, unlike a saturated color that
+	// could wash out or vanish on one extreme.
+	streamCursorStyle = lipgloss.NewStyle().Foreground(themeHex(theme.AccentColor))
 
 	// Muted trailing metadata — the per-tool elapsed suffix. Faint (terminal-
 	// native dim) rather than a fixed color, so the tool name stays the focus

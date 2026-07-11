@@ -565,12 +565,18 @@ type ChatToolCallDeltaEvent struct {
 func (ChatToolCallDeltaEvent) IsChatEvent() {}
 
 type ChatToolExecutionStartedEvent struct {
-	SessionID        string    `json:"session_id"`
-	RequestID        string    `json:"request_id"`
-	CallID           string    `json:"call_id"`
-	ToolName         string    `json:"tool_name"`
-	ArgumentsSummary string    `json:"arguments_summary"`
-	StartedAt        time.Time `json:"started_at"`
+	SessionID        string `json:"session_id"`
+	RequestID        string `json:"request_id"`
+	CallID           string `json:"call_id"`
+	ToolName         string `json:"tool_name"`
+	ArgumentsSummary string `json:"arguments_summary"`
+	// Summary is a short, model-authored one-liner describing what this
+	// call is doing (e.g. "Checking installed packages"), sourced from an
+	// optional "summary" argument injected into every tool's schema. Empty
+	// when the model didn't supply one — never populated with anything
+	// that failed sanitization, so consumers can render it as-is.
+	Summary   string    `json:"summary,omitempty"`
+	StartedAt time.Time `json:"started_at"`
 }
 
 func (ChatToolExecutionStartedEvent) IsChatEvent() {}

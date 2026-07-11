@@ -33,6 +33,12 @@ import (
 const (
 	commandBufferSize   = 16
 	toolSummaryMaxBytes = 600
+
+	// toolCallSummaryProperty is injected into every tool's JSON schema so
+	// the model can optionally supply a one-line description of what a
+	// given call is doing, surfaced live in the UI status bar.
+	toolCallSummaryProperty = "summary"
+	toolCallSummaryMaxChars = 80
 )
 
 // TokenSource resolves a bearer token for the configured provider.
@@ -1914,6 +1920,7 @@ func (c *Coordinator) executeToolsParallel(ctx context.Context, sessionID, reque
 			CallID:           tc.ID,
 			ToolName:         tc.Function.Name,
 			ArgumentsSummary: summarizeForUI(effectiveArgs),
+			Summary:          extractToolCallSummary(effectiveArgs),
 			StartedAt:        startedAt,
 		})
 
@@ -2068,7 +2075,7 @@ func (c *Coordinator) buildToolDefs() []chat.ChatToolDef {
 			Function: chat.ChatToolDefFunction{
 				Name:        s.Name,
 				Description: s.Description,
-				Parameters:  s.Parameters,
+				Parameters:  injectSummarySchemaProperty(s.Parameters),
 			},
 		}
 	}
@@ -2155,7 +2162,7 @@ func (c *Coordinator) emitToolCompleted(
 		ToolName:      tc.Function.Name,
 		Status:        status,
 		Duration:      result.Duration,
-		ResultSummary: summarizeForUI(result.Content),
+		ResultSummary: summarizeResultForUI(result.Content),
 		IsError:       result.IsError,
 		Truncated:     result.Truncated,
 		CompletedAt:   result.CompletedAt,
@@ -2202,6 +2209,95 @@ func summarizeForUIWithTruncation(value string) (string, bool) {
 		return value, false
 	}
 	return value[:toolSummaryMaxBytes] + "…", true
+}
+
+// summarizeResultForUI truncates like summarizeForUI but preserves line
+// breaks (only collapsing horizontal whitespace runs within each line) so
+// multi-line tool output (ls, grep, etc.) still renders as rows rather than
+// one run-together line in consumers like tui2's expanded tool box.
+// injectSummarySchemaProperty adds an optional "summary" string property to
+// a tool's JSON schema so the model can supply a one-line description of
+// what a given call is doing, surfaced live in the status bar while it
+// runs. Applied centrally in buildToolDefs rather than per-tool so every
+// tool gets it without each definition needing to declare it. Falls back to
+// the unmodified schema if it isn't a JSON object or already declares the
+// property — defensive, since every tool schema is expected to be a plain
+// object and none currently uses this name.
+func injectSummarySchemaProperty(params json.RawMessage) json.RawMessage {
+	if len(params) == 0 {
+		return params
+	}
+	var schema map[string]any
+	if err := json.Unmarshal(params, &schema); err != nil {
+		return params
+	}
+	props, _ := schema["properties"].(map[string]any)
+	if props == nil {
+		props = map[string]any{}
+	}
+	if _, exists := props[toolCallSummaryProperty]; exists {
+		return params
+	}
+	props[toolCallSummaryProperty] = map[string]any{
+		"type":        "string",
+		"description": "Optional one-line (<=80 char) description of what this call is doing, shown live in the UI while it runs. Not used by the tool itself.",
+	}
+	schema["properties"] = props
+	out, err := json.Marshal(schema)
+	if err != nil {
+		return params
+	}
+	return out
+}
+
+// extractToolCallSummary pulls the optional model-authored "summary" field
+// out of a tool call's arguments for display in the status bar. It never
+// fails the call: malformed JSON, a missing field, or a wrong type all just
+// yield "". What it does return is sanitized for direct terminal rendering —
+// control/escape characters stripped, collapsed to a single line, and
+// truncated — since it comes straight from the model.
+func extractToolCallSummary(argsJSON string) string {
+	var probe struct {
+		Summary string `json:"summary"`
+	}
+	if err := json.Unmarshal([]byte(argsJSON), &probe); err != nil {
+		return ""
+	}
+	return sanitizeToolCallSummary(probe.Summary)
+}
+
+func sanitizeToolCallSummary(s string) string {
+	s = strings.Map(func(r rune) rune {
+		switch {
+		case r == '\n' || r == '\t':
+			return ' '
+		case r < 0x20 || r == 0x7f:
+			return -1 // drop control/escape characters, incl. ESC (0x1b)
+		default:
+			return r
+		}
+	}, s)
+	s = strings.Join(strings.Fields(s), " ")
+	if s == "" {
+		return ""
+	}
+	if runes := []rune(s); len(runes) > toolCallSummaryMaxChars {
+		s = strings.TrimSpace(string(runes[:toolCallSummaryMaxChars])) + "…"
+	}
+	return s
+}
+
+func summarizeResultForUI(value string) string {
+	value = strings.TrimSpace(value)
+	lines := strings.Split(value, "\n")
+	for i, line := range lines {
+		lines[i] = strings.Join(strings.Fields(line), " ")
+	}
+	value = strings.Join(lines, "\n")
+	if len(value) <= toolSummaryMaxBytes {
+		return value
+	}
+	return value[:toolSummaryMaxBytes] + "…"
 }
 
 // isSuccessFinish returns true for finish reasons that indicate a normal, successful

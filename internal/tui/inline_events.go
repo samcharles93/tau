@@ -134,7 +134,9 @@ func (c *inlineChat) handleEvent(ev tauchat.ChatEvent) {
 			if !ok {
 				return
 			}
-			detail := e.ResultSummary
+			// ResultSummary preserves line breaks for tui2's expandable box;
+			// this row renders as a single formatted line, so collapse them.
+			detail := strings.Join(strings.Fields(e.ResultSummary), " ")
 			if e.ToolName == skillToolName {
 				// Don't dump the skill instructions in the box; the model already
 				// received them as the tool result. A clean "loaded" label keeps
