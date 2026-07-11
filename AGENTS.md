@@ -166,6 +166,7 @@ The project follows a **layered architecture** with a command/event boundary bet
 - **`config`** — Loads `~/.config/tau/config.yaml` (global) and `.tau.yaml` (project-local); foundation package with no internal imports.
 - **`skills`** — Skill discovery from markdown/YAML files, lifecycle management, activation tracking. Publishes `skills.Event` on the event bus when the catalog is refreshed.
 - **`store`** — Session persistence layer (SQLite + raw SQL). Defines `SessionStore` interface and `SessionSummary` struct. Implements JSONL export.
+- **`indexing`** — Language-neutral workspace codesearch acceleration. Maintains mmap-friendly trigram sidecars under the Tau config directory and lifecycle/generation state in a separate SQLite metadata database. Upstream codesearch operations run through Tau's hidden `workspace-codesearch` child command so fatal exits, panics, and mmap lifetime are isolated from the agent process. The built-in `grep` tool remains the authoritative matcher and falls back to direct ripgrep/pure-Go search whenever indexing is unavailable.
 - **`sessions`** — Session lifecycle management (create, update, close, branch). Wraps the coordinator and store for session orchestration.
 - **`plugin`** — gRPC-based plugin/extension system using HashiCorp go-plugin.
 - **`registry`** — Command registry: discovers built-in, custom (markdown-based), skill-based, and extension commands. Publishes `CommandsChangedEvent` on the event bus so the TUI can update completions.
@@ -274,6 +275,8 @@ Use this section to quickly find the right files for a given change.
 - `internal/agent/tools/fsutil.go` — Filesystem utilities
 - `internal/agent/tools/pathutil.go` — Path resolution utilities
 - `internal/agent/tools/truncate.go` — Content truncation utilities
+- `internal/indexing/codesearch.go` — Workspace file discovery, SQLite index lifecycle metadata, asynchronous atomic builds, isolated helper execution, and conservative trigram candidate lookup
+- `internal/cli/codesearch.go` — Hidden same-binary helper commands used to contain upstream codesearch failure and mmap behavior
 - `internal/agent/tools/bridge.go` — UIBridge implementation for interactive prompts
 - `internal/agent/tools/write_test.go` — Tests for write tool including DiffDetails population
 
