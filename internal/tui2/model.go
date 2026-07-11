@@ -624,13 +624,6 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.KeyReleaseMsg:
 		return m, noopCmd
 
-	case tea.KeyMsg:
-		// Dispatch known key types from the KeyMsg interface.
-		if kp, ok := msg.(tea.KeyPressMsg); ok {
-			return m, m.handleKey(kp)
-		}
-		return m, nil
-
 	case chatEventMsg:
 		var cmds []tea.Cmd
 		cmds = append(cmds, readNextEvent(m.chatSub)) // re-arm
@@ -1001,6 +994,12 @@ func (m *model) computeLayout() layoutGeometry {
 	g.viewportStartY = row
 	g.viewportEndY = g.viewportStartY + viewportHeight - 1
 
+	// chromeParts are joined by a single "\n" each (see step 9 above), which
+	// is the same separator that already appears between any two lines of
+	// rendered text — it does not add a blank row of its own. So advancing
+	// from one part to the next is exactly visualLineCount(part) rows, with
+	// no extra "+1" per transition (unlike the viewport->chrome boundary
+	// below, which IS a standalone "\n" written outside chromeStr).
 	row = g.viewportEndY + 1 // "\n" boundary between viewport and chrome
 	if toolsStr != "" {
 		g.toolsStartY = row
@@ -1009,16 +1008,16 @@ func (m *model) computeLayout() layoutGeometry {
 		for i, tr := range toolRows {
 			g.toolBoxes[i] = toolBoxGeometry{id: tr.id, startY: row + tr.startY, endY: row + tr.endY}
 		}
-		row += visualLineCount(toolsStr) + 1
+		row += visualLineCount(toolsStr)
 	}
 	if promptStr != "" {
-		row += visualLineCount(promptStr) + 1
+		row += visualLineCount(promptStr)
 	}
 	if compStr != "" {
-		row += visualLineCount(compStr) + 1
+		row += visualLineCount(compStr)
 	}
-	row += visualLineCount(notifyStr) + 1 // notifyStr is always present
-	row += visualLineCount(sepStr) + 1    // separator is always present
+	row += visualLineCount(notifyStr) // notifyStr is always present
+	row += visualLineCount(sepStr)    // separator is always present
 	g.inputStartY = row
 	inputHeight := visualLineCount(inputStr)
 	g.inputEndY = row + inputHeight - 1
@@ -2508,14 +2507,30 @@ func lastAssistantMessageID(state tauchat.ChatSessionState) string {
 	return ""
 }
 
+// mdCacheWidth normalizes a raw width to the key mdCache actually stores
+// renderers under. Glamour renders unusably narrow at very small widths, so
+// anything below 20 clamps up to 20 — every populate and lookup against
+// mdCache must go through this same normalization, or a narrow width (or
+// width 0, before the first WindowSizeMsg) silently misses a renderer that
+// was stored under its clamped key.
+func mdCacheWidth(width int) int {
+	if width < 20 {
+		return 20
+	}
+	return width
+}
+
 // ensureMDRenderer creates a glamour TermRenderer for the given width in
 // the cache if one doesn't already exist. Uses the "dark" bundled style;
 // a custom glamour theme (glamour.WithStyles) would give full visual
 // control over code blocks and headings, matching tau's theme palette.
+// A nil cache (e.g. markdown rendering deliberately disabled) is a no-op,
+// not a panic — renderMarkdown/renderToolBox then fall back to raw text.
 func ensureMDRenderer(cache map[int]*glamour.TermRenderer, width int) {
-	if width < 20 {
-		width = 20
+	if cache == nil {
+		return
 	}
+	width = mdCacheWidth(width)
 	if _, ok := cache[width]; ok {
 		return
 	}
@@ -2531,9 +2546,16 @@ func ensureMDRenderer(cache map[int]*glamour.TermRenderer, width int) {
 
 // renderMarkdown converts raw markdown to ANSI-styled terminal output using
 // a glamour renderer memoized for the current terminal width. Falls back
-// to plain text when no renderer exists for the current width.
+// to plain text when no renderer exists for the current width, and before
+// the real terminal width is known (m.width == 0, prior to the first
+// WindowSizeMsg) — rendering at a guessed width would wrap content for a
+// size that isn't the actual terminal's.
 func (m *model) renderMarkdown(content string) string {
-	r, ok := m.mdCache[m.width]
+	if m.width <= 0 {
+		return content
+	}
+	ensureMDRenderer(m.mdCache, m.width)
+	r, ok := m.mdCache[mdCacheWidth(m.width)]
 	if !ok || r == nil {
 		return content
 	}
@@ -3938,7 +3960,8 @@ func (m *model) renderToolBox(t toolState, expanded bool, _ int) string {
 			mdBuilder.WriteString(t.result)
 			mdBuilder.WriteString("\n```")
 			md := mdBuilder.String()
-			if r, ok := m.mdCache[innerWidth]; ok && r != nil {
+			ensureMDRenderer(m.mdCache, innerWidth)
+			if r, ok := m.mdCache[mdCacheWidth(innerWidth)]; ok && r != nil {
 				if out, err := r.Render(md); err == nil {
 					for line := range strings.SplitSeq(out, "\n") {
 						innerContent.WriteString(line)

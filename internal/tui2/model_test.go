@@ -3564,6 +3564,86 @@ func TestMouseDragInToolBoxSelectsLinesForRightClickCopy(t *testing.T) {
 	}
 }
 
+// TestExpandedToolBoxPopulatesMarkdownCacheAtInnerWidth guards against a
+// cache-key mismatch: an expanded tool box renders its markdown result at
+// innerWidth = width-8, but mdCache is normally only populated at the full
+// terminal width (constructor preload + WindowSizeMsg). A direct lookup at
+// innerWidth used to miss every time — silently falling back to raw,
+// unrendered markdown — because nothing ever populated the cache at that
+// key. renderToolBox must ensure a renderer exists at innerWidth itself.
+func TestExpandedToolBoxPopulatesMarkdownCacheAtInnerWidth(t *testing.T) {
+	m := newTestModel(&fakeRuntime{}, nil)
+	m.Update(tea.WindowSizeMsg{Width: 80, Height: 24})
+
+	tool := toolState{id: "t1", name: "read", status: "done", result: "# Heading\n\nSome body text."}
+	m.renderToolBox(tool, true, 0)
+
+	const innerWidth = 72 // width(80) - 8, per renderToolBox's own math
+	if r, ok := m.mdCache[innerWidth]; !ok || r == nil {
+		t.Fatalf("expected renderToolBox to ensure a glamour renderer in mdCache at innerWidth=%d, got ok=%v", innerWidth, ok)
+	}
+}
+
+// TestRenderMarkdownAtNarrowWidthStillRenders guards against a normalization
+// mismatch: ensureMDRenderer clamps widths below 20 up to 20 before storing
+// a renderer, but renderMarkdown used to look the renderer back up under the
+// raw, unclamped width — so a narrow terminal (or m.width == 0 before the
+// first WindowSizeMsg) always missed the cache and fell back to raw
+// markdown.
+func TestRenderMarkdownAtNarrowWidthStillRenders(t *testing.T) {
+	m := newTestModel(&fakeRuntime{}, nil)
+	m.Update(tea.WindowSizeMsg{Width: 10, Height: 24})
+
+	out := m.renderMarkdown("# Heading")
+	plain := stripANSI(out)
+	if !strings.Contains(plain, "Heading") {
+		t.Fatalf("expected rendered markdown to contain the heading text, got:\n%s", plain)
+	}
+	if strings.Contains(plain, "# Heading") {
+		t.Fatalf("expected the heading to be glamour-rendered at a narrow width, not left as raw markdown:\n%s", plain)
+	}
+}
+
+// TestComputeLayoutRowsMatchRenderedContent guards against the row-drift bug
+// class where computeLayout's own row bookkeeping disagrees with what
+// actually lands on screen. Earlier mouse-hit tests fed computeLayout's
+// coordinates straight back into hit-testing, which stays self-consistent
+// even if the underlying math is wrong — this test instead cross-checks
+// geom's row numbers against real lines split out of m.View().Content, with
+// every optional chrome section (tools, prompt, completions) simultaneously
+// present so any drift accumulated across sections shows up.
+func TestComputeLayoutRowsMatchRenderedContent(t *testing.T) {
+	m := newTestModel(&fakeRuntime{}, nil)
+	m.Update(tea.WindowSizeMsg{Width: 80, Height: 30})
+	m.tools = []toolState{{id: "t1", name: "read", status: "done", result: "alpha"}}
+	m.input = "/"
+	m.inputCursor = len([]rune(m.input))
+	m.syncCompletionSelection()
+
+	view := m.View()
+	geom := m.computeLayout()
+	lines := strings.Split(view.Content, "\n")
+
+	line := func(y int) string {
+		if y < 0 || y >= len(lines) {
+			t.Fatalf("row %d out of range (rendered content has %d lines)", y, len(lines))
+		}
+		return stripANSI(lines[y])
+	}
+
+	toolBoxLines := strings.Join(lines[geom.toolsStartY:geom.toolsEndY+1], "\n")
+	if got := stripANSI(toolBoxLines); !strings.Contains(got, "read") {
+		t.Fatalf("geom.toolsStartY..toolsEndY=%d..%d, rendered lines = %q, want the tool box title somewhere inside", geom.toolsStartY, geom.toolsEndY, got)
+	}
+	inputAreaLines := strings.Join(lines[geom.inputStartY:geom.inputEndY+1], "\n")
+	if got := stripANSI(inputAreaLines); !strings.Contains(got, "/") {
+		t.Fatalf("geom.inputStartY..inputEndY=%d..%d, rendered lines = %q, want the typed text somewhere inside", geom.inputStartY, geom.inputEndY, got)
+	}
+	if got := line(geom.statusY); !strings.Contains(got, "tau") {
+		t.Fatalf("geom.statusY=%d, rendered line = %q, want it to contain the status bar identity segment", geom.statusY, got)
+	}
+}
+
 // --- context menu ---
 
 func TestRightClickWithActiveSelectionCopiesInsteadOfOpeningMenu(t *testing.T) {
