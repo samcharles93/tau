@@ -73,17 +73,33 @@ type ChatMessage struct {
 	// (never persisted or rendered) and for messages persisted before
 	// per-message IDs were tracked; callers must treat "" as "no stable
 	// identity available" rather than assuming it's always populated.
-	ID               string         `json:"id,omitempty"`
-	Role             ChatRole       `json:"role"`
-	Content          string         `json:"content,omitempty"`
-	ReasoningContent string         `json:"reasoning_content,omitempty"`
-	ToolCalls        []ChatToolCall `json:"tool_calls,omitempty"`
-	ToolCallID       string         `json:"tool_call_id,omitempty"`
+	ID               string              `json:"id,omitempty"`
+	Role             ChatRole            `json:"role"`
+	Content          string              `json:"content,omitempty"`
+	ReasoningContent string              `json:"reasoning_content,omitempty"`
+	ToolCalls        []ChatToolCall      `json:"tool_calls,omitempty"`
+	ToolCallID       string              `json:"tool_call_id,omitempty"`
+	ToolResult       *ToolResultMetadata `json:"tool_result,omitempty"`
 	// CreatedAt records when the message was appended to the conversation.
 	// It is zero for the transient system message synthesised in
 	// RequestMessages and for messages persisted before per-message
 	// timestamps were tracked (the store falls back to a synthesised time).
 	CreatedAt time.Time `json:"created_at,omitzero"`
+}
+
+// ToolResultMetadata records authoritative execution facts for a tool result.
+// Content remains the model-visible result; this metadata is for persistence,
+// observability, and analysis without heuristically parsing that content.
+type ToolResultMetadata struct {
+	ToolName    string        `json:"tool_name"`
+	RequestID   string        `json:"request_id,omitempty"`
+	Status      string        `json:"status"`
+	ErrorKind   string        `json:"error_kind,omitempty"`
+	Duration    time.Duration `json:"duration"`
+	Truncated   bool          `json:"truncated,omitempty"`
+	ResultBytes int           `json:"result_bytes"`
+	StartedAt   time.Time     `json:"started_at,omitzero"`
+	CompletedAt time.Time     `json:"completed_at,omitzero"`
 }
 
 // NewMessageID generates a UUIDv7 message ID, falling back to a
@@ -1170,6 +1186,12 @@ func (s *ChatSessionState) AppendAssistantToolCallMessageWithReasoning(content, 
 
 // AppendToolResultMessage appends a tool result to the conversation.
 func (s *ChatSessionState) AppendToolResultMessage(callID, content string, at time.Time) error {
+	return s.AppendToolResultMessageWithMetadata(callID, content, nil, at)
+}
+
+// AppendToolResultMessageWithMetadata appends a tool result and its
+// authoritative execution metadata to the conversation.
+func (s *ChatSessionState) AppendToolResultMessageWithMetadata(callID, content string, metadata *ToolResultMetadata, at time.Time) error {
 	if !s.HasActiveRequest() {
 		return errors.New("no active request")
 	}
@@ -1181,6 +1203,7 @@ func (s *ChatSessionState) AppendToolResultMessage(callID, content string, at ti
 		Role:       ChatRoleTool,
 		Content:    content,
 		ToolCallID: callID,
+		ToolResult: metadata,
 		CreatedAt:  normalizeChatTime(at),
 	})
 	s.UpdatedAt = normalizeChatTime(at)

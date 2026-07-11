@@ -68,6 +68,7 @@ func NewRootCommand(version string) *urfavecli.Command {
 			skillsCmd(),
 			pluginsCmd(),
 			updateCmd(version),
+			workspaceCodesearchCmd(),
 		},
 		Flags: []urfavecli.Flag{
 			&urfavecli.StringFlag{
@@ -149,7 +150,7 @@ func NewRootCommand(version string) *urfavecli.Command {
 				}
 			}
 
-			cfg, selectedProvider, err := loadProvider(cmd)
+			cfg, selectedProvider, err := loadProvider(ctx, cmd)
 			if err != nil {
 				return err
 			}

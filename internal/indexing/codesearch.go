@@ -19,6 +19,7 @@ import (
 	"time"
 
 	"github.com/google/codesearch/index"
+	"github.com/google/uuid"
 	"github.com/samcharles93/tau/internal/config"
 
 	_ "modernc.org/sqlite"
@@ -83,10 +84,10 @@ func (m *Manager) Candidates(ctx context.Context, pattern string, literal, caseS
 	if err != nil || state.IndexedAt.IsZero() {
 		return nil, false
 	}
-	if _, err := os.Stat(m.indexPath); err != nil {
+	if _, err := os.Stat(state.IndexPath); err != nil {
 		return nil, false
 	}
-	files, err := m.runner.Candidates(ctx, m.indexPath, pattern, literal, caseSensitive)
+	files, err := m.runner.Candidates(ctx, state.IndexPath, pattern, literal, caseSensitive)
 	if err != nil {
 		return nil, false
 	}
@@ -151,6 +152,7 @@ func changedGitFiles(ctx context.Context, root string) map[string]struct{} {
 }
 
 type indexState struct {
+	IndexPath string
 	IndexedAt time.Time
 }
 
@@ -159,45 +161,74 @@ func (m *Manager) refreshAsync(parent context.Context) {
 		ctx, cancel := context.WithTimeout(parent, buildTimeout)
 		defer cancel()
 		startedAt := time.Now().UTC()
-		claimed, err := m.claimBuild(ctx, startedAt)
+		buildID := uuid.NewString()
+		previous, _ := m.state(ctx)
+		claimed, err := m.claimBuild(ctx, startedAt, buildID)
 		if err != nil || !claimed {
 			return
 		}
-		tmp := fmt.Sprintf("%s.%d.tmp", m.indexPath, os.Getpid())
+		finalPath := m.indexPath + "." + buildID
+		tmp := finalPath + ".tmp"
 		_ = os.Remove(tmp)
 		if err := m.runner.Build(ctx, m.root, tmp); err != nil {
 			_ = os.Remove(tmp)
-			m.finishBuild(parent, "error", time.Time{}, err.Error())
+			m.finishBuild(parent, buildID, "error", time.Time{}, "", err.Error())
 			return
 		}
-		if err := os.Rename(tmp, m.indexPath); err != nil {
+		if err := os.Rename(tmp, finalPath); err != nil {
 			_ = os.Remove(tmp)
-			m.finishBuild(parent, "error", time.Time{}, err.Error())
+			m.finishBuild(parent, buildID, "error", time.Time{}, "", err.Error())
 			return
 		}
-		m.finishBuild(parent, "ready", startedAt, "")
+		if !m.finishBuild(parent, buildID, "ready", startedAt, finalPath, "") {
+			_ = os.Remove(finalPath)
+			return
+		}
+		if previous.IndexPath != "" && previous.IndexPath != finalPath &&
+			(previous.IndexPath == m.indexPath || strings.HasPrefix(previous.IndexPath, m.indexPath+".")) {
+			_ = os.Remove(previous.IndexPath)
+		}
 	}()
 }
 
-func (m *Manager) finishBuild(parent context.Context, status string, indexedAt time.Time, lastError string) {
+func (m *Manager) finishBuild(parent context.Context, buildID, status string, indexedAt time.Time, indexPath, lastError string) bool {
 	ctx, cancel := context.WithTimeout(context.WithoutCancel(parent), metadataTimeout)
 	defer cancel()
-	_ = m.setState(ctx, status, indexedAt, lastError)
+	db, err := openIndexDB(m.dbPath)
+	if err != nil {
+		return false
+	}
+	defer db.Close()
+	indexed := ""
+	if !indexedAt.IsZero() {
+		indexed = indexedAt.Format(time.RFC3339Nano)
+	}
+	result, err := db.ExecContext(ctx, `UPDATE workspace_indexes SET
+		index_path=CASE WHEN ? = 'ready' THEN ? ELSE index_path END,
+		status=?, indexed_at=CASE WHEN ? = 'ready' THEN ? ELSE indexed_at END,
+		last_error=?, updated_at=?, generation=generation + CASE WHEN ? = 'ready' THEN 1 ELSE 0 END
+		WHERE root=? AND build_id=?`, status, indexPath, status, status, indexed,
+		lastError, time.Now().UTC().Format(time.RFC3339Nano), status, m.root, buildID)
+	if err != nil {
+		return false
+	}
+	rows, err := result.RowsAffected()
+	return err == nil && rows == 1
 }
 
-func (m *Manager) claimBuild(ctx context.Context, startedAt time.Time) (bool, error) {
+func (m *Manager) claimBuild(ctx context.Context, startedAt time.Time, buildID string) (bool, error) {
 	db, err := openIndexDB(m.dbPath)
 	if err != nil {
 		return false, err
 	}
 	defer db.Close()
 	cutoff := startedAt.Add(-buildTimeout).Format(time.RFC3339Nano)
-	result, err := db.ExecContext(ctx, `INSERT INTO workspace_indexes (root, index_path, status, indexed_at, build_started_at, last_error, updated_at)
-		VALUES (?, ?, 'building', '', ?, '', ?)
-		ON CONFLICT(root) DO UPDATE SET index_path=excluded.index_path, status='building',
-		build_started_at=excluded.build_started_at, last_error='', updated_at=excluded.updated_at
+	result, err := db.ExecContext(ctx, `INSERT INTO workspace_indexes (root, index_path, status, indexed_at, build_started_at, build_id, last_error, updated_at)
+		VALUES (?, ?, 'building', '', ?, ?, '', ?)
+		ON CONFLICT(root) DO UPDATE SET status='building',
+		build_started_at=excluded.build_started_at, build_id=excluded.build_id, last_error='', updated_at=excluded.updated_at
 		WHERE workspace_indexes.status != 'building' OR workspace_indexes.updated_at < ?`,
-		m.root, m.indexPath, startedAt.Format(time.RFC3339Nano), startedAt.Format(time.RFC3339Nano), cutoff)
+		m.root, m.indexPath, startedAt.Format(time.RFC3339Nano), buildID, startedAt.Format(time.RFC3339Nano), cutoff)
 	if err != nil {
 		return false, fmt.Errorf("claim workspace index build: %w", err)
 	}
@@ -222,6 +253,7 @@ func (m *Manager) ensureSchema(ctx context.Context) error {
 		generation INTEGER NOT NULL DEFAULT 0,
 		indexed_at TEXT NOT NULL DEFAULT '',
 		build_started_at TEXT NOT NULL DEFAULT '',
+		build_id TEXT NOT NULL DEFAULT '',
 		last_error TEXT NOT NULL DEFAULT '',
 		updated_at TEXT NOT NULL
 	)`)
@@ -232,6 +264,7 @@ func (m *Manager) ensureSchema(ctx context.Context) error {
 		`ALTER TABLE workspace_indexes ADD COLUMN format_version TEXT NOT NULL DEFAULT 'codesearch-v2'`,
 		`ALTER TABLE workspace_indexes ADD COLUMN generation INTEGER NOT NULL DEFAULT 0`,
 		`ALTER TABLE workspace_indexes ADD COLUMN build_started_at TEXT NOT NULL DEFAULT ''`,
+		`ALTER TABLE workspace_indexes ADD COLUMN build_id TEXT NOT NULL DEFAULT ''`,
 	} {
 		if _, migrationErr := db.ExecContext(ctx, migration); migrationErr != nil && !strings.Contains(migrationErr.Error(), "duplicate column name") {
 			return fmt.Errorf("migrate workspace index metadata: %w", migrationErr)
@@ -246,8 +279,8 @@ func (m *Manager) state(ctx context.Context) (indexState, error) {
 		return indexState{}, err
 	}
 	defer db.Close()
-	var indexed string
-	err = db.QueryRowContext(ctx, `SELECT indexed_at FROM workspace_indexes WHERE root = ?`, m.root).Scan(&indexed)
+	var indexed, indexPath string
+	err = db.QueryRowContext(ctx, `SELECT index_path, indexed_at FROM workspace_indexes WHERE root = ?`, m.root).Scan(&indexPath, &indexed)
 	if errors.Is(err, sql.ErrNoRows) {
 		return indexState{}, nil
 	}
@@ -255,7 +288,7 @@ func (m *Manager) state(ctx context.Context) (indexState, error) {
 		return indexState{}, fmt.Errorf("read workspace index metadata: %w", err)
 	}
 	at, _ := time.Parse(time.RFC3339Nano, indexed)
-	return indexState{IndexedAt: at}, nil
+	return indexState{IndexPath: indexPath, IndexedAt: at}, nil
 }
 
 func (m *Manager) setState(ctx context.Context, status string, indexedAt time.Time, lastError string) error {

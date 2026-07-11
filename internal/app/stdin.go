@@ -11,6 +11,7 @@ import (
 
 	tauchat "github.com/samcharles93/tau/internal/chat"
 	"github.com/samcharles93/tau/internal/eventbus"
+	"github.com/samcharles93/tau/internal/indexing"
 	"github.com/samcharles93/tau/internal/metrics"
 	"github.com/samcharles93/tau/internal/sessions"
 	"github.com/samcharles93/tau/internal/skills"
@@ -90,6 +91,10 @@ func RunStdIn(ctx context.Context, opts ChatOptions, prompt string) error {
 	}
 
 	systemPrompt := buildAgentSystemPrompt("", cwd, skillsMgr)
+	workspaceIndex, indexErr := indexing.NewManager(ctx, cwd)
+	if indexErr != nil {
+		slog.Warn("workspace codesearch unavailable; grep will use direct search", "err", indexErr)
+	}
 
 	rawStore, storeErr := sessions.OpenStore()
 	var sessionManager *sessions.Manager
@@ -110,6 +115,7 @@ func RunStdIn(ctx context.Context, opts ChatOptions, prompt string) error {
 		SkillsManager:         skillsMgr,
 		SkillsDiscoveryConfig: skillDiscoveryCfg,
 		MetricsConfig:         opts.Config.Metrics,
+		GrepIndex:             workspaceIndex,
 	})
 	if err != nil {
 		if sessionManager != nil {

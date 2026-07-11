@@ -508,6 +508,18 @@ func SessionsDBPath() string {
 	return filepath.Join(Dir(), "sessions.db")
 }
 
+// WorkspaceIndexDir returns the directory containing language-neutral
+// codesearch sidecars, one per workspace root.
+func WorkspaceIndexDir() string {
+	return filepath.Join(Dir(), "indexes")
+}
+
+// WorkspaceIndexDBPath returns the SQLite lifecycle metadata database for
+// workspace indexes. Posting data remains in mmap-friendly sidecar files.
+func WorkspaceIndexDBPath() string {
+	return filepath.Join(Dir(), "workspace-indexes.db")
+}
+
 // MetricsDir returns the default directory for metrics.jsonl export — used
 // by syncConfigSchema to backfill MetricsConfig.Dir when it's missing/empty
 // in an existing config file.

@@ -25,7 +25,7 @@ func tokenCmd() *urfavecli.Command {
 		Name:  "token",
 		Usage: "Print the resolved provider bearer token to stdout",
 		Action: func(ctx context.Context, cmd *urfavecli.Command) error {
-			_, selectedProvider, err := loadProvider(cmd)
+			_, selectedProvider, err := loadProvider(ctx, cmd)
 			if err != nil {
 				return err
 			}
@@ -55,7 +55,7 @@ func modelsCmd() *urfavecli.Command {
 			},
 		},
 		Action: func(ctx context.Context, cmd *urfavecli.Command) error {
-			_, selectedProvider, err := loadProvider(cmd)
+			_, selectedProvider, err := loadProvider(ctx, cmd)
 			if err != nil {
 				return err
 			}
@@ -95,7 +95,7 @@ func refreshCmd() *urfavecli.Command {
 		Name:  "refresh",
 		Usage: "Refresh the models.dev catalog and list available models",
 		Action: func(ctx context.Context, cmd *urfavecli.Command) error {
-			_, selectedProvider, err := loadProvider(cmd)
+			_, selectedProvider, err := loadProvider(ctx, cmd)
 			if err != nil {
 				return err
 			}
@@ -199,8 +199,8 @@ func truncateString(s string, maxLen int) string {
 	return s[:maxLen-1] + "…"
 }
 
-func loadProvider(cmd *urfavecli.Command) (config.Config, config.ProviderConfig, error) {
-	cfg, resolved, err := providers.Effective()
+func loadProvider(ctx context.Context, cmd *urfavecli.Command) (config.Config, config.ProviderConfig, error) {
+	cfg, resolved, err := providers.Effective(ctx)
 	if err != nil {
 		return config.Config{}, config.ProviderConfig{}, err
 	}

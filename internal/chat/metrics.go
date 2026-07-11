@@ -28,6 +28,8 @@ type MetricEvent struct {
 	Unit      string            `json:"unit"`   // "tokens", "ms", "count", "usd"
 	Labels    map[string]string `json:"labels"` // provider, model, tool, status, error_kind
 	SessionID string            `json:"session_id"`
+	RequestID string            `json:"request_id,omitempty"`
+	CallID    string            `json:"call_id,omitempty"`
 	Timestamp time.Time         `json:"timestamp"`
 }
 

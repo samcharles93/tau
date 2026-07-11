@@ -22,6 +22,7 @@ import (
 	tauchat "github.com/samcharles93/tau/internal/chat"
 	tauconfig "github.com/samcharles93/tau/internal/config"
 	"github.com/samcharles93/tau/internal/eventbus"
+	"github.com/samcharles93/tau/internal/indexing"
 	"github.com/samcharles93/tau/internal/plugin"
 	"github.com/samcharles93/tau/internal/providers"
 	"github.com/samcharles93/tau/internal/providers/snapshot"
@@ -472,6 +473,10 @@ func newCoordinator(ctx context.Context, opts ChatOptions, bearerToken string, s
 	cwd, _ := os.Getwd()
 	cmdRegClient := bus.Client("command-registry")
 	cmdReg := commandreg.New(cwd, cmdRegClient)
+	workspaceIndex, indexErr := indexing.NewManager(ctx, cwd)
+	if indexErr != nil {
+		slog.Warn("workspace codesearch unavailable; grep will use direct search", "err", indexErr)
+	}
 
 	coordinator, extCmds, pluginMgr, err := buildCoordinator(ctx, coordinatorConfig{
 		Bus:                   bus,
@@ -487,6 +492,7 @@ func newCoordinator(ctx context.Context, opts ChatOptions, bearerToken string, s
 		SkillsManager:         skillsMgr,
 		SkillsDiscoveryConfig: skillsDiscoveryConfig,
 		DeferPluginLoad:       deferPlugins,
+		GrepIndex:             workspaceIndex,
 	})
 	if err != nil {
 		cmdReg.Close()
@@ -524,6 +530,8 @@ type coordinatorConfig struct {
 	DeferPluginLoad bool
 	// MetricsConfig controls observability export.
 	MetricsConfig tauconfig.MetricsConfig
+	// GrepIndex optionally accelerates workspace-wide grep candidate selection.
+	GrepIndex tools.GrepIndex
 }
 
 // buildCoordinator creates a coordinator with the full plugin/tool setup.
@@ -543,7 +551,7 @@ func buildCoordinator(ctx context.Context, cfg coordinatorConfig) (*agent.Coordi
 			return nil
 		}
 		return pluginMgr.PluginDocs()
-	}); err != nil {
+	}, cfg.GrepIndex); err != nil {
 		return nil, nil, nil, fmt.Errorf("registering built-in tools: %w", err)
 	}
 
