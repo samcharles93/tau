@@ -60,16 +60,6 @@ func TestReadToolDefaultsToBoundedOutput(t *testing.T) {
 	}
 }
 
-func TestReadToolReadsGoSymbol(t *testing.T) {
-	tmp := t.TempDir()
-	writeReadTestFile(t, tmp, "f.go", "package sample\n\nfunc first() {}\n\nfunc target() {\n\tprintln(\"yes\")\n}\n\nfunc last() {}\n")
-
-	res := execRead(t, tmp, `{"path":"f.go","symbol":"target"}`)
-	if res.IsError || !strings.Contains(res.Content, "func target()") || strings.Contains(res.Content, "func first()") || strings.Contains(res.Content, "func last()") {
-		t.Fatalf("symbol read result = %s", res.Content)
-	}
-}
-
 func TestReadTool_UserLimitContinuationNotice(t *testing.T) {
 	tmp := t.TempDir()
 	var lines []string

@@ -25,6 +25,9 @@ type Result struct {
 	Details   any    `json:"details,omitempty"`
 	IsError   bool   `json:"is_error,omitempty"`
 	ErrorKind string `json:"error_kind,omitempty"`
+	// MetricLabels adds tool-specific low-cardinality dimensions to the
+	// coordinator's authoritative completion metric.
+	MetricLabels map[string]string `json:"-"`
 
 	// Execution fields are populated by the coordinator after execution so
 	// the same facts drive events, metrics, and persisted tool messages.

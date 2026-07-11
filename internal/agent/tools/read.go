@@ -4,9 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"go/ast"
-	"go/parser"
-	"go/token"
 	"os"
 	"strings"
 	"unicode/utf8"
@@ -19,7 +16,6 @@ type ReadParams struct {
 	Offset int    `json:"offset,omitempty"` // start line (1-based)
 	Limit  int    `json:"limit,omitempty"`  // max lines to read
 	Full   bool   `json:"full,omitempty"`   // explicitly allow a full-file response
-	Symbol string `json:"symbol,omitempty"` // Go declaration name to read
 }
 
 // DefaultReadLines is the bounded line count used when no explicit read limit
@@ -28,7 +24,7 @@ const DefaultReadLines = 400
 
 var readSchema = Schema{
 	Name:        "read",
-	Description: fmt.Sprintf("Read file contents. For Go files, symbol reads one named declaration without paging. Omitted limits return at most %d lines; set full:true only when the complete file is genuinely needed. Output is always capped at %d lines or %s and includes a continuation offset.", DefaultReadLines, DefaultMaxLines, FormatSize(DefaultMaxBytes)),
+	Description: fmt.Sprintf("Read file contents. Omitted limits return at most %d lines; set full:true only when the complete file is genuinely needed. Output is always capped at %d lines or %s and includes a continuation offset.", DefaultReadLines, DefaultMaxLines, FormatSize(DefaultMaxBytes)),
 	Parameters: json.RawMessage(`{
 		"type": "object",
 		"properties": {
@@ -51,10 +47,6 @@ var readSchema = Schema{
 			"full": {
 				"type": "boolean",
 				"description": "Return the whole file up to the global safety cap. Defaults to false."
-			},
-			"symbol": {
-				"type": "string",
-				"description": "For a Go file, read the declaration named by this function, method, type, variable, or constant."
 			}
 		},
 		"anyOf": [{"required": ["path"]}, {"required": ["file"]}]
@@ -132,15 +124,6 @@ func makeReadExecutor(cwd string, rt *ReadTracker) Executor {
 		content := string(data)
 		lines := strings.Split(content, "\n")
 		totalLines := len(lines)
-		if p.Symbol != "" {
-			start, end, err := goSymbolRange(path, data, p.Symbol)
-			if err != nil {
-				return Result{Content: err.Error(), IsError: true, ErrorKind: "symbol_not_found"}, nil
-			}
-			p.Offset = start
-			p.Limit = end - start + 1
-			p.Full = false
-		}
 
 		// Apply offset (1-based).
 		startLine := 1
@@ -186,34 +169,4 @@ func makeReadExecutor(cwd string, rt *ReadTracker) Executor {
 
 		return Result{Content: output, Truncated: tr.Truncated || endLine < totalLines, ResultBytes: tr.OriginalSize}, nil
 	}
-}
-
-func goSymbolRange(path string, data []byte, symbol string) (int, int, error) {
-	fset := token.NewFileSet()
-	file, err := parser.ParseFile(fset, path, data, 0)
-	if err != nil {
-		return 0, 0, fmt.Errorf("parse Go file for symbol %q: %w", symbol, err)
-	}
-	for _, decl := range file.Decls {
-		matched := false
-		switch d := decl.(type) {
-		case *ast.FuncDecl:
-			matched = d.Name.Name == symbol
-		case *ast.GenDecl:
-			for _, spec := range d.Specs {
-				switch s := spec.(type) {
-				case *ast.TypeSpec:
-					matched = matched || s.Name.Name == symbol
-				case *ast.ValueSpec:
-					for _, name := range s.Names {
-						matched = matched || name.Name == symbol
-					}
-				}
-			}
-		}
-		if matched {
-			return fset.Position(decl.Pos()).Line, fset.Position(decl.End()).Line, nil
-		}
-	}
-	return 0, 0, fmt.Errorf("Go symbol %q not found in %s", symbol, path)
 }

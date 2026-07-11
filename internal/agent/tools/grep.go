@@ -39,6 +39,12 @@ type GrepParams struct {
 	Limit         int    `json:"limit,omitempty"`          // max matches to return
 }
 
+// GrepIndex provides conservative workspace-wide candidate files. The grep
+// tool remains responsible for authoritative matching and output formatting.
+type GrepIndex interface {
+	Candidates(context.Context, string, bool, bool) ([]string, bool)
+}
+
 var grepSchema = Schema{
 	Name:        "grep",
 	Description: fmt.Sprintf("Search file contents for a regex pattern using ripgrep (rg). Respects .gitignore. Returns matching lines with file paths and line numbers. Supports alternation (e.g. 'foo|bar') and full regex syntax. Use context_before/context_after to show surrounding lines. Output is capped at %d matches (adjustable via limit) and long lines are truncated to %d chars.", grepDefaultLimit, grepMaxLineChars),
@@ -83,15 +89,20 @@ var grepSchema = Schema{
 }
 
 // NewGrepTool creates the built-in grep tool.
-func NewGrepTool(cwd string) Tool {
+
+func NewGrepTool(cwd string, indexes ...GrepIndex) Tool {
+	var workspaceIndex GrepIndex
+	if len(indexes) > 0 {
+		workspaceIndex = indexes[0]
+	}
 	return Tool{
 		Schema:  grepSchema,
 		Source:  "builtin",
-		Execute: makeGrepExecutor(cwd),
+		Execute: makeGrepExecutor(cwd, workspaceIndex),
 	}
 }
 
-func makeGrepExecutor(cwd string) Executor {
+func makeGrepExecutor(cwd string, workspaceIndex GrepIndex) Executor {
 	return func(ctx context.Context, params json.RawMessage, _ UIBridge) (Result, error) {
 		var p GrepParams
 		if err := json.Unmarshal(params, &p); err != nil {
@@ -115,7 +126,15 @@ func makeGrepExecutor(cwd string) Executor {
 		}
 
 		args := buildGrepArgs(p)
-		args = append(args, searchPath)
+		searchTargets := []string{searchPath}
+		searchBackend := "direct"
+		if workspaceIndex != nil && filepath.Clean(searchPath) == filepath.Clean(cwd) {
+			if candidates, ok := workspaceIndex.Candidates(ctx, p.Pattern, p.Literal, p.CaseSensitive); ok {
+				searchTargets = candidates
+				searchBackend = "codesearch"
+			}
+		}
+		args = append(args, searchTargets...)
 
 		limit := p.Limit
 		if limit <= 0 {
@@ -124,15 +143,16 @@ func makeGrepExecutor(cwd string) Executor {
 
 		binary, err := grepBinary()
 		if err != nil {
+			searchBackend = "direct"
 			// No external binary available — use pure-Go fallback.
 			output, err := grepFallback(ctx, p, searchPath, cwd)
 			if err != nil {
-				return Result{Content: fmt.Sprintf("grep error: %v", err), IsError: true}, nil
+				return grepBackendResult(Result{Content: fmt.Sprintf("grep error: %v", err), IsError: true}, searchBackend), nil
 			}
 			if output == "" {
-				return Result{Content: "no matches found"}, nil
+				return grepBackendResult(Result{Content: "no matches found"}, searchBackend), nil
 			}
-			return capGrepResult(output, limit), nil
+			return grepBackendResult(capGrepResult(output, limit), searchBackend), nil
 		}
 
 		cmd := exec.CommandContext(ctx, binary, args...)
@@ -145,19 +165,38 @@ func makeGrepExecutor(cwd string) Executor {
 		err = cmd.Run()
 
 		output := stdout.String()
+		if searchBackend == "codesearch" && output == "" && err != nil {
+			// Snapshot candidates can disappear, or an unusually large candidate
+			// argv can fail to spawn. Retry the authoritative workspace path.
+			searchBackend = "direct"
+			args = append(buildGrepArgs(p), searchPath)
+			cmd = exec.CommandContext(ctx, binary, args...)
+			cmd.Dir = cwd
+			stdout.Reset()
+			stderr.Reset()
+			cmd.Stdout = &stdout
+			cmd.Stderr = &stderr
+			err = cmd.Run()
+			output = stdout.String()
+		}
 		if output == "" && err != nil {
 			if exitErr, ok := err.(*exec.ExitError); ok && exitErr.ExitCode() == 1 {
-				return Result{Content: "no matches found"}, nil
+				return grepBackendResult(Result{Content: "no matches found"}, searchBackend), nil
 			}
 			errMsg := stderr.String()
 			if errMsg == "" {
 				errMsg = err.Error()
 			}
-			return Result{Content: fmt.Sprintf("grep error: %s", errMsg), IsError: true}, nil
+			return grepBackendResult(Result{Content: fmt.Sprintf("grep error: %s", errMsg), IsError: true}, searchBackend), nil
 		}
 
-		return capGrepResult(output, limit), nil
+		return grepBackendResult(capGrepResult(output, limit), searchBackend), nil
 	}
+}
+
+func grepBackendResult(result Result, backend string) Result {
+	result.MetricLabels = map[string]string{"search_backend": backend}
+	return result
 }
 
 // capGrepOutput enforces the match limit and per-line length cap on
@@ -408,7 +447,7 @@ func grepFile(ctx context.Context, path string, matcher func(string) bool, ctxBe
 }
 
 func buildGrepArgs(p GrepParams) []string {
-	args := []string{"--line-number", "--no-heading", "--color=never"}
+	args := []string{"--line-number", "--with-filename", "--no-heading", "--color=never"}
 
 	if p.Literal {
 		args = append(args, "--fixed-strings")

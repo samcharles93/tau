@@ -12,6 +12,7 @@ import (
 	"log/slog"
 	"os"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -956,7 +957,16 @@ func (c *Coordinator) runBashCommand(ctx context.Context, cancel context.CancelF
 	}
 	c.mu.Unlock()
 
-	c.emitToolCompleted(cmd.SessionID, "", chat.ChatToolCall{ID: cmd.CallID, Function: chat.ChatFunctionCall{Name: "shell"}}, result, now, false)
+	result.StartedAt = now
+	result.CompletedAt = time.Now().UTC()
+	result.Duration = result.CompletedAt.Sub(now)
+	if result.ResultBytes == 0 {
+		result.ResultBytes = len(result.Content)
+	}
+	if result.IsError && result.ErrorKind == "" {
+		result.ErrorKind = toolErrorKind("shell", result.Content)
+	}
+	c.emitToolCompleted(cmd.SessionID, "", chat.ChatToolCall{ID: cmd.CallID, Function: chat.ChatFunctionCall{Name: "shell"}}, result)
 }
 
 // handleCancelBash stops the session's in-flight bash-mode command, if any.
@@ -1602,7 +1612,7 @@ func (c *Coordinator) runTurn(ctx context.Context, state chat.ChatSessionState) 
 
 		// Append tool result messages to the session.
 		for i, tc := range result.ToolCalls {
-			c.appendToolResult(sessionID, tc.ID, toolResults[i].Content)
+			c.appendToolResult(sessionID, requestID, tc, toolResults[i])
 		}
 
 		// The tool-call loop breaker tripped: a call was blocked without
@@ -1932,9 +1942,21 @@ func (c *Coordinator) executeToolsParallel(ctx context.Context, sessionID, reque
 			result.Content = afterResp.GetModifiedToolResult()
 		}
 
+		// Preserve the original size before truncating model-visible content.
+		if result.ResultBytes == 0 {
+			result.ResultBytes = len(result.Content)
+		}
+
 		// Truncate after plugin modifications.
 		tr := tools.TruncateHead(result.Content, tools.DefaultMaxLines, tools.DefaultMaxBytes)
 		result.Content = tr.Content
+		result.StartedAt = startedAt
+		result.CompletedAt = time.Now().UTC()
+		result.Duration = result.CompletedAt.Sub(startedAt)
+		result.Truncated = result.Truncated || tr.Truncated
+		if result.IsError && result.ErrorKind == "" {
+			result.ErrorKind = toolErrorKind(tc.Function.Name, result.Content)
+		}
 
 		results[i] = result
 		c.loggerWithTurn(sessionID, requestID).Debug(
@@ -1945,7 +1967,7 @@ func (c *Coordinator) executeToolsParallel(ctx context.Context, sessionID, reque
 			"duration_ms", time.Since(startedAt).Milliseconds(),
 			"result_bytes", len(result.Content),
 		)
-		c.emitToolCompleted(sessionID, requestID, tc, result, startedAt, tr.Truncated)
+		c.emitToolCompleted(sessionID, requestID, tc, result)
 
 		// Skill activations via the LLM-invoked "skill" tool (the dominant
 		// path) need their own metric; handleRunSkill covers the user-command
@@ -2120,10 +2142,7 @@ func (c *Coordinator) emitToolCompleted(
 	requestID string,
 	tc chat.ChatToolCall,
 	result tools.Result,
-	startedAt time.Time,
-	truncated bool,
 ) {
-	completedAt := time.Now().UTC()
 	status := "success"
 	if result.IsError {
 		status = "error"
@@ -2134,24 +2153,43 @@ func (c *Coordinator) emitToolCompleted(
 		CallID:        tc.ID,
 		ToolName:      tc.Function.Name,
 		Status:        status,
-		Duration:      completedAt.Sub(startedAt),
+		Duration:      result.Duration,
 		ResultSummary: summarizeForUI(result.Content),
 		IsError:       result.IsError,
-		Truncated:     truncated,
-		CompletedAt:   completedAt,
+		Truncated:     result.Truncated,
+		CompletedAt:   result.CompletedAt,
 		Details:       result.Details,
 	}
 	c.emit(event)
+	state := c.getSessionState(sessionID)
+	metricLabels := make(map[string]string, len(result.MetricLabels)+9)
+	for key, value := range result.MetricLabels {
+		metricLabels[key] = value
+	}
+	// Authoritative correlation fields are assigned last so tool-specific
+	// dimensions cannot override execution identity or status.
+	for key, value := range map[string]string{
+		"tool":         tc.Function.Name,
+		"status":       status,
+		"call_id":      tc.ID,
+		"request_id":   requestID,
+		"error_kind":   result.ErrorKind,
+		"truncated":    strconv.FormatBool(result.Truncated),
+		"result_bytes": strconv.Itoa(result.ResultBytes),
+		"provider":     state.ProviderName,
+		"model":        state.Model.ID,
+	} {
+		metricLabels[key] = value
+	}
 	c.emitMetrics(chat.MetricEvent{
-		Category: chat.MetricCategoryTool,
-		Name:     "tool." + tc.Function.Name + ".duration",
-		Value:    float64(event.Duration.Milliseconds()),
-		Unit:     "ms",
-		Labels: map[string]string{
-			"tool":   tc.Function.Name,
-			"status": status,
-		},
+		Category:  chat.MetricCategoryTool,
+		Name:      "tool." + tc.Function.Name + ".duration",
+		Value:     float64(event.Duration.Milliseconds()),
+		Unit:      "ms",
+		Labels:    metricLabels,
 		SessionID: sessionID,
+		RequestID: requestID,
+		CallID:    tc.ID,
 	})
 }
 
@@ -2248,14 +2286,46 @@ func (c *Coordinator) commitAssistantMessage(sessionID string, content string, r
 	_ = session.state.AppendAssistantToolCallMessageWithReasoning(content, reasoningContent, calls, time.Now().UTC())
 }
 
-func (c *Coordinator) appendToolResult(sessionID string, callID, content string) {
+func (c *Coordinator) appendToolResult(sessionID, requestID string, tc chat.ChatToolCall, result tools.Result) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	session, ok := c.sessions[sessionID]
 	if !ok {
 		return
 	}
-	_ = session.state.AppendToolResultMessage(callID, content, time.Now().UTC())
+	status := "success"
+	if result.IsError {
+		status = "error"
+	}
+	metadata := &chat.ToolResultMetadata{
+		ToolName: tc.Function.Name, RequestID: requestID, Status: status,
+		ErrorKind: result.ErrorKind, Duration: result.Duration,
+		Truncated: result.Truncated, ResultBytes: result.ResultBytes,
+		StartedAt: result.StartedAt, CompletedAt: result.CompletedAt,
+	}
+	_ = session.state.AppendToolResultMessageWithMetadata(tc.ID, result.Content, metadata, result.CompletedAt)
+}
+
+func toolErrorKind(toolName, content string) string {
+	lower := strings.ToLower(strings.TrimSpace(content))
+	switch {
+	case strings.HasPrefix(lower, "[timeout after"):
+		return "timeout"
+	case strings.HasPrefix(lower, "[exit code:"):
+		return "command_exit"
+	case strings.Contains(lower, "unknown tool"):
+		return "unknown_tool"
+	case strings.Contains(lower, "blocked by plugin"):
+		return "blocked"
+	case strings.Contains(lower, "invalid parameter"), strings.Contains(lower, " is required"), strings.Contains(lower, "must not be empty"):
+		return "invalid_arguments"
+	case strings.Contains(lower, "escapes working directory"):
+		return "sandbox_escape"
+	case toolName == "edit" && strings.Contains(lower, "old_text"):
+		return "stale_edit"
+	default:
+		return "execution_error"
+	}
 }
 
 func (c *Coordinator) clearPending(sessionID string) {
@@ -2754,7 +2824,7 @@ func (c *Coordinator) handleListSessions(cmd chat.ListSessionsCommand) {
 		return
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	ctx, cancel := context.WithTimeout(c.ctx, 5*time.Second)
 	defer cancel()
 
 	summaries, nextCursor, err := c.sessionManager.List(ctx, cmd.Limit, cmd.Cursor)
@@ -2801,7 +2871,7 @@ func (c *Coordinator) handleLoadSession(cmd chat.LoadSessionCommand) {
 	}
 	c.mu.Unlock()
 
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	ctx, cancel := context.WithTimeout(c.ctx, 10*time.Second)
 	defer cancel()
 
 	loaded, err := c.sessionManager.Load(ctx, cmd.SessionID, runtimeCfg)
@@ -2835,7 +2905,7 @@ func (c *Coordinator) handleDeleteSession(cmd chat.DeleteSessionCommand) {
 		return
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	ctx, cancel := context.WithTimeout(c.ctx, 5*time.Second)
 	defer cancel()
 
 	if err := c.sessionManager.Delete(ctx, cmd.SessionID); err != nil {
@@ -2874,7 +2944,7 @@ func (c *Coordinator) handleExportSession(cmd chat.ExportSessionCommand) {
 
 	outputPath := cmd.Output
 	if outputPath != "" {
-		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		ctx, cancel := context.WithTimeout(c.ctx, 30*time.Second)
 		defer cancel()
 
 		if err := c.sessionManager.ExportToJSONL(ctx, cmd.SessionID, outputPath); err != nil {
@@ -2888,7 +2958,7 @@ func (c *Coordinator) handleExportSession(cmd chat.ExportSessionCommand) {
 		}
 	} else {
 		// Export to stdout: stream lines through events.
-		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		ctx, cancel := context.WithTimeout(c.ctx, 30*time.Second)
 		defer cancel()
 
 		ch, errCh := c.sessionManager.ExportMessages(ctx, cmd.SessionID)
@@ -2931,6 +3001,9 @@ func (c *Coordinator) persistSession(state chat.ChatSessionState, duration time.
 		return
 	}
 
+	// Deliberately not c.ctx: this runs from cancelAllSessions on the
+	// c.ctx.Done() shutdown path, so a context derived from c.ctx would
+	// already be cancelled and the final save would never happen.
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 

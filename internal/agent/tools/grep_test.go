@@ -2,6 +2,7 @@ package tools
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -9,6 +10,27 @@ import (
 	"testing"
 	"time"
 )
+
+type staticGrepIndex struct{ files []string }
+
+func (s staticGrepIndex) Candidates(context.Context, string, bool, bool) ([]string, bool) {
+	return s.files, true
+}
+
+func TestGrepUsesIndexCandidatesAsAdvisoryFileSet(t *testing.T) {
+	tmp := t.TempDir()
+	indexed := filepath.Join(tmp, "indexed.txt")
+	createGrepTestFile(t, tmp, "indexed.txt", "needle\n")
+	createGrepTestFile(t, tmp, "excluded.txt", "needle\n")
+	tool := NewGrepTool(tmp, staticGrepIndex{files: []string{indexed}})
+	result, err := tool.Execute(context.Background(), json.RawMessage(`{"pattern":"needle"}`), nil)
+	if err != nil || result.IsError {
+		t.Fatalf("grep result = %#v, err = %v", result, err)
+	}
+	if !strings.Contains(result.Content, "indexed.txt") || strings.Contains(result.Content, "excluded.txt") {
+		t.Fatalf("candidate-filtered output = %s", result.Content)
+	}
+}
 
 func TestGrepFallback(t *testing.T) {
 	// Create a temporary directory with test files.

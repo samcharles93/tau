@@ -4,7 +4,7 @@ package tools
 // The cwd parameter sets the working directory for file and shell operations.
 // pluginDocs, if non-nil, is queried by the docs tool to merge in
 // plugin-provided documentation; pass nil where no plugin manager exists.
-func RegisterBuiltins(reg *Registry, cwd string, pluginDocs PluginDocsProvider) error {
+func RegisterBuiltins(reg *Registry, cwd string, pluginDocs PluginDocsProvider, indexes ...GrepIndex) error {
 	mq := NewMutationQueue()
 	rt := NewReadTracker()
 
@@ -13,7 +13,7 @@ func RegisterBuiltins(reg *Registry, cwd string, pluginDocs PluginDocsProvider) 
 		NewWriteTool(cwd, mq, rt),
 		NewEditTool(cwd, mq, rt),
 		NewShellTool(cwd, mq),
-		NewGrepTool(cwd),
+		NewGrepTool(cwd, indexes...),
 		NewFindTool(cwd),
 		NewDocsTool(pluginDocs),
 	}
