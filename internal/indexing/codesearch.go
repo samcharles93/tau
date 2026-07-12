@@ -320,7 +320,11 @@ func (m *Manager) setState(ctx context.Context, status string, indexedAt time.Ti
 }
 
 func openIndexDB(path string) (*sql.DB, error) {
-	db, err := sql.Open("sqlite", path+"?_journal_mode=WAL&_busy_timeout=5000")
+	// modernc.org/sqlite only applies pragmas passed via repeated _pragma
+	// params; unrecognized keys like _journal_mode/_busy_timeout are
+	// silently ignored, which previously left the busy timeout at 0 and
+	// caused SQLITE_BUSY on any lock contention instead of a bounded wait.
+	db, err := sql.Open("sqlite", path+"?_pragma=busy_timeout(5000)&_pragma=journal_mode(WAL)")
 	if err != nil {
 		return nil, fmt.Errorf("open workspace index metadata: %w", err)
 	}

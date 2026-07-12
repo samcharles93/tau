@@ -25,16 +25,23 @@ type SQLiteStore struct {
 // NewSQLiteStore opens or creates the SQLite database at dbPath and runs
 // pending migrations. sessionsDir is where JSONL export files are written.
 func NewSQLiteStore(ctx context.Context, dbPath, sessionsDir string) (*SQLiteStore, error) {
-	dsn := dbPath + "?_journal_mode=WAL&_busy_timeout=5000&_foreign_keys=ON"
+	// modernc.org/sqlite ignores unrecognized DSN query keys like
+	// _journal_mode/_busy_timeout/_foreign_keys, so none of these actually
+	// applied via the connection string; each is re-enforced via PRAGMA below.
+	dsn := dbPath
 	db, err := sql.Open("sqlite", dsn)
 	if err != nil {
 		return nil, fmt.Errorf("store: open sqlite: %w", err)
 	}
 
-	// Belt and suspenders: enforce WAL mode and foreign keys after open.
+	// Belt and suspenders: enforce WAL mode, busy timeout, and foreign keys after open.
 	if _, err := db.ExecContext(ctx, "PRAGMA journal_mode=WAL"); err != nil {
 		db.Close()
 		return nil, fmt.Errorf("store: enable WAL mode: %w", err)
+	}
+	if _, err := db.ExecContext(ctx, "PRAGMA busy_timeout=5000"); err != nil {
+		db.Close()
+		return nil, fmt.Errorf("store: set busy timeout: %w", err)
 	}
 	if _, err := db.ExecContext(ctx, "PRAGMA foreign_keys=ON"); err != nil {
 		db.Close()
