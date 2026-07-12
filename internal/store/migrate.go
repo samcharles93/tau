@@ -9,7 +9,7 @@ import (
 
 // currentSchemaVersion is the latest migration number. Bump this when adding
 // new migrations and append the SQL to the migrations map below.
-const currentSchemaVersion = 5
+const currentSchemaVersion = 6
 
 // Migrate runs all pending schema migrations in order. It is idempotent —
 // already-applied migrations are skipped.
@@ -29,6 +29,7 @@ func Migrate(ctx context.Context, db *sql.DB) error {
 		3: migrationV3,
 		4: migrationV4,
 		5: migrationV5,
+		6: migrationV6,
 	}
 
 	for v := current + 1; v <= currentSchemaVersion; v++ {
@@ -130,4 +131,33 @@ CREATE INDEX IF NOT EXISTS idx_messages_client_id ON messages(session_id, client
 // requiring consumers to infer failures and durations from result prose.
 var migrationV5 = strings.TrimSpace(`
 ALTER TABLE messages ADD COLUMN tool_result TEXT NOT NULL DEFAULT '';
+`)
+
+// migrationV6 adds the agent_instances table for process-identity tracking
+// and extends sessions with an agent_instance_id for lineage. See
+// docs/specs/agents/04-storage-and-sessions.md for the full schema design.
+var migrationV6 = strings.TrimSpace(`
+CREATE TABLE IF NOT EXISTS agent_instances (
+    id                 TEXT PRIMARY KEY,
+    spec_name          TEXT NOT NULL,
+    spec_scope         TEXT NOT NULL,
+    spec_source_path   TEXT,
+    spec_hash          TEXT NOT NULL,
+    spec_snapshot      TEXT NOT NULL,
+    resolved_provider  TEXT NOT NULL,
+    resolved_model     TEXT NOT NULL,
+    effective_tools    TEXT,
+    depth              INTEGER NOT NULL DEFAULT 0,
+    parent_instance_id TEXT REFERENCES agent_instances(id) ON DELETE SET NULL,
+    pid                INTEGER,
+    started_at         TIMESTAMP NOT NULL,
+    ended_at           TIMESTAMP,
+    exit_status        TEXT,
+    usage_json         TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_agent_instances_parent ON agent_instances(parent_instance_id);
+
+ALTER TABLE sessions ADD COLUMN agent_instance_id TEXT
+    REFERENCES agent_instances(id) ON DELETE SET NULL;
+CREATE INDEX IF NOT EXISTS idx_sessions_agent_instance ON sessions(agent_instance_id);
 `)
