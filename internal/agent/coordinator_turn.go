@@ -678,19 +678,29 @@ func (c *Coordinator) executeToolsParallel(ctx context.Context, sessionID, reque
 // When non-empty, only tools whose names are in the set are included in
 // the tool schemas sent to the LLM. The "skill" tool is always allowed so
 // that the model can switch skills mid-conversation.
+// SetAllowedTools sets the active tool filter for the current mode/skill.
+// The filter is always intersected with the coordinator's immutable effectiveTools
+// ceiling (set at construction from --tools / spec.tools). An empty or nil
+// toolNames list reverts to the effectiveTools ceiling; passing specific names
+// narrows the active set below the ceiling but never widens beyond it.
 func (c *Coordinator) SetAllowedTools(toolNames []string) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
+	// Empty list: revert to ceiling (or nil if unrestricted).
 	if len(toolNames) == 0 {
 		c.allowedTools = nil
 		return
 	}
+
 	m := make(map[string]bool, len(toolNames)+1)
 	for _, name := range toolNames {
-		m[name] = true
+		// Intersect with the immutable ceiling: a mode can never widen.
+		if c.effectiveTools == nil || c.effectiveTools[name] {
+			m[name] = true
+		}
 	}
-	// Always allow switching skills.
+	// Always allow switching skills regardless of ceiling.
 	m["skill"] = true
 	c.allowedTools = m
 }
@@ -699,18 +709,21 @@ func (c *Coordinator) buildToolDefs() []chat.ChatToolDef {
 	schemas := c.registry.Schemas()
 
 	c.mu.Lock()
+	effective := c.effectiveTools
 	allowed := c.allowedTools
 	c.mu.Unlock()
 
 	var filtered []tools.Schema
-	if len(allowed) == 0 {
-		filtered = schemas
-	} else {
-		for _, s := range schemas {
-			if allowed[s.Name] {
-				filtered = append(filtered, s)
-			}
+	for _, s := range schemas {
+		// Apply immutable ceiling first, then active mode filter.
+		// nil means "no restriction" — the tool passes that tier.
+		if effective != nil && !effective[s.Name] {
+			continue
 		}
+		if allowed != nil && !allowed[s.Name] {
+			continue
+		}
+		filtered = append(filtered, s)
 	}
 
 	defs := make([]chat.ChatToolDef, len(filtered))

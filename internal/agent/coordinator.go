@@ -83,7 +83,8 @@ type Coordinator struct {
 	skillsMgr         *skills.Manager
 	commandRegistry   *commandreg.Registry
 	lastSkillsConfig  skills.DiscoveryConfig
-	allowedTools      map[string]bool
+	effectiveTools    map[string]bool // immutable ceiling (set at construction); nil = unrestricted
+	allowedTools      map[string]bool // active filter (intersected with effectiveTools); nil = no mode restriction
 	autoCompact       tauconfig.AutoCompactConfig
 
 	mu       sync.Mutex
@@ -175,6 +176,14 @@ type CoordinatorConfig struct {
 	// Returns merged EventResponse, or nil if no plugins.
 	OnPluginEvent func(event string, sessionID string, payload *api.EventPayload) *api.EventResponse
 
+	// AllowedTools is the initial tool allowlist for this coordinator.
+	// When non-empty, the LLM can only see tools in this list (plus the
+	// "skill" tool, which is always added for mode switching). An empty
+	// or nil slice means no restriction — the full registry is available.
+	// This is the process-wide base; individual modes may further narrow
+	// the set via SetAllowedTools, which always intersects with this base.
+	AllowedTools []string
+
 	// ModelLookup resolves a model ID to its full ChatModelRef (with Config,
 	// context window, pricing). If set, the coordinator calls this whenever
 	// a model patch arrives to enrich the bare {id: "..."} with the full
@@ -223,6 +232,18 @@ func NewCoordinator(ctx context.Context, cfg CoordinatorConfig) (*Coordinator, e
 	}
 	logger = logger.With("component", "coordinator")
 
+	// Initialise the tool allowlist from config. Empty/nil means unrestricted.
+	// The "skill" tool is always added to non-empty filters so mode switching
+	// remains available even in restricted tool sets.
+	var initEffectiveTools map[string]bool
+	if len(cfg.AllowedTools) > 0 {
+		initEffectiveTools = make(map[string]bool, len(cfg.AllowedTools)+1)
+		for _, name := range cfg.AllowedTools {
+			initEffectiveTools[strings.TrimSpace(name)] = true
+		}
+		initEffectiveTools["skill"] = true
+	}
+
 	c := &Coordinator{
 		ctx:               ctx,
 		cancel:            cancel,
@@ -252,6 +273,7 @@ func NewCoordinator(ctx context.Context, cfg CoordinatorConfig) (*Coordinator, e
 		commandRegistry:   cfg.CommandRegistry,
 		lastSkillsConfig:  cfg.SkillsDiscoveryConfig,
 		autoCompact:       cfg.AutoCompact,
+		effectiveTools:    initEffectiveTools,
 		allowedTools:      nil,
 		sessions:          make(map[string]*coordinatorSession),
 		shutdown:          make(map[string]struct{}),

@@ -189,21 +189,29 @@ func (c *Coordinator) handleRunAgent(cmd chat.RunAgentCommand) {
 }
 
 // clampToolsToCurrentAllowlist intersects requested with the coordinator's
-// current tool allowlist. When the session is currently unrestricted
-// (allowedTools nil/empty), there is nothing to escalate past, so requested
-// passes through unchanged.
+// current tool allowlist. When no mode restriction is active (allowedTools nil)
+// but a process ceiling exists (effectiveTools set), the ceiling is used as
+// the baseline so the escalation warning fires for tools outside it. Only when
+// both are nil is the session truly unrestricted.
 func (c *Coordinator) clampToolsToCurrentAllowlist(requested []string) []string {
 	c.mu.Lock()
-	current := c.allowedTools
+	effective := c.effectiveTools
+	allowed := c.allowedTools
 	c.mu.Unlock()
 
-	if len(current) == 0 {
+	// Determine the baseline: active mode filter takes precedence; if none,
+	// fall back to the immutable ceiling. If neither exists, unrestricted.
+	baseline := allowed
+	if len(baseline) == 0 {
+		baseline = effective
+	}
+	if len(baseline) == 0 {
 		return requested
 	}
 
 	clamped := make([]string, 0, len(requested))
 	for _, name := range requested {
-		if current[name] {
+		if baseline[name] {
 			clamped = append(clamped, name)
 		}
 	}
