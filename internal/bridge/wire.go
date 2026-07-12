@@ -13,8 +13,13 @@ import (
 )
 
 // Envelope is the on-the-wire wrapper for every WebSocket message.
+// From/To are optional agent-instance addresses used by the agent wire
+// protocol (see docs/specs/agents/03-wire-protocol.md). Browser-bound
+// messages omit these fields, preserving backwards compatibility.
 type Envelope struct {
 	Type    string          `json:"type"`
+	From    string          `json:"from,omitempty"`
+	To      string          `json:"to,omitempty"`
 	Payload json.RawMessage `json:"payload"`
 }
 
