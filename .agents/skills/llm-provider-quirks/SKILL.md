@@ -28,6 +28,8 @@ Consult this catalog before editing `provider/openai` or `provider/anthropic` in
 
 **Responses reasoning summaries can be block arrays.** Confirmed live with `gpt-5.4` (2026-07-12): a non-streaming reasoning output item carries `summary` as an array such as `[{"type":"summary_text","text":"..."}]`, not only as a string. Decoders must accept both forms because older mocks and compatible backends may still emit the string form.
 
+**Responses history text types depend on the message role.** Confirmed live with OpenAI Responses (2026-07-13): user/system history uses `input_text`, but assistant history must use `output_text`. Sending assistant content as `input_text` returns a 400 whose supported values are `output_text` and `refusal` for that content item.
+
 **Ollama's OpenAI-compat endpoint uses a different reasoning field name.** Ollama's `/v1/chat/completions` streams thinking content under `"reasoning"`, not `"reasoning_content"` (DeepSeek's convention on the same generic "openai-compatible" wire shape). ai-sdk's `openai.go` checks both field names since Ollama is served through the shared `openai-compatible` provider class.
 
 **tau's default local-Ollama routing bypasses ai-sdk's native Ollama provider.** `internal/providers/catalog.go`'s built-in `"ollama"` catalog entry sets no `Class`, so it resolves through `resolveProviderClass` to the generic `"openai-compatible"` runtime class — ai-sdk's `provider/openai.Provider` pointed at Ollama's `/v1` endpoint — not `provider/ollama` (which talks to the native `/api/chat`). A fix to `provider/ollama/ollama.go` does not reach default zero-config local-Ollama users in tau. Check which class a catalog entry resolves to before assuming a provider-level fix reaches them.
