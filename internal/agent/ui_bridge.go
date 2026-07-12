@@ -190,3 +190,21 @@ func extensionDiagnosticMessage(diagnostic chat.ExtensionDiagnostic) string {
 	}
 	return prefix + ": " + diagnostic.Message
 }
+
+type loggingUIBridge struct {
+	tools.UIBridge
+	sessionID string
+	requestID string
+	callID    string
+	c         *Coordinator
+}
+
+func (b *loggingUIBridge) Log(chunk string) {
+	b.c.emit(chat.ChatToolOutputEvent{
+		SessionID:  b.sessionID,
+		RequestID:  b.requestID,
+		CallID:     b.callID,
+		Chunk:      chunk,
+		ReceivedAt: time.Now().UTC(),
+	})
+}
