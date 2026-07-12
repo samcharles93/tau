@@ -19,15 +19,13 @@ func TestBuiltins_ParsesAllDefinitions(t *testing.T) {
 		names[def.Name] = def
 	}
 
-	// task is reserved for future programmatic/headless use, not a slash command.
-	task, ok := names["task"]
-	require.True(t, ok)
-	require.False(t, task.UserInvocable)
-	require.False(t, task.ModeSwitcher)
-
+	// task.agent.md was retired in P0.4 — tau is now the spawnable
+	// general-purpose child worker. tau is not user-invocable.
 	// Everything else defaults (or is explicitly set) to user-invocable.
 	for _, def := range defs {
-		if def.Name == "task" || def.Name == "tau" {
+		if def.Name == "tau" {
+			require.False(t, def.UserInvocable, "expected tau to not be user-invocable")
+			require.False(t, def.ModeSwitcher, "expected tau to not be mode-switcher")
 			continue
 		}
 		require.True(t, def.UserInvocable, "expected %q to be user-invocable", def.Name)

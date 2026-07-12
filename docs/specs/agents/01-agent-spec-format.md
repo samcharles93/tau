@@ -85,11 +85,11 @@ Notes:
 
 ## Built-in inventory after the change
 
-`init`, `plan`, `research`, `rubber-duck`, `compact`, `summarise`, `task`, `tau`.
+`init`, `plan`, `research`, `rubber-duck`, `compact`, `summarise`, `tau`.
 
 Existing built-ins are untouched by this design except:
 
-- `task.agent.md`: review against the new spawn semantics (it was authored for delegation before processes existed); likely gains `model: fast` or similar once tiers exist.
+- `task.agent.md`: **retired (P0.4).** Before process agents existed, task was authored as a delegation target. Now that `tau` is a spawnable general-purpose child worker with the full personality, task's role is filled. The file remains in `templates/` for reference but is not loaded by `Builtins()`. A purpose-specific, tightly scoped replacement can be authored as a user or project spec.
 - `compact.agent.md`, `summarise.agent.md`: remain mode/one-shot templates; nothing about them changes. They demonstrate why modes coexist with processes.
 
 ## Snapshot semantics

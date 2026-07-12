@@ -31,7 +31,9 @@ var builtinFiles = []string{
 	"rubber-duck.agent.md",
 	"compact.agent.md",
 	"summarise.agent.md",
-	"task.agent.md",
+	// task.agent.md was retired in P0.4 — tau is now spawnable and
+	// fills the general-purpose child-worker role; task's body was a
+	// subset of tau's personality. File kept for reference.
 }
 
 // Definition is a built-in agent's declarative spec plus its unrendered
