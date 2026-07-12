@@ -535,6 +535,13 @@ type coordinatorConfig struct {
 	MetricsConfig tauconfig.MetricsConfig
 	// GrepIndex optionally accelerates workspace-wide grep candidate selection.
 	GrepIndex tools.GrepIndex
+	// MaxTurns / Timeout / MaxTokens / Deadline are structural and per-task
+	// budget limits enforced by the coordinator's checkLimits. Zero means
+	// unlimited.
+	MaxTurns  int
+	Timeout   time.Duration
+	MaxTokens int
+	Deadline  time.Time
 }
 
 // buildCoordinator creates a coordinator with the full plugin/tool setup.
@@ -755,6 +762,10 @@ func buildCoordinator(ctx context.Context, cfg coordinatorConfig) (*agent.Coordi
 			return nil
 		},
 		MetricsConfig: cfg.MetricsConfig,
+		MaxTurns:      cfg.MaxTurns,
+		Timeout:       cfg.Timeout,
+		MaxTokens:     cfg.MaxTokens,
+		Deadline:      cfg.Deadline,
 		AutoCompact:   cfg.ChatOptions.Config.AutoCompact,
 	})
 	if err != nil {
@@ -774,6 +785,20 @@ func buildCoordinator(ctx context.Context, cfg coordinatorConfig) (*agent.Coordi
 	// assertion is needed to recover them.
 	if viewRenderer, ok := coordinator.UIBridge().(plugin.ViewRenderer); ok {
 		pluginMgr.SetViewRenderer(viewRenderer)
+	}
+
+	// Register the agent tool for spawning child processes.
+	agentCfg := tools.AgentToolConfig{
+		CWD:               cwd,
+		ModelModes:        cfg.ChatOptions.Config.ModelModes,
+		DefaultProvider:   cfg.ChatOptions.Config.DefaultProvider,
+		DefaultModel:      cfg.ChatOptions.Config.DefaultModel,
+		Agents:            cfg.ChatOptions.Config.Agents,
+		InheritedProvider: cfg.ChatOptions.Provider.Name,
+		InheritedModel:    cfg.ChatOptions.Model,
+	}
+	if err := registry.Register(tools.NewAgentTool(agentCfg)); err != nil {
+		return nil, nil, nil, fmt.Errorf("registering agent tool: %w", err)
 	}
 
 	return coordinator, pluginMgr.ExtensionCommands(), pluginMgr, nil

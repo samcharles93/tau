@@ -135,6 +135,11 @@ func NewRootCommand(version string) *urfavecli.Command {
 				Name:  "agent",
 				Usage: "Agent spec to use as root identity (default: tau)",
 			},
+			&urfavecli.BoolFlag{
+				Name:   "child",
+				Usage:  "Run as a headless agent child process (internal use)",
+				Hidden: true,
+			},
 			&urfavecli.StringSliceFlag{
 				Name:    "tools",
 				Aliases: []string{"t"},
@@ -166,6 +171,12 @@ func NewRootCommand(version string) *urfavecli.Command {
 			}
 			initLogging(cmd.Bool("verbose") || cfg.Debug, version)
 			opts := chatOptionsFromCmd(cmd, cfg, selectedProvider, version)
+			if cmd.Bool("child") {
+				err := app.RunChild(ctx, opts)
+				app.ExitChild(err)
+				// unreachable — exitChild calls os.Exit
+				return err
+			}
 			prompt := cmd.String("prompt")
 			if prompt != "" {
 				if args := cmd.Args(); args.Len() > 0 {
