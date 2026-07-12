@@ -11,6 +11,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/samcharles93/tau/internal/agent"
 	"github.com/samcharles93/tau/internal/agent/tools"
 
 	tauchat "github.com/samcharles93/tau/internal/chat"
@@ -117,6 +118,7 @@ func RunChat(ctx context.Context, opts ChatOptions) error {
 	defer skillsMgr.Close()
 
 	cwd, _ := os.Getwd()
+
 	// Refresh the skill catalog once at startup. Disabled skills are read from
 	// config so user preferences persist across sessions. CLI --skill-dir flags
 	// are merged with config SkillPaths.
@@ -142,7 +144,7 @@ func RunChat(ctx context.Context, opts ChatOptions) error {
 	} else {
 		toolSchemas = tmpReg.Schemas()
 	}
-	systemPrompt := buildAgentSystemPrompt("", cwd, skillsMgr, toolSchemas)
+	systemPrompt := buildAgentSystemPrompt(cwd, skillsMgr, toolSchemas)
 	logStartupPhase("after-prompt", t0)
 
 	// Collect startup notifications for the coordinator event stream so the
@@ -175,6 +177,38 @@ func RunChat(ctx context.Context, opts ChatOptions) error {
 			Level:      tauchat.ChatNotificationInfo,
 			OccurredAt: time.Now().UTC(),
 		})
+	}
+
+	// Instantiate the root agent identity. This creates the agent_instances
+	// row and resolves the spec, model, and effective tools.
+	var agentInstanceID string
+	if sessionManager != nil {
+		instCfg := agent.InstantiateConfig{
+			Name:              opts.AgentSpec,
+			CWD:               cwd,
+			ModelOverride:     opts.Model,
+			InheritedProvider: opts.Provider.Name,
+			InheritedModel:    opts.Model,
+			ModelModes:        opts.Config.ModelModes,
+			DefaultProvider:   opts.Config.DefaultProvider,
+			DefaultModel:      opts.Config.DefaultModel,
+			Agents:            opts.Config.Agents,
+			Store:             rawStore,
+		}
+		instResult, instErr := agent.Instantiate(ctx, instCfg)
+		if instErr != nil {
+			slog.Warn("agent instantiation failed", "err", instErr)
+		} else {
+			agentInstanceID = instResult.InstanceID
+			slog.Info("root agent instantiated", "instance_id", agentInstanceID,
+				"provider", instResult.ResolvedProvider, "model", instResult.ResolvedModel,
+				"depth", instResult.Depth)
+			startupEvents = append(startupEvents, tauchat.ChatNotificationEvent{
+				Message:    fmt.Sprintf("Agent instantiated: %s", agentInstanceID),
+				Level:      tauchat.ChatNotificationInfo,
+				OccurredAt: time.Now().UTC(),
+			})
+		}
 	}
 
 	// Auth is resolved by the runtime when the provider is created.

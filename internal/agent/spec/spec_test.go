@@ -27,7 +27,7 @@ func TestBuiltins_ParsesAllDefinitions(t *testing.T) {
 
 	// Everything else defaults (or is explicitly set) to user-invocable.
 	for _, def := range defs {
-		if def.Name == "task" {
+		if def.Name == "task" || def.Name == "tau" {
 			continue
 		}
 		require.True(t, def.UserInvocable, "expected %q to be user-invocable", def.Name)

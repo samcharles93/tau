@@ -51,6 +51,7 @@ type ChatOptions struct {
 	NewTUI          bool     // --new-tui: use the new Bubbletea-based TUI
 	Ephemeral       bool     // --ephemeral: do not persist this session to the session store
 	AllowedTools    []string // --tools: initial tool allowlist (empty = unrestricted)
+	AgentSpec       string   // --agent: spec name for the root agent identity (default "tau")
 	// Logger is the root logger for the session. When nil, slog.Default() is
 	// used. Each subsystem derives a named child (component=xxx) from it.
 	Logger *slog.Logger
@@ -195,7 +196,7 @@ func buildSessionConfig(opts ChatOptions, model tauchat.ChatModelRef, systemProm
 // combining project context (AGENTS.md), the skill catalog and working
 // directory info. toolSchemas are the built-in tool name/description pairs
 // rendered into the prompt as capability metadata.
-func buildAgentSystemPrompt(userPrompt, cwd string, skillsMgr *skills.Manager, toolSchemas []tools.Schema) string {
+func buildAgentSystemPrompt(cwd string, skillsMgr *skills.Manager, toolSchemas []tools.Schema) string {
 	contextFiles := agent.DiscoverContextFiles(cwd)
 
 	var activeSkills []*skills.Skill
@@ -211,7 +212,6 @@ func buildAgentSystemPrompt(userPrompt, cwd string, skillsMgr *skills.Manager, t
 		ContextFiles: contextFiles,
 		Skills:       activeSkills,
 		CWD:          cwd,
-		AppendPrompt: userPrompt,
 		Tools:        toolSchemas,
 	})
 }

@@ -47,6 +47,8 @@ type PromptConfig struct {
 
 	// AppendPrompt contains trusted host-level system instructions appended in a
 	// clearly delimited block after the generated prompt.
+	// Deprecated: removed per P0.3 decision — trusted-host injection is not a
+	// use case worth building a mechanism for. Write a custom agent spec instead.
 	AppendPrompt string
 
 	// ModelName is the model identifier for this session (optional metadata).
@@ -64,6 +66,7 @@ type ContextFile struct {
 
 // promptData is the template execution context.
 type promptData struct {
+	AgentBody     string
 	Tools         []tools.Schema
 	ContextFiles  []ContextFile
 	Guidelines    []string
@@ -76,7 +79,6 @@ type promptData struct {
 	IsGitRepo     bool
 	ModelName     string
 	SessionID     string
-	AppendPrompt  string
 }
 
 // BuildSystemPrompt constructs the full system prompt from the given config
@@ -97,7 +99,27 @@ func buildPromptData(cfg PromptConfig) promptData {
 		skillsIndex = skills.ToPromptIndex(cfg.Skills)
 	}
 
+	// Render the tau.agent.md spec body into the agent-character slot.
+	// It receives the same env/workspace vars as any other spec body.
+	// Use renderPromptTemplate directly (not RenderAgentPrompt) to avoid
+	// the infinite recursion RenderAgentPrompt → buildPromptData → here.
+	tauAgent, ok := agentspec.Lookup("tau")
+	agentBody := ""
+	if ok {
+		agentBody = renderPromptTemplate("tau", tauAgent.Body, promptData{
+			WorkingDir:    filepath.ToSlash(cfg.CWD),
+			WorkspaceTree: buildWorkspaceTree(cfg.CWD),
+			Platform:      runtime.GOOS,
+			Shell:         shellName(),
+			Date:          time.Now().Format("2006-01-02"),
+			IsGitRepo:     isGitRepo(cfg.CWD),
+			ModelName:     cfg.ModelName,
+			SessionID:     cfg.SessionID,
+		})
+	}
+
 	return promptData{
+		AgentBody:     agentBody,
 		Tools:         cfg.Tools,
 		ContextFiles:  cfg.ContextFiles,
 		Guidelines:    cfg.Guidelines,
@@ -110,7 +132,6 @@ func buildPromptData(cfg PromptConfig) promptData {
 		IsGitRepo:     isGitRepo(cfg.CWD),
 		ModelName:     cfg.ModelName,
 		SessionID:     cfg.SessionID,
-		AppendPrompt:  cfg.AppendPrompt,
 	}
 }
 

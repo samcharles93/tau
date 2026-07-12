@@ -24,6 +24,7 @@ var templateFS embed.FS
 // builtinFiles is the deterministic load and display order for built-in
 // agent definitions.
 var builtinFiles = []string{
+	"tau.agent.md",
 	"init.agent.md",
 	"plan.agent.md",
 	"research.agent.md",

@@ -131,6 +131,10 @@ func NewRootCommand(version string) *urfavecli.Command {
 				Name:  "skill-dir",
 				Usage: "Additional skill directories (repeatable)",
 			},
+			&urfavecli.StringFlag{
+				Name:  "agent",
+				Usage: "Agent spec to use as root identity (default: tau)",
+			},
 			&urfavecli.StringSliceFlag{
 				Name:    "tools",
 				Aliases: []string{"t"},
@@ -218,6 +222,15 @@ func splitToolsFlag(raw []string) []string {
 	return out
 }
 
+func firstNonEmptyString(values ...string) string {
+	for _, v := range values {
+		if strings.TrimSpace(v) != "" {
+			return v
+		}
+	}
+	return ""
+}
+
 func chatOptionsFromCmd(cmd *urfavecli.Command, cfg tauconfig.Config, provider tauconfig.ProviderConfig, version string) app.ChatOptions {
 	return app.ChatOptions{
 		Config:          cfg,
@@ -235,5 +248,6 @@ func chatOptionsFromCmd(cmd *urfavecli.Command, cfg tauconfig.Config, provider t
 		SkillDirs:       cmd.StringSlice("skill-dir"),
 		Ephemeral:       cmd.Bool("ephemeral"),
 		AllowedTools:    splitToolsFlag(cmd.StringSlice("tools")),
+		AgentSpec:       firstNonEmptyString(cmd.String("agent"), "tau"),
 	}
 }

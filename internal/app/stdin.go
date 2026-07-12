@@ -100,7 +100,7 @@ func RunStdIn(ctx context.Context, opts ChatOptions, prompt string) error {
 	} else {
 		toolSchemas = tmpReg.Schemas()
 	}
-	systemPrompt := buildAgentSystemPrompt("", cwd, skillsMgr, toolSchemas)
+	systemPrompt := buildAgentSystemPrompt(cwd, skillsMgr, toolSchemas)
 	workspaceIndex, indexErr := indexing.NewManager(ctx, cwd)
 	if indexErr != nil {
 		slog.Warn("workspace codesearch unavailable; grep will use direct search", "err", indexErr)

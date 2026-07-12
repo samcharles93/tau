@@ -83,8 +83,6 @@ func TestBuildSystemPromptWithAllSections(t *testing.T) {
 		"Git repo: yes",
 		"Session: test-session",
 		"Model: test-model",
-		"<additional_system_instructions purpose=\"trusted_host_instructions\" priority=\"core\">",
-		"Follow the host policy.",
 	)
 
 	dateAfter := time.Now().Format("2006-01-02")
