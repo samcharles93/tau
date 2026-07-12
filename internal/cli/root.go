@@ -131,6 +131,12 @@ func NewRootCommand(version string) *urfavecli.Command {
 				Name:  "skill-dir",
 				Usage: "Additional skill directories (repeatable)",
 			},
+			&urfavecli.StringSliceFlag{
+				Name:    "tools",
+				Aliases: []string{"t"},
+				Usage:   "Restrict visible tools (comma-separated, repeatable; empty = all tools)",
+				Sources: urfavecli.EnvVars("TAU_TOOLS"),
+			},
 			&urfavecli.BoolFlag{
 				Name:    "ephemeral",
 				Usage:   "Do not persist this session to the session store",
@@ -196,6 +202,22 @@ func splitProviderModel(raw string) (providerPart string, modelPart string, ok b
 	return "", "", false
 }
 
+func splitToolsFlag(raw []string) []string {
+	if len(raw) == 0 {
+		return nil
+	}
+	var out []string
+	for _, s := range raw {
+		for part := range strings.SplitSeq(s, ",") {
+			trimmed := strings.TrimSpace(part)
+			if trimmed != "" {
+				out = append(out, trimmed)
+			}
+		}
+	}
+	return out
+}
+
 func chatOptionsFromCmd(cmd *urfavecli.Command, cfg tauconfig.Config, provider tauconfig.ProviderConfig, version string) app.ChatOptions {
 	return app.ChatOptions{
 		Config:          cfg,
@@ -212,5 +234,6 @@ func chatOptionsFromCmd(cmd *urfavecli.Command, cfg tauconfig.Config, provider t
 		NoWeb:           cmd.Bool("no-web"),
 		SkillDirs:       cmd.StringSlice("skill-dir"),
 		Ephemeral:       cmd.Bool("ephemeral"),
+		AllowedTools:    splitToolsFlag(cmd.StringSlice("tools")),
 	}
 }

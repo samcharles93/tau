@@ -9,6 +9,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/samcharles93/tau/internal/agent/tools"
+
 	tauchat "github.com/samcharles93/tau/internal/chat"
 	"github.com/samcharles93/tau/internal/eventbus"
 	"github.com/samcharles93/tau/internal/indexing"
@@ -90,7 +92,15 @@ func RunStdIn(ctx context.Context, opts ChatOptions, prompt string) error {
 		slog.Warn("skill discovery failed", "err", err)
 	}
 
-	systemPrompt := buildAgentSystemPrompt("", cwd, skillsMgr)
+	// Register built-in tools early to extract schemas for the prompt.
+	tmpReg := tools.NewRegistry()
+	var toolSchemas []tools.Schema
+	if err := tools.RegisterBuiltins(tmpReg, cwd, nil); err != nil {
+		slog.Warn("registering built-in tools for prompt", "err", err)
+	} else {
+		toolSchemas = tmpReg.Schemas()
+	}
+	systemPrompt := buildAgentSystemPrompt("", cwd, skillsMgr, toolSchemas)
 	workspaceIndex, indexErr := indexing.NewManager(ctx, cwd)
 	if indexErr != nil {
 		slog.Warn("workspace codesearch unavailable; grep will use direct search", "err", indexErr)

@@ -11,6 +11,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/samcharles93/tau/internal/agent/tools"
+
 	tauchat "github.com/samcharles93/tau/internal/chat"
 	tauconfig "github.com/samcharles93/tau/internal/config"
 	"github.com/samcharles93/tau/internal/eventbus"
@@ -131,7 +133,16 @@ func RunChat(ctx context.Context, opts ChatOptions) error {
 	logStartupPhase("after-skills", t0)
 
 	// Build the full system prompt — project context (AGENTS.md) + skill catalog.
-	systemPrompt := buildAgentSystemPrompt("", cwd, skillsMgr) // Left user prompt there in case we want to expand this later.
+	// Register built-in tools early to be able to extract their schemas for the prompt;
+	// the real registry in buildCoordinator does this again (idempotent).
+	tmpReg := tools.NewRegistry()
+	var toolSchemas []tools.Schema
+	if err := tools.RegisterBuiltins(tmpReg, cwd, nil); err != nil {
+		slog.Warn("registering built-in tools for prompt", "err", err)
+	} else {
+		toolSchemas = tmpReg.Schemas()
+	}
+	systemPrompt := buildAgentSystemPrompt("", cwd, skillsMgr, toolSchemas)
 	logStartupPhase("after-prompt", t0)
 
 	// Collect startup notifications for the coordinator event stream so the

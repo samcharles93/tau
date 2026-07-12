@@ -50,6 +50,7 @@ type ChatOptions struct {
 	SkillDirs       []string // --skill-dir: additional skill directories
 	NewTUI          bool     // --new-tui: use the new Bubbletea-based TUI
 	Ephemeral       bool     // --ephemeral: do not persist this session to the session store
+	AllowedTools    []string // --tools: initial tool allowlist (empty = unrestricted)
 	// Logger is the root logger for the session. When nil, slog.Default() is
 	// used. Each subsystem derives a named child (component=xxx) from it.
 	Logger *slog.Logger
@@ -192,8 +193,9 @@ func buildSessionConfig(opts ChatOptions, model tauchat.ChatModelRef, systemProm
 
 // buildAgentSystemPrompt builds the full system prompt for the agent,
 // combining project context (AGENTS.md), the skill catalog and working
-// directory info
-func buildAgentSystemPrompt(userPrompt, cwd string, skillsMgr *skills.Manager) string {
+// directory info. toolSchemas are the built-in tool name/description pairs
+// rendered into the prompt as capability metadata.
+func buildAgentSystemPrompt(userPrompt, cwd string, skillsMgr *skills.Manager, toolSchemas []tools.Schema) string {
 	contextFiles := agent.DiscoverContextFiles(cwd)
 
 	var activeSkills []*skills.Skill
@@ -210,6 +212,7 @@ func buildAgentSystemPrompt(userPrompt, cwd string, skillsMgr *skills.Manager) s
 		Skills:       activeSkills,
 		CWD:          cwd,
 		AppendPrompt: userPrompt,
+		Tools:        toolSchemas,
 	})
 }
 
@@ -726,6 +729,7 @@ func buildCoordinator(ctx context.Context, cfg coordinatorConfig) (*agent.Coordi
 		InteractiveUI:         cfg.InteractiveUI,
 		SessionManager:        cfg.SessionManager,
 		NoPersist:             cfg.ChatOptions.Ephemeral,
+		AllowedTools:          cfg.ChatOptions.AllowedTools,
 		AutoExportJSONL:       cfg.AutoExportJSONL,
 		StartupEvents:         cfg.StartupEvents,
 		ProjectDir:            cwd,
