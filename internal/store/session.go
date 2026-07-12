@@ -26,6 +26,27 @@ type SessionSummary struct {
 	ToolErrors      int       `json:"tool_errors"`
 	SystemPrompt    string    `json:"system_prompt,omitempty"`
 	ParentSessionID string    `json:"parent_session_id,omitempty"`
+	AgentInstanceID string    `json:"agent_instance_id,omitempty"`
+}
+
+// AgentInstance is the wire type for a persisted agent instance row.
+type AgentInstance struct {
+	ID               string    `json:"id"`
+	SpecName         string    `json:"spec_name"`
+	SpecScope        string    `json:"spec_scope"`
+	SpecSourcePath   string    `json:"spec_source_path,omitempty"`
+	SpecHash         string    `json:"spec_hash"`
+	SpecSnapshot     string    `json:"spec_snapshot"`
+	ResolvedProvider string    `json:"resolved_provider"`
+	ResolvedModel    string    `json:"resolved_model"`
+	EffectiveTools   string    `json:"effective_tools,omitempty"`
+	Depth            int       `json:"depth"`
+	ParentInstanceID string    `json:"parent_instance_id,omitempty"`
+	PID              int       `json:"pid,omitempty"`
+	StartedAt        time.Time `json:"started_at"`
+	EndedAt          time.Time `json:"ended_at,omitempty"`
+	ExitStatus       string    `json:"exit_status,omitempty"`
+	UsageJSON        string    `json:"usage_json,omitempty"`
 }
 
 // SessionStore persists and retrieves chat sessions. SQLite is the single
@@ -60,4 +81,22 @@ type SessionStore interface {
 
 	// SessionJSONLPath returns the canonical JSONL export file path for a session.
 	SessionJSONLPath(sessionID string, createdAt time.Time) string
+
+	// SaveAgentInstance persists a new agent instance row.
+	SaveAgentInstance(ctx context.Context, inst AgentInstance) error
+
+	// CloseAgentInstance marks an instance as ended with the given status
+	// and usage totals.
+	CloseAgentInstance(ctx context.Context, id, exitStatus, usageJSON string) error
+
+	// GetAgentInstance returns a single instance by id.
+	GetAgentInstance(ctx context.Context, id string) (AgentInstance, error)
+
+	// ListAgentInstances returns instances with the given parent, ordered
+	// by started_at desc. Empty parentID lists root instances.
+	ListAgentInstances(ctx context.Context, parentID string) ([]AgentInstance, error)
+
+	// ListChildren returns sessions that have the given parent_session_id,
+	// ordered by created_at desc.
+	ListChildren(ctx context.Context, parentSessionID string) ([]SessionSummary, error)
 }

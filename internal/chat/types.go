@@ -256,6 +256,9 @@ type ChatSessionConfig struct {
 	// branching / traceability. Empty string means this is a root session.
 	// The relationship is immutable after session creation.
 	ParentSessionID string `json:"parent_session_id,omitempty"`
+	// AgentInstanceID links this session to the agent instance that ran it.
+	// Empty for pre-migration sessions. Immutable after creation.
+	AgentInstanceID string `json:"agent_instance_id,omitempty"`
 }
 
 func (c ChatSessionConfig) withDefaults() ChatSessionConfig {
@@ -1046,6 +1049,9 @@ type ChatSessionState struct {
 	// ParentSessionID links this session to its parent for conversation
 	// branching / traceability. Empty means root session. Immutable after creation.
 	ParentSessionID string `json:"parent_session_id,omitempty"`
+	// AgentInstanceID links this session to the agent instance that ran it.
+	// Empty for pre-migration sessions. Immutable after creation.
+	AgentInstanceID string `json:"agent_instance_id,omitempty"`
 }
 
 func NewChatSessionState(sessionID string, cfg ChatSessionConfig, now time.Time) (*ChatSessionState, error) {
@@ -1066,6 +1072,7 @@ func NewChatSessionState(sessionID string, cfg ChatSessionConfig, now time.Time)
 		SystemPrompt:    cfg.SystemPrompt,
 		Parameters:      cfg.Parameters,
 		ParentSessionID: cfg.ParentSessionID,
+		AgentInstanceID: cfg.AgentInstanceID,
 		Status:          ChatSessionIdle,
 		CreatedAt:       now,
 		UpdatedAt:       now,

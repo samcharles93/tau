@@ -80,21 +80,22 @@ func (s *SQLiteStore) Save(ctx context.Context, state chat.ChatSessionState, dur
 			id, model_id, provider, created_at, updated_at, status,
 			message_count, input_tokens, output_tokens, cache_read,
 			cache_write, total_tokens, cost, duration_ms, tool_calls,
-			tool_errors, system_prompt, parent_session_id
-		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+			tool_errors, system_prompt, parent_session_id, agent_instance_id
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		ON CONFLICT(id) DO UPDATE SET
-			updated_at        = excluded.updated_at,
-			status            = excluded.status,
-			message_count     = excluded.message_count,
-			input_tokens      = excluded.input_tokens,
-			output_tokens     = excluded.output_tokens,
-			cache_read        = excluded.cache_read,
-			cache_write       = excluded.cache_write,
-			total_tokens      = excluded.total_tokens,
-			cost              = excluded.cost,
-			duration_ms       = excluded.duration_ms,
-			system_prompt     = excluded.system_prompt,
-			parent_session_id = excluded.parent_session_id
+			updated_at         = excluded.updated_at,
+			status             = excluded.status,
+			message_count      = excluded.message_count,
+			input_tokens       = excluded.input_tokens,
+			output_tokens      = excluded.output_tokens,
+			cache_read         = excluded.cache_read,
+			cache_write        = excluded.cache_write,
+			total_tokens       = excluded.total_tokens,
+			cost               = excluded.cost,
+			duration_ms        = excluded.duration_ms,
+			system_prompt      = excluded.system_prompt,
+			parent_session_id  = excluded.parent_session_id,
+			agent_instance_id  = excluded.agent_instance_id
 	`,
 		state.SessionID,
 		state.Model.ID,
@@ -114,6 +115,7 @@ func (s *SQLiteStore) Save(ctx context.Context, state chat.ChatSessionState, dur
 		0, // tool_errors
 		state.SystemPrompt,
 		nullString(state.ParentSessionID),
+		nullString(state.AgentInstanceID),
 	)
 	if err != nil {
 		return fmt.Errorf("store: upsert session: %w", err)
@@ -169,15 +171,16 @@ func (s *SQLiteStore) Load(ctx context.Context, id string) (chat.ChatSessionStat
 	var row struct {
 		modelID, provider, createdStr, updatedStr, status, systemPrompt string
 		parentID                                                        sql.NullString
+		agentInstID                                                     sql.NullString
 		messageCount                                                    int
 	}
 	err := s.db.QueryRowContext(ctx, `
 		SELECT model_id, provider, created_at, updated_at, status, system_prompt,
-		       message_count, parent_session_id
+		       message_count, parent_session_id, agent_instance_id
 		FROM sessions WHERE id = ?
 	`, id).Scan(
 		&row.modelID, &row.provider, &row.createdStr, &row.updatedStr,
-		&row.status, &row.systemPrompt, &row.messageCount, &row.parentID,
+		&row.status, &row.systemPrompt, &row.messageCount, &row.parentID, &row.agentInstID,
 	)
 	if err != nil {
 		if err == sql.ErrNoRows {
@@ -232,6 +235,7 @@ func (s *SQLiteStore) Load(ctx context.Context, id string) (chat.ChatSessionStat
 		ProviderName:    row.provider,
 		SystemPrompt:    row.systemPrompt,
 		ParentSessionID: row.parentID.String,
+		AgentInstanceID: row.agentInstID.String,
 		Status:          chat.ChatSessionStatus(row.status),
 		Messages:        messages,
 		CreatedAt:       createdAt,
@@ -251,7 +255,7 @@ func (s *SQLiteStore) List(ctx context.Context, limit int, cursor string) ([]Ses
 		SELECT id, model_id, provider, created_at, updated_at, status,
 		       message_count, input_tokens, output_tokens, total_tokens,
 		       cost, duration_ms, tool_calls, tool_errors,
-		       system_prompt, parent_session_id
+		       system_prompt, parent_session_id, agent_instance_id
 		FROM sessions
 	`
 	var args []any
@@ -272,7 +276,7 @@ func (s *SQLiteStore) List(ctx context.Context, limit int, cursor string) ([]Ses
 	var summaries []SessionSummary
 	for rows.Next() {
 		var createdStr, updatedStr string
-		var parentID sql.NullString
+		var parentID, agentInstID sql.NullString
 		var sum SessionSummary
 		if err := rows.Scan(
 			&sum.ID, &sum.ModelID, &sum.Provider,
@@ -280,13 +284,14 @@ func (s *SQLiteStore) List(ctx context.Context, limit int, cursor string) ([]Ses
 			&sum.MessageCount, &sum.InputTokens, &sum.OutputTokens,
 			&sum.TotalTokens, &sum.Cost, &sum.DurationMs,
 			&sum.ToolCalls, &sum.ToolErrors,
-			&sum.SystemPrompt, &parentID,
+			&sum.SystemPrompt, &parentID, &agentInstID,
 		); err != nil {
 			return nil, "", fmt.Errorf("store: scan session row: %w", err)
 		}
 		sum.CreatedAt, _ = time.Parse(time.RFC3339, createdStr)
 		sum.UpdatedAt, _ = time.Parse(time.RFC3339, updatedStr)
 		sum.ParentSessionID = parentID.String
+		sum.AgentInstanceID = agentInstID.String
 		summaries = append(summaries, sum)
 	}
 	if err := rows.Err(); err != nil {
@@ -420,6 +425,203 @@ func (s *SQLiteStore) SessionJSONLPath(sessionID string, createdAt time.Time) st
 // Close closes the database connection.
 func (s *SQLiteStore) Close() error {
 	return s.db.Close()
+}
+
+// SaveAgentInstance persists a new agent instance row.
+func (s *SQLiteStore) SaveAgentInstance(ctx context.Context, inst AgentInstance) error {
+	_, err := s.db.ExecContext(
+		ctx, `
+		INSERT INTO agent_instances (
+			id, spec_name, spec_scope, spec_source_path, spec_hash,
+			spec_snapshot, resolved_provider, resolved_model,
+			effective_tools, depth, parent_instance_id, pid, started_at
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+	`, inst.ID, inst.SpecName, inst.SpecScope, nullString(inst.SpecSourcePath),
+		inst.SpecHash, inst.SpecSnapshot, inst.ResolvedProvider,
+		inst.ResolvedModel, nullString(inst.EffectiveTools), inst.Depth,
+		nullString(inst.ParentInstanceID), nullInt(inst.PID),
+		formatTime(inst.StartedAt),
+	)
+	if err != nil {
+		return fmt.Errorf("store: save agent instance: %w", err)
+	}
+	return nil
+}
+
+// CloseAgentInstance marks an instance as ended with the given status and usage.
+func (s *SQLiteStore) CloseAgentInstance(ctx context.Context, id, exitStatus, usageJSON string) error {
+	_, err := s.db.ExecContext(ctx, `
+		UPDATE agent_instances
+		SET ended_at = ?, exit_status = ?, usage_json = ?
+		WHERE id = ?
+	`, formatTime(time.Now()), exitStatus, nullString(usageJSON), id)
+	if err != nil {
+		return fmt.Errorf("store: close agent instance: %w", err)
+	}
+	return nil
+}
+
+// GetAgentInstance returns a single instance by id.
+func (s *SQLiteStore) GetAgentInstance(ctx context.Context, id string) (AgentInstance, error) {
+	var (
+		inst           AgentInstance
+		startedStr     string
+		endedStr       sql.NullString
+		sourcePath     sql.NullString
+		effectiveTools sql.NullString
+		parentID       sql.NullString
+		pid            sql.NullInt64
+		exitStatus     sql.NullString
+		usageJSON      sql.NullString
+	)
+	err := s.db.QueryRowContext(ctx, `
+		SELECT id, spec_name, spec_scope, spec_source_path, spec_hash,
+		       spec_snapshot, resolved_provider, resolved_model,
+		       effective_tools, depth, parent_instance_id, pid,
+		       started_at, ended_at, exit_status, usage_json
+		FROM agent_instances WHERE id = ?
+	`, id).Scan(
+		&inst.ID, &inst.SpecName, &inst.SpecScope, &sourcePath,
+		&inst.SpecHash, &inst.SpecSnapshot, &inst.ResolvedProvider,
+		&inst.ResolvedModel, &effectiveTools, &inst.Depth, &parentID,
+		&pid, &startedStr, &endedStr, &exitStatus, &usageJSON,
+	)
+	if err != nil {
+		if err == sql.ErrNoRows {
+			return AgentInstance{}, fmt.Errorf("store: agent instance %q not found", id)
+		}
+		return AgentInstance{}, fmt.Errorf("store: get agent instance: %w", err)
+	}
+	inst.SpecSourcePath = sourcePath.String
+	inst.EffectiveTools = effectiveTools.String
+	inst.ParentInstanceID = parentID.String
+	if pid.Valid {
+		inst.PID = int(pid.Int64)
+	}
+	inst.StartedAt, _ = time.Parse(time.RFC3339, startedStr)
+	if endedStr.Valid {
+		inst.EndedAt, _ = time.Parse(time.RFC3339, endedStr.String)
+	}
+	inst.ExitStatus = exitStatus.String
+	inst.UsageJSON = usageJSON.String
+	return inst, nil
+}
+
+// ListAgentInstances returns instances with the given parent, ordered by
+// started_at desc. Empty parentID lists root instances.
+func (s *SQLiteStore) ListAgentInstances(ctx context.Context, parentID string) ([]AgentInstance, error) {
+	query := `
+		SELECT id, spec_name, spec_scope, spec_source_path, spec_hash,
+		       spec_snapshot, resolved_provider, resolved_model,
+		       effective_tools, depth, parent_instance_id, pid,
+		       started_at, ended_at, exit_status, usage_json
+		FROM agent_instances
+	`
+	var args []any
+	if parentID == "" {
+		query += " WHERE parent_instance_id IS NULL"
+	} else {
+		query += " WHERE parent_instance_id = ?"
+		args = append(args, parentID)
+	}
+	query += " ORDER BY started_at DESC"
+
+	rows, err := s.db.QueryContext(ctx, query, args...)
+	if err != nil {
+		return nil, fmt.Errorf("store: list agent instances: %w", err)
+	}
+	defer rows.Close()
+
+	var instances []AgentInstance
+	for rows.Next() {
+		var (
+			inst           AgentInstance
+			startedStr     string
+			endedStr       sql.NullString
+			sourcePath     sql.NullString
+			effectiveTools sql.NullString
+			rowParentID    sql.NullString
+			pid            sql.NullInt64
+			exitStatus     sql.NullString
+			usageJSON      sql.NullString
+		)
+		if err := rows.Scan(
+			&inst.ID, &inst.SpecName, &inst.SpecScope, &sourcePath,
+			&inst.SpecHash, &inst.SpecSnapshot, &inst.ResolvedProvider,
+			&inst.ResolvedModel, &effectiveTools, &inst.Depth, &rowParentID,
+			&pid, &startedStr, &endedStr, &exitStatus, &usageJSON,
+		); err != nil {
+			return nil, fmt.Errorf("store: scan agent instance: %w", err)
+		}
+		inst.SpecSourcePath = sourcePath.String
+		inst.EffectiveTools = effectiveTools.String
+		inst.ParentInstanceID = rowParentID.String
+		if pid.Valid {
+			inst.PID = int(pid.Int64)
+		}
+		inst.StartedAt, _ = time.Parse(time.RFC3339, startedStr)
+		if endedStr.Valid {
+			inst.EndedAt, _ = time.Parse(time.RFC3339, endedStr.String)
+		}
+		inst.ExitStatus = exitStatus.String
+		inst.UsageJSON = usageJSON.String
+		instances = append(instances, inst)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return instances, nil
+}
+
+// ListChildren returns sessions that have the given parent_session_id,
+// ordered by created_at desc.
+func (s *SQLiteStore) ListChildren(ctx context.Context, parentSessionID string) ([]SessionSummary, error) {
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT id, model_id, provider, created_at, updated_at, status,
+		       message_count, input_tokens, output_tokens, total_tokens,
+		       cost, duration_ms, tool_calls, tool_errors,
+		       system_prompt, parent_session_id, agent_instance_id
+		FROM sessions
+		WHERE parent_session_id = ?
+		ORDER BY created_at DESC
+	`, parentSessionID)
+	if err != nil {
+		return nil, fmt.Errorf("store: list children: %w", err)
+	}
+	defer rows.Close()
+
+	var children []SessionSummary
+	for rows.Next() {
+		var createdStr, updatedStr string
+		var parentID, agentInstID sql.NullString
+		var sum SessionSummary
+		if err := rows.Scan(
+			&sum.ID, &sum.ModelID, &sum.Provider,
+			&createdStr, &updatedStr, &sum.Status,
+			&sum.MessageCount, &sum.InputTokens, &sum.OutputTokens,
+			&sum.TotalTokens, &sum.Cost, &sum.DurationMs,
+			&sum.ToolCalls, &sum.ToolErrors,
+			&sum.SystemPrompt, &parentID, &agentInstID,
+		); err != nil {
+			return nil, fmt.Errorf("store: scan child: %w", err)
+		}
+		sum.CreatedAt, _ = time.Parse(time.RFC3339, createdStr)
+		sum.UpdatedAt, _ = time.Parse(time.RFC3339, updatedStr)
+		sum.ParentSessionID = parentID.String
+		sum.AgentInstanceID = agentInstID.String
+		children = append(children, sum)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return children, nil
+}
+
+func nullInt(v int) sql.NullInt64 {
+	if v == 0 {
+		return sql.NullInt64{}
+	}
+	return sql.NullInt64{Int64: int64(v), Valid: true}
 }
 
 // Helpers
