@@ -120,7 +120,7 @@ func Instantiate(ctx context.Context, cfg InstantiateConfig) (*InstantiateResult
 	resolvedProvider, resolvedModel := config.ResolveModelMode(
 		cfg.ModelOverride,
 		def.Model,
-		"", // specProvider — not yet parsed, added in P1.2
+		def.Provider,
 		cfg.InheritedProvider,
 		cfg.InheritedModel,
 		cfg.DefaultProvider,
