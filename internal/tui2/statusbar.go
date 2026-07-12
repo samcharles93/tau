@@ -28,6 +28,7 @@ const (
 	// model with no turn yet in flight, and restored once a turn completes.
 	agentReady agentState = iota
 	agentThinking
+	agentProcessing
 	agentRunningTool
 	agentStreaming
 	agentCancelled
@@ -354,13 +355,13 @@ func approxTokensPerSecond(streamed string, elapsed time.Duration) (rate int, ok
 // streaming/tools combinations at render time. Called synchronously in
 // View() — no goroutine, no Tick needed.
 //
-// Layout is deliberately consistent across all 6 states: the left side is
-// always "τ tau" plus the current activity (Ready/Thinking/Running <tool>/
-// generating/Cancelled/Error), never anything else; the right side always
+// Layout is deliberately consistent across all 7 states: the left side is
+// always "τ tau" plus the current activity (Ready/Thinking/Processing/
+// Running <tool>/generating/Cancelled/Error), never anything else; the right side always
 // carries model/provider/effort/token/cost/context/web — i.e. model sits on
 // the opposite side of the bar from whatever the agent is currently doing,
 // so the two never compete for the same reading position. Busy states
-// (Thinking/RunningTool/Streaming) trim the right side down to just what's
+// (Thinking/Processing/RunningTool/Streaming) trim the right side down to just what's
 // useful mid-turn (nothing else is as relevant, and it keeps the bar
 // compact); idle-ish states (Ready/Cancelled) restore the full identity +
 // token-usage picture. The steering indicator layers onto the left side on
@@ -376,6 +377,15 @@ func (m *model) computeStatusBar() string {
 	case agentThinking:
 		left = append(left, statusSeg{
 			text:  "Thinking " + thinkingDots(m.spinnerFrame),
+			style: func(s string) string { return termkit.FgOnly(s, theme.AccentColor) },
+			prio:  prioTransient,
+		})
+		right = append(right, m.identitySegs(false)...)
+		right = append(right, ctrlCStopSeg())
+
+	case agentProcessing:
+		left = append(left, statusSeg{
+			text:  "Processing " + thinkingDots(m.spinnerFrame),
 			style: func(s string) string { return termkit.FgOnly(s, theme.AccentColor) },
 			prio:  prioTransient,
 		})

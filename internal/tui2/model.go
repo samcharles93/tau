@@ -2499,11 +2499,13 @@ func (m *model) handleChatEvent(evt tauchat.ChatEvent) tea.Cmd {
 			m.bashRunning = false
 			m.bashCallID = ""
 		}
-		// Back to Thinking only once every tool in this batch has settled —
+		// Show a neutral processing state once every tool in this batch has
+		// settled. A later reasoning delta transitions explicitly to Thinking;
+		// tool completion alone is not evidence that the model is reasoning.
 		// a still-running sibling call means the status bar should keep
 		// showing "Running <tool>", not flicker to Thinking and back.
 		if !m.anyToolRunning() {
-			m.agentState = agentThinking
+			m.agentState = agentProcessing
 		}
 
 	case tauchat.ChatToolOutputEvent:

@@ -5461,6 +5461,7 @@ func TestToolExecutionStartResetsElapsedClock(t *testing.T) {
 // it should stay on agentRunningTool until every call in the batch settles.
 func TestAgentStateToolExecutionCompletedKeepsRunningToolWhileSiblingActive(t *testing.T) {
 	m := newTestModel(&fakeRuntime{}, nil)
+	m.width = 80
 	m.handleChatEvent(tauchat.ChatResponseStartedEvent{})
 	m.handleChatEvent(tauchat.ChatToolExecutionStartedEvent{CallID: "t1", ToolName: "read"})
 	m.handleChatEvent(tauchat.ChatToolExecutionStartedEvent{CallID: "t2", ToolName: "grep"})
@@ -5471,8 +5472,24 @@ func TestAgentStateToolExecutionCompletedKeepsRunningToolWhileSiblingActive(t *t
 	}
 
 	m.handleChatEvent(tauchat.ChatToolExecutionCompletedEvent{CallID: "t2"})
+	if m.agentState != agentProcessing {
+		t.Fatalf("agentState = %v, want agentProcessing once every tool has settled", m.agentState)
+	}
+	plain := stripANSI(m.computeStatusBar())
+	if !strings.Contains(plain, "Processing") || strings.Contains(plain, "Thinking") {
+		t.Fatalf("status bar = %q, want Processing without Thinking", plain)
+	}
+}
+
+func TestAgentStateReasoningAfterToolCompletionTransitionsToThinking(t *testing.T) {
+	m := newTestModel(&fakeRuntime{}, nil)
+	m.handleChatEvent(tauchat.ChatResponseStartedEvent{})
+	m.handleChatEvent(tauchat.ChatToolExecutionStartedEvent{CallID: "t1", ToolName: "read"})
+	m.handleChatEvent(tauchat.ChatToolExecutionCompletedEvent{CallID: "t1"})
+	m.handleChatEvent(tauchat.ChatReasoningDeltaEvent{Delta: "considering the result"})
+
 	if m.agentState != agentThinking {
-		t.Fatalf("agentState = %v, want agentThinking once every tool has settled", m.agentState)
+		t.Fatalf("agentState = %v, want agentThinking after an actual reasoning delta", m.agentState)
 	}
 }
 
