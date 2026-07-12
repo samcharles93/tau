@@ -31,6 +31,11 @@ type Config struct {
 	DisabledSkills []string `yaml:"disabled_skills,omitempty"`
 	// SkillPaths lists additional directories to scan for skills.
 	SkillPaths []string `yaml:"skill_paths,omitempty"`
+	// ModelModes maps tier names (e.g. "fast", "smart", "deep") to
+	// concrete provider/model pairs. Keys are case-insensitive unique.
+	ModelModes map[string]ModeConfig `yaml:"model_modes"`
+	// Agents holds default limits and caps for agent processes.
+	Agents AgentsConfig `yaml:"agents"`
 	// Metrics configures observability export and tracking.
 	Metrics     MetricsConfig     `yaml:"metrics"`
 	AutoCompact AutoCompactConfig `yaml:"auto_compact"`
@@ -59,6 +64,69 @@ type AutoCompactConfig struct {
 	Model          string  `yaml:"model,omitempty"`
 
 	enabledSet bool
+}
+
+// ModeConfig maps a tier name to a concrete provider/model pair.
+type ModeConfig struct {
+	Provider string `yaml:"provider" json:"provider"`
+	Model    string `yaml:"model" json:"model"`
+}
+
+// AgentsConfig holds default limits and caps for agent processes.
+// Zero values mean "defer to the built-in defaults".
+type AgentsConfig struct {
+	// DefaultMaxDepth is the spawn-tree depth when a spec doesn't say
+	// otherwise. Default 2 if unset.
+	DefaultMaxDepth int `yaml:"default_max_depth" json:"default_max_depth"`
+	// DepthCeiling is the hard maximum a spec may raise its depth to.
+	// Default 4 if unset.
+	DepthCeiling int `yaml:"depth_ceiling" json:"depth_ceiling"`
+	// DefaultMaxTurns is the per-assigned-task turn cap when a spec
+	// doesn't say otherwise. Default 30 if unset.
+	DefaultMaxTurns int `yaml:"default_max_turns" json:"default_max_turns"`
+	// DefaultTimeout is the per-assigned-task wall-clock limit when a
+	// spec doesn't say otherwise. Default 10m if unset.
+	DefaultTimeout time.Duration `yaml:"default_timeout" json:"default_timeout"`
+}
+
+func (a *AgentsConfig) UnmarshalYAML(value *yaml.Node) error {
+	type rawAgentsConfig struct {
+		DefaultMaxDepth      int    `yaml:"default_max_depth"`
+		DefaultMaxDepthCamel int    `yaml:"defaultMaxDepth"`
+		DepthCeiling         int    `yaml:"depth_ceiling"`
+		DepthCeilingCamel    int    `yaml:"depthCeiling"`
+		DefaultMaxTurns      int    `yaml:"default_max_turns"`
+		DefaultMaxTurnsCamel int    `yaml:"defaultMaxTurns"`
+		DefaultTimeout       string `yaml:"default_timeout"`
+		DefaultTimeoutCamel  string `yaml:"defaultTimeout"`
+	}
+	var raw rawAgentsConfig
+	if err := value.Decode(&raw); err != nil {
+		return err
+	}
+	a.DefaultMaxDepth = firstNonZero(raw.DefaultMaxDepth, raw.DefaultMaxDepthCamel)
+	a.DepthCeiling = firstNonZero(raw.DepthCeiling, raw.DepthCeilingCamel)
+	a.DefaultMaxTurns = firstNonZero(raw.DefaultMaxTurns, raw.DefaultMaxTurnsCamel)
+	if timeout := firstNonEmpty(raw.DefaultTimeout, raw.DefaultTimeoutCamel); timeout != "" {
+		d, err := time.ParseDuration(timeout)
+		if err != nil {
+			return fmt.Errorf("agents.default_timeout: %w", err)
+		}
+		a.DefaultTimeout = d
+	}
+	return nil
+}
+
+// DefaultAgentsConfig returns the built-in defaults when nothing is
+// configured. These are applied at resolve time, not at load time, so
+// zero values in the parsed config mean "use the defaults".
+func DefaultAgentsConfig() AgentsConfig {
+	return AgentsConfig{
+		DefaultMaxDepth: 2,
+		DepthCeiling:    4,
+		DefaultMaxTurns: 30,
+		DefaultTimeout:  10 * time.Minute,
+	}
 }
 
 func (c *AutoCompactConfig) UnmarshalYAML(value *yaml.Node) error {
@@ -95,6 +163,8 @@ func (c *Config) UnmarshalYAML(value *yaml.Node) error {
 		DefaultProvider string                    `yaml:"default_provider"`
 		DefaultModel    string                    `yaml:"default_model"`
 		Providers       yaml.Node                 `yaml:"providers"`
+		ModelModes      map[string]ModeConfig     `yaml:"model_modes"`
+		Agents          AgentsConfig              `yaml:"agents"`
 		UI              UIConfig                  `yaml:"ui"`
 		Debug           bool                      `yaml:"debug"`
 		Registry        RegistryConfig            `yaml:"registry"`
@@ -110,6 +180,8 @@ func (c *Config) UnmarshalYAML(value *yaml.Node) error {
 	}
 	c.DefaultProvider = raw.DefaultProvider
 	c.DefaultModel = raw.DefaultModel
+	c.ModelModes = raw.ModelModes
+	c.Agents = raw.Agents
 	c.UI = raw.UI
 	c.Debug = raw.Debug
 	c.Registry = raw.Registry
@@ -1004,6 +1076,8 @@ func mergeConfigs(globalCfg, localCfg Config) Config {
 		merged.Providers = append(merged.Providers, providers[name])
 	}
 	merged.UI = mergeUIConfigs(merged.UI, localCfg.UI)
+	merged.ModelModes = mergeModelModes(merged.ModelModes, localCfg.ModelModes)
+	merged.Agents = mergeAgentsConfigs(merged.Agents, localCfg.Agents)
 	return merged
 }
 
@@ -1016,6 +1090,41 @@ func mergeUIConfigs(globalCfg, localCfg UIConfig) UIConfig {
 	if localCfg.toolCallsDefaultCollapsedSet {
 		merged.ToolCallsDefaultCollapsed = localCfg.ToolCallsDefaultCollapsed
 		merged.toolCallsDefaultCollapsedSet = true
+	}
+	return merged
+}
+
+// mergeModelModes merges local model_modes on top of global. Local entries
+// override global entries with the same case-insensitive key.
+func mergeModelModes(global, local map[string]ModeConfig) map[string]ModeConfig {
+	if global == nil && local == nil {
+		return nil
+	}
+	merged := make(map[string]ModeConfig, len(global)+len(local))
+	for k, v := range global {
+		merged[strings.ToLower(k)] = v
+	}
+	for k, v := range local {
+		merged[strings.ToLower(k)] = v
+	}
+	return merged
+}
+
+// mergeAgentsConfigs merges project-local agent config over global config.
+// Non-zero local values override global; zero means "unchanged".
+func mergeAgentsConfigs(globalCfg, localCfg AgentsConfig) AgentsConfig {
+	merged := globalCfg
+	if localCfg.DefaultMaxDepth > 0 {
+		merged.DefaultMaxDepth = localCfg.DefaultMaxDepth
+	}
+	if localCfg.DepthCeiling > 0 {
+		merged.DepthCeiling = localCfg.DepthCeiling
+	}
+	if localCfg.DefaultMaxTurns > 0 {
+		merged.DefaultMaxTurns = localCfg.DefaultMaxTurns
+	}
+	if localCfg.DefaultTimeout > 0 {
+		merged.DefaultTimeout = localCfg.DefaultTimeout
 	}
 	return merged
 }
@@ -1055,6 +1164,40 @@ func Validate(cfg Config) error {
 			return fmt.Errorf("provider %q has unsupported auth type %q", name, provider.Auth.Type)
 		}
 	}
+
+	// Validate model_modes: keys must be non-empty; provider/model required
+	// for each entry; keys are case-insensitive unique (enforced above).
+	for name, mode := range cfg.ModelModes {
+		if strings.TrimSpace(name) == "" {
+			return errors.New("model_modes key must not be empty")
+		}
+		if strings.TrimSpace(mode.Provider) == "" {
+			return fmt.Errorf("model_mode %q: provider is required", name)
+		}
+		if strings.TrimSpace(mode.Model) == "" {
+			return fmt.Errorf("model_mode %q: model is required", name)
+		}
+	}
+
+	// Validate agents block: defaults must be positive, ceiling >= default depth.
+	if cfg.Agents.DefaultMaxDepth < 0 {
+		return errors.New("agents.default_max_depth must be >= 0")
+	}
+	if cfg.Agents.DepthCeiling < 0 {
+		return errors.New("agents.depth_ceiling must be >= 0")
+	}
+	if cfg.Agents.DefaultMaxTurns < 0 {
+		return errors.New("agents.default_max_turns must be >= 0")
+	}
+	if cfg.Agents.DefaultTimeout < 0 {
+		return errors.New("agents.default_timeout must be >= 0")
+	}
+	if cfg.Agents.DefaultMaxDepth > 0 && cfg.Agents.DepthCeiling > 0 &&
+		cfg.Agents.DefaultMaxDepth > cfg.Agents.DepthCeiling {
+		return fmt.Errorf("agents.default_max_depth (%d) must not exceed agents.depth_ceiling (%d)",
+			cfg.Agents.DefaultMaxDepth, cfg.Agents.DepthCeiling)
+	}
+
 	return nil
 }
 
@@ -1107,6 +1250,52 @@ func SaveDefaultProviderAndModel(cwd, provider, model string) error {
 		return fmt.Errorf("write local config: %w", err)
 	}
 	return nil
+}
+
+// ResolveModelMode resolves a tier name or concrete model string to a
+// provider/model pair using the full precedence chain:
+//  1. Spawn-call model parameter (tier or concrete) — passed via modeOrModel
+//  2. Spec model field (tier or concrete, with spec provider for concrete)
+//  3. The invoking instance's already-resolved pair — inherited{Provider,Model}
+//  4. Config default_provider / default_model
+//
+// Tier names are looked up case-insensitively in modelModes first; a miss
+// treats the value as a concrete model name. Returns the resolved provider
+// and model, which may be empty if nothing matched.
+func ResolveModelMode(
+	modeOrModel string,
+	specModel string,
+	specProvider string,
+	inheritedProvider string,
+	inheritedModel string,
+	defaultProvider string,
+	defaultModel string,
+	modelModes map[string]ModeConfig,
+) (provider string, model string) {
+	// 1. Spawn-call parameter: tier lookup first, then concrete.
+	if s := strings.TrimSpace(modeOrModel); s != "" {
+		if mode, ok := modelModes[strings.ToLower(s)]; ok {
+			return mode.Provider, mode.Model
+		}
+		return "", s
+	}
+
+	// 2. Spec model: tier lookup first, then concrete with optional provider.
+	if s := strings.TrimSpace(specModel); s != "" {
+		if mode, ok := modelModes[strings.ToLower(s)]; ok {
+			return mode.Provider, mode.Model
+		}
+		p := strings.TrimSpace(specProvider)
+		return p, s
+	}
+
+	// 3. Inherited pair from the invoking instance.
+	if strings.TrimSpace(inheritedProvider) != "" || strings.TrimSpace(inheritedModel) != "" {
+		return inheritedProvider, inheritedModel
+	}
+
+	// 4. Global defaults.
+	return defaultProvider, defaultModel
 }
 
 // ProviderNames returns configured provider names in resolution order.

@@ -501,6 +501,11 @@ registry:
   token: ""
 auto_compact:
   enabled: false
+agents:
+  default_max_depth: 0
+  default_max_turns: 0
+  default_timeout: 0s
+  depth_ceiling: 0
 metrics:
   dir: /custom/metrics/path
   session: false
