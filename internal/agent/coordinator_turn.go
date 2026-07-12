@@ -60,6 +60,13 @@ func (c *Coordinator) runTurn(ctx context.Context, state chat.ChatSessionState) 
 			return
 		}
 
+		// Check budget/limit enforcement.
+		c.turnCount++
+		if status, partial := c.checkLimits(sessionID, requestID); status != "" {
+			c.budgetExhausted(sessionID, requestID, status, partial, time.Now().UTC())
+			return
+		}
+
 		// Inject any steering messages that arrived during tool execution
 		// or at the turn start.
 		c.injectSteering(sessionID)
@@ -221,6 +228,9 @@ func (c *Coordinator) runTurn(ctx context.Context, state chat.ChatSessionState) 
 			"total_tokens", result.Usage.TotalTokens,
 			"tool_calls", len(result.ToolCalls),
 		)
+
+		// Accumulate token usage for budget enforcement.
+		c.cumulativeTokens += result.Usage.TotalTokens
 
 		// No tool calls → final response. Complete the turn.
 		if len(result.ToolCalls) == 0 {
@@ -1321,4 +1331,72 @@ func (c *Coordinator) cancelAllSessions() {
 	}
 	c.shutdown = make(map[string]struct{})
 	c.mu.Unlock()
+}
+
+// checkLimits returns the breach status ("", "budget_exhausted", or
+// "timed_out") and whether partial output is available. An empty status
+// means no limit has been breached — continue the turn.
+func (c *Coordinator) checkLimits(sessionID, requestID string) (status string, partial bool) {
+	// Structural turn cap.
+	if c.maxTurns > 0 && c.turnCount > c.maxTurns {
+		return "budget_exhausted", true
+	}
+
+	// Wall-clock: check deadline first (more specific), then timeout.
+	n := time.Now()
+	if !c.deadline.IsZero() && n.After(c.deadline) {
+		return "timed_out", true
+	}
+	if c.timeout > 0 && n.After(c.startedAt.Add(c.timeout)) {
+		return "timed_out", true
+	}
+
+	// Token budget.
+	if c.maxTokens > 0 && c.cumulativeTokens >= c.maxTokens {
+		return "budget_exhausted", true
+	}
+
+	return "", false
+}
+
+// budgetExhausted emits a ChatResponseCompletedEvent with a budget/timed_out
+// status and the partial output flag set. It leaves the session in a
+// completed state so the caller (child entry) can persist and report result.
+func (c *Coordinator) budgetExhausted(sessionID, requestID, status string, partialOutput bool, at time.Time) {
+	c.mu.Lock()
+	session, ok := c.sessions[sessionID]
+	if !ok || session.state.ActiveRequestID != requestID {
+		c.mu.Unlock()
+		return
+	}
+
+	// Force-terminate the turn: consume any pending assistant text and mark complete.
+	pending := session.state.PendingAssistant
+	session.state.PendingAssistant = ""
+	session.state.ActiveRequestID = ""
+	if pending != "" {
+		msg := chat.ChatMessage{
+			Role:    chat.ChatRoleAssistant,
+			Content: pending,
+		}
+		session.state.Messages = append(session.state.Messages, msg)
+	}
+	session.state.Status = chat.ChatSessionIdle
+	session.cancel = nil
+	session.steeringMu.Lock()
+	session.pendingSteering = nil
+	session.steeringMu.Unlock()
+	snapshot := chat.CloneChatSessionState(session.state)
+	c.mu.Unlock()
+
+	// Emit the completed event with budget/timed_out metadata.
+	event := chat.ChatResponseCompletedEvent{
+		State:           snapshot,
+		RequestID:       requestID,
+		CompletedAt:     at,
+		BudgetExhausted: status == "budget_exhausted",
+		TimedOut:        status == "timed_out",
+		Partial:         partialOutput,
+	}
+	c.emit(event)
 }

@@ -621,6 +621,15 @@ type ChatResponseCompletedEvent struct {
 	FinishReason string           `json:"finish_reason"`
 	Usage        ChatUsage        `json:"usage"`
 	CompletedAt  time.Time        `json:"completed_at"`
+	// BudgetExhausted is true when the turn ended due to max-turns or
+	// max-tokens budget exhaustion (per-task limit, per P2.4).
+	BudgetExhausted bool `json:"budget_exhausted,omitempty"`
+	// TimedOut is true when the turn ended due to a wall-clock deadline
+	// or timeout (per-task limit, per P2.4).
+	TimedOut bool `json:"timed_out,omitempty"`
+	// Partial is true when the response contains best-effort partial output
+	// from a limit-breached turn.
+	Partial bool `json:"partial,omitempty"`
 }
 
 func (ChatResponseCompletedEvent) IsChatEvent() {}

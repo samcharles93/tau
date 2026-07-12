@@ -87,6 +87,15 @@ type Coordinator struct {
 	allowedTools      map[string]bool // active filter (intersected with effectiveTools); nil = no mode restriction
 	autoCompact       tauconfig.AutoCompactConfig
 
+	// Budget/limit enforcement (per-task, used by child processes).
+	maxTurns         int
+	timeout          time.Duration
+	maxTokens        int
+	deadline         time.Time
+	startedAt        time.Time
+	turnCount        int
+	cumulativeTokens int
+
 	mu       sync.Mutex
 	sessions map[string]*coordinatorSession
 	shutdown map[string]struct{}
@@ -198,6 +207,19 @@ type CoordinatorConfig struct {
 	// LLM requests when the current request approaches the model context
 	// window.
 	AutoCompact tauconfig.AutoCompactConfig
+
+	// MaxTurns is a structural cap on agentic-loop iterations per assigned
+	// task (from spec or config). Zero means no cap.
+	MaxTurns int
+	// Timeout is the default wall-clock limit per task (from spec or
+	// config). Zero means no timeout.
+	Timeout time.Duration
+	// MaxTokens is a per-task token budget from the spawn call. Zero
+	// means no budget.
+	MaxTokens int
+	// Deadline is a per-task wall-clock deadline from the spawn call.
+	// Zero means no deadline.
+	Deadline time.Time
 }
 
 // NewCoordinator creates and starts the agent coordinator.
@@ -273,6 +295,11 @@ func NewCoordinator(ctx context.Context, cfg CoordinatorConfig) (*Coordinator, e
 		commandRegistry:   cfg.CommandRegistry,
 		lastSkillsConfig:  cfg.SkillsDiscoveryConfig,
 		autoCompact:       cfg.AutoCompact,
+		maxTurns:          cfg.MaxTurns,
+		timeout:           cfg.Timeout,
+		maxTokens:         cfg.MaxTokens,
+		deadline:          cfg.Deadline,
+		startedAt:         time.Now(),
 		effectiveTools:    initEffectiveTools,
 		allowedTools:      nil,
 		sessions:          make(map[string]*coordinatorSession),
