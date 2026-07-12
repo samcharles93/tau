@@ -2,9 +2,6 @@ package agent
 
 import (
 	"context"
-	"crypto/rand"
-	"crypto/sha256"
-	"encoding/json"
 	"fmt"
 	"os"
 	"strings"
@@ -13,16 +10,8 @@ import (
 	"github.com/samcharles93/tau/internal/agent/spec"
 	"github.com/samcharles93/tau/internal/chat"
 	"github.com/samcharles93/tau/internal/config"
-	"github.com/samcharles93/tau/internal/skills"
 	"github.com/samcharles93/tau/internal/store"
 )
-
-// base32Alphabet is the lowercased RFC 4648 alphabet without padding,
-// used for instance-id suffixes.
-const base32Alphabet = "abcdefghijklmnopqrstuvwxyz234567"
-
-// instanceIDLen is the number of random base32 characters in an instance id.
-const instanceIDLen = 6
 
 // InstantiateConfig holds the parameters for bringing an agent identity
 // into existence. See docs/specs/agents/02-spawning-and-lifecycle.md.
@@ -132,7 +121,7 @@ func Instantiate(ctx context.Context, cfg InstantiateConfig) (*InstantiateResult
 	effectiveTools := computeEffectiveTools(def.Tools, cfg)
 
 	// Step 4: Mint the instance id and the instance row.
-	instanceID := mintInstanceID(def.Name)
+	instanceID := spec.MintInstanceID(def.Name)
 	depth := cfg.ParentDepth
 	if cfg.ParentInstanceID != "" {
 		depth++ // child
@@ -157,20 +146,20 @@ func Instantiate(ctx context.Context, cfg InstantiateConfig) (*InstantiateResult
 	}
 
 	// Build the spec snapshot (resolved definition + body as JSON).
-	specSnapshot := buildSpecSnapshot(def, resolvedProvider, resolvedModel, effectiveTools)
-	specHash := hashSpec(specSnapshot)
+	specSnapshot := spec.BuildSpecSnapshot(def, resolvedProvider, resolvedModel, effectiveTools)
+	specHash := spec.HashSpecSnapshot(specSnapshot)
 
 	now := time.Now()
 	inst := store.AgentInstance{
 		ID:               instanceID,
 		SpecName:         def.Name,
-		SpecScope:        scopeString(def.Scope),
+		SpecScope:        spec.ScopeString(def.Scope),
 		SpecSourcePath:   def.SourcePath,
 		SpecHash:         specHash,
 		SpecSnapshot:     specSnapshot,
 		ResolvedProvider: resolvedProvider,
 		ResolvedModel:    resolvedModel,
-		EffectiveTools:   toolsToJSON(effectiveTools),
+		EffectiveTools:   spec.ToolsToJSON(effectiveTools),
 		Depth:            depth,
 		ParentInstanceID: cfg.ParentInstanceID,
 		PID:              osPID(),
@@ -265,78 +254,16 @@ func intersectTools(a, b []string) []string {
 	return out
 }
 
-// mintInstanceID generates a new instance address like "research#k3v9qp".
-func mintInstanceID(specName string) string {
-	var suffix [instanceIDLen]byte
-	_, _ = rand.Read(suffix[:])
-	for i := range suffix {
-		suffix[i] = base32Alphabet[int(suffix[i])%len(base32Alphabet)]
-	}
-	return fmt.Sprintf("%s#%s", specName, string(suffix[:]))
-}
-
 // buildSpecSnapshot serialises the resolved definition + body as JSON
 // so every instance carries exactly what ran it.
-func buildSpecSnapshot(def *spec.Definition, provider, model string, tools []string) string {
-	snap := map[string]any{
-		"name":        def.Name,
-		"description": def.Description,
-		"body":        def.Body,
-		"resolved": map[string]any{
-			"provider": provider,
-			"model":    model,
-		},
-	}
-	if len(tools) > 0 {
-		snap["tools"] = tools
-	}
-	if def.Scope != "" {
-		snap["scope"] = scopeString(def.Scope)
-	}
-	if def.SourcePath != "" {
-		snap["source_path"] = def.SourcePath
-	}
-	data, _ := json.Marshal(snap)
-	return string(data)
-}
 
 // hashSpec returns the hex-encoded SHA-256 of the spec snapshot JSON.
 // Hashing the full snapshot (which includes all frontmatter fields and the
 // resolved model/tools) means any change to tools:, model:, description, or
 // the body will produce a different hash — correctly detecting spec drift
 // rather than silently colliding on identical bodies with different frontmatter.
-func hashSpec(snapshotJSON string) string {
-	h := sha256.Sum256([]byte(snapshotJSON))
-	return fmt.Sprintf("%x", h[:])
-}
-
-// scopeString returns the string representation of a skills.Scope.
-func scopeString(scope skills.Scope) string {
-	switch scope {
-	case skills.ScopeUser:
-		return "user"
-	case skills.ScopeProject:
-		return "project"
-	case skills.ScopeBuiltin:
-		return "builtin"
-	default:
-		return ""
-	}
-}
 
 // toolsToJSON serialises a tool list as a JSON array string, or "" for nil/empty.
-func toolsToJSON(tools []string) string {
-	if len(tools) == 0 {
-		return ""
-	}
-	data, _ := json.Marshal(tools)
-	return string(data)
-}
-
-// osPID returns the current OS process id.
-func osPID() int {
-	return os.Getpid()
-}
 
 // SweepOrphanedInstances closes any agent_instances rows with ended_at IS NULL
 // whose pid is no longer running. Called at root startup. See
@@ -366,4 +293,9 @@ func pidAlive(_ int) bool {
 	// dead pid rows are harmless and get closed eventually on the next sweep.
 	// TODO: add a platform-specific Signal(0) check.
 	return true
+}
+
+// osPID returns the current OS process id.
+func osPID() int {
+	return os.Getpid()
 }
