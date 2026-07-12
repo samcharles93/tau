@@ -44,7 +44,7 @@ type AgentInstance struct {
 	ParentInstanceID string    `json:"parent_instance_id,omitempty"`
 	PID              int       `json:"pid,omitempty"`
 	StartedAt        time.Time `json:"started_at"`
-	EndedAt          time.Time `json:"ended_at,omitempty"`
+	EndedAt          time.Time `json:"ended_at"`
 	ExitStatus       string    `json:"exit_status,omitempty"`
 	UsageJSON        string    `json:"usage_json,omitempty"`
 }
