@@ -158,7 +158,7 @@ func Instantiate(ctx context.Context, cfg InstantiateConfig) (*InstantiateResult
 
 	// Build the spec snapshot (resolved definition + body as JSON).
 	specSnapshot := buildSpecSnapshot(def, resolvedProvider, resolvedModel, effectiveTools)
-	specHash := hashSpec(def)
+	specHash := hashSpec(specSnapshot)
 
 	now := time.Now()
 	inst := store.AgentInstance{
@@ -300,12 +300,13 @@ func buildSpecSnapshot(def *spec.Definition, provider, model string, tools []str
 	return string(data)
 }
 
-// hashSpec returns the hex-encoded SHA-256 of the spec file content.
-func hashSpec(def *spec.Definition) string {
-	// Rebuild the raw content from the parsed definition — not the file on
-	// disk, which may have changed since parsing.
-	content := def.Body
-	h := sha256.Sum256([]byte(content))
+// hashSpec returns the hex-encoded SHA-256 of the spec snapshot JSON.
+// Hashing the full snapshot (which includes all frontmatter fields and the
+// resolved model/tools) means any change to tools:, model:, description, or
+// the body will produce a different hash — correctly detecting spec drift
+// rather than silently colliding on identical bodies with different frontmatter.
+func hashSpec(snapshotJSON string) string {
+	h := sha256.Sum256([]byte(snapshotJSON))
 	return fmt.Sprintf("%x", h[:])
 }
 
