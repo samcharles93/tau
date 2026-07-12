@@ -751,7 +751,8 @@ func (*reasoningOnlyStreamer) StreamChatCompletionFull(
 }
 
 type unknownToolStreamer struct {
-	done bool
+	done     bool
+	toolName string // if set, the hallucinated tool call uses this name
 }
 
 func (s *unknownToolStreamer) StreamChatCompletionFull(
@@ -766,19 +767,24 @@ func (s *unknownToolStreamer) StreamChatCompletionFull(
 		return chat.CompletionResult{FinishReason: "stop"}, nil
 	}
 	s.done = true
+	name := s.toolName
+	if name == "" {
+		name = "missing"
+	}
+	callID := "call_" + name
 	_ = cb.OnToolCallDelta(chat.ChatToolCallDelta{
 		Index:    0,
-		ID:       "call_missing",
+		ID:       callID,
 		Type:     "function",
-		Function: chat.ChatFunctionCallDelta{Name: "missing", Arguments: `{}`},
+		Function: chat.ChatFunctionCallDelta{Name: name, Arguments: `{}`},
 	})
 	return chat.CompletionResult{
 		FinishReason: "tool_calls",
 		ToolCalls: []chat.ChatToolCall{{
-			ID:   "call_missing",
+			ID:   callID,
 			Type: "function",
 			Function: chat.ChatFunctionCall{
-				Name:      "missing",
+				Name:      name,
 				Arguments: `{}`,
 			},
 		}},

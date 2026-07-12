@@ -541,7 +541,7 @@ func (c *Coordinator) executeToolsParallel(ctx context.Context, sessionID, reque
 				}
 			} else {
 				effectiveArgs = beforeResp.GetModifiedToolArguments()
-				if tool, ok := c.registry.Get(tc.Function.Name); ok {
+				if tool, ok := c.registry.Get(tc.Function.Name); ok && c.toolAllowed(tc.Function.Name) {
 					run = func() (tools.Result, error) {
 						return tool.Execute(ctx, json.RawMessage(effectiveArgs), bridge)
 					}
@@ -554,7 +554,7 @@ func (c *Coordinator) executeToolsParallel(ctx context.Context, sessionID, reque
 			}
 
 		default:
-			if tool, ok := c.registry.Get(tc.Function.Name); ok {
+			if tool, ok := c.registry.Get(tc.Function.Name); ok && c.toolAllowed(tc.Function.Name) {
 				run = func() (tools.Result, error) {
 					return tool.Execute(ctx, json.RawMessage(effectiveArgs), bridge)
 				}
@@ -713,6 +713,25 @@ func (c *Coordinator) SetAllowedTools(toolNames []string) {
 	// Always allow switching skills regardless of ceiling.
 	m["skill"] = true
 	c.allowedTools = m
+}
+
+// toolAllowed returns true if the named tool is permitted by both the
+// effectiveTools ceiling and the allowedTools active filter. Used as an
+// execution-time guard: a tool hidden from the LLM by buildToolDefs must
+// also be blocked if the LLM hallucinates it anyway.
+func (c *Coordinator) toolAllowed(name string) bool {
+	c.mu.Lock()
+	effective := c.effectiveTools
+	allowed := c.allowedTools
+	c.mu.Unlock()
+
+	if effective != nil && !effective[name] {
+		return false
+	}
+	if allowed != nil && !allowed[name] {
+		return false
+	}
+	return true
 }
 
 func (c *Coordinator) buildToolDefs() []chat.ChatToolDef {

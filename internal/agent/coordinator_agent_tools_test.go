@@ -12,6 +12,7 @@ import (
 	"github.com/samcharles93/tau/internal/agent/tools"
 	"github.com/samcharles93/tau/internal/chat"
 	"github.com/samcharles93/tau/internal/config"
+	"github.com/samcharles93/tau/internal/eventbus"
 	"github.com/stretchr/testify/require"
 )
 
@@ -246,4 +247,288 @@ func TestHandleRunAgentBuiltinToolsApplyDirectly(t *testing.T) {
 	require.True(t, active["grep"], "a built-in must be able to widen the allowlist to its own declared tools")
 	require.True(t, active["docs"], "a built-in must be able to widen the allowlist to its own declared tools")
 	require.False(t, active["bash"], "plan does not declare bash, so it must not be active")
+}
+
+// ============================================================================
+// P2.6: Per-run tool filtering tests (two-tier: effectiveTools + allowedTools)
+// ============================================================================
+
+// TestEffectiveToolsCeilingRejectsOutOfSetToolCalls creates a coordinator
+// with an effectiveTools ceiling and verifies that a tool outside the
+// ceiling is rejected as "unknown tool" — the buildToolDefs filter means
+// the LLM can't see it, and if it somehow calls it anyway (hallucination),
+// the registry lookup fails with the standard unknown-tool path.
+func TestEffectiveToolsCeilingRejectsOutOfSetToolCalls(t *testing.T) {
+	reg := newRegistryWithTools(t, "read", "grep", "edit", "bash")
+	coordinator, err := NewCoordinator(context.Background(), CoordinatorConfig{
+		Bus:          newTestBus(t),
+		TokenSource:  func(context.Context, config.ProviderConfig) (string, error) { return "", nil },
+		Streamer:     &unknownToolStreamer{toolName: "edit"},
+		Registry:     reg,
+		AllowedTools: []string{"read", "grep"},
+	})
+	require.NoError(t, err)
+	defer coordinator.Close()
+
+	// Verify buildToolDefs respects the ceiling.
+	active := activeToolNames(coordinator)
+	require.True(t, active["read"])
+	require.True(t, active["grep"])
+	// skill is in the effectiveTools ceiling but not registered in
+	// this test's tool registry, so buildToolDefs can't return it.
+	require.False(t, active["edit"], "edit is outside the ceiling")
+	require.False(t, active["bash"], "bash is outside the ceiling")
+
+	// Send a prompt — the streamer calls "edit" which IS registered but is
+	// outside the ceiling (only read/grep are allowed). The execution-time
+	// guard must reject it as unknown tool.
+	sub := eventbus.Subscribe[chat.ChatEvent](coordinator.bus.Client("test-observer"))
+	defer sub.Close()
+	startTestSession(t, coordinator)
+	require.NoError(t, coordinator.Send(chat.SubmitChatPromptCommand{
+		SessionID:   "session-1",
+		RequestID:   "request-1",
+		Prompt:      "use missing",
+		SubmittedAt: time.Now().UTC(),
+	}))
+
+	deadline := time.After(2 * time.Second)
+	for {
+		select {
+		case event := <-sub.Events():
+			completed, ok := event.(chat.ChatToolExecutionCompletedEvent)
+			if !ok {
+				continue
+			}
+			require.Equal(t, "edit", completed.ToolName)
+			require.Equal(t, "error", completed.Status)
+			require.True(t, completed.IsError)
+			require.Contains(t, completed.ResultSummary, "unknown tool")
+			return
+		case <-deadline:
+			t.Fatal("timed out waiting for unknown tool completion event")
+		}
+	}
+}
+
+// TestModeIntersectionWithinCeiling verifies that a mode (via
+// SetAllowedTools) can only narrow within the effectiveTools ceiling
+// and never widens beyond it.
+func TestModeIntersectionWithinCeiling(t *testing.T) {
+	reg := newRegistryWithTools(t, "read", "grep", "edit", "bash", "write")
+	coordinator, err := NewCoordinator(context.Background(), CoordinatorConfig{
+		Bus:          newTestBus(t),
+		TokenSource:  func(context.Context, config.ProviderConfig) (string, error) { return "", nil },
+		Streamer:     noopStreamer{},
+		Registry:     reg,
+		AllowedTools: []string{"read", "grep", "edit"},
+	})
+	require.NoError(t, err)
+	defer coordinator.Close()
+
+	// Initial state: ceiling only, no active mode.
+	active := activeToolNames(coordinator)
+	require.True(t, active["read"])
+	require.True(t, active["grep"])
+	require.True(t, active["edit"])
+	require.False(t, active["bash"])
+	require.False(t, active["write"])
+
+	// Activate a mode that requests ["read", "bash"]. Bash is outside the
+	// ceiling, so it should be excluded. Read + skill survive.
+	coordinator.SetAllowedTools([]string{"read", "bash"})
+	active = activeToolNames(coordinator)
+	require.True(t, active["read"], "read is in both sets")
+	// skill ceiling entry not visible because skill tool not in registry
+	require.False(t, active["bash"], "bash is outside the ceiling, must not be granted")
+	require.False(t, active["grep"], "grep was not in the mode list")
+	require.False(t, active["edit"], "edit was not in the mode list")
+
+	// Mode exit: revert to ceiling.
+	coordinator.SetAllowedTools(nil)
+	active = activeToolNames(coordinator)
+	require.True(t, active["read"])
+	require.True(t, active["grep"])
+	require.True(t, active["edit"])
+	require.False(t, active["bash"])
+}
+
+// TestPluginRegistrationMidRunBlockedByCeiling verifies that a new plugin
+// tool registered mid-session is invisible to the LLM if it falls outside
+// the effectiveTools ceiling, and visible if inside.
+func TestPluginRegistrationMidRunBlockedByCeiling(t *testing.T) {
+	reg := newRegistryWithTools(t, "read", "grep")
+	coordinator, err := NewCoordinator(context.Background(), CoordinatorConfig{
+		Bus:          newTestBus(t),
+		TokenSource:  func(context.Context, config.ProviderConfig) (string, error) { return "", nil },
+		Streamer:     noopStreamer{},
+		Registry:     reg,
+		AllowedTools: []string{"read", "grep"},
+	})
+	require.NoError(t, err)
+	defer coordinator.Close()
+
+	// Register a new plugin tool "myplugin__extra" mid-run.
+	require.NoError(t, reg.RegisterPluginTool("myplugin", tools.PluginToolDef{Name: "extra"}))
+
+	active := activeToolNames(coordinator)
+	// "myplugin__extra" was NOT in the effectiveTools ceiling originally.
+	// Since the ceiling is immutable, it should be blocked.
+	require.False(t, active["myplugin__extra"], "plugin tool outside ceiling must be blocked")
+	require.True(t, active["read"])
+	require.True(t, active["grep"])
+
+	// Register a plugin tool "myplugin__read" that overlaps "read" in name.
+	// The ceiling allows "read", and the plugin tool's sanitized name is
+	// "myplugin__read" — this is NOT the same as "read", so it's also blocked.
+	require.NoError(t, reg.RegisterPluginTool("myplugin", tools.PluginToolDef{Name: "read"}))
+	active = activeToolNames(coordinator)
+	require.False(t, active["myplugin__read"], "plugin tool with sanitized name must be blocked by ceiling")
+}
+
+// TestPluginRegistrationNoCeilingPassesThrough verifies that without a
+// ceiling, plugin tools registered mid-run ARE visible.
+func TestPluginRegistrationNoCeilingPassesThrough(t *testing.T) {
+	reg := newRegistryWithTools(t, "read", "grep")
+	coordinator, err := NewCoordinator(context.Background(), CoordinatorConfig{
+		Bus:         newTestBus(t),
+		TokenSource: func(context.Context, config.ProviderConfig) (string, error) { return "", nil },
+		Streamer:    noopStreamer{},
+		Registry:    reg,
+		// No AllowedTools — unrestricted.
+	})
+	require.NoError(t, err)
+	defer coordinator.Close()
+
+	require.NoError(t, reg.RegisterPluginTool("myplugin", tools.PluginToolDef{Name: "extra"}))
+
+	active := activeToolNames(coordinator)
+	require.True(t, active["myplugin__extra"], "plugin tool must be visible when no ceiling")
+	require.True(t, active["read"])
+}
+
+// TestAgentToolRemovalCutsSpawnCapability verifies that removing "agent"
+// from the effectiveTools ceiling makes it invisible to the LLM via
+// buildToolDefs, which is the mechanism for cutting spawn capability
+// down the tree (decision 8).
+func TestAgentToolRemovalCutsSpawnCapability(t *testing.T) {
+	// Register "agent" as a real tool so it CAN be filtered.
+	reg := newRegistryWithTools(t, "read", "grep", "agent")
+
+	// Ceiling includes "agent".
+	coordWithAgent, err := NewCoordinator(context.Background(), CoordinatorConfig{
+		Bus:          newTestBus(t),
+		TokenSource:  func(context.Context, config.ProviderConfig) (string, error) { return "", nil },
+		Streamer:     noopStreamer{},
+		Registry:     reg,
+		AllowedTools: []string{"read", "agent"},
+	})
+	require.NoError(t, err)
+	defer coordWithAgent.Close()
+
+	activeWith := activeToolNames(coordWithAgent)
+	require.True(t, activeWith["agent"], "agent tool must be visible when in ceiling")
+	require.True(t, activeWith["read"])
+
+	// Ceiling excludes "agent".
+	coordWithoutAgent, err := NewCoordinator(context.Background(), CoordinatorConfig{
+		Bus:          newTestBus(t),
+		TokenSource:  func(context.Context, config.ProviderConfig) (string, error) { return "", nil },
+		Streamer:     noopStreamer{},
+		Registry:     reg,
+		AllowedTools: []string{"read"},
+	})
+	require.NoError(t, err)
+	defer coordWithoutAgent.Close()
+
+	activeWithout := activeToolNames(coordWithoutAgent)
+	require.False(t, activeWithout["agent"], "agent tool must NOT be visible when excluded from ceiling")
+	require.True(t, activeWithout["read"])
+}
+
+// TestSetAllowedToolsEmptyRevertsToCeiling verifies that mode exit
+// (empty or nil list) reverts allowedTools to nil, restoring the
+// ceiling-only filter — not the full unrestricted registry.
+func TestSetAllowedToolsEmptyRevertsToCeiling(t *testing.T) {
+	reg := newRegistryWithTools(t, "read", "grep", "bash", "write")
+	coordinator, err := NewCoordinator(context.Background(), CoordinatorConfig{
+		Bus:          newTestBus(t),
+		TokenSource:  func(context.Context, config.ProviderConfig) (string, error) { return "", nil },
+		Streamer:     noopStreamer{},
+		Registry:     reg,
+		AllowedTools: []string{"read", "grep"},
+	})
+	require.NoError(t, err)
+	defer coordinator.Close()
+
+	// Start unrestricted (ceiling only).
+	active := activeToolNames(coordinator)
+	require.True(t, active["read"])
+	require.True(t, active["grep"])
+	require.False(t, active["bash"])
+
+	// Activate a mode that narrows to ["read"].
+	coordinator.SetAllowedTools([]string{"read"})
+	active = activeToolNames(coordinator)
+	require.True(t, active["read"])
+	require.False(t, active["grep"], "grep was not in the mode list")
+
+	// Empty list: should revert to ceiling, NOT full registry.
+	coordinator.SetAllowedTools([]string{})
+	active = activeToolNames(coordinator)
+	require.True(t, active["read"])
+	require.True(t, active["grep"])
+	require.False(t, active["bash"], "empty SetAllowedTools must not grant bash outside the ceiling")
+	require.False(t, active["write"], "empty SetAllowedTools must not grant write outside the ceiling")
+
+	// Nil list: same behaviour.
+	coordinator.SetAllowedTools(nil)
+	active = activeToolNames(coordinator)
+	require.True(t, active["read"])
+	require.True(t, active["grep"])
+	require.False(t, active["bash"])
+}
+
+// TestAllowedToolsConstructorDefaultsToUnrestricted verifies that when
+// no AllowedTools is passed to NewCoordinator, effectiveTools is nil
+// (unrestricted) and all tools are visible.
+func TestAllowedToolsConstructorDefaultsToUnrestricted(t *testing.T) {
+	reg := newRegistryWithTools(t, "read", "grep", "bash")
+	coordinator, err := NewCoordinator(context.Background(), CoordinatorConfig{
+		Bus:         newTestBus(t),
+		TokenSource: func(context.Context, config.ProviderConfig) (string, error) { return "", nil },
+		Streamer:    noopStreamer{},
+		Registry:    reg,
+		// No AllowedTools — nil slice.
+	})
+	require.NoError(t, err)
+	defer coordinator.Close()
+
+	active := activeToolNames(coordinator)
+	require.True(t, active["read"])
+	require.True(t, active["grep"])
+	require.True(t, active["bash"])
+	// No "skill" in the map because it was never registered; it's only
+	// auto-added to non-empty ceilings.
+	require.False(t, active["skill"], "skill is not auto-added when ceiling is unrestricted")
+}
+
+// TestAllowedToolsConstructorEmptySliceIsNil verifies that an empty slice
+// is treated as nil (unrestricted).
+func TestAllowedToolsConstructorEmptySliceIsNil(t *testing.T) {
+	reg := newRegistryWithTools(t, "read", "grep", "bash")
+	coordinator, err := NewCoordinator(context.Background(), CoordinatorConfig{
+		Bus:          newTestBus(t),
+		TokenSource:  func(context.Context, config.ProviderConfig) (string, error) { return "", nil },
+		Streamer:     noopStreamer{},
+		Registry:     reg,
+		AllowedTools: []string{},
+	})
+	require.NoError(t, err)
+	defer coordinator.Close()
+
+	active := activeToolNames(coordinator)
+	require.True(t, active["read"])
+	require.True(t, active["grep"])
+	require.True(t, active["bash"])
 }
