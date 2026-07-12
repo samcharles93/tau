@@ -13,6 +13,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"time"
 	"unicode"
 
 	"github.com/samcharles93/tau/internal/skills"
@@ -49,6 +50,19 @@ type Definition struct {
 	// Model is reserved for a future per-agent model override. It is parsed
 	// and validated but not yet applied by the coordinator.
 	Model string
+
+	// Provider is the provider to use when Model is set to a concrete
+	// (non-tier) model name. Only meaningful alongside a concrete Model;
+	// tiers carry their own provider via config model_modes.
+	Provider string
+
+	// MaxTurns is a structural cap on agentic-loop iterations per assigned
+	// task when running as a process. Zero means "defer to config default".
+	MaxTurns int
+
+	// Timeout is the default wall-clock limit per assigned task when running
+	// as a process. Zero means "defer to config default".
+	Timeout time.Duration
 
 	// DisableModelInvocation is reserved for future model-driven agent
 	// selection, mirroring skills.Skill.DisableModelInvocation. Tau has no
@@ -101,6 +115,9 @@ type frontmatter struct {
 	Description            string            `yaml:"description"`
 	Tools                  []string          `yaml:"tools,omitempty"`
 	Model                  string            `yaml:"model,omitempty"`
+	Provider               string            `yaml:"provider,omitempty"`
+	MaxTurns               int               `yaml:"max-turns,omitempty"`
+	Timeout                string            `yaml:"timeout,omitempty"`
 	DisableModelInvocation bool              `yaml:"disable-model-invocation,omitempty"`
 	UserInvocable          *bool             `yaml:"user-invocable,omitempty"`
 	ModeSwitcher           *bool             `yaml:"mode-switcher,omitempty"`
@@ -158,11 +175,35 @@ func Parse(content []byte) (*Definition, error) {
 		displayName = titleCase(name)
 	}
 
+	model := strings.TrimSpace(parsed.Model)
+	provider := strings.TrimSpace(parsed.Provider)
+
+	// Validate max-turns: negative or zero is rejected.
+	if parsed.MaxTurns < 0 {
+		return nil, fmt.Errorf("max-turns must be >= 1, got %d", parsed.MaxTurns)
+	}
+
+	// Validate timeout: must be a parseable duration string.
+	var timeout time.Duration
+	if raw := strings.TrimSpace(parsed.Timeout); raw != "" {
+		d, err := time.ParseDuration(raw)
+		if err != nil {
+			return nil, fmt.Errorf("timeout %q: %w", raw, err)
+		}
+		if d <= 0 {
+			return nil, fmt.Errorf("timeout must be positive, got %q", raw)
+		}
+		timeout = d
+	}
+
 	return &Definition{
 		Name:                   name,
 		Description:            description,
 		Tools:                  parsed.Tools,
-		Model:                  strings.TrimSpace(parsed.Model),
+		Model:                  model,
+		Provider:               provider,
+		MaxTurns:               parsed.MaxTurns,
+		Timeout:                timeout,
 		DisableModelInvocation: parsed.DisableModelInvocation,
 		UserInvocable:          userInvocable,
 		ModeSwitcher:           modeSwitcher,

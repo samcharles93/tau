@@ -2,6 +2,7 @@ package spec
 
 import (
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/require"
 )
@@ -118,4 +119,71 @@ func TestParse_ColorPassthrough(t *testing.T) {
 	def, err = Parse([]byte("---\nname: x\ndescription: y\n---\nbody"))
 	require.NoError(t, err)
 	require.Empty(t, def.Color)
+}
+
+func TestParse_ProviderPassthrough(t *testing.T) {
+	def, err := Parse([]byte("---\nname: x\ndescription: y\nprovider: openai\n---\nbody"))
+	require.NoError(t, err)
+	require.Equal(t, "openai", def.Provider)
+
+	def, err = Parse([]byte("---\nname: x\ndescription: y\n---\nbody"))
+	require.NoError(t, err)
+	require.Empty(t, def.Provider)
+}
+
+func TestParse_MaxTurnsValid(t *testing.T) {
+	def, err := Parse([]byte("---\nname: x\ndescription: y\nmax-turns: 10\n---\nbody"))
+	require.NoError(t, err)
+	require.Equal(t, 10, def.MaxTurns)
+
+	// Zero is valid (defer to config default).
+	def, err = Parse([]byte("---\nname: x\ndescription: y\n---\nbody"))
+	require.NoError(t, err)
+	require.Equal(t, 0, def.MaxTurns)
+}
+
+func TestParse_MaxTurnsRejected(t *testing.T) {
+	_, err := Parse([]byte("---\nname: x\ndescription: y\nmax-turns: -1\n---\nbody"))
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "max-turns")
+
+	_, err = Parse([]byte("---\nname: x\ndescription: y\nmax-turns: 0\n---\nbody"))
+	require.NoError(t, err) // 0 is valid — defers to config
+}
+
+func TestParse_TimeoutValid(t *testing.T) {
+	def, err := Parse([]byte("---\nname: x\ndescription: y\ntimeout: 5m\n---\nbody"))
+	require.NoError(t, err)
+	require.Equal(t, 5*time.Minute, def.Timeout)
+
+	def, err = Parse([]byte("---\nname: x\ndescription: y\ntimeout: 1h30m\n---\nbody"))
+	require.NoError(t, err)
+	require.Equal(t, 90*time.Minute, def.Timeout)
+
+	// Unset is valid.
+	def, err = Parse([]byte("---\nname: x\ndescription: y\n---\nbody"))
+	require.NoError(t, err)
+	require.Equal(t, time.Duration(0), def.Timeout)
+}
+
+func TestParse_TimeoutRejected(t *testing.T) {
+	_, err := Parse([]byte("---\nname: x\ndescription: y\ntimeout: not-a-duration\n---\nbody"))
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "timeout")
+
+	_, err = Parse([]byte("---\nname: x\ndescription: y\ntimeout: -5m\n---\nbody"))
+	require.Error(t, err)
+
+	_, err = Parse([]byte("---\nname: x\ndescription: y\ntimeout: 0s\n---\nbody"))
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "positive")
+}
+
+func TestParse_AllNewFieldsTogether(t *testing.T) {
+	def, err := Parse([]byte("---\nname: test-agent\ndescription: y\nprovider: deepseek\nmodel: deepseek-v3\nmax-turns: 25\ntimeout: 15m\n---\nbody"))
+	require.NoError(t, err)
+	require.Equal(t, "deepseek", def.Provider)
+	require.Equal(t, "deepseek-v3", def.Model)
+	require.Equal(t, 25, def.MaxTurns)
+	require.Equal(t, 15*time.Minute, def.Timeout)
 }
