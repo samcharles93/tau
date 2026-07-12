@@ -259,6 +259,16 @@ func codexSSEChunk(data []byte) (aisdkchat.Chunk, bool) {
 			Name:      event.Name,
 			ArgsDelta: firstNonEmpty(event.Delta, event.Arguments),
 		}}
+	case "response.function_call_arguments.done":
+		// The Codex backend may omit the function name from the initial
+		// output_item.added event and provide it only when arguments are
+		// finalized. Do not forward event.Arguments here: it is the complete
+		// snapshot and would duplicate the deltas already assembled upstream.
+		chunk.ToolCallDeltas = []aisdkchat.ToolCallDelta{{
+			Index: event.Index,
+			ID:    firstNonEmpty(event.CallID, event.ItemID),
+			Name:  event.Name,
+		}}
 	case "response.output_item.added":
 		name, callID, itemID, arguments := event.Name, event.CallID, event.ItemID, event.Arguments
 		if event.Item != nil {
