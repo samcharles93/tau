@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.18.1](https://github.com/samcharles93/tau/compare/v0.18.0...v0.18.1) (2026-07-12)
+
+
+### Bug Fixes
+
+* bundle ripgrep binary, fix grep fallback, harden CI tests ([7dde49d](https://github.com/samcharles93/tau/commit/7dde49dff43f6220de1164c9993deffb745b7794))
+* **codex:** recover streamed tool names ([ecb25d0](https://github.com/samcharles93/tau/commit/ecb25d02edb8a43aec86f841c529b2e92a15f3f4))
+
 ## [0.18.0](https://github.com/samcharles93/tau/compare/v0.17.0...v0.18.0) (2026-07-11)
 
 
