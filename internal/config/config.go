@@ -180,7 +180,7 @@ func (c *Config) UnmarshalYAML(value *yaml.Node) error {
 	}
 	c.DefaultProvider = raw.DefaultProvider
 	c.DefaultModel = raw.DefaultModel
-	c.ModelModes = raw.ModelModes
+	c.ModelModes = normalizeModelModesKeys(raw.ModelModes)
 	c.Agents = raw.Agents
 	c.UI = raw.UI
 	c.Debug = raw.Debug
@@ -1100,14 +1100,26 @@ func mergeModelModes(global, local map[string]ModeConfig) map[string]ModeConfig 
 	if global == nil && local == nil {
 		return nil
 	}
-	merged := make(map[string]ModeConfig, len(global)+len(local))
-	for k, v := range global {
-		merged[strings.ToLower(k)] = v
-	}
+	merged := normalizeModelModesKeys(global)
 	for k, v := range local {
 		merged[strings.ToLower(k)] = v
 	}
 	return merged
+}
+
+// normalizeModelModesKeys returns a new map with all keys lowercased.
+// Returns nil if the input is nil. A duplicate after lowercasing means
+// one entry silently overwrites another (which is fine — validate catches
+// missing provider/model, and merge picks the last).
+func normalizeModelModesKeys(modes map[string]ModeConfig) map[string]ModeConfig {
+	if modes == nil {
+		return nil
+	}
+	out := make(map[string]ModeConfig, len(modes))
+	for k, v := range modes {
+		out[strings.ToLower(k)] = v
+	}
+	return out
 }
 
 // mergeAgentsConfigs merges project-local agent config over global config.
