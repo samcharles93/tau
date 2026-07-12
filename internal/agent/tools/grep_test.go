@@ -172,7 +172,7 @@ func TestGrepFallback(t *testing.T) {
 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			got, err := grepFallback(ctx, tc.params, tc.params.Path, tmp)
+			got, err := grepFallback(ctx, tc.params, tc.params.Path, tmp, nil)
 			if err != nil {
 				t.Fatalf("grepFallback error: %v", err)
 			}
@@ -207,7 +207,7 @@ func TestGrepFallback_ContextDedup(t *testing.T) {
 	defer cancel()
 
 	params := GrepParams{Pattern: "Hello", Path: tmp, ContextBefore: 1, ContextAfter: 1}
-	got, err := grepFallback(ctx, params, tmp, tmp)
+	got, err := grepFallback(ctx, params, tmp, tmp, nil)
 	if err != nil {
 		t.Fatalf("grepFallback error: %v", err)
 	}
@@ -281,7 +281,7 @@ func TestGrepFallback_NonExistentPath(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
-	_, err := grepFallback(ctx, GrepParams{Pattern: "foo"}, "/nonexistent/path", "/nonexistent/path")
+	_, err := grepFallback(ctx, GrepParams{Pattern: "foo"}, "/nonexistent/path", "/nonexistent/path", nil)
 	if err == nil {
 		t.Fatal("expected error for non-existent path")
 	}

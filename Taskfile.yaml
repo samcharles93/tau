@@ -160,3 +160,29 @@ tasks:
       - go install mvdan.cc/gofumpt@latest
       - go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@latest
       - go install github.com/go-delve/delve/cmd/dlv@latest
+
+  docker:test:
+    desc: Run tests in Docker (same environment as CI)
+    cmds:
+      - docker build -f Dockerfile.test -t tau-test .
+      - docker run --rm tau-test
+
+  docker:build:
+    desc: Build tau in Docker
+    cmds:
+      - docker build -t tau .
+
+  rg:download:
+    desc: Download ripgrep binaries for embedding (linux/darwin/windows amd64)
+    cmds:
+      - |
+        RG_VERSION=15.1.0
+        OUT=internal/agent/tools/rg
+        curl -sL "https://github.com/BurntSushi/ripgrep/releases/download/${RG_VERSION}/ripgrep-${RG_VERSION}-x86_64-unknown-linux-musl.tar.gz" | tar xz -C /tmp
+        cp /tmp/ripgrep-${RG_VERSION}-x86_64-unknown-linux-musl/rg "${OUT}/rg-linux-amd64"
+        curl -sL "https://github.com/BurntSushi/ripgrep/releases/download/${RG_VERSION}/ripgrep-${RG_VERSION}-x86_64-apple-darwin.tar.gz" | tar xz -C /tmp
+        cp /tmp/ripgrep-${RG_VERSION}-x86_64-apple-darwin/rg "${OUT}/rg-darwin-amd64"
+        curl -sL "https://github.com/BurntSushi/ripgrep/releases/download/${RG_VERSION}/ripgrep-${RG_VERSION}-x86_64-pc-windows-msvc.zip" -o /tmp/rg-win.zip
+        unzip -qo /tmp/rg-win.zip -d /tmp/rg-win
+        cp /tmp/rg-win/ripgrep-${RG_VERSION}-x86_64-pc-windows-msvc/rg.exe "${OUT}/rg-windows-amd64.exe"
+        chmod +x "${OUT}/rg-linux-amd64" "${OUT}/rg-darwin-amd64"

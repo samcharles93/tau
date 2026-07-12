@@ -11,6 +11,8 @@ import (
 	"regexp"
 	"strings"
 	"unicode/utf8"
+
+	"github.com/samcharles93/tau/internal/agent/tools/rg"
 )
 
 const (
@@ -145,7 +147,7 @@ func makeGrepExecutor(cwd string, workspaceIndex GrepIndex) Executor {
 		if err != nil {
 			searchBackend = "direct"
 			// No external binary available — use pure-Go fallback.
-			output, err := grepFallback(ctx, p, searchPath, cwd)
+			output, err := grepFallback(ctx, p, searchPath, cwd, searchTargets)
 			if err != nil {
 				return grepBackendResult(Result{Content: fmt.Sprintf("grep error: %v", err), IsError: true}, searchBackend), nil
 			}
@@ -253,41 +255,44 @@ func truncationBoundary(s string, max int) int {
 }
 
 // grepFallback performs a pure-Go file scan for when ripgrep is not available.
-// Works on all platforms including Windows.
-func grepFallback(ctx context.Context, p GrepParams, searchPath, cwd string) (string, error) {
-	info, err := os.Stat(searchPath)
+// Works on all platforms including Windows. When targets has explicit file paths
+// (not just the searchPath directory), only those files are searched.
+func grepFallback(ctx context.Context, p GrepParams, searchPath, cwd string, targets []string) (string, error) {
+	matcher, err := buildMatcher(p)
 	if err != nil {
 		return "", err
 	}
 
-	var matcher func(line string) bool
-	if !p.Literal {
-		var re *regexp.Regexp
-		if p.CaseSensitive || hasUppercase(p.Pattern) {
-			re, err = regexp.Compile(p.Pattern)
-		} else {
-			re, err = regexp.Compile("(?i:" + p.Pattern + ")")
-		}
-		if err != nil {
-			return "", fmt.Errorf("invalid regex: %w", err)
-		}
-		matcher = func(line string) bool {
-			return re.MatchString(line)
-		}
-	} else {
-		if p.CaseSensitive || hasUppercase(p.Pattern) {
-			matcher = func(line string) bool {
-				return strings.Contains(line, p.Pattern)
+	var results []grepResult
+
+	// When explicit files are provided (index candidates), search only those.
+	if len(targets) > 0 && targets[0] != searchPath {
+		for _, path := range targets {
+			select {
+			case <-ctx.Done():
+				return "", ctx.Err()
+			default:
 			}
-		} else {
-			lowerPattern := strings.ToLower(p.Pattern)
-			matcher = func(line string) bool {
-				return strings.Contains(strings.ToLower(line), lowerPattern)
+			res, fErr := grepFile(ctx, path, matcher, p.ContextBefore, p.ContextAfter)
+			if fErr != nil {
+				continue
 			}
+			for i := range res {
+				res[i].relPath, _ = filepath.Rel(cwd, path)
+				res[i].relPath = filepath.ToSlash(res[i].relPath)
+				if res[i].relPath == "" || res[i].relPath == "." {
+					res[i].relPath = filepath.ToSlash(filepath.Base(path))
+				}
+			}
+			results = append(results, res...)
 		}
+		return formatGrepResults(results), nil
 	}
 
-	var results []grepResult
+	info, err := os.Stat(searchPath)
+	if err != nil {
+		return "", err
+	}
 
 	if !info.IsDir() {
 		res, err := grepFile(ctx, searchPath, matcher, p.ContextBefore, p.ContextAfter)
@@ -352,8 +357,35 @@ func grepFallback(ctx context.Context, p GrepParams, searchPath, cwd string) (st
 		}
 	}
 
+	return formatGrepResults(results), nil
+}
+
+// buildMatcher returns a line matcher based on grep parameters.
+func buildMatcher(p GrepParams) (func(string) bool, error) {
+	if !p.Literal {
+		var re *regexp.Regexp
+		var err error
+		if p.CaseSensitive || hasUppercase(p.Pattern) {
+			re, err = regexp.Compile(p.Pattern)
+		} else {
+			re, err = regexp.Compile("(?i:" + p.Pattern + ")")
+		}
+		if err != nil {
+			return nil, fmt.Errorf("invalid regex: %w", err)
+		}
+		return func(line string) bool { return re.MatchString(line) }, nil
+	}
+	if p.CaseSensitive || hasUppercase(p.Pattern) {
+		return func(line string) bool { return strings.Contains(line, p.Pattern) }, nil
+	}
+	lowerPattern := strings.ToLower(p.Pattern)
+	return func(line string) bool { return strings.Contains(strings.ToLower(line), lowerPattern) }, nil
+}
+
+// formatGrepResults deduplicates and formats grep results in ripgrep style.
+func formatGrepResults(results []grepResult) string {
 	if len(results) == 0 {
-		return "", nil
+		return ""
 	}
 
 	// Overlapping context windows can emit the same line twice, and a line
@@ -384,7 +416,7 @@ func grepFallback(ctx context.Context, p GrepParams, searchPath, cwd string) (st
 		}
 	}
 
-	return strings.Join(lines, "\n"), nil
+	return strings.Join(lines, "\n")
 }
 
 type grepResult struct {
@@ -475,11 +507,8 @@ func buildGrepArgs(p GrepParams) []string {
 }
 
 func grepBinary() (string, error) {
-	// Prefer ripgrep; signal fallback if not found.
-	if path, err := exec.LookPath("rg"); err == nil {
-		return path, nil
-	}
-	return "", fmt.Errorf("ripgrep (rg) not found in PATH")
+	// Use the embedded statically-linked ripgrep binary.
+	return rg.Path()
 }
 
 // hasUppercase reports whether s contains any uppercase ASCII letter.

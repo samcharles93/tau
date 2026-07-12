@@ -1,0 +1,12 @@
+# Test-only Dockerfile — run go test in the same environment as CI
+# Usage: docker build -f Dockerfile.test -t tau-test . && docker run --rm tau-test
+FROM golang:1.26-alpine
+
+RUN apk add --no-cache git ca-certificates
+
+WORKDIR /src
+COPY go.mod go.sum ./
+RUN go mod download
+
+COPY . .
+CMD ["go", "test", "./..."]

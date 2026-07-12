@@ -136,7 +136,9 @@ func TestManagerRefreshBuildsAtomicallyAndRecordsGeneration(t *testing.T) {
 	ctx := t.Context()
 	m.refreshAsync(ctx)
 
-	deadline := time.Now().Add(2 * time.Second)
+	// Poll for the async build to complete. Use a deadline longer than SQLite's
+	// busy timeout (5 s) so a contended CI runner doesn't trigger a false timeout.
+	deadline := time.Now().Add(8 * time.Second)
 	var installedPath string
 	for {
 		state, stateErr := m.state(context.Background())
@@ -144,6 +146,20 @@ func TestManagerRefreshBuildsAtomicallyAndRecordsGeneration(t *testing.T) {
 			if _, err := os.Stat(state.IndexPath); err == nil {
 				installedPath = state.IndexPath
 				break
+			}
+		}
+		// If the goroutine errored, fail fast with the last error.
+		if stateErr == nil && state.IndexedAt.IsZero() {
+			// Check if status indicates an error.
+			db, dbErr := openIndexDB(m.dbPath)
+			if dbErr == nil {
+				var status, lastErr string
+				_ = db.QueryRowContext(context.Background(),
+					`SELECT status, last_error FROM workspace_indexes WHERE root = ?`, m.root).Scan(&status, &lastErr)
+				db.Close()
+				if status == "error" {
+					t.Fatalf("build failed: %s", lastErr)
+				}
 			}
 		}
 		if time.Now().After(deadline) {
