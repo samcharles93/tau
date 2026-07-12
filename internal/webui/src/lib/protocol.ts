@@ -246,6 +246,8 @@ export interface SessionSummary {
   message_count: number
   total_tokens: number
   cost: number
+  parent_session_id?: string
+  agent_instance_id?: string
 }
 
 export interface SessionsListedEvent {

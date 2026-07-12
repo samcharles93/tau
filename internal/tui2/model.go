@@ -77,8 +77,13 @@ type model struct {
 	// committedReasoningKey) for the rare turn that commits reasoning
 	// before the owning message has a real ID.
 	committedReasoning []*committedReasoningBlock
-	lastReasoningKey   string
-	reasoningKeySeq    int
+
+	// Child agent state — terminal summaries for each spawned child agent
+	// tool call. Keyed by tool call id. Rendered as a compact status line
+	// above the tool result per docs/specs/agents/05-ui.md (The state block).
+	childAgents      map[string]childAgentResult
+	lastReasoningKey string
+	reasoningKeySeq  int
 
 	// helpOverlay is the currently open /help overlay, or nil if none — see
 	// help.go. Unlike a committed scrollback message, it's redrawn fresh
@@ -440,6 +445,36 @@ func committedGroupKey(tools []toolState) string {
 	return strings.Join(ids, "\x00")
 }
 
+// childAgentResult holds the terminal state of a spawned child agent,
+// extracted from the agent tool's result details. Rendered as a compact
+// summary line above the tool result (see docs/specs/agents/05-ui.md).
+type childAgentResult struct {
+	instanceID string // e.g. "research#k3v9qp"
+	status     string // completed, failed, cancelled, budget_exhausted, timed_out
+	turns      int
+	tokens     int // total tokens
+	durationMs int64
+	errorMsg   string
+}
+
+// renderChildAgentLine renders the compact terminal summary line.
+func renderChildAgentLine(c childAgentResult) string {
+	statusStyle := termkit.FgOnly
+	statusColour := theme.SuccessColor
+	switch c.status {
+	case "failed", "timed_out":
+		statusColour = theme.ErrorColor
+	case "cancelled":
+		statusColour = theme.AccentColor
+	case "budget_exhausted":
+		statusColour = theme.AccentColor
+	}
+	status := statusStyle(strings.ReplaceAll(c.status, "_", " "), statusColour)
+	durStr := formatDurationCompact(c.durationMs)
+	return termkit.FgOnly(fmt.Sprintf("  agent %s  %s  turn %d · %dt · %s",
+		c.instanceID, status, c.turns, c.tokens, durStr), theme.ToneMuted)
+}
+
 // committedReasoningBlock is a completed reasoning block already committed
 // to permanent scrollback that can still be collapsed/expanded afterward —
 // mirroring committedToolGroup's same "stay interactive after it scrolls
@@ -575,6 +610,7 @@ func newModel(
 		debug:                     debug,
 		extensionCommands:         make(map[string]tauchat.ExtensionCommand),
 		panels:                    make(map[string]pluginPanel),
+		childAgents:               make(map[string]childAgentResult),
 		mdCache:                   mdCache,
 	}
 }
@@ -2495,6 +2531,12 @@ func (m *model) handleChatEvent(evt tauchat.ChatEvent) tea.Cmd {
 		if e.ResultSummary != "" || e.Details != nil {
 			m.finalizeToolResult(e.CallID, e.ResultSummary, e.Details)
 		}
+		// Extract child agent terminal state from the agent tool result.
+		if e.ToolName == "agent" && e.Details != nil {
+			if child, ok := extractChildAgentResult(e.Details); ok {
+				m.childAgents[e.CallID] = child
+			}
+		}
 		if m.bashCallID != "" && e.CallID == m.bashCallID {
 			m.bashRunning = false
 			m.bashCallID = ""
@@ -3260,6 +3302,16 @@ func (m *model) commitToolGroup(tools []toolState, restore map[string]*committed
 	g.lineCount = visualLineCount(rendered)
 	m.committedGroups = append(m.committedGroups, g)
 	m.renderedLines = append(m.renderedLines, strings.Split(rendered, "\n")...)
+
+	// Append child agent summary lines for any "agent" tools that completed.
+	for _, t := range tools {
+		if t.name == "agent" {
+			if child, ok := m.childAgents[t.id]; ok {
+				line := renderChildAgentLine(child)
+				m.renderedLines = append(m.renderedLines, line)
+			}
+		}
+	}
 }
 
 // shouldNavigateTools returns true when tool focus navigation is appropriate:
@@ -4486,19 +4538,53 @@ func skillLabelFromArgs(args string) string {
 	return "skill"
 }
 
-// sessionSummariesText renders the /session list output — mirrors
-// internal/tui/inline_events.go's printSessionSummaries.
+// sessionSummariesText renders the /session list output as a lineage tree:
+// child sessions (parent_session_id) nest under their parent with indent
+// glyphs, and each row carrying an agent_instance_id shows it as attribution
+// (the instance id is already "specname#suffix", so no separate lookup
+// against agent_instances is needed to display it). Sessions whose parent
+// isn't present in this page (or that have none) render as roots.
 func sessionSummariesText(summaries []tauchat.SessionSummary, nextCursor string) string {
 	if len(summaries) == 0 {
 		return "Sessions: no saved sessions"
 	}
+
+	byID := make(map[string]bool, len(summaries))
+	for _, s := range summaries {
+		byID[s.ID] = true
+	}
+	childrenOf := make(map[string][]tauchat.SessionSummary)
+	var roots []tauchat.SessionSummary
+	for _, s := range summaries {
+		if s.ParentSessionID != "" && byID[s.ParentSessionID] {
+			childrenOf[s.ParentSessionID] = append(childrenOf[s.ParentSessionID], s)
+		} else {
+			roots = append(roots, s)
+		}
+	}
+
 	var b strings.Builder
 	b.WriteString("Sessions:")
-	for _, s := range summaries {
-		fmt.Fprintf(&b, "\n- %s · %d messages · %s", s.ID, s.MessageCount, s.ModelID)
-		if line := sessionSummaryMetricsLine(s); line != "" {
-			fmt.Fprintf(&b, "\n  %s", line)
+	var writeNode func(s tauchat.SessionSummary, depth int)
+	writeNode = func(s tauchat.SessionSummary, depth int) {
+		indent := strings.Repeat("  ", depth)
+		glyph := "-"
+		if depth > 0 {
+			glyph = "└─"
 		}
+		fmt.Fprintf(&b, "\n%s%s %s · %d messages · %s", indent, glyph, s.ID, s.MessageCount, s.ModelID)
+		if s.AgentInstanceID != "" {
+			fmt.Fprintf(&b, " · agent %s", s.AgentInstanceID)
+		}
+		if line := sessionSummaryMetricsLine(s); line != "" {
+			fmt.Fprintf(&b, "\n%s  %s", indent, line)
+		}
+		for _, child := range childrenOf[s.ID] {
+			writeNode(child, depth+1)
+		}
+	}
+	for _, root := range roots {
+		writeNode(root, 0)
 	}
 	if nextCursor != "" {
 		b.WriteString("\nMore sessions available.")
@@ -5152,6 +5238,61 @@ func renderHighlightedWord(word string, spans [][2]int, base lipgloss.Style) str
 // themeHex converts a termkit.Color RGB triple to a lipgloss-compatible color.
 func themeHex(c termkit.Color) color.Color {
 	return lipgloss.Color(fmt.Sprintf("#%02X%02X%02X", c[0], c[1], c[2]))
+}
+
+// extractChildAgentResult parses the agent tool's result details into a
+// childAgentResult. The agent tool's details carry a JSON object with
+// "status", "instance_id", "session_id", "usage" (turns, tokens), and
+// error fields (see tools/agent.go, assembleStatusLine).
+func extractChildAgentResult(details any) (childAgentResult, bool) {
+	d, ok := details.(map[string]any)
+	if !ok {
+		return childAgentResult{}, false
+	}
+	id, _ := d["instance_id"].(string)
+	if id == "" {
+		return childAgentResult{}, false
+	}
+	status, _ := d["status"].(string)
+	if status == "" {
+		status = "completed"
+	}
+	var turns int
+	var tokens int
+	var durationMs int64
+	if usage, ok := d["usage"].(map[string]any); ok {
+		if t, ok := usage["turns"].(float64); ok {
+			turns = int(t)
+		} else if t, ok := usage["turns"].(int); ok {
+			turns = t
+		}
+		if it, ok := usage["input_tokens"].(float64); ok {
+			tokens += int(it)
+		} else if it, ok := usage["input_tokens"].(int); ok {
+			tokens += it
+		}
+		if ot, ok := usage["output_tokens"].(float64); ok {
+			tokens += int(ot)
+		} else if ot, ok := usage["output_tokens"].(int); ok {
+			tokens += ot
+		}
+	}
+	if dur, ok := d["duration_ms"].(float64); ok {
+		durationMs = int64(dur)
+	} else if dur, ok := d["duration_ms"].(int); ok {
+		durationMs = int64(dur)
+	} else if dur, ok := d["duration_ms"].(int64); ok {
+		durationMs = dur
+	}
+	errMsg, _ := d["error"].(string)
+	return childAgentResult{
+		instanceID: id,
+		status:     status,
+		turns:      turns,
+		tokens:     tokens,
+		durationMs: durationMs,
+		errorMsg:   errMsg,
+	}, true
 }
 
 var (

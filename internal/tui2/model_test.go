@@ -1824,6 +1824,64 @@ func TestSessionSummariesTextWithMetricsAndCursor(t *testing.T) {
 	}
 }
 
+func TestSessionSummariesTextTreeWithAgentAttribution(t *testing.T) {
+	out := sessionSummariesText([]tauchat.SessionSummary{
+		{ID: "root", ModelID: "gpt-4", MessageCount: 5},
+		{ID: "child-1", ModelID: "gpt-4", MessageCount: 2, ParentSessionID: "root", AgentInstanceID: "research#k3v9qp"},
+		{ID: "child-2", ModelID: "gpt-4", MessageCount: 1, ParentSessionID: "root", AgentInstanceID: "plan#m2xw01"},
+		{ID: "orphan", ModelID: "gpt-4", MessageCount: 1, ParentSessionID: "does-not-exist"},
+	}, "")
+
+	lines := strings.Split(out, "\n")
+	var rootLine, child1Line, child2Line, orphanLine string
+	for _, l := range lines {
+		switch {
+		case strings.Contains(l, "root") && !strings.Contains(l, "child") && !strings.Contains(l, "orphan"):
+			rootLine = l
+		case strings.Contains(l, "child-1"):
+			child1Line = l
+		case strings.Contains(l, "child-2"):
+			child2Line = l
+		case strings.Contains(l, "orphan"):
+			orphanLine = l
+		}
+	}
+
+	if rootLine == "" || strings.HasPrefix(rootLine, "  ") {
+		t.Fatalf("root line should be unindented, got %q", rootLine)
+	}
+	if !strings.HasPrefix(child1Line, "  └─") {
+		t.Fatalf("child-1 line should be indented under its parent, got %q", child1Line)
+	}
+	if !strings.Contains(child1Line, "agent research#k3v9qp") {
+		t.Fatalf("child-1 line missing agent attribution, got %q", child1Line)
+	}
+	if !strings.Contains(child2Line, "agent plan#m2xw01") {
+		t.Fatalf("child-2 line missing agent attribution, got %q", child2Line)
+	}
+	if strings.HasPrefix(orphanLine, "  ") {
+		t.Fatalf("orphan (parent not in page) should render as a root, got %q", orphanLine)
+	}
+
+	// child-1 must appear before child-2 (source order preserved) and both
+	// after root (tree order, not flat order).
+	rootIdx := indexOfSubstring(lines, "root")
+	child1Idx := indexOfSubstring(lines, "child-1")
+	child2Idx := indexOfSubstring(lines, "child-2")
+	if !(rootIdx < child1Idx && child1Idx < child2Idx) {
+		t.Fatalf("expected tree order root < child-1 < child-2, got indices %d,%d,%d", rootIdx, child1Idx, child2Idx)
+	}
+}
+
+func indexOfSubstring(lines []string, needle string) int {
+	for i, l := range lines {
+		if strings.Contains(l, needle) {
+			return i
+		}
+	}
+	return -1
+}
+
 func TestFormatDurationCompact(t *testing.T) {
 	cases := []struct {
 		ms   int64
@@ -6060,6 +6118,108 @@ func TestSkillLabelFromArgs(t *testing.T) {
 		t.Run(tt.args, func(t *testing.T) {
 			if got := skillLabelFromArgs(tt.args); got != tt.want {
 				t.Errorf("skillLabelFromArgs(%q) = %q, want %q", tt.args, got, tt.want)
+			}
+		})
+	}
+}
+
+// TestRenderChildAgentLine verifies the compact child agent summary line.
+func TestRenderChildAgentLine(t *testing.T) {
+	tests := []struct {
+		name         string
+		c            childAgentResult
+		wantContains []string
+	}{
+		{
+			name:         "completed",
+			c:            childAgentResult{instanceID: "research#k3v9qp", status: "completed", turns: 7, tokens: 12300, durationMs: 8000},
+			wantContains: []string{"research#k3v9qp", "completed", "7", "8s"},
+		},
+		{
+			name:         "failed",
+			c:            childAgentResult{instanceID: "tau#abc123", status: "failed", turns: 3, tokens: 500, durationMs: 120000},
+			wantContains: []string{"tau#abc123", "failed", "3", "2m"},
+		},
+		{
+			name:         "timed_out",
+			c:            childAgentResult{instanceID: "plan#x1y2z3", status: "timed_out", turns: 1, tokens: 100, durationMs: 300000},
+			wantContains: []string{"plan#x1y2z3", "timed out", "1", "5m"},
+		},
+		{
+			name:         "cancelled",
+			c:            childAgentResult{instanceID: "init#d4e5f6", status: "cancelled", turns: 0, tokens: 0, durationMs: 500},
+			wantContains: []string{"init#d4e5f6", "cancelled", "0t", "500ms"},
+		},
+		{
+			name:         "budget_exhausted",
+			c:            childAgentResult{instanceID: "research#g7h8i9", status: "budget_exhausted", turns: 5, tokens: 45000, durationMs: 45000},
+			wantContains: []string{"research#g7h8i9", "budget exhausted", "5"},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := stripANSI(renderChildAgentLine(tt.c))
+			for _, want := range tt.wantContains {
+				if !strings.Contains(got, want) {
+					t.Errorf("renderChildAgentLine() = %q, missing %q", got, want)
+				}
+			}
+		})
+	}
+}
+
+// TestExtractChildAgentResult verifies extraction from agent tool result details.
+func TestExtractChildAgentResult(t *testing.T) {
+	tests := []struct {
+		name    string
+		details any
+		want    childAgentResult
+		wantOK  bool
+	}{
+		{
+			name: "full details",
+			details: map[string]any{
+				"instance_id": "research#k3v9qp",
+				"status":      "completed",
+				"usage":       map[string]any{"turns": float64(7), "input_tokens": float64(8000), "output_tokens": float64(4300)},
+				"duration_ms": float64(8000),
+			},
+			want:   childAgentResult{instanceID: "research#k3v9qp", status: "completed", turns: 7, tokens: 12300, durationMs: 8000},
+			wantOK: true,
+		},
+		{
+			name:    "missing instance_id",
+			details: map[string]any{"status": "completed"},
+			wantOK:  false,
+		},
+		{
+			name:    "not a map",
+			details: "not a map",
+			wantOK:  false,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, ok := extractChildAgentResult(tt.details)
+			if ok != tt.wantOK {
+				t.Errorf("ok = %v, want %v", ok, tt.wantOK)
+			}
+			if ok {
+				if got.instanceID != tt.want.instanceID {
+					t.Errorf("instanceID = %q, want %q", got.instanceID, tt.want.instanceID)
+				}
+				if got.status != tt.want.status {
+					t.Errorf("status = %q, want %q", got.status, tt.want.status)
+				}
+				if got.turns != tt.want.turns {
+					t.Errorf("turns = %d, want %d", got.turns, tt.want.turns)
+				}
+				if got.tokens != tt.want.tokens {
+					t.Errorf("tokens = %d, want %d", got.tokens, tt.want.tokens)
+				}
+				if got.durationMs != tt.want.durationMs {
+					t.Errorf("durationMs = %d, want %d", got.durationMs, tt.want.durationMs)
+				}
 			}
 		})
 	}

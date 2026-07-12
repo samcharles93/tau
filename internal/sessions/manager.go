@@ -73,8 +73,11 @@ func (m *Manager) List(ctx context.Context, limit int, cursor string) ([]chat.Se
 			TotalTokens:     s.TotalTokens,
 			Cost:            s.Cost,
 			DurationMs:      s.DurationMs,
+			ToolCalls:       s.ToolCalls,
+			ToolErrors:      s.ToolErrors,
 			SystemPrompt:    s.SystemPrompt,
 			ParentSessionID: s.ParentSessionID,
+			AgentInstanceID: s.AgentInstanceID,
 		}
 	}
 	return result, nextCursor, nil

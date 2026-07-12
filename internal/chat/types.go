@@ -930,6 +930,7 @@ type SessionSummary struct {
 	ToolErrors      int       `json:"tool_errors"`
 	SystemPrompt    string    `json:"system_prompt,omitempty"`
 	ParentSessionID string    `json:"parent_session_id,omitempty"`
+	AgentInstanceID string    `json:"agent_instance_id,omitempty"`
 }
 
 // SessionsListedEvent carries paginated session summaries back to the TUI.
