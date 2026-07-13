@@ -1,0 +1,34 @@
+//go:build !windows
+
+package tools
+
+import (
+	"os/exec"
+	"syscall"
+)
+
+// setProcessGroup configures cmd to start as the leader of a new process
+// group, so the parent can signal the whole tree (see
+// docs/specs/agents/02-spawning-and-lifecycle.md, Process group
+// management). Must be called before cmd.Start().
+func setProcessGroup(cmd *exec.Cmd) {
+	if cmd.SysProcAttr == nil {
+		cmd.SysProcAttr = &syscall.SysProcAttr{}
+	}
+	cmd.SysProcAttr.Setpgid = true
+}
+
+// signalProcessGroup sends sig to cmd's entire process group (shells,
+// tools, provider subprocesses, grandchild agents — everything that
+// inherited the group from setProcessGroup). Must be called after
+// cmd.Start(). ESRCH (group already gone) is not an error worth surfacing.
+func signalProcessGroup(cmd *exec.Cmd, sig syscall.Signal) error {
+	if cmd.Process == nil {
+		return nil
+	}
+	// A negative pid targets the whole process group (see kill(2)).
+	if err := syscall.Kill(-cmd.Process.Pid, sig); err != nil && err != syscall.ESRCH {
+		return err
+	}
+	return nil
+}

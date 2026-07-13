@@ -87,6 +87,15 @@ type AgentsConfig struct {
 	// DefaultTimeout is the per-assigned-task wall-clock limit when a
 	// spec doesn't say otherwise. Default 10m if unset.
 	DefaultTimeout time.Duration `yaml:"default_timeout" json:"default_timeout"`
+	// CancelGrace is how long the parent waits after sending agent.cancel
+	// before escalating to SIGTERM on the child's process group. Default
+	// 5s if unset. See docs/specs/agents/02-spawning-and-lifecycle.md
+	// (Tree-wide cancellation).
+	CancelGrace time.Duration `yaml:"cancel_grace" json:"cancel_grace"`
+	// KillGrace is how long the parent waits after SIGTERM before
+	// escalating to SIGKILL on the child's process group. Default 5s if
+	// unset.
+	KillGrace time.Duration `yaml:"kill_grace" json:"kill_grace"`
 }
 
 func (a *AgentsConfig) UnmarshalYAML(value *yaml.Node) error {
@@ -99,6 +108,10 @@ func (a *AgentsConfig) UnmarshalYAML(value *yaml.Node) error {
 		DefaultMaxTurnsCamel int    `yaml:"defaultMaxTurns"`
 		DefaultTimeout       string `yaml:"default_timeout"`
 		DefaultTimeoutCamel  string `yaml:"defaultTimeout"`
+		CancelGrace          string `yaml:"cancel_grace"`
+		CancelGraceCamel     string `yaml:"cancelGrace"`
+		KillGrace            string `yaml:"kill_grace"`
+		KillGraceCamel       string `yaml:"killGrace"`
 	}
 	var raw rawAgentsConfig
 	if err := value.Decode(&raw); err != nil {
@@ -114,6 +127,20 @@ func (a *AgentsConfig) UnmarshalYAML(value *yaml.Node) error {
 		}
 		a.DefaultTimeout = d
 	}
+	if grace := firstNonEmpty(raw.CancelGrace, raw.CancelGraceCamel); grace != "" {
+		d, err := time.ParseDuration(grace)
+		if err != nil {
+			return fmt.Errorf("agents.cancel_grace: %w", err)
+		}
+		a.CancelGrace = d
+	}
+	if grace := firstNonEmpty(raw.KillGrace, raw.KillGraceCamel); grace != "" {
+		d, err := time.ParseDuration(grace)
+		if err != nil {
+			return fmt.Errorf("agents.kill_grace: %w", err)
+		}
+		a.KillGrace = d
+	}
 	return nil
 }
 
@@ -126,6 +153,8 @@ func DefaultAgentsConfig() AgentsConfig {
 		DepthCeiling:    4,
 		DefaultMaxTurns: 30,
 		DefaultTimeout:  10 * time.Minute,
+		CancelGrace:     5 * time.Second,
+		KillGrace:       5 * time.Second,
 	}
 }
 
@@ -1137,6 +1166,12 @@ func mergeAgentsConfigs(globalCfg, localCfg AgentsConfig) AgentsConfig {
 	}
 	if localCfg.DefaultTimeout > 0 {
 		merged.DefaultTimeout = localCfg.DefaultTimeout
+	}
+	if localCfg.CancelGrace > 0 {
+		merged.CancelGrace = localCfg.CancelGrace
+	}
+	if localCfg.KillGrace > 0 {
+		merged.KillGrace = localCfg.KillGrace
 	}
 	return merged
 }

@@ -8,6 +8,7 @@ import (
 	"html"
 	"os/exec"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/samcharles93/tau/internal/agent/spec"
@@ -228,7 +229,7 @@ func executeSpawn(ctx context.Context, args agentToolArgs, cfg AgentToolConfig) 
 		// a session to run it never will (see spawnChildProcess) — close
 		// it now rather than leaving it "started" forever (G3).
 		if cfg.Store != nil {
-			_ = cfg.Store.CloseAgentInstance(ctx, instResult.InstanceID, "failed", "")
+			_ = cfg.Store.CloseAgentInstance(context.WithoutCancel(ctx), instResult.InstanceID, "failed", "")
 		}
 		return Result{Content: fmt.Sprintf("seed child session: %v", err), IsError: true, ErrorKind: "instantiation_failed"}, nil
 	}
@@ -431,11 +432,14 @@ func spawnChildProcess(ctx context.Context, args agentToolArgs, cfg AgentToolCon
 	// Close the instance deterministically as failed rather than leaving
 	// it "started" forever — see docs/specs/agents/
 	// 04-storage-and-sessions.md (G3: atomic instantiation / spawn-failure
-	// compensation).
+	// compensation). Uses context.WithoutCancel: this defer very often runs
+	// exactly because ctx was cancelled (G7 cancellation path) — the close
+	// write must still go through even though the request that triggered it
+	// is the reason ctx is no longer usable.
 	instanceClosed := false
 	defer func() {
 		if !instanceClosed && cfg.Store != nil {
-			_ = cfg.Store.CloseAgentInstance(ctx, instResult.InstanceID, "failed", "")
+			_ = cfg.Store.CloseAgentInstance(context.WithoutCancel(ctx), instResult.InstanceID, "failed", "")
 		}
 	}()
 
@@ -445,8 +449,14 @@ func spawnChildProcess(ctx context.Context, args agentToolArgs, cfg AgentToolCon
 	}
 
 	cmd := exec.CommandContext(ctx, tauPath, "--child")
+	// Disable exec.CommandContext's default cancellation behavior (an
+	// immediate Process.Kill() of just the direct process). Cancellation
+	// is instead handled by our own three-phase escalation (below), which
+	// signals the whole process group, not only the direct child.
+	cmd.Cancel = func() error { return nil }
 	cmd.Dir = cfg.CWD
 	cmd.Env = nil // inherit
+	setProcessGroup(cmd)
 	stdin, err := cmd.StdinPipe()
 	if err != nil {
 		return agentToolError("stdin pipe", err), nil
@@ -477,13 +487,25 @@ func spawnChildProcess(ctx context.Context, args agentToolArgs, cfg AgentToolCon
 		return agentToolError("start child", err), nil
 	}
 
-	// Handshake: read agent.ready, write agent.assign.
 	childReader := stdio.NewReader(stdout)
 	childWriter := stdio.NewWriter(stdin)
 
+	// Single authoritative cmd.Wait() call site for this process — Wait
+	// must be called exactly once. waitDone tells the cancellation
+	// supervisor (below) the process has already been reaped, so it stops
+	// escalating signals into a pid that may have been recycled.
+	waitDone := make(chan struct{})
+	supervisorDone := make(chan struct{})
+	go superviseCancellation(ctx, cmd, childWriter, instResult.InstanceID, cfg.Agents, waitDone, supervisorDone)
+	defer func() {
+		close(waitDone)
+		<-supervisorDone
+	}()
+
+	// Handshake: read agent.ready, write agent.assign.
 	ready, err := childReader.ReadHandshake(stdio.ProtocolVersion)
 	if err != nil {
-		cmd.Process.Kill()
+		_ = signalProcessGroup(cmd, syscall.SIGKILL)
 		_ = cmd.Wait()
 		return agentToolError("handshake", err), nil
 	}
@@ -505,7 +527,7 @@ func spawnChildProcess(ctx context.Context, args agentToolArgs, cfg AgentToolCon
 		if args.Budget.Deadline != "" {
 			d, err := time.ParseDuration(args.Budget.Deadline)
 			if err != nil {
-				cmd.Process.Kill()
+				_ = signalProcessGroup(cmd, syscall.SIGKILL)
 				_ = cmd.Wait()
 				return Result{
 					Content:   fmt.Sprintf("invalid budget.deadline %q: %v", args.Budget.Deadline, err),
@@ -533,7 +555,7 @@ func spawnChildProcess(ctx context.Context, args agentToolArgs, cfg AgentToolCon
 		Budget: budget,
 	}
 	if err := childWriter.WriteEnvelope("agent.assign", assignMsg); err != nil {
-		cmd.Process.Kill()
+		_ = signalProcessGroup(cmd, syscall.SIGKILL)
 		_ = cmd.Wait()
 		return agentToolError("write assign", err), nil
 	}
@@ -545,17 +567,18 @@ func spawnChildProcess(ctx context.Context, args agentToolArgs, cfg AgentToolCon
 	childBusClient := cfg.Bus.Client("agent-" + instResult.InstanceID)
 	childPub := eventbus.Publish[tauchat.ChatEvent](childBusClient)
 
-	finalText, resultEnv, usageAcc, err := readChildResult(childReader, cmd, instResult.InstanceID, instResult.InstanceID, cfg.SessionID, childPub)
+	finalText, resultEnv, usageAcc, err := readChildResult(ctx, childReader, instResult.InstanceID, instResult.InstanceID, cfg.SessionID, childPub)
 	if err != nil {
-		cmd.Process.Kill()
+		_ = signalProcessGroup(cmd, syscall.SIGKILL)
 		_ = cmd.Wait()
 		childBusClient.Close()
 		return agentToolError("child result", err), nil
 	}
 
-	// Wait for the child to exit. A non-zero exit with an already-successful
-	// result still counts as failed — the child exited abnormally after
-	// sending its result, which means the result may be incomplete.
+	// Wait for the child to exit — the sole cmd.Wait() call for the normal
+	// path. A non-zero exit with an already-successful result still counts
+	// as failed — the child exited abnormally after sending its result,
+	// which means the result may be incomplete.
 	exitErr := cmd.Wait()
 	if exitErr != nil && resultEnv.Status == "completed" {
 		resultEnv.Status = "failed"
@@ -566,7 +589,7 @@ func spawnChildProcess(ctx context.Context, args agentToolArgs, cfg AgentToolCon
 	// Close the instance row and bus client.
 	if cfg.Store != nil && usageAcc != nil {
 		usageJSON, _ := json.Marshal(usageAcc)
-		_ = cfg.Store.CloseAgentInstance(ctx, instResult.InstanceID, resultEnv.Status, string(usageJSON))
+		_ = cfg.Store.CloseAgentInstance(context.WithoutCancel(ctx), instResult.InstanceID, resultEnv.Status, string(usageJSON))
 		instanceClosed = true
 	}
 	childBusClient.Close()
@@ -879,11 +902,70 @@ func buildChildPrompt(prompt, ctxStr, parentInstanceID string) string {
 	)
 }
 
+// superviseCancellation watches ctx and, if it's cancelled before the child
+// process is reaped (signalled via waitDone), drives the three-phase
+// escalation from docs/specs/agents/02-spawning-and-lifecycle.md
+// (Tree-wide cancellation):
+//
+//  1. Send agent.cancel on the wire (graceful — the child aborts its
+//     in-flight work and exits on its own).
+//  2. After cancelGrace with no exit, SIGTERM the child's whole process
+//     group (kills shells, tools, provider subprocesses, grandchildren).
+//  3. After killGrace more with no exit, SIGKILL the process group.
+//
+// Always closes done on return so the caller can wait for the escalation
+// to stop before returning (no goroutine leak, no signal sent to a
+// possibly-recycled pid after Wait() has reaped the process).
+func superviseCancellation(ctx context.Context, cmd *exec.Cmd, w *stdio.Writer, instanceID string, agentsCfg config.AgentsConfig, waitDone, done chan struct{}) {
+	defer close(done)
+
+	select {
+	case <-waitDone:
+		return // process already exited normally — nothing to supervise
+	case <-ctx.Done():
+	}
+
+	// Phase 1: graceful cancel message. Best effort — the child may already
+	// be gone, or its stdin pipe may be closed.
+	_ = w.WriteEnvelope("agent.cancel", bridge.AgentCancel{
+		TaskID: instanceID,
+		Reason: "parent_cancelled",
+	})
+
+	cancelGrace := agentsCfg.CancelGrace
+	if cancelGrace <= 0 {
+		cancelGrace = config.DefaultAgentsConfig().CancelGrace
+	}
+	select {
+	case <-waitDone:
+		return
+	case <-time.After(cancelGrace):
+	}
+
+	// Phase 2: SIGTERM the process group.
+	_ = signalProcessGroup(cmd, syscall.SIGTERM)
+
+	killGrace := agentsCfg.KillGrace
+	if killGrace <= 0 {
+		killGrace = config.DefaultAgentsConfig().KillGrace
+	}
+	select {
+	case <-waitDone:
+		return
+	case <-time.After(killGrace):
+	}
+
+	// Phase 3: forced kill. Non-ignorable — the OS guarantees termination.
+	_ = signalProcessGroup(cmd, syscall.SIGKILL)
+}
+
 // readChildResult reads envelopes from the child's stdout until it sees
 // agent.result, forwarding agent.event and agent.usage to the parent bus
 // as ChildAgentStateEvent (per 05-ui.md). Returns the child's final text,
-// the result envelope, accumulated usage, and any error.
-func readChildResult(reader *stdio.Reader, cmd *exec.Cmd, instanceID, callID, parentSessionID string, childPub *eventbus.Publisher[tauchat.ChatEvent]) (string, *bridge.AgentResult, *bridge.AgentResultUsage, error) {
+// the result envelope, accumulated usage, and any error. Does not call
+// cmd.Wait() — the caller owns the single authoritative Wait() call (see
+// spawnChildProcess).
+func readChildResult(ctx context.Context, reader *stdio.Reader, instanceID, callID, parentSessionID string, childPub *eventbus.Publisher[tauchat.ChatEvent]) (string, *bridge.AgentResult, *bridge.AgentResultUsage, error) {
 	var finalText strings.Builder
 	var usageAcc bridge.AgentResultUsage
 	var activity string
@@ -912,15 +994,21 @@ func readChildResult(reader *stdio.Reader, cmd *exec.Cmd, instanceID, callID, pa
 	for {
 		typ, payload, err := reader.ReadEnvelope()
 		if err != nil {
-			// EOF without agent.result — child crashed. Synthesise failed.
-			exitErr := cmd.Wait()
-			errDetail := "child exited without result"
-			if exitErr != nil {
-				errDetail = fmt.Sprintf("child exited without result: %v", exitErr)
+			// EOF without agent.result. If the parent's own context was
+			// cancelled, this is the expected outcome of our cancellation
+			// escalation (see superviseCancellation) — synthesise
+			// "cancelled", not "failed" (docs/specs/agents/
+			// 02-spawning-and-lifecycle.md, Phase 3: Forced kill). Otherwise
+			// the child crashed unexpectedly.
+			status := "failed"
+			errDetail := fmt.Sprintf("child exited without result: %v", err)
+			if ctx.Err() != nil {
+				status = "cancelled"
+				errDetail = ""
 			}
 			return finalText.String(), &bridge.AgentResult{
 				TaskID:    instanceID,
-				Status:    "failed",
+				Status:    status,
 				FinalText: finalText.String(),
 				Partial:   true,
 				Error:     errDetail,

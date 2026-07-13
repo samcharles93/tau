@@ -11,6 +11,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"sync"
 )
 
 // ProtocolVersion is the current agent-wire protocol version. The parent
@@ -43,10 +44,15 @@ type rawEnvelope struct {
 
 // Writer wraps an io.Writer and writes one JSON-encoded message per line,
 // flushing after each write when the underlying writer supports flushing.
+// Safe for concurrent use: callers on both sides of the wire write from more
+// than one goroutine (e.g. the parent's normal envelope stream and its
+// cancellation supervisor both write to the same child's stdin), and
+// bufio.Writer itself has no internal locking.
 type Writer struct {
 	w  io.Writer
 	f  flusher
 	bw *bufio.Writer
+	mu sync.Mutex
 }
 
 type flusher interface {
@@ -73,16 +79,7 @@ func (w *Writer) WriteMessage(msg any) error {
 	if len(data) > MaxLineSize {
 		return fmt.Errorf("%w (%d bytes)", ErrLineTooLong, len(data))
 	}
-	if _, err := w.bw.Write(data); err != nil {
-		return fmt.Errorf("write: %w", err)
-	}
-	if _, err := w.bw.Write([]byte{'\n'}); err != nil {
-		return fmt.Errorf("write newline: %w", err)
-	}
-	if err := w.bw.Flush(); err != nil {
-		return fmt.Errorf("flush: %w", err)
-	}
-	return nil
+	return w.writeLine(data)
 }
 
 // WriteRaw writes a pre-serialised JSON byte slice as a line. The caller
@@ -91,6 +88,14 @@ func (w *Writer) WriteRaw(data []byte) error {
 	if len(data) > MaxLineSize {
 		return fmt.Errorf("%w (%d bytes)", ErrLineTooLong, len(data))
 	}
+	return w.writeLine(data)
+}
+
+// writeLine appends a newline and flushes, holding mu for the duration so
+// concurrent writers never interleave partial lines on the wire.
+func (w *Writer) writeLine(data []byte) error {
+	w.mu.Lock()
+	defer w.mu.Unlock()
 	if _, err := w.bw.Write(data); err != nil {
 		return fmt.Errorf("write: %w", err)
 	}

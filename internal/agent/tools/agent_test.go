@@ -2,7 +2,10 @@ package tools
 
 import (
 	"context"
+	"encoding/json"
+	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -633,5 +636,98 @@ func TestExecuteSpawn_ClosesInstanceOnStartFailure(t *testing.T) {
 	}
 	if insts[0].ExitStatus != "failed" {
 		t.Errorf("ExitStatus = %q, want %q", insts[0].ExitStatus, "failed")
+	}
+}
+
+// --- G7: process-group cancellation ---
+
+// TestExecuteSpawn_CancellationEscalatesToSIGKILL verifies the full
+// three-phase cancellation escalation (docs/specs/agents/
+// 02-spawning-and-lifecycle.md, Tree-wide cancellation): a fake "child"
+// that ignores SIGTERM is still terminated (via SIGKILL to its process
+// group) once the parent's context is cancelled, and the spawn returns
+// promptly with status "cancelled" rather than hanging forever.
+func TestExecuteSpawn_CancellationEscalatesToSIGKILL(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("process-group SIGTERM/trap semantics are POSIX-only")
+	}
+
+	dir := t.TempDir()
+	s, err := store.NewSQLiteStore(context.Background(), dir+"/sessions.db", dir)
+	if err != nil {
+		t.Fatalf("NewSQLiteStore: %v", err)
+	}
+	defer s.Close()
+
+	require.NoError(t, s.SaveAgentInstance(context.Background(), store.AgentInstance{
+		ID:        "tau#root000",
+		SpecName:  "tau",
+		SpecHash:  "h",
+		StartedAt: time.Now(),
+	}))
+	require.NoError(t, s.Save(context.Background(), tauchat.ChatSessionState{
+		SessionID: "parent-session",
+		Status:    tauchat.ChatSessionIdle,
+	}, 0))
+
+	// A fake child: sends a valid handshake, then ignores SIGTERM and
+	// sleeps — only SIGKILL can end it. Proves escalation reaches phase 3.
+	script := filepath.Join(dir, "fake-child.sh")
+	scriptBody := "#!/bin/sh\ntrap '' TERM\necho '{\"type\":\"agent.ready\",\"payload\":{\"instance\":\"x\",\"pid\":1,\"protocol\":1}}'\nsleep 100\n"
+	if err := os.WriteFile(script, []byte(scriptBody), 0o755); err != nil {
+		t.Fatalf("write fake child script: %v", err)
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cfg := AgentToolConfig{
+		CWD:              t.TempDir(),
+		Agents:           config.AgentsConfig{DefaultMaxDepth: 2, DepthCeiling: 4, CancelGrace: 50 * time.Millisecond, KillGrace: 50 * time.Millisecond},
+		ParentDepth:      0,
+		ParentInstanceID: "tau#root000",
+		Bus:              eventbus.New(),
+		Store:            s,
+		SessionID:        "parent-session",
+		TauPath:          script,
+	}
+
+	resultCh := make(chan Result, 1)
+	go func() {
+		result, err := executeAgentTool(ctx, mustMarshal(map[string]any{
+			"agent":  "tau",
+			"prompt": "do something",
+		}), nil, cfg)
+		if err != nil {
+			t.Errorf("executeAgentTool returned error: %v", err)
+		}
+		resultCh <- result
+	}()
+
+	// Give the child a moment to start and complete its handshake, then
+	// cancel — this is what triggers the escalation.
+	time.Sleep(75 * time.Millisecond)
+	cancel()
+
+	select {
+	case result := <-resultCh:
+		t.Logf("result: IsError=%v ErrorKind=%q Content=%q", result.IsError, result.ErrorKind, result.Content)
+		detailsJSON, ok := result.Details.([]byte)
+		if !ok {
+			t.Fatalf("Details is %T, want []byte", result.Details)
+		}
+		var details map[string]any
+		if err := json.Unmarshal(detailsJSON, &details); err != nil {
+			t.Fatalf("unmarshal details: %v", err)
+		}
+		if details["status"] != "cancelled" {
+			t.Errorf("status = %v, want %q (details: %s)", details["status"], "cancelled", result.Details)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("spawn did not return within 5s of cancellation — escalation did not terminate the process group")
+	}
+
+	insts, err := s.ListAgentInstances(context.Background(), "tau#root000")
+	require.NoError(t, err)
+	if len(insts) != 1 || insts[0].EndedAt.IsZero() {
+		t.Fatalf("instance not closed after cancellation: %+v", insts)
 	}
 }
