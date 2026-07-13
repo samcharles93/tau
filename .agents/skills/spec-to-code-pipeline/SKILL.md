@@ -1,11 +1,7 @@
 ---
 name: spec-to-code-pipeline
 description: End-to-end pipeline for turning spec documents into actionable, sequenced implementation tickets — Spec Review → Gap Analysis → Story Creation → Dependency Analysis → Execution Process Design → Implementation Coordination. Use when working through a new spec, landing a multi-ticket project, doing architecture-to-backlog conversion, or when the user asks to "analyze dependencies", "sequence these tickets", "map the critical path", or "turn this spec into stories".
-source: project
-scope: project
-enabled: true
-user_invocable: true
-priority: 14
+user-invocable: true
 ---
 
 # Spec → Code Pipeline

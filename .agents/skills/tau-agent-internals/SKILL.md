@@ -1,11 +1,7 @@
 ---
 name: tau-agent-internals
 description: This skill should be used when debugging tau's own agent coordinator, tui2 rendering, or live model/provider discovery — for example "a tool call looks stuck at pending", "the input box layout is wrong", "reasoning effort has no options for a model", "a config default isn't applying", "a model is stuck repeating the same tool call", "a config field I set isn't taking effect", "tool boxes render out of order", "manual scroll snaps back to the bottom", "markdown reverts to plain text", "cost calculation looks off", or when a fix needs to target the correct one of tau's two TUI implementations.
-source: project
-scope: project
-enabled: true
-user_invocable: true
-priority: 15
+user-invocable: true
 ---
 
 # Tau Agent Internals

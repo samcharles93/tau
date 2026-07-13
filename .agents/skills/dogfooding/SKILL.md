@@ -1,11 +1,7 @@
 ---
 name: dogfooding-methods
 description: Helps evaluate Tau through disciplined self-use, turning daily friction into better product decisions and implementation priorities.
-source: project
-scope: project
-enabled: true
-user_invocable: true
-priority: 20
+user-invocable: true
 ---
 
 # Dogfooding Methods

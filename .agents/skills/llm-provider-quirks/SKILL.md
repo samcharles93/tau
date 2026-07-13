@@ -1,11 +1,7 @@
 ---
 name: llm-provider-quirks
 description: This skill should be used when editing provider request/response building in ai-sdk, or when a live call to OpenAI or Anthropic returns an unexpected 400 or missing data — for example "tool calls aren't returning", "reasoning_effort rejected", "temperature not supported", "thinking budget error", "cached tokens not showing up", or anything involving the Responses API, adaptive thinking, or prompt caching. Maintain this file as a living catalog: add a new entry whenever a new wire-format quirk is confirmed live.
-source: project
-scope: project
-enabled: true
-user_invocable: true
-priority: 15
+user-invocable: true
 ---
 
 # LLM Provider Quirks

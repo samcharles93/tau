@@ -1,11 +1,7 @@
 ---
 name: ai-sdk-workflow
 description: This skill should be used when developing, testing, or releasing changes to ai-sdk, tau's LLM provider SDK — for example when a task involves "fix a provider bug", "add a new LLM provider", "the API returned a 400", "release a new ai-sdk version", "bump ai-sdk in tau", or anything touching request building, response parsing, streaming, or usage/cost accounting for OpenAI/Anthropic/Ollama/etc.
-source: project
-scope: project
-enabled: true
-user_invocable: true
-priority: 15
+user-invocable: true
 ---
 
 # ai-sdk Workflow
