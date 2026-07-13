@@ -1,5 +1,18 @@
 # Changelog
 
+## [0.21.0](https://github.com/samcharles93/tau/compare/v0.20.0...v0.21.0) (2026-07-13)
+
+
+### Features
+
+* add Ctrl+P command palette, Ctrl+L model picker, Ctrl+O session navigator ([9224d56](https://github.com/samcharles93/tau/commit/9224d56087c4a6099a6b37cf45e20e43b6f86837))
+
+
+### Bug Fixes
+
+* **docs:** escape Go template mustaches breaking VitePress build ([86399e3](https://github.com/samcharles93/tau/commit/86399e3c3c62a6fbc05410077d80621c1c563c0d))
+* **test:** raise budget-trip completion-wait timeout to reduce CI flakiness ([3030076](https://github.com/samcharles93/tau/commit/303007615d937bef0e46d70ba82ae54c9b096a77))
+
 ## [0.20.0](https://github.com/samcharles93/tau/compare/v0.19.0...v0.20.0) (2026-07-13)
 
 
