@@ -49,7 +49,7 @@ type ChatOptions struct {
 	WebPort         int      // --port: 0 = ephemeral
 	NoWeb           bool     // --no-web: do not start web UI
 	SkillDirs       []string // --skill-dir: additional skill directories
-	NewTUI          bool     // --new-tui: use the new Bubbletea-based TUI
+	NewTUI          bool     // default true; --legacy-tui inverts to use the legacy inline TUI
 	Ephemeral       bool     // --ephemeral: do not persist this session to the session store
 	AllowedTools    []string // --tools: initial tool allowlist (empty = unrestricted)
 	AgentSpec       string   // --agent: spec name for the root agent identity (default "tau")

@@ -3,7 +3,7 @@
 // frontends share the same eventbus.Bus, agent.Coordinator, and plugin
 // contracts — tui2 is just a different renderer.
 //
-// It is gated behind the --new-tui flag.
+// It is the default TUI; --legacy-tui falls back to the legacy renderer.
 package tui2
 
 import (

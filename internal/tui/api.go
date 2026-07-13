@@ -43,7 +43,7 @@ type TUIConfig struct {
 	// one-line collapsed form rather than showing all rows.
 	ToolCallsDefaultCollapsed bool
 
-	// NewTUI selects the new Bubbletea-based TUI instead of the legacy
-	// taui inline renderer.
+	// NewTUI selects the Bubbletea-based TUI instead of the legacy
+	// taui inline renderer. True by default; --legacy-tui sets this false.
 	NewTUI bool
 }

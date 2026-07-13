@@ -114,7 +114,7 @@ internal/app/ (orchestration: creates eventbus.Bus, wires subsystems as Clients)
         │       │
         │       └─► internal/tui/notify/ (queue-based notification system)
         │
-        └─► internal/tui2/ (Bubbletea v2-based terminal UI — experimental, --new-tui)
+        └─► internal/tui2/ (Bubbletea v2-based terminal UI — default; --legacy-tui falls back)
 ```
 
 ### Communication Flow
@@ -159,9 +159,9 @@ The project follows a **layered architecture** with a command/event boundary bet
 - **`eventbus`** — Central in-process event bus. Routes events by Go type (`Publisher[ChatEvent]` → `Subscriber[ChatEvent]`) rather than string topics. Adapted from Tailscale's `util/eventbus` (BSD-3-Clause). The bus enforces total ordering of published events via a single pump goroutine. Clients are named handles that own their publishers and subscribers; `Client.Close()` cascades cleanup. Designed so that subsystems communicate through the bus without importing each other.
 - **`agent`** — Coordinator runtime: agentic turn loop, tool execution, plugin lifecycle dispatch, session persistence. Receives `ChatCommand` via its command channel and publishes `ChatEvent` on the event bus. Defines `Streamer` and `TokenSource` interfaces.
 - **`tui`** — taui-based interactive terminal UI. Subscribes to `ChatEvent` on the event bus and sends `ChatCommand` to the coordinator. Files are prefixed `inline_*` reflecting the inline rendering approach. Uses `pkg/taui` for all widget rendering (no direct go-tui dependency).
-  - **Legacy TUI (`internal/tui/`)**: Handles app bootstrapping, event watchers, slash command dispatch, completions, and inline rendering. Gated behind legacy path (default); `--new-tui` flag delegates to `internal/tui2`.
+  - **Legacy TUI (`internal/tui/`)**: Handles app bootstrapping, event watchers, slash command dispatch, completions, and inline rendering. Used when `--legacy-tui` is passed; otherwise `internal/tui2` is used by default.
   - **Notify (`internal/tui/notify/`)**: Queue-based notification system. Shared leaf package — usable by both frontends.
-  - **Experimental TUI (`internal/tui2/`)**: Bubbletea v2-based interactive terminal UI behind `--new-tui`. Subscribes to the same event bus as the legacy TUI; implements its own rendering, input handling, and command dispatch. See `reference/tui-migration/parity-checklist.md` for feature parity status.
+  - **Default TUI (`internal/tui2/`)**: Bubbletea v2-based interactive terminal UI, used by default (`--legacy-tui` falls back to the legacy renderer). Subscribes to the same event bus as the legacy TUI; implements its own rendering, input handling, and command dispatch. See `reference/tui-migration/parity-checklist.md` for feature parity status.
 - **`providerui`** — Shared presentation helpers for provider OAuth login. Formats the device-code workflow/failure blocks and performs best-effort browser opening/code-copy UX for both TUI frontends.
 - **`config`** — Loads `~/.config/tau/config.yaml` (global) and `.tau.yaml` (project-local); foundation package with no internal imports.
 - **`skills`** — Skill discovery from markdown/YAML files, lifecycle management, activation tracking. Publishes `skills.Event` on the event bus when the catalog is refreshed.
@@ -311,7 +311,7 @@ Use this section to quickly find the right files for a given change.
 - `internal/tui2/overlays.go` — Context-menu and plugin-panel state, rendering, hit-testing, and actions.
 - `internal/tui2/render.go` / `styles.go` — Shared message/completion rendering and lipgloss styles.
 - `internal/tui2/diff.go` — Diff viewer overlay for tool results. `openDiffViewer()` creates a centered viewport showing a unified diff (via `go-difflib`) rendered through glamour markdown. `renderUnifiedDiff()` builds and colorizes the diff; `handleDiffViewerKey()` routes Esc/q to close and arrow/PgUp/PgDn to scroll; `compositeDiffViewer()` layers the overlay on top of the base chat using a lipgloss Compositor. Activated by the "View diff" context menu item on edit/write tools that carry `DiffDetails`.
-- **Flag gating**: `--new-tui` flag in `internal/cli/root.go` → `ChatOptions.NewTUI` → `TUIConfig.NewTUI` → `internal/tui/run.go` branches to `tui2.Run()`.
+- **Flag gating**: `--legacy-tui` flag in `internal/cli/root.go` inverts to `ChatOptions.NewTUI` (true by default) → `TUIConfig.NewTUI` → `internal/tui/run.go` branches to `tui2.Run()` unless false.
 - **Circular dependency avoidance**: `internal/tui/run.go` imports `internal/tui2`, but `internal/tui2` does NOT import `internal/tui`. Parameters are passed individually (not via `TUIConfig`).
 
 ### Changing the Command Registry
@@ -673,7 +673,7 @@ internal/tui2/
 ### Lifecycle
 
 1. `app.RunChat()` creates the coordinator and TUI config, then calls `tui.Run()`.
-2. With `--new-tui`, `tui.Run()` delegates to `tui2.Run()`, which creates the bus subscriber and Bubbletea program.
+2. By default (unless `--legacy-tui`), `tui.Run()` delegates to `tui2.Run()`, which creates the bus subscriber and Bubbletea program.
 3. `model.Init()` starts the channel-drain-rearm event command; `model.Update()` reduces Bubbletea messages and `ChatEvent` values.
 4. `model.View()` calls `computeLayout()` and composites active overlays over the rendered chat.
 

@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# Visual parity sign-off between tau's legacy inline TUI and the new
-# Bubbletea-based tui2 (--new-tui), per reference/tui-migration/plan.md's
+# Visual parity sign-off between tau's legacy inline TUI (--legacy-tui) and
+# the default Bubbletea-based tui2, per reference/tui-migration/plan.md's
 # Phase 3/5 verification gate.
 #
 # Drives an identical scripted interaction against both renderers via termvis
@@ -103,12 +103,12 @@ run_variant() {
   ) | termvis -width "$WIDTH" -height "$HEIGHT" -- bash -c "$cmd" > "$log" 2>&1
 }
 
-run_variant "legacy (--new-tui=false)" \
-  "TAU_CONFIG_DIR=$WORKDIR/config-legacy $WORKDIR/tau-test chat --no-web" \
+run_variant "legacy (--legacy-tui)" \
+  "TAU_CONFIG_DIR=$WORKDIR/config-legacy $WORKDIR/tau-test chat --no-web --legacy-tui" \
   "$OUT_DIR/legacy"
 
-run_variant "tui2 (--new-tui)" \
-  "TAU_CONFIG_DIR=$WORKDIR/config-tui2 $WORKDIR/tau-test chat --no-web --new-tui" \
+run_variant "tui2 (default)" \
+  "TAU_CONFIG_DIR=$WORKDIR/config-tui2 $WORKDIR/tau-test chat --no-web" \
   "$OUT_DIR/tui2"
 
 echo
