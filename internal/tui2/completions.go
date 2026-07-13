@@ -164,7 +164,15 @@ func (m *model) completionRows() ([]compRow, string) {
 		return nil, ""
 	}
 	token := m.completionToken()
+	return filterAndRankRows(groups, token), token
+}
 
+// filterAndRankRows fuzzy-filters groups against token and returns them
+// score-ranked — shared by completionRows (against m.input's current token)
+// and paletteState's independent query (palette.go), so both the inline "/"
+// dropdown and the Ctrl+P/Ctrl+L floating overlays narrow and order
+// candidates identically.
+func filterAndRankRows(groups []compGroup, token string) []compRow {
 	var rows []compRow
 	for _, g := range groups {
 		for _, mc := range g.Matches {
@@ -201,7 +209,7 @@ func (m *model) completionRows() ([]compRow, string) {
 			return strings.Compare(a.Word, b.Word)
 		}
 	})
-	return rows, token
+	return rows
 }
 
 // --- command name completions ----------------------------------------------
@@ -414,22 +422,39 @@ func (m *model) providerCompletions(fields []string, argsBefore int) []compGroup
 
 // --- dropdown navigation / accept --------------------------------------------
 
+// completionsVisible reports whether the completions dropdown is currently
+// shown, and its rows/token if so — the single source of truth for both
+// View()'s compositing (compositeCompletionsOverlay) and handleCompletionKey's
+// routing, so the two can never disagree about whether it's up. Before this
+// was extracted, rendering only ever checked completionRows() while
+// handleCompletionKey separately checked compDismissed — a first Esc could
+// silently stop the dropdown from consuming Up/Down (falling through to
+// history recall / tool-focus nav instead) while it kept right on rendering,
+// since nothing told the view side it had been dismissed.
+func (m *model) completionsVisible() (rows []compRow, token string, ok bool) {
+	rows, token = m.completionRows()
+	if len(rows) == 0 {
+		return nil, "", false
+	}
+	if m.compDismissed && m.compDismissedToken == token {
+		return nil, "", false
+	}
+	return rows, token, true
+}
+
 // handleCompletionKey gives the completions dropdown first refusal on a
 // keystroke while it's visible — matches taui's OverlayStack precedence
 // (pkg/taui's Completions is a "soft" overlay: it consumes the keys it
 // recognizes — arrows, tab, enter, esc — and anything else falls through to
 // normal input handling unchanged). Returns (cmd, true) when consumed.
 func (m *model) handleCompletionKey(msg tea.KeyPressMsg) (tea.Cmd, bool) {
-	rows, token := m.completionRows()
-	if len(rows) == 0 {
+	rows, token, ok := m.completionsVisible()
+	if !ok {
 		return nil, false
 	}
 	if m.compToken != token {
 		m.compToken = token
 		m.compSelected = 0
-	}
-	if m.compDismissed && m.compDismissedToken == token {
-		return nil, false
 	}
 	if m.compSelected < 0 || m.compSelected >= len(rows) {
 		m.compSelected = 0

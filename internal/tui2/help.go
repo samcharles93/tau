@@ -65,6 +65,9 @@ var helpSections = []helpSection{
 			{"PageUp / PageDown", "scroll through conversation history"},
 			{"Ctrl+Home / Ctrl+End", "jump to oldest / newest content"},
 			{"Tab", "cycle tab-completions when dropdown is visible"},
+			{"Ctrl+P", "open the command palette"},
+			{"Ctrl+L", "open the model picker"},
+			{"Ctrl+O", "open the session navigator"},
 		},
 	},
 	{

@@ -62,6 +62,17 @@ func (m *model) dispatchKey(msg tea.KeyPressMsg) tea.Cmd {
 		return m.handleChildTranscriptViewerKey(msg)
 	}
 
+	// Session navigator (Ctrl+O) open: route keys to it, same "opening a
+	// modal always wins" precedence as diffViewer/childTranscriptViewer
+	// above. (Ctrl+P's command palette and Ctrl+L's model picker have no
+	// separate modal state of their own — see openCommandPalette/
+	// openModelPalette in palette.go — so there's nothing to route to here
+	// for those; they're handled by the completions dropdown further down,
+	// same as any other "/" input.)
+	if m.sessionTreeOverlay != nil {
+		return m.handleSessionTreeKey(msg)
+	}
+
 	// Context menu open: route keys to the menu, above the completions
 	// dropdown (both use up/down/enter/esc and completions can legitimately
 	// be visible at the same time — input still has a "/slash" token while
@@ -148,6 +159,15 @@ func (m *model) dispatchKey(msg tea.KeyPressMsg) tea.Cmd {
 	case "ctrl+shift+l":
 		m.clearScreen()
 		return nil
+
+	case "ctrl+p":
+		return m.openCommandPalette()
+
+	case "ctrl+l":
+		return m.openModelPalette()
+
+	case "ctrl+o":
+		return m.openSessionTree()
 
 	case "ctrl+?", "ctrl+shift+/":
 		return m.cmdHelp("")

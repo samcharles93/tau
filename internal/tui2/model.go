@@ -211,6 +211,11 @@ type model struct {
 	// diffViewer (see childtranscript.go).
 	childTranscriptViewer *childTranscriptViewerState
 
+	// sessionTreeOverlay is the currently open Ctrl+O session navigator, or
+	// nil if none is open — same nil-sentinel idiom as contextMenu (see
+	// sessiontree.go).
+	sessionTreeOverlay *sessionTreeState
+
 	// Plugin views.
 	panels map[string]pluginPanel
 
@@ -590,6 +595,12 @@ func (m *model) View() tea.View {
 	if m.helpOverlay != nil {
 		base = m.compositeHelpOverlay(base)
 	}
+	if rows, token, ok := m.completionsVisible(); ok {
+		base = m.compositeCompletionsOverlay(base, rows, token)
+	}
+	if m.sessionTreeOverlay != nil {
+		base = m.compositeSessionTreeOverlay(base)
+	}
 
 	v := tea.NewView(base)
 	// AltScreen owns the full terminal so we can use guaranteed screen real
@@ -645,15 +656,9 @@ func (m *model) computeLayout() layoutGeometry {
 		promptStr = renderPrompt(m.activePrompt, m.width)
 	}
 
-	// 5. Completion dropdown.
-	var compStr string
-	if rows, _ := m.completionRows(); len(rows) > 0 {
-		selected := m.compSelected
-		if selected < 0 || selected >= len(rows) {
-			selected = 0
-		}
-		compStr = renderCompletions(rows, selected, m.width)
-	}
+	// 5. Completion dropdown — floats as a centered overlay (see
+	// compositeCompletionsOverlay in View()) rather than flow-laid chrome, so
+	// it no longer occupies space here.
 
 	// 6. Notification banner — a fixed notifyReservedLines-tall area is
 	// always reserved directly above the separator/input, even when
@@ -704,9 +709,6 @@ func (m *model) computeLayout() layoutGeometry {
 	}
 	if promptStr != "" {
 		chromeParts = append(chromeParts, promptStr)
-	}
-	if compStr != "" {
-		chromeParts = append(chromeParts, compStr)
 	}
 	// notifyStr is always present (padOrClipLines guarantees
 	// notifyReservedLines rows even when there's no message) — see its
@@ -767,9 +769,6 @@ func (m *model) computeLayout() layoutGeometry {
 	}
 	if promptStr != "" {
 		row += visualLineCount(promptStr)
-	}
-	if compStr != "" {
-		row += visualLineCount(compStr)
 	}
 	row += visualLineCount(notifyStr) // notifyStr is always present
 	row += visualLineCount(sepStr)    // separator is always present

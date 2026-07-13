@@ -240,20 +240,27 @@ func formatDurationCompact(ms int64) string {
 	}
 }
 
+// scrollWindow returns the [start, end) slice bounds of a window rows wide
+// centered on selected within a list of n items, clamped so the window never
+// runs past either end of the list. Shared by renderCompletions and the
+// Ctrl+P/Ctrl+L palette and Ctrl+O session-tree overlays (palette.go,
+// sessiontree.go) so all three keyboard-navigable lists scroll identically.
+func scrollWindow(selected, n, window int) (start, end int) {
+	size := min(n, window)
+	start = max(selected-size/2, 0)
+	if start+size > n {
+		start = n - size
+	}
+	return start, start + size
+}
+
 // renderCompletions draws the dropdown: a scrolling window (so a selection
 // past the visible window is never invisible/unreachable), group headers,
 // a chevron + bold-highlighted matched characters on the selected row, and
 // a description column aligned across the visible rows. Mirrors
 // pkg/taui/completions.go's Render.
 func renderCompletions(rows []compRow, selected, width int) string {
-	const window = 10
-	n := len(rows)
-	size := min(n, window)
-	start := max(selected-size/2, 0)
-	if start+size > n {
-		start = n - size
-	}
-	end := start + size
+	start, end := scrollWindow(selected, len(rows), 10)
 
 	descCol := completionDescColumn(rows)
 
@@ -270,7 +277,7 @@ func renderCompletions(rows []compRow, selected, width int) string {
 	if start > 0 {
 		out = append([]string{compMoreStyle.Render(fmt.Sprintf("  ↑ %d more", start))}, out...)
 	}
-	if remaining := n - end; remaining > 0 {
+	if remaining := len(rows) - end; remaining > 0 {
 		out = append(out, compMoreStyle.Render(fmt.Sprintf("  ↓ %d more", remaining)))
 	}
 
