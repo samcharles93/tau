@@ -1,15 +1,29 @@
 # Implementation Plan
 
-Phased work breakdown for the agent-process architecture. Each item maps one-to-one to a Linear story under the CatlowTech team (project: Agent Processes v1); this page is the durable mirror so the plan survives independently of any tracker. Phases are dependency-ordered; items within a phase are mostly parallelisable. `task check` gates every item.
+Phased work breakdown for the agent-process architecture. Each item maps one-to-one to a Linear story under the CatlowTech team (project: Agent Processes v1); this page is the durable mirror so the plan survives independently of any tracker. Phases are dependency-ordered; items within a phase are mostly parallelisable.
+
+**Status legend:** 🟢 decided+implemented  |  🔵 decided, implementation pending  |  ⚪ proposed, not yet decided  |  ⬜ superseded/retired
+
+**Last updated:** 2026-07-13 — reconciled P0 status with gap review (CAT-105).
+
+## Gap review and backlog
+
+The 2026-07-13 gap review (`review-gaps-2026-07-13.md`) identified 18 gaps (G1–G18) against the Phase 0–5 plan. Each gap has a corresponding Linear ticket under the `tau: Agent Processes v1` project:
+
+- **Critical (G1–G4):** CAT-89 (skill attenuation), CAT-90 (resume auth), CAT-92 (atomic creation), CAT-94 (authority binding)
+- **High-priority operational (G5–G9):** CAT-91 (concurrency ceilings), CAT-93 (budget semantics), CAT-95 (process-tree cancel), CAT-98 (JSONL state machine), CAT-99 (delivery guarantees)
+- **Consistency/hardening (G10–G18):** CAT-96 (identity/orphan), CAT-97 (snapshot versioning), CAT-100 (delegated context trust), CAT-101 (storage semantics), CAT-102 (root-spec trust), CAT-103 (UI recovery/a11y), CAT-104 (per-story test gates), CAT-105 (P0 status — this ticket), CAT-106 (observability)
+
+See `review-gaps-2026-07-13.md` for gap details and `.agents/skills/spec-to-code-pipeline/SKILL.md` for the dependency analysis methodology used to sequence them.
 
 ## Phase 0: Investigations
 
-| ID | Item | Notes |
-|----|------|-------|
-| P0.1 | Per-run tool filtering design | The registry is global (`registry.Replace`/`Unregister` affect all sessions). Design the filtered-view mechanism a coordinator run applies (instance effective set ∩ mode restriction), including plugin registration changes mid-flight. Output: short ADR in this directory |
-| P0.2 | Coordinator scoping audit | Confirm the coordinator turn loop can run headless against an assigned session with injected model/tools/limits without TUI assumptions; identify seams (the one-shot path in `internal/cli/root.go` is the starting point). Output: notes + list of refactors feeding P2.1 |
-| P0.3 | Root prompt relocation audit | What of tau's current base system prompt moves into `tau.agent.md`'s body, what stays code-assembled (env block, skills, memory). Output: split proposal |
-| P0.4 | task.agent.md rationalisation | Decide fate of `task` built-in vs spawnable `tau` (thin restriction, retire, or keep) |
+| ID | Item | Design | Implementation | Notes |
+|----|------|--------|---------------|-------|
+| P0.1 | Per-run tool filtering design | 🔵 decided (ADR 2026-07-12) | 🟢 implemented (`effectiveTools` + `allowedTools` two-tier filter, CAT-89 resolved) | The registry is global; filtered-view mechanism per coordinator run (instance effective set ∩ mode restriction), including plugin registration changes mid-flight. ADR: `p0.1-per-run-tool-filtering-adr.md`. **Updated 2026-07-13:** `skill` is now an ordinary attenuated tool (not auto-injected). |
+| P0.2 | Coordinator scoping audit | 🔵 decided (ADR 2026-07-12) | 🔵 pending (P2.1) | Confirmed one-shot mode is the right base for headless child runs; coordinator requires zero changes. ADR: `p0.2-coordinator-scoping-audit.md`. Blocks CAT-53 (P2.1). |
+| P0.3 | Root prompt relocation audit | 🔵 decided (ADR 2026-07-12) | 🔵 pending (P1.7) | Static character extracted to `tau.agent.md`; dynamic scaffolding stays in template; two-pass rendering. ADR: `p0.3-prompt-relocation-proposal.md`. Blocks CAT-52 (P1.7). |
+| P0.4 | task.agent.md rationalisation | 🟢 decided + implemented | 🟢 done (`task.agent.md` excluded from `Builtins()` list; file kept for reference) | tau is spawnable as a general-purpose child worker, filling task's original role. Format spec (`01-agent-spec-format.md`) correctly recorded this as retired; this plan now matches. |
 
 ## Phase 1: Foundations
 
