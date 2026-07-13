@@ -52,6 +52,15 @@ type InstantiateConfig struct {
 	// Store is used to persist the new instance row. The caller owns
 	// the session that's created from the returned SessionConfig.
 	Store store.SessionStore
+	// PreResolvedRootDef, when set, is used directly instead of
+	// re-resolving the root spec. The root startup path resolves once via
+	// ResolveRootSpec to apply the root-spec override trust gate (G14; see
+	// docs/specs/agents/01-agent-spec-format.md, Root-spec override trust)
+	// before instantiation — this avoids a second, potentially
+	// inconsistent, discovery pass and the TOCTOU window that would open
+	// between the trust check and the actual instantiation. Ignored for
+	// children (ParentInstanceID != "").
+	PreResolvedRootDef *spec.Definition
 }
 
 // InstantiateResult is the output of a successful Instantiate call.
@@ -96,7 +105,9 @@ func Instantiate(ctx context.Context, cfg InstantiateConfig) (*InstantiateResult
 	// For the bare name "tau" at root startup, resolve through full
 	// discovery so project/user overrides win (see 00-overview.md decision 1).
 	var def *spec.Definition
-	if name == "tau" && cfg.ParentInstanceID == "" {
+	if cfg.ParentInstanceID == "" && cfg.PreResolvedRootDef != nil {
+		def = cfg.PreResolvedRootDef
+	} else if name == "tau" && cfg.ParentInstanceID == "" {
 		def = resolveTauRoot(cfg.CWD)
 	}
 	if def == nil {
@@ -218,6 +229,25 @@ func resolveTauRoot(cwd string) *spec.Definition {
 			return def
 		}
 	}
+	d, _ := spec.Lookup("tau")
+	return d
+}
+
+// ResolveRootSpec resolves the root agent's spec exactly as Instantiate
+// does internally for the bare name "tau" (project > user > built-in full
+// discovery). Exported so the root startup path can inspect the resolution
+// — specifically its Scope and SourcePath — to apply the root-spec
+// override trust gate (G14) before instantiation, then pass the same
+// *spec.Definition back in via InstantiateConfig.PreResolvedRootDef.
+func ResolveRootSpec(cwd string) *spec.Definition {
+	return resolveTauRoot(cwd)
+}
+
+// ResolveBuiltinTau resolves the built-in "tau" spec directly, bypassing
+// filesystem discovery. Used as the fallback when a project-level root-spec
+// override is rejected by the trust gate (G14) — the spec's documented
+// "N: reject. Fall back to the built-in tau spec."
+func ResolveBuiltinTau() *spec.Definition {
 	d, _ := spec.Lookup("tau")
 	return d
 }

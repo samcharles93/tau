@@ -52,6 +52,12 @@ type ChatOptions struct {
 	Ephemeral       bool     // --ephemeral: do not persist this session to the session store
 	AllowedTools    []string // --tools: initial tool allowlist (empty = unrestricted)
 	AgentSpec       string   // --agent: spec name for the root agent identity (default "tau")
+	// TrustProjectRootSpec bypasses the root-spec override trust prompt
+	// (--trust-project-root-spec / TAU_TRUST_PROJECT_ROOT_SPEC), trusting
+	// a project-level tau.agent.md override for this invocation only —
+	// not persisted to trust.yaml. See docs/specs/agents/
+	// 01-agent-spec-format.md (Root-spec override trust).
+	TrustProjectRootSpec bool
 	// Logger is the root logger for the session. When nil, slog.Default() is
 	// used. Each subsystem derives a named child (component=xxx) from it.
 	Logger *slog.Logger

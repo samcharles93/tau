@@ -203,6 +203,23 @@ func RunChat(ctx context.Context, opts ChatOptions) error {
 			Agents:            opts.Config.Agents,
 			Store:             rawStore,
 		}
+
+		// Root-spec override trust gate (G14): only the default bare "tau"
+		// resolution path is subject to implicit project/user discovery —
+		// an explicit --agent <other-name> is a deliberate user choice, not
+		// a silent override, and is out of scope for this gate. See
+		// docs/specs/agents/01-agent-spec-format.md (Root-spec override
+		// trust).
+		var rootDisplay *rootSpecDisplay
+		if strings.TrimSpace(opts.AgentSpec) == "tau" || opts.AgentSpec == "" {
+			def, disp, trustErr := resolveRootSpecWithTrust(cwd, opts)
+			if trustErr != nil {
+				return trustErr
+			}
+			instCfg.PreResolvedRootDef = def
+			rootDisplay = &disp
+		}
+
 		instResult, instErr := agent.Instantiate(ctx, instCfg)
 		if instErr != nil {
 			slog.Warn("agent instantiation failed", "err", instErr)
@@ -216,6 +233,23 @@ func RunChat(ctx context.Context, opts ChatOptions) error {
 				Level:      tauchat.ChatNotificationInfo,
 				OccurredAt: time.Now().UTC(),
 			})
+
+			// Display the resolved root spec whenever it came from a
+			// non-built-in source, per docs/specs/agents/
+			// 01-agent-spec-format.md ("Display before execution": visible
+			// throughout the session, not just at startup).
+			if rootDisplay != nil && rootDisplay.Scope != "builtin" {
+				msg := fmt.Sprintf("Resolved root spec: %s:%s", rootDisplay.Scope, rootDisplay.Source)
+				if rootDisplay.Hash != "" {
+					msg += fmt.Sprintf(" (sha256:%s, trusted)", rootDisplay.Hash[:8])
+				}
+				slog.Info("root spec resolved", "scope", rootDisplay.Scope, "source", rootDisplay.Source, "hash", rootDisplay.Hash)
+				startupEvents = append(startupEvents, tauchat.ChatNotificationEvent{
+					Message:    msg,
+					Level:      tauchat.ChatNotificationInfo,
+					OccurredAt: time.Now().UTC(),
+				})
+			}
 		}
 	}
 
