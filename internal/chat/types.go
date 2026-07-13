@@ -729,6 +729,28 @@ type SkillsChangedEvent struct {
 
 func (SkillsChangedEvent) IsChatEvent() {}
 
+// ChildAgentStateEvent is published on the parent bus when an agent-scoped
+// event or usage update arrives from a spawned child. It carries the live
+// state of a running child agent so both UIs can render the state block
+// from the same data (see docs/specs/agents/05-ui.md). Terminal states
+// collapse to a summary line; the UI chooses how much to show.
+type ChildAgentStateEvent struct {
+	InstanceID   string    `json:"instance_id"`   // child instance, e.g. "research#k3v9qp"
+	CallID       string    `json:"call_id"`       // spawning agent tool call id
+	SpecName     string    `json:"spec_name"`     // e.g. "research"
+	Activity     string    `json:"activity"`      // "thinking" or tool verb + argument
+	Turns        int       `json:"turns"`         // from agent.usage
+	InputTokens  int       `json:"input_tokens"`  // cumulative from agent.usage
+	OutputTokens int       `json:"output_tokens"` // cumulative from agent.usage
+	ElapsedMs    int64     `json:"elapsed_ms"`    // wall clock since spawn
+	Status       string    `json:"status"`        // "working", "completed", "failed", "cancelled", "budget_exhausted", "timed_out"
+	Error        string    `json:"error,omitempty"`
+	Partial      bool      `json:"partial,omitempty"`
+	OccurredAt   time.Time `json:"occurred_at"`
+}
+
+func (ChildAgentStateEvent) IsChatEvent() {}
+
 // WidgetKind identifies which field of Widget is populated.
 type WidgetKind string
 

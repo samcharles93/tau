@@ -341,7 +341,7 @@ func executeAgentTool(ctx context.Context, params json.RawMessage, _ UIBridge, c
 	childBusClient := cfg.Bus.Client("agent-" + instResult.InstanceID)
 	childPub := eventbus.Publish[tauchat.ChatEvent](childBusClient)
 
-	finalText, resultEnv, usageAcc, err := readChildResult(childReader, cmd, instResult.InstanceID, cfg.SessionID, childPub)
+	finalText, resultEnv, usageAcc, err := readChildResult(childReader, cmd, instResult.InstanceID, instResult.InstanceID, cfg.SessionID, childPub)
 	if err != nil {
 		cmd.Process.Kill()
 		_ = cmd.Wait()
@@ -634,12 +634,34 @@ func buildChildPrompt(prompt, ctxStr string) string {
 }
 
 // readChildResult reads envelopes from the child's stdout until it sees
-// agent.result, forwarding agent.event to the parent bus and accumulating
-// agent.usage totals. Returns the child's final text, the result envelope,
-// accumulated usage, and any error.
-func readChildResult(reader *stdio.Reader, cmd *exec.Cmd, instanceID, parentSessionID string, childPub *eventbus.Publisher[tauchat.ChatEvent]) (string, *bridge.AgentResult, *bridge.AgentResultUsage, error) {
+// agent.result, forwarding agent.event and agent.usage to the parent bus
+// as ChildAgentStateEvent (per 05-ui.md). Returns the child's final text,
+// the result envelope, accumulated usage, and any error.
+func readChildResult(reader *stdio.Reader, cmd *exec.Cmd, instanceID, callID, parentSessionID string, childPub *eventbus.Publisher[tauchat.ChatEvent]) (string, *bridge.AgentResult, *bridge.AgentResultUsage, error) {
 	var finalText strings.Builder
 	var usageAcc bridge.AgentResultUsage
+	var activity string
+	startedAt := time.Now()
+
+	// emitState publishes a ChildAgentStateEvent on the parent bus.
+	emitState := func(status string) {
+		if childPub == nil || !childPub.ShouldPublish() {
+			return
+		}
+		elapsed := time.Since(startedAt).Milliseconds()
+		childPub.Publish(tauchat.ChildAgentStateEvent{
+			InstanceID:   instanceID,
+			CallID:       callID,
+			SpecName:     specNameFromID(instanceID),
+			Activity:     activity,
+			Turns:        usageAcc.Turns,
+			InputTokens:  usageAcc.InputTokens,
+			OutputTokens: usageAcc.OutputTokens,
+			ElapsedMs:    elapsed,
+			Status:       status,
+			OccurredAt:   time.Now(),
+		})
+	}
 
 	for {
 		typ, payload, err := reader.ReadEnvelope()
@@ -667,8 +689,8 @@ func readChildResult(reader *stdio.Reader, cmd *exec.Cmd, instanceID, parentSess
 
 		switch typ {
 		case "agent.event":
-			// Forward child events to the parent bus. We publish via
-			// ChatToolOutputEvent carrying the raw inner event envelope.
+			// Forward raw event as a ChatToolOutputEvent (backwards compat)
+			// and extract activity from tool-execution-started events.
 			if childPub != nil {
 				childPub.Publish(tauchat.ChatToolOutputEvent{
 					SessionID:  parentSessionID,
@@ -677,24 +699,24 @@ func readChildResult(reader *stdio.Reader, cmd *exec.Cmd, instanceID, parentSess
 					ReceivedAt: time.Now(),
 				})
 			}
+			// Try to extract the inner event type for activity tracking.
+			if activity == "" {
+				activity = extractChildActivity(payload)
+			}
+			emitState("working")
 		case "agent.usage":
 			var usage bridge.AgentResultUsage
 			if err := json.Unmarshal(payload, &usage); err != nil {
 				continue
 			}
-			// Cumulative — last message wins.
 			if usage.Turns > usageAcc.Turns {
 				usageAcc = usage
 			}
+			emitState("working")
 		case "agent.result":
 			var result bridge.AgentResult
 			if err := json.Unmarshal(payload, &result); err != nil {
 				return finalText.String(), nil, &usageAcc, fmt.Errorf("unmarshal agent.result: %w", err)
-			}
-			result.TaskID = instanceID
-			// Backfill usage if the child didn't report its own.
-			if result.Usage.Turns == 0 {
-				result.Usage = usageAcc
 			}
 			return finalText.String(), &result, &usageAcc, nil
 		default:
@@ -763,6 +785,40 @@ func mustMarshal(v map[string]any) json.RawMessage {
 		panic(err)
 	}
 	return data
+}
+
+// specNameFromID extracts the spec name from an instance ID like "research#k3v9qp".
+func specNameFromID(instanceID string) string {
+	if idx := strings.LastIndex(instanceID, "#"); idx >= 0 {
+		return instanceID[:idx]
+	}
+	return instanceID
+}
+
+// extractChildActivity tries to extract a human-readable activity string
+// from a raw agent.event payload. On failure, returns "".
+func extractChildActivity(payload json.RawMessage) string {
+	var env struct {
+		Type    string          `json:"type"`
+		Payload json.RawMessage `json:"payload"`
+	}
+	if err := json.Unmarshal(payload, &env); err != nil {
+		return ""
+	}
+	switch env.Type {
+	case "ChatToolExecutionStartedEvent":
+		var ev struct {
+			ToolName string `json:"tool_name"`
+		}
+		if err := json.Unmarshal(env.Payload, &ev); err != nil || ev.ToolName == "" {
+			return ""
+		}
+		return ev.ToolName
+	case "ChatResponseStartedEvent":
+		return "thinking"
+	default:
+		return ""
+	}
 }
 
 var _ = errors.New // keep import for future use

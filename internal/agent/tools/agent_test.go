@@ -36,11 +36,28 @@ func TestExecuteAgentTool_SpecNotFound(t *testing.T) {
 // TestExecuteAgentTool_DisableModelInvocation verifies that specs with
 // disable-model-invocation:true are rejected.
 func TestExecuteAgentTool_DisableModelInvocation(t *testing.T) {
-	// Create a test spec with disable-model-invocation.
-	// Since we can't easily create a filesystem spec in test without the
-	// full agent infrastructure, this test documents the expected behavior.
-	// The rejection path is exercised by the depth and spec-not-found tests.
-	t.Skip("requires filesystem spec setup — covered by pre-spawn checks in unit tests")
+	// "plan" is a built-in spec with disable-model-invocation:true.
+	cfg := AgentToolConfig{
+		CWD:              t.TempDir(),
+		Agents:           config.DefaultAgentsConfig(),
+		ParentDepth:      0,
+		ParentInstanceID: "tau#root000",
+		Bus:              eventbus.New(),
+	}
+	result, err := executeAgentTool(context.Background(), mustMarshal(map[string]any{
+		"agent":  "plan",
+		"prompt": "do something",
+	}), nil, cfg)
+	if err != nil {
+		t.Fatalf("executeAgentTool returned error: %v", err)
+	}
+	if !result.IsError {
+		t.Errorf("expected IsError=true for disable-model-invocation spec, got false")
+	}
+	if result.ErrorKind != "not_spawnable" {
+		t.Errorf("expected ErrorKind=not_spawnable, got %q", result.ErrorKind)
+	}
+	t.Logf("content: %s", result.Content)
 }
 
 // TestExecuteAgentTool_DepthExceeded verifies that spawning beyond the

@@ -450,7 +450,9 @@ func committedGroupKey(tools []toolState) string {
 // summary line above the tool result (see docs/specs/agents/05-ui.md).
 type childAgentResult struct {
 	instanceID string // e.g. "research#k3v9qp"
-	status     string // completed, failed, cancelled, budget_exhausted, timed_out
+	specName   string // e.g. "research"
+	status     string // completed, failed, cancelled, budget_exhausted, timed_out, working
+	activity   string // tool verb or "thinking" (only for working state)
 	turns      int
 	tokens     int // total tokens
 	durationMs int64
@@ -473,6 +475,47 @@ func renderChildAgentLine(c childAgentResult) string {
 	durStr := formatDurationCompact(c.durationMs)
 	return termkit.FgOnly(fmt.Sprintf("  agent %s  %s  turn %d · %dt · %s",
 		c.instanceID, status, c.turns, c.tokens, durStr), theme.ToneMuted)
+}
+
+// renderChildStateBlock renders the live child agent state as a compact
+// status element inside the tool box. Working state shows activity,
+// turns, tokens, and elapsed; terminal states show the summary line.
+func renderChildStateBlock(c childAgentResult, width int) string {
+	if c.status == "completed" || c.status == "failed" || c.status == "cancelled" ||
+		c.status == "budget_exhausted" || c.status == "timed_out" {
+		return renderChildAgentLine(c)
+	}
+
+	// Live working state: activity line + metrics line.
+	var lines []string
+
+	// Activity line: spec name + instance, current activity.
+	activity := c.activity
+	if activity == "" {
+		activity = "starting"
+	}
+	idLine := termkit.FgOnly(fmt.Sprintf("  agent %s  %s", c.instanceID, activity),
+		theme.AccentColor)
+	lines = append(lines, idLine)
+
+	// Metrics line: turns, tokens, elapsed.
+	tokensStr := formatTokensCompact(c.tokens)
+	durStr := formatDurationCompact(c.durationMs)
+	metrics := termkit.FgOnly(fmt.Sprintf("  turn %d · %s · %s", c.turns, tokensStr, durStr),
+		theme.ToneMuted)
+	lines = append(lines, metrics)
+
+	return strings.Join(lines, "\n")
+}
+
+func formatTokensCompact(n int) string {
+	if n >= 1_000_000 {
+		return fmt.Sprintf("%.1fM", float64(n)/1_000_000)
+	}
+	if n >= 1_000 {
+		return fmt.Sprintf("%.1fk", float64(n)/1_000)
+	}
+	return fmt.Sprintf("%d", n)
 }
 
 // committedReasoningBlock is a completed reasoning block already committed
@@ -2550,6 +2593,21 @@ func (m *model) handleChatEvent(evt tauchat.ChatEvent) tea.Cmd {
 			m.agentState = agentProcessing
 		}
 
+	case tauchat.ChildAgentStateEvent:
+		// Live child agent state update (per 05-ui.md). Terminal
+		// states from the event stream update the summary; the UI
+		// collapses working states and shows terminal summaries.
+		m.childAgents[e.CallID] = childAgentResult{
+			instanceID: e.InstanceID,
+			specName:   e.SpecName,
+			status:     e.Status,
+			activity:   e.Activity,
+			turns:      e.Turns,
+			tokens:     e.InputTokens + e.OutputTokens,
+			durationMs: e.ElapsedMs,
+			errorMsg:   e.Error,
+		}
+
 	case tauchat.ChatToolOutputEvent:
 		m.setToolResult(e.CallID, e.Chunk)
 		m.appendToolTail(e.CallID, e.Chunk)
@@ -4372,6 +4430,14 @@ func (m *model) renderToolBox(t toolState, expanded bool, _ int) string {
 
 	// Build body lines.
 	var bodyLines []string
+
+	// For agent tools, render the live child state block while running
+	// or the terminal summary once complete (per 05-ui.md).
+	if t.name == "agent" {
+		if child, ok := m.childAgents[t.id]; ok && child.instanceID != "" {
+			bodyLines = append(bodyLines, renderChildStateBlock(child, width-4))
+		}
+	}
 
 	if expanded {
 		// Expanded mode: show full result content in an inner box.
