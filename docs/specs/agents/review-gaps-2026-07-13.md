@@ -195,6 +195,8 @@ Specify whether project overrides of the root require explicit approval, a trust
 
 ### G15. UI recovery, accessibility, and high-volume behavior are missing
 
+**Status: RESOLVED (2026-07-13, CAT-103).**
+
 **Ticket: CAT-103**
 
 The UI receives the full child event stream and keeps live drill-down state in memory (`05-ui.md`, lines 3-44). Define:
