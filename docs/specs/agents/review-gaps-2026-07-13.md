@@ -146,6 +146,8 @@ Define prompt assembly precedence and escaping. Persist origin/provenance for de
 
 ### G12. Snapshot schema and compatibility are not versioned
 
+**Status: RESOLVED (2026-07-13, CAT-97).**
+
 **Ticket: CAT-97**
 
 The resolved spec snapshot is serialized into JSON (`01-agent-spec-format.md`, lines 95-97), but no snapshot schema version or forward/backward compatibility rule is given. Add `snapshot_version`, canonical serialization rules for `spec_hash`, and behavior when a newer binary cannot decode an old snapshot. Clarify whether resume uses the historical body snapshot (identity continuity) or the latest spec (upgrade behavior).

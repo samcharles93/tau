@@ -193,7 +193,7 @@ The tool result the parent model sees is the child's final assistant text. Attac
 
 On abnormal end the parent model receives the partial text (if any) plus a single compact status line appended by the harness, e.g. `[agent research#k3v9qp ended: timed_out after 5m, 7 turns; partial output above]`. Failures are data: the parent decides whether to retry, respawn, resume or report.
 
-Follow-ups: `resume` spawns a fresh process on the child's existing session (same spec, new instance row with the same lineage). This is the only continuation mechanism; there are no resident children in v1.
+Follow-ups: `resume` spawns a fresh process on the child's existing session (same spec identity from the historical snapshot, new instance row with the same lineage). Resume uses the original instance's `spec_snapshot`, not the latest spec file on disk (see 01, Snapshot semantics — resume behavior). The `model` parameter on the resume call may override the resolved model, but the spec identity (name, body, tools, limits) is immutable. This is the only continuation mechanism; there are no resident children in v1.
 
 ## Lifecycle and failure modes
 

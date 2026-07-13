@@ -94,4 +94,95 @@ Existing built-ins are untouched by this design except:
 
 ## Snapshot semantics
 
-When a process instantiates its spec (root at startup, child at spawn), the fully resolved definition is serialised into `agent_instances.spec_snapshot`: name, description, effective frontmatter after defaulting, the resolved provider/model pair, and the raw body. The running instance never re-reads the spec file. Modes, by contrast, keep today's live-resolution behaviour and run under the process's existing identity; entering a mode never creates an instance.
+When a process instantiates its spec (root at startup, child at spawn), the fully resolved definition is serialised into `agent_instances.spec_snapshot`. The running instance never re-reads the spec file. Modes, by contrast, keep today's live-resolution behaviour and run under the process's existing identity; entering a mode never creates an instance.
+
+### Snapshot schema version
+
+Every snapshot carries a `snapshot_version` field. The current version is `1`.
+
+```json
+{
+  "snapshot_version": 1,
+  "name": "research",
+  "description": "Answer research questions by searching the codebase, documentation, and web.",
+  "scope": "builtin",
+  "source_path": "",
+  "source_hash": "sha256:abc123def456...",
+  "resolved_provider": "anthropic",
+  "resolved_model": "claude-sonnet-4-20250514",
+  "model_tier": "smart",
+  "effective_tools": ["read", "find", "grep", "docs"],
+  "max_turns": 30,
+  "timeout": "10m",
+  "disable_model_invocation": false,
+  "user_invocable": true,
+  "mode_switcher": true,
+  "body": "You are a research agent. ...",
+  "timestamp": "2026-07-13T01:00:00Z"
+}
+```
+
+| Field | Source | Notes |
+|---|---|---|
+| `snapshot_version` | N/A | Integer, starts at 1. Bumped when the shape changes incompatibly. |
+| `name`, `description`, `body` | Spec file frontmatter + template body | Body is the raw template content (NOT rendered). |
+| `scope` | Discovery path | `"builtin"`, `"user"`, or `"project"`. |
+| `source_path` | Discovery path | Filesystem path for user/project specs; empty for built-ins. |
+| `source_hash` | sha256 of the raw `.agent.md` file bytes | Identifies which version of the spec file was snapshotted. |
+| `resolved_provider`, `resolved_model` | Tier resolution or explicit config | The concrete pair the instance actually runs. |
+| `model_tier` | From spec `model` field | The tier name (`"fast"`, `"smart"`, `"deep"`) or empty if a concrete model was used. |
+| `effective_tools` | Attenuation intersection at instantiation | `null` = unrestricted; `[]` = no tools. |
+| `max_turns`, `timeout` | Spec frontmatter, defaulted from config | The structural limits in effect at spawn. |
+| `disable_model_invocation`, `user_invocable`, `mode_switcher` | Spec frontmatter | As resolved at instantiation time. |
+| `timestamp` | `time.Now().UTC()` at snapshot creation | Audit trail; not used for decisions. |
+
+### Canonical serialization and hashing
+
+To ensure stable hashes across equivalent snapshots (acceptance criterion), snapshots are serialised in canonical form before hashing:
+
+- **Key order**: all object keys are sorted lexicographically by Unicode codepoint.
+- **Whitespace**: 2-space indent, no trailing whitespace, a single trailing newline (LF, `\n`).
+- **Numbers**: integers are serialised without decimal points or exponents. Floating-point values are not used in snapshots.
+- **Strings**: Unicode, unescaped where possible (only `"`, `\`, and control characters < U+0020 are escaped). Solidus (`/`) is NOT escaped.
+- **Arrays**: no trailing comma, consistent spacing.
+- `null` vs absent: fields with Go zero values (empty string, 0, false, nil slice) are **omitted** rather than serialised as `null` or `[]`, except for `effective_tools` where `null` and `[]` have distinct semantics (unrestricted vs no tools).
+
+The canonical hash is `sha256(canonical_json_bytes)`, stored alongside the snapshot for fast equality comparison without re-serialising.
+
+### Forward and backward compatibility
+
+| Direction | Behavior |
+|---|---|
+| **Old snapshot read by new binary** | Supported for all versions ≥ 1. New fields introduced in later versions default to Go zero values (empty string, 0, false). Old snapshots decode deterministically — the same snapshot bytes always produce the same in-memory representation. |
+| **New snapshot read by old binary** | If `snapshot_version` is greater than the binary's `MaxSupportedSnapshotVersion`, the binary fails at load time with a clear error: `"snapshot version N is not supported by this binary (max: M)"`. The session is not loaded and the error is returned to the caller. No state is corrupted because the snapshot is only read, never rewritten by a binary that doesn't understand it. |
+| **Snapshot written by any binary** | Always written at the binary's own `CurrentSnapshotVersion`. Never downgraded to an older format. |
+
+### Migration policy
+
+No automatic in-place migration. Snapshots are immutable once written. When a new snapshot version is introduced:
+
+1. The new binary reads both old and new versions (backward compatibility).
+2. New instances write the new version.
+3. Old instances (from before the upgrade) retain their original snapshot version. They load successfully because the new binary supports old versions.
+4. If a snapshot field's semantics change incompatibly, the `snapshot_version` is bumped and a new field name is introduced alongside the old one. The old field is kept for reading old snapshots; the new field is authoritative when present.
+
+### Resume behavior
+
+**Resume uses the historical snapshot, not the latest spec.**
+
+When an agent is resumed:
+
+1. The resuming process loads the original instance's `spec_snapshot` from the store.
+2. It instantiates the new instance from that historical snapshot — same name, description, body, resolved model, effective tools, max_turns, and timeout as the original instance.
+3. It does NOT re-resolve the spec file from disk. The spec file may have changed or been deleted since the original spawn.
+
+Rationale: identity continuity. The child session was started under a specific identity; resuming it must preserve that identity. If the user wants a different spec, they spawn a new child, not resume the old one. The `resume` parameter on the `agent` tool can optionally override `resolved_model` (to resume with a different model) but cannot change the spec identity.
+
+### Snapshot hash stability
+
+Two snapshots with identical semantic content produce identical hashes, regardless of:
+
+- The order in which the spec file's frontmatter was parsed
+- The machine or time they were generated on (except `timestamp`, which differs)
+
+**Note:** `timestamp` is deliberately excluded from the canonical hash. Including it would make every snapshot unique even when the spec is unchanged. The `source_hash` field already captures whether the source file changed.
