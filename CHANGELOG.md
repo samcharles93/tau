@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.20.0](https://github.com/samcharles93/tau/compare/v0.19.0...v0.20.0) (2026-07-13)
+
+
+### Features
+
+* default to tui2, rename --new-tui to --legacy-tui ([ed965b3](https://github.com/samcharles93/tau/commit/ed965b3b0fa92de6e5ebd494278ee114389e50b0))
+
 ## [0.19.0](https://github.com/samcharles93/tau/compare/v0.18.1...v0.19.0) (2026-07-13)
 
 
