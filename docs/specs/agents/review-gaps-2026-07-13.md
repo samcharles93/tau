@@ -217,6 +217,8 @@ Add structured spawn/ready/assign/cancel/result transition logs with instance/ta
 
 ### G17. The implementation plan lacks per-item acceptance gates
 
+**Status: RESOLVED (2026-07-13, CAT-104).**
+
 **Ticket: CAT-104**
 
 `task check` is the only universal gate (`06-implementation-plan.md`, line 3), and P5.1 bundles most end-to-end behavior late (`06-implementation-plan.md`, lines 56-63). Security and lifecycle invariants should be tested in the phase that introduces them, not deferred to Phase 5.
