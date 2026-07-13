@@ -32,6 +32,8 @@ Acceptance criteria:
 
 ### G2. Resume authorization and capability recomputation are unspecified
 
+**Status: RESOLVED (2026-07-13, CAT-90).**
+
 **Ticket: CAT-90**
 
 `resume` starts a new process on an existing child session (`02-spawning-and-lifecycle.md`, line 96), but the spec does not state who may resume which session, whether the target must be a descendant of the caller, whether its original spec must match the requested target, or whether effective tools are inherited from the old instance or recomputed against the current parent.

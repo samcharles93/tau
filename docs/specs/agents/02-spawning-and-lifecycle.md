@@ -195,6 +195,83 @@ On abnormal end the parent model receives the partial text (if any) plus a singl
 
 Follow-ups: `resume` spawns a fresh process on the child's existing session (same spec identity from the historical snapshot, new instance row with the same lineage). Resume uses the original instance's `spec_snapshot`, not the latest spec file on disk (see 01, Snapshot semantics — resume behavior). The `model` parameter on the resume call may override the resolved model, but the spec identity (name, body, tools, limits) is immutable. This is the only continuation mechanism; there are no resident children in v1.
 
+## Resume authorization
+
+Resume creates a new agent instance that continues a previously-ended child session. It is the most authority-sensitive operation in the tree — it grants a new process write access to an existing session and recomputes capabilities at a potentially different point in the tree. Every resume must be explicitly authorized.
+
+### Ownership rules
+
+A session may be resumed only by an agent instance that is an **ancestor** of the original instance (the one that created the session). Specifically:
+
+| Rule | Check | Violation result |
+|---|---|---|
+| **Ancestor only** | The resuming instance's address must appear in the original instance's ancestor chain (walk `parent_instance_id` up to the root). | Resume rejected: `"not an ancestor of the session's original instance"` |
+| **Session ended** | The original instance's `ended_at` must be non-NULL. | Resume rejected: `"session is still active"` |
+| **Session not already resumed** | No other instance may currently own the session. Ownership = the session's `agent_instance_id` points to an instance with `ended_at IS NULL`. The atomic check in 04 prevents races. | Resume rejected: `"session already resumed"` |
+| **Session exists** | The session UUID must resolve to a row in the store. | Resume rejected: `"session not found"` |
+
+Ancestor-only means:
+- **Direct parent**: can resume. Standard case.
+- **Grandparent**: can resume (the intermediate parent may have crashed without resuming).
+- **Root**: can resume any child session in the tree.
+- **Sibling**: cannot resume. A peer agent is not an ancestor.
+- **Unrelated**: cannot resume. No path from the resuming instance to the original.
+
+### Capability recomputation
+
+Resume recomputes capabilities — it never trusts the original instance's `effective_tools` as sufficient authority:
+
+```
+resumed effective tools = original snapshot effective_tools  ∩  current parent effective_tools  ∩  resume spawn restriction (if given)
+```
+
+This is the same attenuation formula as spawn, with one addition: the **original snapshot's effective_tools** replaces the child spec's `tools` list. The original ceiling acts as an upper bound — the resumed agent can never have more tools than it originally had.
+
+- `original snapshot effective_tools`: read from the original instance's `spec_snapshot.effective_tools`. Nil means unrestricted (the original had no tool restriction from its spec).
+- `current parent effective_tools`: the resuming instance's current effective set at resume time (may have been narrowed by modes or attenuation since the original spawn).
+- `resume spawn restriction`: the `tools` parameter on the `resume` call, which may further narrow.
+
+**Key invariant**: resume never widens the original instance's capability ceiling. If the original had `{read, grep, skill}`, the resumed instance can at most have those same tools, and may have fewer if the parent has lost capabilities since the original spawn.
+
+### Model and spec precedence
+
+| Input | Source | Precedence |
+|---|---|---|
+| Spec identity (name, description, body, tools, max_turns, timeout) | Original instance's `spec_snapshot` | Authoritative; cannot be overridden by the resume call |
+| Model | Resume call's `model` parameter | Overrides the snapshot's `resolved_model`. If unset, inherits the snapshot's model. Tier names are resolved against the current config, not the historical one. |
+| Provider | Resume call's `provider` parameter (if any), else snapshot's `resolved_provider` | The model override can specify a provider; otherwise the snapshot's provider is used. |
+
+The resume call MUST NOT specify `agent` (spec name) — the spec identity is fixed by the original session. If `agent` is present on a resume call, it is rejected with `"spec identity cannot be changed on resume; spawn a new child instead"`.
+
+### Atomic ownership acquisition
+
+Two processes racing to resume the same session must yield exactly one owner. This is enforced by the SQLite transaction defined in 04 (Active session ownership):
+
+1. `BEGIN IMMEDIATE`
+2. Read the session's `agent_instance_id` → read that instance's `ended_at`
+3. If `ended_at IS NULL`: the prior owner is still active → `ROLLBACK`, fail with `"session is still active"`
+4. If `ended_at IS NOT NULL`: the session is free → INSERT new instance row, UPDATE session's `agent_instance_id`, `COMMIT`
+5. The second racer blocks on the write lock. When it proceeds, it sees the updated `agent_instance_id` pointing to the first racer's new instance (which has `ended_at IS NULL`). It fails with `"session already resumed"`.
+
+No additional locking column is needed — `ended_at` on the prior instance is the ownership token.
+
+### Test coverage requirements
+
+| Scenario | Expected behavior |
+|---|---|
+| Resume ended session by direct parent | ✅ Succeeds; capabilities recomputed |
+| Resume ended session by grandparent | ✅ Succeeds (ancestor chain check passes) |
+| Resume ended session by sibling | ❌ Rejected: not an ancestor |
+| Resume ended session by unrelated agent | ❌ Rejected: not an ancestor |
+| Resume active session | ❌ Rejected: session is still active |
+| Resume already-resumed session | ❌ Rejected: session already resumed (via atomic check) |
+| Resume missing session | ❌ Rejected: session not found |
+| Resume with `agent` override | ❌ Rejected: spec identity cannot be changed |
+| Resume with `model` override | ✅ Succeeds; new instance uses the specified model |
+| Resume by parent whose capabilities were narrowed since spawn | ✅ Succeeds; effective tools = original ∩ current parent (may be narrower) |
+| Concurrent resume by two ancestors | ✅ Exactly one succeeds; the other gets `"session already resumed"` |
+| Resume where original had nil effective_tools (unrestricted) | ✅ Succeeds; effective = current parent ∩ spawn restriction (original ceiling is unbounded) |
+
 ## Lifecycle and failure modes
 
 Child process states: `spawned → ready → working → (result sent) → exited`.
