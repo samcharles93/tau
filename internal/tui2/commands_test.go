@@ -388,9 +388,10 @@ func TestCmdHelpOpensOverlayWithoutTouchingScrollback(t *testing.T) {
 
 func TestCmdHelpOverlayShowsKeybindings(t *testing.T) {
 	m := newTestModel(&fakeRuntime{}, nil)
+	m.height = 200
 	drainCmd(m.cmdHelp(""))
 
-	rendered, _ := renderHelpBox(m.helpOverlayWidth(), m.helpOverlay.expanded)
+	rendered, _ := m.renderHelpOverlayBox()
 	plain := stripANSI(rendered)
 	for _, want := range []string{"Help: Keybindings & Controls", "Ctrl+S", "Ctrl+Home / Ctrl+End"} {
 		if !strings.Contains(plain, want) {
@@ -420,12 +421,13 @@ func TestAnyKeyClosesHelpOverlay(t *testing.T) {
 // the available height and let Up/Down/PgUp/PgDn scroll to the rest.
 func TestHelpOverlayClipsAndScrollsOnShortTerminal(t *testing.T) {
 	m := newTestModel(&fakeRuntime{}, nil)
-	m.width, m.height = 120, 15 // short enough that the full box can't fit
+	m.width, m.height = 120, 200
 	drainCmd(m.cmdHelp(""))
 
-	full, _ := renderHelpBox(m.helpOverlayWidth(), m.helpOverlay.expanded)
+	full, _ := m.renderHelpOverlayBox()
 	fullHeight := lipgloss.Height(full)
 
+	m.height = 15 // short enough that the full box can't fit
 	clipped, _ := m.renderHelpOverlayBox()
 	clippedHeight := lipgloss.Height(clipped)
 
@@ -477,8 +479,7 @@ func TestHelpOverlayClickExpandsAndCollapsesRow(t *testing.T) {
 	m.width, m.height = 70, 40 // single-column layout — simpler, deterministic hit coordinates
 	drainCmd(m.cmdHelp(""))
 
-	width := m.helpOverlayWidth()
-	rendered, hits := renderHelpBox(width, m.helpOverlay.expanded)
+	rendered, hits := m.renderHelpOverlayBox()
 	if len(hits) == 0 {
 		t.Fatal("expected at least one clickable row")
 	}

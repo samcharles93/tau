@@ -324,6 +324,27 @@ func (m *model) modelCompletions(argsBefore int) []compGroup {
 	return []compGroup{{Title: "Models", Matches: matches}}
 }
 
+// maybePrefetchSessions silently refreshes m.sessionSummaries the first
+// time the /session or /resume argument completer needs it and finds it
+// empty. Without this, the very first time a user tab-completes a session
+// ID in a fresh TUI process the dropdown has nothing to show — the cache is
+// otherwise only ever populated as a side effect of an explicit "/session"
+// or "/resume" submission. Silent so the SessionsListedEvent handler
+// doesn't also print a "Sessions: ..." dump to scrollback the way an
+// explicit command does (see ListSessionsCommand.Silent).
+func (m *model) maybePrefetchSessions() tea.Cmd {
+	if m.sessionsFetchInFlight || len(m.sessionSummaries) > 0 {
+		return nil
+	}
+	for _, g := range m.rawCandidateGroups() {
+		if g.Title == "Sessions" && len(g.Matches) == 0 {
+			m.sessionsFetchInFlight = true
+			return sendCommand(m.runtime, tauchat.ListSessionsCommand{Silent: true})
+		}
+	}
+	return nil
+}
+
 func (m *model) sessionCompletions(argsBefore int) []compGroup {
 	if argsBefore > 0 {
 		return nil // only first arg

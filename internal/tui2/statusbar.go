@@ -19,7 +19,7 @@ import (
 // doing — the status bar's single source of truth for which content to
 // show, instead of inferring "what's happening" by sniffing
 // m.notification text or combining inResponse/streaming/tools ad hoc at
-// render time. model.go's handleChatEvent sets this at each transition;
+// render time. events.go's handleChatEvent sets this at each transition;
 // computeStatusBar only ever reads it.
 type agentState int
 
@@ -63,11 +63,14 @@ const (
 	prioProvider = 2
 	prioModel    = 3
 
-	// Right-side metric segments.
-	prioWeb     = 1
-	prioCost    = 2
-	prioTokens  = 3
-	prioContext = 4
+	// Right-side metric segments. prioDuration (the session's cumulative
+	// turn time) is the most disposable of the usage segments — nice
+	// context, but cost/tokens/context% matter more under width pressure.
+	prioDuration = 1
+	prioWeb      = 2
+	prioCost     = 3
+	prioTokens   = 4
+	prioContext  = 5
 	// prioMetric is a busy state's supporting numeric segment (elapsed time
 	// for Running tool, tok/s for Streaming) — more disposable than the
 	// session-token/context segments above.
@@ -271,10 +274,10 @@ func (m *model) identitySegs(full bool) []statusSeg {
 	return segs
 }
 
-// sessionTokenSegs returns the token/cost/context-% right-side segments
-// shared by every state that shows usage metrics (Ready, Cancelled,
-// Streaming) — the same content computeStatusBar always showed, just
-// factored out so each state doesn't repeat the m.usage plumbing.
+// sessionTokenSegs returns the token/cost/duration/context-% right-side
+// segments shared by every state that shows usage metrics (Ready,
+// Cancelled, Streaming) — the same content computeStatusBar always showed,
+// just factored out so each state doesn't repeat the m.usage plumbing.
 func (m *model) sessionTokenSegs() []statusSeg {
 	if m.usage == nil {
 		return nil
@@ -283,12 +286,18 @@ func (m *model) sessionTokenSegs() []statusSeg {
 	if totals == nil || totals.TotalTokens <= 0 {
 		return nil
 	}
+	// "↑in ↓out" (input/output split) is more informative at a glance than
+	// a single combined total — it's the split that actually drives cost
+	// and context usage differently, not just a bigger/smaller number.
 	segs := []statusSeg{{
-		text: humanizeTokens(totals.TotalTokens) + " tok",
+		text: fmt.Sprintf("↑%s ↓%s", humanizeTokens(totals.PromptTokens), humanizeTokens(totals.CompletionTokens)),
 		prio: prioTokens,
 	}}
 	if totals.Cost > 0 {
 		segs = append(segs, statusSeg{text: formatCost(totals.Cost), prio: prioCost})
+	}
+	if totals.TurnDurationMs > 0 {
+		segs = append(segs, statusSeg{text: formatDurationCompact(totals.TurnDurationMs), prio: prioDuration})
 	}
 	if pct := contextPct(totals.LastPromptTokens, m.ctxWindow); pct >= 0 {
 		segs = append(segs, statusSeg{
@@ -315,10 +324,11 @@ func webSeg(url string) statusSeg {
 }
 
 // ctrlCStopSeg is the interrupt hint shown across every busy state
-// (Thinking/Running tool/Streaming) — styled with the same ErrorColor
-// already used for "Ctrl+C" everywhere else it appears (see steerHint),
-// and marked prioTransient so it's one of the last things a narrow
-// terminal drops.
+// (Thinking/Running tool/Streaming) — the sole place this hint appears
+// (the chat area used to duplicate it via steerHint; removed since Ctrl+C
+// stop belongs in the status bar, not scrollback, and "[Enter] steer" was
+// actively wrong once Enter started queueing by default instead). Marked
+// prioTransient so it's one of the last things a narrow terminal drops.
 func ctrlCStopSeg() statusSeg {
 	return statusSeg{
 		text:  "Ctrl+C Stop",

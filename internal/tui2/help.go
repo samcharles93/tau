@@ -97,7 +97,7 @@ type helpRowKey struct {
 }
 
 // helpRowHit records where one row landed in the rendered box, for click
-// hit-testing (see toggleCommittedHelpAtLine in model.go): startY/endY are
+// hit-testing (see handleHelpOverlayClick below): startY/endY are
 // line offsets relative to the box's first body line (0 = the line right
 // after the top border); startX/endX are column offsets within a fully
 // composed, padded body line (i.e. already accounting for the border/pad
@@ -113,24 +113,9 @@ type helpRowHit struct {
 // helpBoxTitle is the /help overlay's title, embedded in its top border.
 const helpBoxTitle = "Help: Keybindings & Controls"
 
-// renderHelpBox builds the full, unclipped /help output: a bordered box
-// containing every helpSections group, laid out as two columns (Input &
-// Editing on the left; Tool Interaction and Screen & Navigation stacked on
-// the right) with Turn Control & Shell spanning full width below,
-// mirroring the two side columns' combined height. Below
-// helpTwoColumnMinWidth it falls back to one section per row, stacked
-// top-to-bottom. Used directly by tests and anywhere the whole box (no
-// height clamping) is wanted; the live overlay instead calls
-// renderHelpBody + renderBoxAround itself so it can clip to the terminal's
-// available height — see renderHelpOverlayBox.
-func renderHelpBox(width int, expanded map[helpRowKey]bool) (rendered string, hits []helpRowHit) {
-	body, hits := renderHelpBody(width, expanded)
-	return renderBoxAround(width, helpBoxTitle, body), hits
-}
-
 // renderHelpBody builds the /help content lines (no border) for the given
-// outer box width — see renderHelpBox's doc comment for the layout this
-// produces. expanded holds which rows are showing their full (word-wrapped)
+// outer box width. It lays sections out in two columns when space permits,
+// and stacks them at narrower widths. expanded holds which rows are showing their full (word-wrapped)
 // description instead of a truncated one-liner. The returned hits describe
 // where each row landed, in body-relative (unclipped) line coordinates —
 // callers that clip the body for a scrollable window (renderHelpOverlayBox)
@@ -336,7 +321,7 @@ func padVisible(s string, width int) string {
 }
 
 // renderBoxAround wraps body lines in a box using titledBoxBorders — the
-// same border convention renderInputBox uses (model.go), for visual
+// same border convention renderInputBox uses (input.go), for visual
 // consistency between the input box and /help. Unlike renderInputBoxLine
 // (which sits content flush against the left border to match the input
 // prompt/cursor), this adds a one-space pad on both sides for readability,
@@ -402,7 +387,7 @@ func (m *model) helpOverlayWidth() int {
 // helpOverlayHeightFrac of the terminal: when the full body (renderHelpBody)
 // is taller than that, it's clipped to m.helpOverlay.scrollOffset..+visible
 // rows and a scroll hint is appended as an extra row, exactly like
-// renderHelpBox's normal footer-less box when content already fits (a short
+// the normal footer-less box when content already fits (a short
 // help box, the common case, renders byte-for-byte the same as before this
 // clipping existed — scrollOffset stays 0 and maxScroll is 0, so no hint
 // line is added and nothing is clipped).

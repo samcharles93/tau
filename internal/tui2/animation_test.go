@@ -1,13 +1,9 @@
 package tui2
 
 import (
-	"fmt"
 	"slices"
-	"strings"
 	"testing"
 	"time"
-
-	"github.com/samcharles93/tau/internal/theme"
 )
 
 // --- thinkingDots ---
@@ -104,70 +100,6 @@ func TestToolGlyph(t *testing.T) {
 	}
 	if toolGlyph("pending", 0) != toolGlyph("running", 0) {
 		t.Error("pending and running should share the spinner glyph")
-	}
-}
-
-// --- workingIndicator ---
-
-func TestWorkingIndicatorShowsDots(t *testing.T) {
-	m := &model{
-		spinnerFrame: 0,
-	}
-	out := stripANSI(m.workingIndicator())
-	if !strings.Contains(out, "Thinking ") {
-		t.Errorf("indicator missing label: %q", out)
-	}
-	if !strings.Contains(out, "●") {
-		t.Errorf("indicator missing dot: %q", out)
-	}
-}
-
-func TestWorkingIndicatorNoVerbOrClock(t *testing.T) {
-	m := &model{
-		spinnerFrame: 0,
-	}
-	out := stripANSI(m.workingIndicator())
-	for _, banned := range []string{"4s", "ctrl+c", "Cogitating", "Percolating", "…"} {
-		if strings.Contains(out, banned) {
-			t.Errorf("indicator contains removed element %q: %q", banned, out)
-		}
-	}
-}
-
-func TestWorkingIndicatorAnimates(t *testing.T) {
-	m := &model{spinnerFrame: 0}
-	a := m.workingIndicator()
-	m.spinnerFrame = thinkingDotFrameTicks
-	b := m.workingIndicator()
-	if a == b {
-		t.Fatal("workingIndicator did not change across dot frames")
-	}
-}
-
-// TestWorkingIndicatorAccentsOnlyTheDots guards the "accent is sparing"
-// convention this codebase otherwise follows everywhere (reasoningLabelStyle
-// on just the bar, userGlyphStyle on just the "⏎" glyph): the static
-// "Thinking " label must stay unstyled/inherit the terminal's default
-// foreground, since it's the only element on screen for the entire thinking
-// phase of every turn — only the dot glyphs after it should carry Warm
-// Ochre.
-func TestWorkingIndicatorAccentsOnlyTheDots(t *testing.T) {
-	m := &model{spinnerFrame: 0}
-	out := m.workingIndicator()
-
-	idx := strings.Index(out, "Thinking ")
-	if idx < 0 {
-		t.Fatalf("indicator missing label: %q", out)
-	}
-	label := out[idx : idx+len("Thinking ")]
-	if label != stripANSI(label) {
-		t.Fatalf("label carries styling, want it unstyled: %q", label)
-	}
-
-	accentSGR := fmt.Sprintf("38;2;%d;%d;%d", theme.AccentColor[0], theme.AccentColor[1], theme.AccentColor[2])
-	dotsPortion := out[idx+len("Thinking "):]
-	if !strings.Contains(dotsPortion, accentSGR) {
-		t.Fatalf("dot sequence missing the Warm Ochre accent: %q", out)
 	}
 }
 

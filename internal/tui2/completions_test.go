@@ -594,6 +594,105 @@ func TestRawCandidateGroupsSessionArgCompletions(t *testing.T) {
 	}
 }
 
+// --- regression: first-ever /session tab-complete must not be empty -------
+//
+// Reported bug: in a fresh TUI process, m.sessionSummaries starts empty and
+// was only ever populated as a side effect of an explicit "/session" or
+// "/resume" submission — so the very first time a user typed "/session "
+// and tab-completed, the dropdown had nothing to show. maybePrefetchSessions
+// now fires a silent background fetch the first time the completer finds
+// the cache empty.
+
+func TestMaybePrefetchSessionsFiresOnEmptyCacheWhileCompleting(t *testing.T) {
+	rt := &fakeRuntime{}
+	m := newTestModel(rt, nil)
+	m.input = "/session "
+
+	drainCmd(m.handleKey(key(tea.KeyRight, 0))) // any keystroke drives the handleKey path; must not mutate m.input
+
+	if !m.sessionsFetchInFlight {
+		t.Fatal("expected sessionsFetchInFlight to be set after prefetch fires")
+	}
+	if len(rt.sent) != 1 {
+		t.Fatalf("expected exactly 1 command sent, got %d", len(rt.sent))
+	}
+	cmd, ok := rt.sent[0].(tauchat.ListSessionsCommand)
+	if !ok {
+		t.Fatalf("expected ListSessionsCommand, got %T", rt.sent[0])
+	}
+	if !cmd.Silent {
+		t.Error("expected the prefetch to be Silent so it doesn't print to scrollback")
+	}
+}
+
+func TestMaybePrefetchSessionsDoesNotRefireWhileInFlight(t *testing.T) {
+	rt := &fakeRuntime{}
+	m := newTestModel(rt, nil)
+	m.input = "/session "
+
+	drainCmd(m.handleKey(key(tea.KeyRight, 0)))
+	drainCmd(m.handleKey(key(tea.KeyRight, 0)))
+
+	if len(rt.sent) != 1 {
+		t.Fatalf("expected exactly 1 command sent across repeated keystrokes, got %d", len(rt.sent))
+	}
+}
+
+func TestMaybePrefetchSessionsSkippedWhenCacheAlreadyPopulated(t *testing.T) {
+	rt := &fakeRuntime{}
+	m := newTestModel(rt, nil)
+	m.sessionSummaries = []tauchat.SessionSummary{{ID: "sess-1"}}
+	m.input = "/session "
+
+	drainCmd(m.handleKey(key(tea.KeyRight, 0)))
+
+	if len(rt.sent) != 0 {
+		t.Fatalf("expected no prefetch once the cache is already populated, got %d sent", len(rt.sent))
+	}
+}
+
+// TestSilentSessionsListedEventDoesNotPrintToScrollback guards the other
+// half of the fix: a silent background refresh must update the cache
+// without also appending the "Sessions: ..." dump an explicit "/session"
+// submission produces.
+func TestSilentSessionsListedEventDoesNotPrintToScrollback(t *testing.T) {
+	m := newTestModel(&fakeRuntime{}, nil)
+	before := len(m.renderedLines)
+	m.sessionsFetchInFlight = true
+
+	m.handleChatEvent(tauchat.SessionsListedEvent{
+		Sessions: []tauchat.SessionSummary{{ID: "sess-1", ModelID: "gpt-4"}},
+		Silent:   true,
+	})
+
+	if m.sessionsFetchInFlight {
+		t.Error("expected sessionsFetchInFlight to clear once the response arrives")
+	}
+	if len(m.sessionSummaries) != 1 {
+		t.Fatalf("expected the cache to still be populated, got %d entries", len(m.sessionSummaries))
+	}
+	if len(m.renderedLines) != before {
+		t.Fatalf("expected a Silent SessionsListedEvent not to append to scrollback, lines went from %d to %d", before, len(m.renderedLines))
+	}
+}
+
+// TestExplicitSessionsListedEventPrintsToScrollback guards that an actual
+// "/session" submission still prints its result, unlike the silent
+// background prefetch above.
+func TestExplicitSessionsListedEventPrintsToScrollback(t *testing.T) {
+	m := newTestModel(&fakeRuntime{}, nil)
+	before := len(m.renderedLines)
+
+	m.handleChatEvent(tauchat.SessionsListedEvent{
+		Sessions: []tauchat.SessionSummary{{ID: "sess-1", ModelID: "gpt-4"}},
+		Silent:   false,
+	})
+
+	if len(m.renderedLines) <= before {
+		t.Fatal("expected an explicit (non-Silent) SessionsListedEvent to append to scrollback")
+	}
+}
+
 func TestRawCandidateGroupsEffortArgCompletions(t *testing.T) {
 	m := newTestModel(&fakeRuntime{}, nil)
 	m.availableModels = []tauchat.ChatModelRef{{
