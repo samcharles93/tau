@@ -461,6 +461,63 @@ func (s *SQLiteStore) CloseAgentInstance(ctx context.Context, id, exitStatus, us
 	return nil
 }
 
+// ResumeSession atomically transfers ownership of a session to newInstance.
+// See docs/specs/agents/04-storage-and-sessions.md (Active session ownership):
+// the session's current owning instance (if any) must have ended_at set
+// before a new owner is admitted. Started as a regular (deferred) SQLite
+// transaction rather than BEGIN IMMEDIATE — database/sql doesn't expose that
+// directly, and the existing busy_timeout (5s) absorbs the write-upgrade
+// contention this would otherwise need IMMEDIATE to avoid.
+func (s *SQLiteStore) ResumeSession(ctx context.Context, sessionID string, newInstance AgentInstance) error {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("store: resume session: begin: %w", err)
+	}
+	defer tx.Rollback()
+
+	var currentInstanceID sql.NullString
+	err = tx.QueryRowContext(ctx, `SELECT agent_instance_id FROM sessions WHERE id = ?`, sessionID).Scan(&currentInstanceID)
+	if err != nil {
+		if err == sql.ErrNoRows {
+			return ErrSessionNotFound
+		}
+		return fmt.Errorf("store: resume session: %w", err)
+	}
+
+	if currentInstanceID.Valid && currentInstanceID.String != "" {
+		var endedAt sql.NullString
+		err := tx.QueryRowContext(ctx, `SELECT ended_at FROM agent_instances WHERE id = ?`, currentInstanceID.String).Scan(&endedAt)
+		if err != nil && err != sql.ErrNoRows {
+			return fmt.Errorf("store: resume session: %w", err)
+		}
+		if err == nil && !endedAt.Valid {
+			return ErrSessionActive
+		}
+	}
+
+	if _, err := tx.ExecContext(
+		ctx, `
+		INSERT INTO agent_instances (
+			id, spec_name, spec_scope, spec_source_path, spec_hash,
+			spec_snapshot, resolved_provider, resolved_model,
+			effective_tools, depth, parent_instance_id, pid, started_at
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+	`, newInstance.ID, newInstance.SpecName, newInstance.SpecScope, nullString(newInstance.SpecSourcePath),
+		newInstance.SpecHash, newInstance.SpecSnapshot, newInstance.ResolvedProvider,
+		newInstance.ResolvedModel, nullString(newInstance.EffectiveTools), newInstance.Depth,
+		nullString(newInstance.ParentInstanceID), nullInt(newInstance.PID),
+		formatTime(newInstance.StartedAt),
+	); err != nil {
+		return fmt.Errorf("store: resume session: insert instance: %w", err)
+	}
+
+	if _, err := tx.ExecContext(ctx, `UPDATE sessions SET agent_instance_id = ? WHERE id = ?`, newInstance.ID, sessionID); err != nil {
+		return fmt.Errorf("store: resume session: update session: %w", err)
+	}
+
+	return tx.Commit()
+}
+
 // GetAgentInstance returns a single instance by id.
 func (s *SQLiteStore) GetAgentInstance(ctx context.Context, id string) (AgentInstance, error) {
 	var (

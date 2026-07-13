@@ -2,10 +2,19 @@ package store
 
 import (
 	"context"
+	"errors"
 	"time"
 
 	"github.com/samcharles93/tau/internal/chat"
 )
+
+// ErrSessionActive is returned by ResumeSession when the session's current
+// owning instance has not ended — another process is actively running it.
+var ErrSessionActive = errors.New("store: session is still active")
+
+// ErrSessionNotFound is returned by ResumeSession when the target session
+// does not exist.
+var ErrSessionNotFound = errors.New("store: session not found")
 
 // SessionSummary is a metadata-only view of a saved session. It is the wire
 // type used for session listing — no full message content is included.
@@ -99,4 +108,13 @@ type SessionStore interface {
 	// ListChildren returns sessions that have the given parent_session_id,
 	// ordered by created_at desc.
 	ListChildren(ctx context.Context, parentSessionID string) ([]SessionSummary, error)
+
+	// ResumeSession atomically transfers ownership of a session to newInstance:
+	// it verifies the session's current owning instance (if any) has ended,
+	// inserts newInstance, and repoints the session's agent_instance_id, all
+	// within one transaction. Returns ErrSessionNotFound if the session
+	// doesn't exist, or ErrSessionActive if another instance currently owns
+	// it (ended_at IS NULL) — see docs/specs/agents/04-storage-and-sessions.md
+	// (Active session ownership).
+	ResumeSession(ctx context.Context, sessionID string, newInstance AgentInstance) error
 }

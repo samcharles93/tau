@@ -34,6 +34,12 @@ func BuildSpecSnapshot(def *Definition, provider, model string, tools []string) 
 	if len(tools) > 0 {
 		snap["tools"] = tools
 	}
+	if def.MaxTurns > 0 {
+		snap["max_turns"] = def.MaxTurns
+	}
+	if def.Timeout > 0 {
+		snap["timeout"] = def.Timeout.String()
+	}
 	scope := ScopeString(def.Scope)
 	if scope != "" {
 		snap["scope"] = scope
@@ -43,6 +49,25 @@ func BuildSpecSnapshot(def *Definition, provider, model string, tools []string) 
 	}
 	data, _ := json.Marshal(snap)
 	return string(data)
+}
+
+// SnapshotLimits extracts max_turns/timeout from a spec snapshot JSON
+// previously built by BuildSpecSnapshot. Used on resume, where the original
+// spec.Definition is not re-resolved from disk — spec identity, including
+// its structural limits, comes from the historical snapshot instead (see
+// PatchSnapshotResolved). Returns zero values for unparseable input.
+func SnapshotLimits(snapshotJSON string) (maxTurns int, timeout time.Duration) {
+	var snap struct {
+		MaxTurns int    `json:"max_turns"`
+		Timeout  string `json:"timeout"`
+	}
+	if err := json.Unmarshal([]byte(snapshotJSON), &snap); err != nil {
+		return 0, 0
+	}
+	if snap.Timeout != "" {
+		timeout, _ = time.ParseDuration(snap.Timeout)
+	}
+	return snap.MaxTurns, timeout
 }
 
 // ScopeString returns the string representation of a skills.Scope.
@@ -66,6 +91,48 @@ func ToolsToJSON(tools []string) string {
 	}
 	data, _ := json.Marshal(tools)
 	return string(data)
+}
+
+// ToolsFromJSON parses a tool list previously serialised by ToolsToJSON.
+// Empty or unparseable input returns nil (unrestricted) — the same
+// nil-means-unrestricted convention used throughout attenuation.
+func ToolsFromJSON(s string) []string {
+	if s == "" {
+		return nil
+	}
+	var tools []string
+	if err := json.Unmarshal([]byte(s), &tools); err != nil {
+		return nil
+	}
+	return tools
+}
+
+// PatchSnapshotResolved rewrites the "resolved" provider/model and "tools"
+// fields of a spec snapshot JSON, leaving identity fields (name, description,
+// body, scope, source_path) untouched. Used on resume: spec identity is
+// immutable from the original snapshot (see
+// docs/specs/agents/02-spawning-and-lifecycle.md, Model/provider precedence
+// on resume), but the resolved model/provider and recomputed effective tools
+// for the new instance can differ from the original.
+func PatchSnapshotResolved(snapshotJSON, provider, model string, tools []string) (string, error) {
+	var snap map[string]any
+	if err := json.Unmarshal([]byte(snapshotJSON), &snap); err != nil {
+		return "", fmt.Errorf("patch spec snapshot: %w", err)
+	}
+	snap["resolved"] = map[string]any{
+		"provider": provider,
+		"model":    model,
+	}
+	if len(tools) > 0 {
+		snap["tools"] = tools
+	} else {
+		delete(snap, "tools")
+	}
+	data, err := json.Marshal(snap)
+	if err != nil {
+		return "", fmt.Errorf("patch spec snapshot: %w", err)
+	}
+	return string(data), nil
 }
 
 // MintInstanceID generates a new agent instance address like "research#k3v9qp".
