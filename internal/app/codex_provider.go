@@ -136,7 +136,7 @@ func codexRequestBody(req aisdkchat.Request) (map[string]any, error) {
 				"type":        "function",
 				"name":        tool.Name,
 				"description": tool.Description,
-				"parameters":  tool.Parameters,
+				"parameters":  sanitiseResponsesSchema(tool.Parameters),
 			})
 		}
 		body["tools"] = tools
@@ -320,4 +320,46 @@ func firstNonEmpty(values ...string) string {
 		}
 	}
 	return ""
+}
+
+// sanitiseResponsesSchema strips keywords that the OpenAI Responses API
+// rejects at the top level of a tool's JSON Schema parameters object.
+// The Responses API only allows {"type": "object", ...} and rejects
+// anyOf, oneOf, allOf, enum, const, and not at the top level.
+//
+// This is a lossy conversion: it favours safety (the call succeeds)
+// over schema strictness. Downstream tool executors are expected to
+// validate parameters independently.
+func sanitiseResponsesSchema(params json.RawMessage) json.RawMessage {
+	if len(params) == 0 || bytes.Equal(params, []byte("null")) {
+		return params
+	}
+
+	var schema map[string]json.RawMessage
+	if err := json.Unmarshal(params, &schema); err != nil {
+		// Can't parse — return as-is and let the API reject it.
+		return params
+	}
+
+	disallowed := []string{"anyOf", "oneOf", "allOf", "enum", "const", "not"}
+	cleaned := false
+	for _, key := range disallowed {
+		if _, exists := schema[key]; exists {
+			delete(schema, key)
+			cleaned = true
+		}
+	}
+
+	// Also strip "required" when we removed anyOf/oneOf — the
+	// remaining schema is intentionally looser so the API passes
+	// validation. Tool executors handle their own validation.
+	if cleaned {
+		delete(schema, "required")
+	}
+
+	result, err := json.Marshal(schema)
+	if err != nil {
+		return params
+	}
+	return json.RawMessage(result)
 }

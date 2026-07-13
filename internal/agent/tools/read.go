@@ -25,6 +25,11 @@ const DefaultReadLines = 400
 var readSchema = Schema{
 	Name:        "read",
 	Description: fmt.Sprintf("Read file contents. Omitted limits return at most %d lines; set full:true only when the complete file is genuinely needed. Output is always capped at %d lines or %s and includes a continuation offset.", DefaultReadLines, DefaultMaxLines, FormatSize(DefaultMaxBytes)),
+	// NOTE: file is a compatibility alias for path; the executor
+	// handles the fallback (file → path) and returns a clear error
+	// when both are empty. We intentionally do NOT use anyOf here
+	// because the OpenAI Responses API rejects schemas with
+	// anyOf/oneOf/allOf at the top level of the parameters object.
 	Parameters: json.RawMessage(`{
 		"type": "object",
 		"properties": {
@@ -48,8 +53,7 @@ var readSchema = Schema{
 				"type": "boolean",
 				"description": "Return the whole file up to the global safety cap. Defaults to false."
 			}
-		},
-		"anyOf": [{"required": ["path"]}, {"required": ["file"]}]
+		}
 	}`),
 }
 
