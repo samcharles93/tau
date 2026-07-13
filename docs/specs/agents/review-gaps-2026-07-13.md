@@ -60,6 +60,8 @@ Acceptance tests should inject failure after every step: ID allocation, instance
 
 ### G4. Protocol authority validation is incomplete
 
+**Status: RESOLVED (2026-07-13, CAT-94).**
+
 **Ticket: CAT-94**
 
 The child validates that assigned instance/session IDs exist and match (`03-wire-protocol.md`, line 60), but the parent-side validation rules are absent. `from`/`to`, nested `agent.event` contents, task IDs, session IDs, and result IDs must be treated as untrusted bytes even over a child pipe: child tools and plugins execute code in a separate process and can be buggy or compromised.
@@ -149,6 +151,8 @@ Define prompt assembly precedence and escaping. Persist origin/provenance for de
 The resolved spec snapshot is serialized into JSON (`01-agent-spec-format.md`, lines 95-97), but no snapshot schema version or forward/backward compatibility rule is given. Add `snapshot_version`, canonical serialization rules for `spec_hash`, and behavior when a newer binary cannot decode an old snapshot. Clarify whether resume uses the historical body snapshot (identity continuity) or the latest spec (upgrade behavior).
 
 ### G13. Storage constraints and indexes are incomplete
+
+**Status: RESOLVED (2026-07-13, CAT-101).**
 
 **Ticket: CAT-101**
 
