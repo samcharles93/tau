@@ -1,5 +1,72 @@
 # Changelog
 
+## [0.19.0](https://github.com/samcharles93/tau/compare/v0.18.1...v0.19.0) (2026-07-13)
+
+
+### Features
+
+* add event and command types for child transcript loading ([8239133](https://github.com/samcharles93/tau/commit/8239133f134fd9c9c0e879267a9e7b689e2586d2))
+* add hierarchical tree view to session switcher ([9bd38a1](https://github.com/samcharles93/tau/commit/9bd38a195f3f406d4595ec4eda027f222158cb65))
+* add silent listing and child transcript types ([4c7e8e0](https://github.com/samcharles93/tau/commit/4c7e8e027146902c8c860301cfd02ba1a635dd4e))
+* add tui2 interactive chat UI ([c7674cf](https://github.com/samcharles93/tau/commit/c7674cfc90b780077bb00f07560dbf03a727f59c))
+* **agent-observability:** add correlated metrics, logs, and redaction ([da52c9a](https://github.com/samcharles93/tau/commit/da52c9af53be94d6a1fd4a4ca5808443aabc4354))
+* **agent-storage:** version agent spec snapshots ([5fa9f3e](https://github.com/samcharles93/tau/commit/5fa9f3e6e1f269c1298dce7fbe7a772f00f9a561))
+* **agent-ui:** add recovery, accessibility, and fan-out bounds ([742b539](https://github.com/samcharles93/tau/commit/742b5392ce2c014cafcd0c0a32f936619914da4a))
+* **agent:** add --tools/-t flag and wire {{.Tools}} into the system prompt ([89cdb43](https://github.com/samcharles93/tau/commit/89cdb43662f923eb1736c9547abf370325e4d152))
+* **agent:** add budget and limit enforcement to the coordinator ([acd427d](https://github.com/samcharles93/tau/commit/acd427db61de49ebd00e3c56e7a324f0d9c5a7d5))
+* **agent:** add provider, max-turns, timeout to spec frontmatter ([38638b2](https://github.com/samcharles93/tau/commit/38638b27ede467e88d4316b70dcd92042799a4ed))
+* **agent:** add stdio JSONL transport for the agent wire protocol ([23f025c](https://github.com/samcharles93/tau/commit/23f025c07f7ac7554f3bb152bccf5f8e460f3b69))
+* **agent:** add the agent tool and headless child process runtime ([30fbd02](https://github.com/samcharles93/tau/commit/30fbd02c295bd458749889ece1e643260e2abcf1))
+* **agent:** add the shared agent instantiation function ([01b3875](https://github.com/samcharles93/tau/commit/01b387583f718de84b2728fc84e19f1a2b60f928))
+* **agent:** enforce child concurrency and resource ceilings ([11a734b](https://github.com/samcharles93/tau/commit/11a734b7d931ea7f1a4e6542f4ce77a8a6e5bc52))
+* **agent:** relocate root identity into a built-in tau.agent.md spec ([f761dbb](https://github.com/samcharles93/tau/commit/f761dbb9944ce6855e378a136c97bfca8c415ab0))
+* **agent:** render live child agent state blocks in the TUI (P4.1/CAT-64) ([a9c0d92](https://github.com/samcharles93/tau/commit/a9c0d92e87bd065c223f96a92d08ca1ed878b17c))
+* **agent:** split tool filter into an immutable ceiling and an active filter ([08f273b](https://github.com/samcharles93/tau/commit/08f273bdd02bfcc940ab3d48bb3cf4a3e08d9838))
+* **agent:** trust-on-first-use gate for project root-spec overrides (G14) ([7105922](https://github.com/samcharles93/tau/commit/7105922fad7996bd006cf597998013b7eedb2932))
+* **bridge:** add agent wire envelope fields and message types ([c13ade5](https://github.com/samcharles93/tau/commit/c13ade51c473a35ae1ef57fd66268e50a0fbbc05))
+* **cli:** show relative build age in version ([b62084b](https://github.com/samcharles93/tau/commit/b62084bb954d2b8dd680fa91366527664b3c72d3))
+* **config:** add model_modes tier map and agents defaults block ([82dd2c0](https://github.com/samcharles93/tau/commit/82dd2c088d70be76c2286f613f9cd0870b56da3b))
+* **sessions:** CAT-67 session tree — lineage in session lists, agent attribution, resume ([0b3faa9](https://github.com/samcharles93/tau/commit/0b3faa91e324d0ffbf48c3b31906a1c9758e41de))
+* **skills:** add spec-to-code-pipeline workflow skill ([e4e126a](https://github.com/samcharles93/tau/commit/e4e126a5e4a95d3f1c49ddfe4c360710c8959060))
+* **store:** add agent_instances migration ([dc45d46](https://github.com/samcharles93/tau/commit/dc45d46b19a437af6373774310df5fb27c264c9b))
+* **store:** add AgentInstance CRUD and session lineage plumbing ([21ea623](https://github.com/samcharles93/tau/commit/21ea6233684b18abf8f2896919d78073924b3aa3))
+
+
+### Bug Fixes
+
+* **agent-prompt:** frame delegated context as untrusted data ([7ab441f](https://github.com/samcharles93/tau/commit/7ab441f5641590cf0b39c846e1d58751caef7458))
+* **agent-security:** require trust decision for project root-spec overrides ([c7925ff](https://github.com/samcharles93/tau/commit/c7925ff6ccfbf5d41612bc432cb9343def366254))
+* **agent-wire:** specify JSONL protocol state machine and conformance ([a505e88](https://github.com/samcharles93/tau/commit/a505e887cf7268a527db904c3b68529a44b4e212))
+* **agent:** authorize resume and recompute capabilities safely ([7eacc80](https://github.com/samcharles93/tau/commit/7eacc80ba743cbdeffcc901904eaaa863dc90392))
+* **agent:** cancel entire descendant process tree via process groups ([99426e3](https://github.com/samcharles93/tau/commit/99426e371e8fbb12a38a013d44cb4c6afe08249a))
+* **agent:** compensate orphaned instance rows on spawn failure, retry ID collisions (G3) ([79f12f6](https://github.com/samcharles93/tau/commit/79f12f6b5669e3e3788c181387fe32644874700d))
+* **agent:** define canonical budget semantics and atomic instantiation ([a94e5b7](https://github.com/samcharles93/tau/commit/a94e5b76f31715b721702190f65badfa4569c140))
+* **agent:** define wire authority bindings and storage constraints ([89336a5](https://github.com/samcharles93/tau/commit/89336a5487240e48ffb1dbeec28f557006f3c455))
+* **agent:** enforce the tool ceiling at dispatch time, not just prompt-build time ([17b1fab](https://github.com/samcharles93/tau/commit/17b1fab5547e68ebafaf1d8960d8415ba128171f))
+* **agent:** fix child/parent handshake deadlock (agent.ready vs agent.assign) ([2be4a56](https://github.com/samcharles93/tau/commit/2be4a5611ae19b839ecce49f2a60892b4b52d7ff))
+* **agent:** give spawned children their own system prompt, not the parent's ([4d4cabe](https://github.com/samcharles93/tau/commit/4d4cabef49608ea571f439cb12b39888fc8417e2))
+* **agent:** harden instance identity and orphan detection ([422e20a](https://github.com/samcharles93/tau/commit/422e20adbe3f682863ed247fb86bf677f8104fcf))
+* **agent:** hash the full spec snapshot, not just the body ([e1bfb1e](https://github.com/samcharles93/tau/commit/e1bfb1e78f4b248b112e5baa915860bd573e08b2))
+* **agent:** per-parent and process-wide concurrency ceilings for spawns (G5) ([7807dc6](https://github.com/samcharles93/tau/commit/7807dc636e26bb237a23993de4f0c615ff27668b))
+* **agent:** process-group cancellation with three-phase escalation (G7) ([626f189](https://github.com/samcharles93/tau/commit/626f189311b205897d5c900abd1a195431861f16))
+* **agent:** process-start identity for orphan sweep, wire it into root startup (G10) ([9167f69](https://github.com/samcharles93/tau/commit/9167f6924563c4d20927b02ad97bebe33fbb6716))
+* **agent:** redact, rate-limit, and cap child stderr capture (G16) ([f55d505](https://github.com/samcharles93/tau/commit/f55d50595aad642f4c62a1d6c4b5084470b57cb6))
+* **agent:** resolve skill tool attenuation contradiction ([c4757a0](https://github.com/samcharles93/tau/commit/c4757a0c339accbae4185b11aad9d11f830132a4))
+* **agent:** resume authorization and delegated-context trust framing (G2/G11) ([f566236](https://github.com/samcharles93/tau/commit/f5662363cf1affe72ec29b965b055142422b74e5))
+* **agent:** split budget.deadline into timeout/deadline, add spawn-time validation (G6) ([cc8252f](https://github.com/samcharles93/tau/commit/cc8252fb5c34280adb5de21a168764124b0af550))
+* **agent:** wire spec.Provider into Instantiate's model resolution ([58a6919](https://github.com/samcharles93/tau/commit/58a6919aa3fee03fa26d3af5e6cb2efc3e2a73e4))
+* **agent:** wire Store/Bus/ParentInstanceID/SessionID into the live agent tool ([af9cf2a](https://github.com/samcharles93/tau/commit/af9cf2aa0ab9d0237907f18c558360fb01735a21))
+* **config:** fix two model-resolution bugs found via agent-spawn testing ([ae150b5](https://github.com/samcharles93/tau/commit/ae150b5a3cc8d3d6b3f6aba13caef356b7076329))
+* **config:** normalize model_modes keys at unmarshal, not just merge ([732ca77](https://github.com/samcharles93/tau/commit/732ca772db7164db8a37c2413e191fa58e26004e))
+* drain pending commands on shutdown to prevent lost messages ([9bbf2dd](https://github.com/samcharles93/tau/commit/9bbf2dde44277d5ce82f31c7b0bdfc51956bb7d4))
+* **skills:** add enabled parsing, fix user-invocable in docs ([819b807](https://github.com/samcharles93/tau/commit/819b80741ed1aa4c394179697bd49ef0f8648040))
+* **skills:** align frontmatter with agentskills.io spec, drop dead fields ([3441058](https://github.com/samcharles93/tau/commit/344105881aaf66e5c2996d590e05f0e8ea026a6f))
+* **skills:** correct json tag user_invocable -&gt; user-invocable ([6feff9d](https://github.com/samcharles93/tau/commit/6feff9db9ce75bdbe45ab95e3ec8d96a95721de6))
+* skip exit summary when session has no messages ([fefa7b9](https://github.com/samcharles93/tau/commit/fefa7b9fda13dd0adb76457a834220f29cd096c2))
+* **store:** enforce sqlite busy_timeout via PRAGMA, not DSN query params ([4893818](https://github.com/samcharles93/tau/commit/4893818d0c766a5bf54654e08d9492a652d4ba69))
+* strip anyOf from read tool schema for OpenAI Responses API compatibility ([39cc188](https://github.com/samcharles93/tau/commit/39cc188ae4df66c794544ae2e0f1fe61fd8856a1))
+* **tui2:** only enter Thinking on an actual reasoning delta ([f411863](https://github.com/samcharles93/tau/commit/f4118637d8722cfcf5d7dcf08e919d91c3dbbe12))
+
 ## [0.18.1](https://github.com/samcharles93/tau/compare/v0.18.0...v0.18.1) (2026-07-12)
 
 
