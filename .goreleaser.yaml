@@ -10,7 +10,7 @@ builds:
     main: ./cmd/tau
     binary: tau
     ldflags:
-      - -s -w -X main.version={{ .Version }} -X main.commit={{ .Commit }} -X main.date={{ .Date }}
+      - -s -w -X main.version={{ .Version }} -X main.date={{ .Date }}
     goos:
       - darwin
       - linux

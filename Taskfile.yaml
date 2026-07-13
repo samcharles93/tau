@@ -5,8 +5,6 @@ vars:
   CMD: ./cmd/tau
   VERSION:
     sh: git describe --tags --always --dirty 2>/dev/null || echo dev
-  COMMIT:
-    sh: git rev-parse --short HEAD 2>/dev/null || echo none
   DATE:
     sh: date -u +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || echo unknown
 
@@ -14,7 +12,7 @@ tasks:
   default:
     desc: Build the Go binary
     cmds:
-      - go build -ldflags "-s -w -X main.version={{.VERSION}} -X main.commit={{.COMMIT}} -X main.date={{.DATE}}" -o {{.BINARY}}{{exeExt}} {{.CMD}}
+      - go build -ldflags "-s -w -X main.version={{.VERSION}} -X main.date={{.DATE}}" -o {{.BINARY}}{{exeExt}} {{.CMD}}
     sources:
       - "**/*.go"
       - go.mod
@@ -26,7 +24,7 @@ tasks:
     desc: Build the web UI SPA and the Go binary (full build)
     cmds:
       - cd internal/webui && pnpm install --prefer-offline && pnpm build
-      - go build -ldflags "-s -w -X main.version={{.VERSION}} -X main.commit={{.COMMIT}} -X main.date={{.DATE}}" -o {{.BINARY}}{{exeExt}} {{.CMD}}
+      - go build -ldflags "-s -w -X main.version={{.VERSION}} -X main.date={{.DATE}}" -o {{.BINARY}}{{exeExt}} {{.CMD}}
     sources:
       - "**/*.go"
       - go.mod
@@ -146,7 +144,7 @@ tasks:
   install:
     desc: Install tau to $GOPATH/bin
     cmds:
-      - go install -ldflags "-s -w -X main.version={{.VERSION}} -X main.commit={{.COMMIT}} -X main.date={{.DATE}}" {{.CMD}}
+      - go install -ldflags "-s -w -X main.version={{.VERSION}} -X main.date={{.DATE}}" {{.CMD}}
 
   setup:
     desc: Setup the required dependencies

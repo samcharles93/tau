@@ -5,18 +5,18 @@ import (
 	"fmt"
 	"os"
 	"os/signal"
+	"time"
 
 	taucli "github.com/samcharles93/tau/internal/cli"
 )
 
 var (
 	version = "dev"
-	commit  = "none"
 	date    = "unknown"
 )
 
 func main() {
-	versionStr := fmt.Sprintf("%s (%s, %s)", version, commit, date)
+	versionStr := formatVersion(version, date, time.Now())
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt)
 	defer cancel()
 	app := taucli.NewRootCommand(versionStr)
