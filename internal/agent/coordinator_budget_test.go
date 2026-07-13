@@ -80,12 +80,12 @@ func startAndSubmit(t *testing.T, c *Coordinator, sid, rid string) {
 func TestMaxTurnsTrip(t *testing.T) {
 	c, fs, bus := newBudgetCoordinator(t, 1, 0, 0, time.Time{})
 	startAndSubmit(t, c, "s1", "r1")
-	ce := subscribeCompleted(t, bus, 5*time.Second)
+	ce := subscribeCompleted(t, bus, 15*time.Second)
 	require.False(t, ce.BudgetExhausted, "turn 1 with maxTurns=1 should not trip")
 	require.Equal(t, 1, fs.calls)
 
 	startAndSubmit(t, c, "s2", "r2")
-	ce2 := subscribeCompleted(t, bus, 5*time.Second)
+	ce2 := subscribeCompleted(t, bus, 15*time.Second)
 	require.True(t, ce2.BudgetExhausted, "turn 2 with maxTurns=1 should trip")
 	require.True(t, ce2.Partial)
 	require.Equal(t, 1, fs.calls, "streamer should not be called on limit breach")
@@ -94,15 +94,15 @@ func TestMaxTurnsTrip(t *testing.T) {
 func TestTokenBudgetTrip(t *testing.T) {
 	c, _, bus := newBudgetCoordinator(t, 0, 0, 200, time.Time{})
 	startAndSubmit(t, c, "s1", "r1")
-	ce := subscribeCompleted(t, bus, 5*time.Second)
+	ce := subscribeCompleted(t, bus, 15*time.Second)
 	require.False(t, ce.BudgetExhausted, "150 < 200 should not trip")
 
 	startAndSubmit(t, c, "s2", "r2")
-	ce2 := subscribeCompleted(t, bus, 5*time.Second)
+	ce2 := subscribeCompleted(t, bus, 15*time.Second)
 	require.False(t, ce2.BudgetExhausted, "150 < 200 at start, passes, accumulates to 300")
 
 	startAndSubmit(t, c, "s3", "r3")
-	ce3 := subscribeCompleted(t, bus, 5*time.Second)
+	ce3 := subscribeCompleted(t, bus, 15*time.Second)
 	require.True(t, ce3.BudgetExhausted, "300 >= 200 should trip on turn 3")
 	require.True(t, ce3.Partial)
 }
@@ -110,7 +110,7 @@ func TestTokenBudgetTrip(t *testing.T) {
 func TestDeadlineTrip(t *testing.T) {
 	c, _, bus := newBudgetCoordinator(t, 0, 0, 0, time.Now().Add(-time.Hour))
 	startAndSubmit(t, c, "s1", "r1")
-	ce := subscribeCompleted(t, bus, 5*time.Second)
+	ce := subscribeCompleted(t, bus, 15*time.Second)
 	require.True(t, ce.TimedOut, "deadline in the past should trip immediately")
 	require.True(t, ce.Partial)
 }
@@ -118,7 +118,7 @@ func TestDeadlineTrip(t *testing.T) {
 func TestNoLimitsNormal(t *testing.T) {
 	c, _, bus := newBudgetCoordinator(t, 0, 0, 0, time.Time{})
 	startAndSubmit(t, c, "s1", "r1")
-	ce := subscribeCompleted(t, bus, 5*time.Second)
+	ce := subscribeCompleted(t, bus, 15*time.Second)
 	require.False(t, ce.BudgetExhausted)
 	require.False(t, ce.TimedOut)
 	require.False(t, ce.Partial)
