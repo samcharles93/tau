@@ -75,6 +75,11 @@ func printExitSummary(ctx context.Context, m *sessions.Manager, sessionID, extra
 	if latest.ID != sessionID {
 		return
 	}
+	// Nothing was ever sent — there's no conversation to save or resume,
+	// so claiming "saved" and offering a resume hint would be misleading.
+	if latest.MessageCount == 0 {
+		return
+	}
 
 	fmt.Fprintf(os.Stderr, "\nSession %s saved — %d messages, %s tokens",
 		latest.ID, latest.MessageCount, formatTokensHuman(latest.TotalTokens))
