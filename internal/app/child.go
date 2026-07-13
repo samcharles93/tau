@@ -20,17 +20,30 @@ import (
 	"github.com/samcharles93/tau/internal/skills"
 )
 
-// RunChild is the headless child entry point. It reads agent.assign from
-// stdin, loads its instance and session from the shared store, runs the
-// coordinator headless with injected model/tools/limits, and exits after
-// writing agent.result on stdout.
+// RunChild is the headless child entry point. It writes agent.ready first
+// (before reading anything — see step 1 below), reads agent.assign, loads
+// its instance and session from the shared store, runs the coordinator
+// headless with injected model/tools/limits, and exits after writing
+// agent.result on stdout.
 // stderr is reserved for log messages only — never protocol.
 // Exit codes: 0 after result; 1 for protocol errors; 2 for fatal runtime errors.
 func RunChild(ctx context.Context, opts ChatOptions) error {
 	stdin := stdio.NewReader(os.Stdin)
 	stdout := stdio.NewWriter(os.Stdout)
 
-	// Step 1: Read agent.assign from parent.
+	// Step 1: Write agent.ready as the first line on stdout — this MUST
+	// come before reading anything from stdin. The parent blocks reading
+	// agent.ready before it will send agent.assign (docs/specs/agents/
+	// 03-wire-protocol.md: "The child writes agent.ready as its first
+	// line; the parent replies with agent.assign"); reading assign first
+	// here deadlocked unconditionally, both sides waiting on each other.
+	// The real instance ID isn't known yet (the parent assigns it via
+	// agent.assign, next) — the parent doesn't validate this field.
+	if err := stdout.WriteHandshake("", os.Getpid()); err != nil {
+		return fmt.Errorf("write agent.ready: %w", err)
+	}
+
+	// Step 2: Read agent.assign from parent.
 	typ, payload, err := stdin.ReadEnvelope()
 	if err != nil {
 		return fmt.Errorf("read agent.assign: %w", err)
@@ -43,7 +56,7 @@ func RunChild(ctx context.Context, opts ChatOptions) error {
 		return fmt.Errorf("unmarshal agent.assign: %w", err)
 	}
 
-	// Step 2: Open the shared store and validate IDs.
+	// Step 3: Open the shared store and validate IDs.
 	rawStore, storeErr := sessions.OpenStore()
 	if storeErr != nil {
 		return fmt.Errorf("open store: %w", storeErr)
@@ -60,7 +73,7 @@ func RunChild(ctx context.Context, opts ChatOptions) error {
 		return fmt.Errorf("instance %q not found: %w", assign.InstanceID, err)
 	}
 
-	// Step 3: Build the coordinator with the injected model.
+	// Step 4: Build the coordinator with the injected model.
 	bus := eventbus.New()
 	defer bus.Close()
 
@@ -124,18 +137,14 @@ func RunChild(ctx context.Context, opts ChatOptions) error {
 	}
 	defer coordinator.Close()
 
-	// Apply the injected tool allowlist before handshake so buildToolDefs
-	// respects it from the first turn.
+	// Apply the injected tool allowlist so buildToolDefs respects it from
+	// the first turn. (agent.ready was already written in step 1, before
+	// the instance ID was even known — see above.)
 	if len(assign.Tools) > 0 {
 		coordinator.SetAllowedTools(assign.Tools)
 	}
 
-	// Write agent.ready as the first line on stdout.
-	if err := stdout.WriteHandshake(assign.InstanceID, os.Getpid()); err != nil {
-		return fmt.Errorf("write agent.ready: %w", err)
-	}
-
-	// Step 4: Start session, load persisted history, submit prompt.
+	// Step 5: Start session, load persisted history, submit prompt.
 	cfg := buildSessionConfig(opts, model, "")
 	if err := coordinator.Send(tauchat.StartChatSessionCommand{
 		SessionID: assign.SessionID,
@@ -160,7 +169,7 @@ func RunChild(ctx context.Context, opts ChatOptions) error {
 		return fmt.Errorf("submit prompt: %w", err)
 	}
 
-	// Step 5: Monitor stdin for cancel/EOF in a background goroutine.
+	// Step 6: Monitor stdin for cancel/EOF in a background goroutine.
 	// The parent may send agent.cancel at any time, or close stdin
 	// (parent death / intentional shutdown). Both trigger cancellation.
 	cancelCh := make(chan struct{})
@@ -182,7 +191,7 @@ func RunChild(ctx context.Context, opts ChatOptions) error {
 		}
 	}()
 
-	// Step 6: Stream events until completion, cancellation, or error.
+	// Step 7: Stream events until completion, cancellation, or error.
 	chatSub := eventbus.Subscribe[tauchat.ChatEvent](bus.Client("child"))
 	defer chatSub.Close()
 
