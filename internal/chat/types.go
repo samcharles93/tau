@@ -389,10 +389,15 @@ type RespondInteractivePromptCommand struct {
 
 func (RespondInteractivePromptCommand) IsChatCommand() {}
 
-// ListSessionsCommand requests a paginated list of saved sessions.
+// ListSessionsCommand requests a paginated list of saved sessions. Silent,
+// when true, is echoed back on the resulting SessionsListedEvent so a caller
+// that's just refreshing a cache (e.g. a completion dropdown's data source)
+// can be distinguished from an explicit user-facing "/session list" that
+// should print its result to scrollback.
 type ListSessionsCommand struct {
 	Limit  int    `json:"limit"`
 	Cursor string `json:"cursor,omitempty"`
+	Silent bool   `json:"silent,omitempty"`
 }
 
 func (ListSessionsCommand) IsChatCommand() {}
@@ -407,6 +412,15 @@ type LoadSessionCommand struct {
 }
 
 func (LoadSessionCommand) IsChatCommand() {}
+
+// LoadChildTranscriptCommand requests a read-only load of a finished child
+// agent's session, for TUI/WebUI drill-down. Unlike LoadSessionCommand, it
+// must never replace the runtime's active session state.
+type LoadChildTranscriptCommand struct {
+	SessionID string `json:"session_id"`
+}
+
+func (LoadChildTranscriptCommand) IsChatCommand() {}
 
 // DeleteSessionCommand deletes a saved session and its messages.
 type DeleteSessionCommand struct {
@@ -956,9 +970,12 @@ type SessionSummary struct {
 }
 
 // SessionsListedEvent carries paginated session summaries back to the TUI.
+// Silent mirrors the triggering ListSessionsCommand.Silent — see its doc
+// comment.
 type SessionsListedEvent struct {
 	Sessions   []SessionSummary `json:"sessions"`
 	NextCursor string           `json:"next_cursor,omitempty"`
+	Silent     bool             `json:"silent,omitempty"`
 }
 
 func (SessionsListedEvent) IsChatEvent() {}
@@ -969,6 +986,17 @@ type SessionLoadedEvent struct {
 }
 
 func (SessionLoadedEvent) IsChatEvent() {}
+
+// ChildTranscriptLoadedEvent carries a finished child agent's message
+// history for read-only drill-down. It intentionally omits the rest of
+// ChatSessionState (provider, model, status) since the viewer never treats
+// the child as the active session.
+type ChildTranscriptLoadedEvent struct {
+	SessionID string        `json:"session_id"`
+	Messages  []ChatMessage `json:"messages"`
+}
+
+func (ChildTranscriptLoadedEvent) IsChatEvent() {}
 
 // SessionDeletedEvent confirms that a session was deleted.
 type SessionDeletedEvent struct {
