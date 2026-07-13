@@ -132,6 +132,8 @@ Change the guarantee to: ordered and reliable while both endpoints and the pipe 
 
 ### G10. Instance ID entropy and PID orphan detection need stronger rules
 
+**Status: RESOLVED (2026-07-13, CAT-96).** ID collision retry spec'd in CAT-92/CAT-101.
+
 **Ticket: CAT-96**
 
 Six lowercase base32 characters provide roughly 30 bits of entropy (`02-spawning-and-lifecycle.md`, lines 5-11). That may be adequate for a display suffix, but the full address is also the database primary key and protocol identity. Specify collision retry and consider a durable random/UUID primary key with a short display suffix.

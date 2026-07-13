@@ -17,7 +17,7 @@ One function, used by every path that brings an agent identity into existence:
 1. Resolve the spec (built-in, `user:`, `project:`; for the bare name `tau` the root startup path resolves through full discovery so project/user overrides win, see 01).
 2. Resolve the model (precedence in 01) to a concrete provider/model pair.
 3. Compute the effective toolset (for children: attenuation; for root: the spec's `tools` or the full registry).
-4. Mint the instance id with bounded uniqueness retry (see below), write the `agent_instances` row (snapshot, resolved model, effective tools, depth, parent instance, pid, started_at) AND create/fork the session — **in one SQLite transaction**.
+4. Mint the instance id with bounded uniqueness retry (see below), write the `agent_instances` row (snapshot, resolved model, effective tools, depth, parent instance, pid, process_start_ns, started_at) AND create/fork the session — **in one SQLite transaction**.
 5. After commit: spawn the child process. If spawn or handshake fails, close the instance deterministically as `failed` with a structured reason (see compensation, below).
 
 Who runs it:

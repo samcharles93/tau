@@ -24,6 +24,7 @@ CREATE TABLE agent_instances (
   depth              INTEGER NOT NULL DEFAULT 0,
   parent_instance_id TEXT REFERENCES agent_instances(id) ON DELETE SET NULL,
   pid                INTEGER,
+  process_start_ns   INTEGER,                  -- OS-reported process start time (monotonic nanos since boot on Linux; absolute Unix nanos on macOS)
   started_at         TIMESTAMP NOT NULL,
   ended_at           TIMESTAMP,
   exit_status        TEXT,                      -- completed | failed | cancelled | budget_exhausted | timed_out
@@ -203,4 +204,47 @@ WAL supports many readers plus one writer. Writers here are: each process saving
 
 ## Orphan sweep
 
-At root startup (and available as a maintenance command later): find instance rows with `ended_at IS NULL`, check the pid, close dead ones as `failed` with a note. Lazy, daemon-free, and safe because pids are only advisory (a recycled pid at worst delays the sweep; the row's pipes are long gone so nothing else references it).
+At root startup (and available as a maintenance command later): find instance rows with `ended_at IS NULL` and determine whether the owning process is still alive.
+
+### PID check with process-start identity
+
+A PID alone is not sufficient — the OS may recycle PIDs. The sweep uses process-start identity where the platform supports it:
+
+| Platform | Identity check |
+|---|---|
+| **Linux** | Read `/proc/<pid>/stat` field 22 (starttime, in clock ticks since boot). Compare with `process_start_ns` (converted to ticks). If they match, the process is the same one that was spawned. If they differ, the PID was recycled. |
+| **macOS** | `sysctl KERN_PROC_PID` → `kinfo_proc.kp_proc.p_starttime` (absolute `timeval`). Compare with `process_start_ns`. |
+| **Windows** | `GetProcessTimes` → `lpCreationTime`. Compare with `process_start_ns`. |
+| **Unsupported platform** | Fall back to PID-only check with a WARN log. Rows on unsupported platforms are closed by the stale-age bound (below). |
+
+### Stale-age bound
+
+A PID check with matching process-start identity only proves the process is the same one — it does not prove the agent is still doing useful work. A zombie or hung process could keep an instance row open indefinitely. The stale-age bound prevents this:
+
+- **Config**: `agents.orphan_stale_age` (duration, default `"24h"`).
+- **Logic**: any instance with `ended_at IS NULL` and `started_at < (NOW() - orphan_stale_age)` is unconditionally closed as `failed` with `failure_reason = "orphan sweep: stale age exceeded"`.
+- **Rationale**: no agent process should run continuously for 24 hours in v1. If it does, it is hung, and the operator should investigate rather than the sweep silently keeping it alive.
+
+### Sweep algorithm
+
+```
+FOR each row in SELECT * FROM agent_instances WHERE ended_at IS NULL:
+  IF started_at < NOW() - orphan_stale_age:
+    CLOSE as failed (stale age exceeded)
+    CONTINUE
+  IF pid IS NULL OR pid == 0:
+    CLOSE as failed (no pid recorded)
+    CONTINUE
+  IF platform_check_pid_and_starttime(pid, process_start_ns):
+    SKIP (process is alive and identity matches)
+  ELSE:
+    CLOSE as failed (pid not found or identity mismatch)
+```
+
+### Safety
+
+- The sweep runs at root startup (and is available as `tau instances sweep` for manual invocation).
+- It tolerates errors from individual PID checks: a single inaccessible `/proc/<pid>/stat` (permission denied, TOCTOU race) logs a warning and skips that row. It does not close a row without positive evidence.
+- The stale-age bound is the backstop: even if every PID check fails, rows older than the bound are eventually closed.
+- A recycled PID that happens to have the same process-start time (astronomically unlikely, but theoretically possible) would pass the identity check, but the stale-age bound would still close the row after 24h.
+- Deleting rows is the only way an orphan ever becomes invisible. No row is deleted by the sweep (only `ended_at` is set), so an operator can always inspect closed rows.
