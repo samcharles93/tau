@@ -40,22 +40,31 @@ type SessionSummary struct {
 
 // AgentInstance is the wire type for a persisted agent instance row.
 type AgentInstance struct {
-	ID               string    `json:"id"`
-	SpecName         string    `json:"spec_name"`
-	SpecScope        string    `json:"spec_scope"`
-	SpecSourcePath   string    `json:"spec_source_path,omitempty"`
-	SpecHash         string    `json:"spec_hash"`
-	SpecSnapshot     string    `json:"spec_snapshot"`
-	ResolvedProvider string    `json:"resolved_provider"`
-	ResolvedModel    string    `json:"resolved_model"`
-	EffectiveTools   string    `json:"effective_tools,omitempty"`
-	Depth            int       `json:"depth"`
-	ParentInstanceID string    `json:"parent_instance_id,omitempty"`
-	PID              int       `json:"pid,omitempty"`
-	StartedAt        time.Time `json:"started_at"`
-	EndedAt          time.Time `json:"ended_at"`
-	ExitStatus       string    `json:"exit_status,omitempty"`
-	UsageJSON        string    `json:"usage_json,omitempty"`
+	ID               string `json:"id"`
+	SpecName         string `json:"spec_name"`
+	SpecScope        string `json:"spec_scope"`
+	SpecSourcePath   string `json:"spec_source_path,omitempty"`
+	SpecHash         string `json:"spec_hash"`
+	SpecSnapshot     string `json:"spec_snapshot"`
+	ResolvedProvider string `json:"resolved_provider"`
+	ResolvedModel    string `json:"resolved_model"`
+	EffectiveTools   string `json:"effective_tools,omitempty"`
+	Depth            int    `json:"depth"`
+	ParentInstanceID string `json:"parent_instance_id,omitempty"`
+	PID              int    `json:"pid,omitempty"`
+	// ProcessStartNS is the platform-specific process-start identity token
+	// (monotonic nanos since boot on Linux, absolute Unix nanos on macOS/
+	// Windows) used to detect PID recycling during the orphan sweep. Zero
+	// means unavailable — the sweep falls back to a PID-only check.
+	ProcessStartNS int64     `json:"process_start_ns,omitempty"`
+	StartedAt      time.Time `json:"started_at"`
+	EndedAt        time.Time `json:"ended_at"`
+	ExitStatus     string    `json:"exit_status,omitempty"`
+	// FailureReason is a structured, human-readable detail set on abnormal
+	// closure (spawn failure, orphan sweep closure, etc). Empty on normal
+	// completion.
+	FailureReason string `json:"failure_reason,omitempty"`
+	UsageJSON     string `json:"usage_json,omitempty"`
 }
 
 // SessionStore persists and retrieves chat sessions. SQLite is the single
@@ -94,9 +103,17 @@ type SessionStore interface {
 	// SaveAgentInstance persists a new agent instance row.
 	SaveAgentInstance(ctx context.Context, inst AgentInstance) error
 
-	// CloseAgentInstance marks an instance as ended with the given status
-	// and usage totals.
-	CloseAgentInstance(ctx context.Context, id, exitStatus, usageJSON string) error
+	// SetAgentInstancePID records the OS process identity for an instance
+	// once its child process has actually started (pid isn't known at
+	// SaveAgentInstance time — the row is created before exec.Start()).
+	// processStartNS is the platform-specific process-start identity token
+	// (see docs/specs/agents/04-storage-and-sessions.md, Orphan sweep);
+	// zero means "unavailable on this platform".
+	SetAgentInstancePID(ctx context.Context, id string, pid int, processStartNS int64) error
+
+	// CloseAgentInstance marks an instance as ended with the given status,
+	// usage totals, and (for abnormal ends) a structured failure reason.
+	CloseAgentInstance(ctx context.Context, id, exitStatus, usageJSON, failureReason string) error
 
 	// GetAgentInstance returns a single instance by id.
 	GetAgentInstance(ctx context.Context, id string) (AgentInstance, error)
@@ -104,6 +121,11 @@ type SessionStore interface {
 	// ListAgentInstances returns instances with the given parent, ordered
 	// by started_at desc. Empty parentID lists root instances.
 	ListAgentInstances(ctx context.Context, parentID string) ([]AgentInstance, error)
+
+	// ListOpenAgentInstances returns every instance row (at any depth,
+	// regardless of parent) with ended_at IS NULL. Used by the orphan
+	// sweep, which must cover the whole tree, not just roots.
+	ListOpenAgentInstances(ctx context.Context) ([]AgentInstance, error)
 
 	// ListChildren returns sessions that have the given parent_session_id,
 	// ordered by created_at desc.

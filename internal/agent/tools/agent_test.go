@@ -448,7 +448,7 @@ func TestExecuteResume_RejectsNonAncestor(t *testing.T) {
 	s := newAncestorTestStore(t)
 	ctx := context.Background()
 
-	require.NoError(t, s.CloseAgentInstance(ctx, "research#orig001", "completed", ""))
+	require.NoError(t, s.CloseAgentInstance(ctx, "research#orig001", "completed", "", ""))
 	require.NoError(t, s.Save(ctx, tauchat.ChatSessionState{
 		SessionID:       "orig-session",
 		Status:          tauchat.ChatSessionIdle,
@@ -968,5 +968,38 @@ func TestExecuteSpawn_RejectsMalformedDeadline(t *testing.T) {
 	}
 	if !result.IsError || result.ErrorKind != "invalid_params" {
 		t.Fatalf("IsError=%v ErrorKind=%q, want invalid_params", result.IsError, result.ErrorKind)
+	}
+}
+
+// --- G10: process identity is recorded on spawn ---
+
+// TestExecuteSpawn_RecordsChildPID proves SetAgentInstancePID is actually
+// wired into the spawn path (previously the pid column was always 0 for
+// tool-spawned children, silently defeating the orphan sweep's PID check).
+func TestExecuteSpawn_RecordsChildPID(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("fake child script is POSIX shell")
+	}
+	cfg, s := budgetTestConfig(t)
+	cfg.Agents.CancelGrace = 20 * time.Millisecond
+	cfg.Agents.KillGrace = 20 * time.Millisecond
+	ctx, cancel := context.WithTimeout(context.Background(), 300*time.Millisecond)
+	defer cancel()
+
+	_, err := executeAgentTool(ctx, mustMarshal(map[string]any{
+		"agent":  "tau",
+		"prompt": "do something",
+	}), nil, cfg)
+	if err != nil {
+		t.Fatalf("executeAgentTool returned error: %v", err)
+	}
+
+	insts, err := s.ListAgentInstances(context.Background(), "tau#root000")
+	require.NoError(t, err)
+	if len(insts) != 1 {
+		t.Fatalf("expected exactly 1 instance row, got %d", len(insts))
+	}
+	if insts[0].PID <= 0 {
+		t.Errorf("PID = %d, want the spawned child's actual pid (> 0)", insts[0].PID)
 	}
 }

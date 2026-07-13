@@ -457,13 +457,14 @@ func (s *SQLiteStore) SaveAgentInstance(ctx context.Context, inst AgentInstance)
 		INSERT INTO agent_instances (
 			id, spec_name, spec_scope, spec_source_path, spec_hash,
 			spec_snapshot, resolved_provider, resolved_model,
-			effective_tools, depth, parent_instance_id, pid, started_at
-		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+			effective_tools, depth, parent_instance_id, pid,
+			process_start_ns, started_at
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 	`, inst.ID, inst.SpecName, inst.SpecScope, nullString(inst.SpecSourcePath),
 		inst.SpecHash, inst.SpecSnapshot, inst.ResolvedProvider,
 		inst.ResolvedModel, nullString(inst.EffectiveTools), inst.Depth,
 		nullString(inst.ParentInstanceID), nullInt(inst.PID),
-		formatTime(inst.StartedAt),
+		nullInt64(inst.ProcessStartNS), formatTime(inst.StartedAt),
 	)
 	if err != nil {
 		return fmt.Errorf("store: save agent instance: %w", err)
@@ -471,13 +472,29 @@ func (s *SQLiteStore) SaveAgentInstance(ctx context.Context, inst AgentInstance)
 	return nil
 }
 
-// CloseAgentInstance marks an instance as ended with the given status and usage.
-func (s *SQLiteStore) CloseAgentInstance(ctx context.Context, id, exitStatus, usageJSON string) error {
+// SetAgentInstancePID records the child's OS process identity once it has
+// actually started (see docs/specs/agents/04-storage-and-sessions.md,
+// Orphan sweep: PID check with process-start identity).
+func (s *SQLiteStore) SetAgentInstancePID(ctx context.Context, id string, pid int, processStartNS int64) error {
 	_, err := s.db.ExecContext(ctx, `
 		UPDATE agent_instances
-		SET ended_at = ?, exit_status = ?, usage_json = ?
+		SET pid = ?, process_start_ns = ?
 		WHERE id = ?
-	`, formatTime(time.Now()), exitStatus, nullString(usageJSON), id)
+	`, nullInt(pid), nullInt64(processStartNS), id)
+	if err != nil {
+		return fmt.Errorf("store: set agent instance pid: %w", err)
+	}
+	return nil
+}
+
+// CloseAgentInstance marks an instance as ended with the given status,
+// usage, and (for abnormal ends) a structured failure reason.
+func (s *SQLiteStore) CloseAgentInstance(ctx context.Context, id, exitStatus, usageJSON, failureReason string) error {
+	_, err := s.db.ExecContext(ctx, `
+		UPDATE agent_instances
+		SET ended_at = ?, exit_status = ?, usage_json = ?, failure_reason = ?
+		WHERE id = ?
+	`, formatTime(time.Now()), exitStatus, nullString(usageJSON), nullString(failureReason), id)
 	if err != nil {
 		return fmt.Errorf("store: close agent instance: %w", err)
 	}
@@ -523,13 +540,14 @@ func (s *SQLiteStore) ResumeSession(ctx context.Context, sessionID string, newIn
 		INSERT INTO agent_instances (
 			id, spec_name, spec_scope, spec_source_path, spec_hash,
 			spec_snapshot, resolved_provider, resolved_model,
-			effective_tools, depth, parent_instance_id, pid, started_at
-		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+			effective_tools, depth, parent_instance_id, pid,
+			process_start_ns, started_at
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 	`, newInstance.ID, newInstance.SpecName, newInstance.SpecScope, nullString(newInstance.SpecSourcePath),
 		newInstance.SpecHash, newInstance.SpecSnapshot, newInstance.ResolvedProvider,
 		newInstance.ResolvedModel, nullString(newInstance.EffectiveTools), newInstance.Depth,
 		nullString(newInstance.ParentInstanceID), nullInt(newInstance.PID),
-		formatTime(newInstance.StartedAt),
+		nullInt64(newInstance.ProcessStartNS), formatTime(newInstance.StartedAt),
 	); err != nil {
 		return fmt.Errorf("store: resume session: insert instance: %w", err)
 	}
@@ -551,20 +569,24 @@ func (s *SQLiteStore) GetAgentInstance(ctx context.Context, id string) (AgentIns
 		effectiveTools sql.NullString
 		parentID       sql.NullString
 		pid            sql.NullInt64
+		processStartNS sql.NullInt64
 		exitStatus     sql.NullString
+		failureReason  sql.NullString
 		usageJSON      sql.NullString
 	)
 	err := s.db.QueryRowContext(ctx, `
 		SELECT id, spec_name, spec_scope, spec_source_path, spec_hash,
 		       spec_snapshot, resolved_provider, resolved_model,
 		       effective_tools, depth, parent_instance_id, pid,
-		       started_at, ended_at, exit_status, usage_json
+		       process_start_ns, started_at, ended_at, exit_status,
+		       failure_reason, usage_json
 		FROM agent_instances WHERE id = ?
 	`, id).Scan(
 		&inst.ID, &inst.SpecName, &inst.SpecScope, &sourcePath,
 		&inst.SpecHash, &inst.SpecSnapshot, &inst.ResolvedProvider,
 		&inst.ResolvedModel, &effectiveTools, &inst.Depth, &parentID,
-		&pid, &startedStr, &endedStr, &exitStatus, &usageJSON,
+		&pid, &processStartNS, &startedStr, &endedStr, &exitStatus,
+		&failureReason, &usageJSON,
 	)
 	if err != nil {
 		if err == sql.ErrNoRows {
@@ -578,25 +600,31 @@ func (s *SQLiteStore) GetAgentInstance(ctx context.Context, id string) (AgentIns
 	if pid.Valid {
 		inst.PID = int(pid.Int64)
 	}
+	if processStartNS.Valid {
+		inst.ProcessStartNS = processStartNS.Int64
+	}
 	inst.StartedAt, _ = time.Parse(time.RFC3339, startedStr)
 	if endedStr.Valid {
 		inst.EndedAt, _ = time.Parse(time.RFC3339, endedStr.String)
 	}
 	inst.ExitStatus = exitStatus.String
+	inst.FailureReason = failureReason.String
 	inst.UsageJSON = usageJSON.String
 	return inst, nil
 }
 
+const agentInstanceColumns = `
+	id, spec_name, spec_scope, spec_source_path, spec_hash,
+	spec_snapshot, resolved_provider, resolved_model,
+	effective_tools, depth, parent_instance_id, pid,
+	process_start_ns, started_at, ended_at, exit_status,
+	failure_reason, usage_json
+`
+
 // ListAgentInstances returns instances with the given parent, ordered by
 // started_at desc. Empty parentID lists root instances.
 func (s *SQLiteStore) ListAgentInstances(ctx context.Context, parentID string) ([]AgentInstance, error) {
-	query := `
-		SELECT id, spec_name, spec_scope, spec_source_path, spec_hash,
-		       spec_snapshot, resolved_provider, resolved_model,
-		       effective_tools, depth, parent_instance_id, pid,
-		       started_at, ended_at, exit_status, usage_json
-		FROM agent_instances
-	`
+	query := "SELECT " + agentInstanceColumns + " FROM agent_instances"
 	var args []any
 	if parentID == "" {
 		query += " WHERE parent_instance_id IS NULL"
@@ -611,7 +639,27 @@ func (s *SQLiteStore) ListAgentInstances(ctx context.Context, parentID string) (
 		return nil, fmt.Errorf("store: list agent instances: %w", err)
 	}
 	defer rows.Close()
+	return scanAgentInstances(rows)
+}
 
+// ListOpenAgentInstances returns every instance row (at any depth) with
+// ended_at IS NULL, ordered by started_at ascending (oldest first — the
+// orphan sweep has no reason to prefer either order, but ascending keeps
+// long-stale rows first in logs). See docs/specs/agents/
+// 04-storage-and-sessions.md (Orphan sweep: sweep algorithm).
+func (s *SQLiteStore) ListOpenAgentInstances(ctx context.Context) ([]AgentInstance, error) {
+	query := "SELECT " + agentInstanceColumns + " FROM agent_instances WHERE ended_at IS NULL ORDER BY started_at ASC"
+	rows, err := s.db.QueryContext(ctx, query)
+	if err != nil {
+		return nil, fmt.Errorf("store: list open agent instances: %w", err)
+	}
+	defer rows.Close()
+	return scanAgentInstances(rows)
+}
+
+// scanAgentInstances scans rows produced by a query selecting
+// agentInstanceColumns, in that exact order.
+func scanAgentInstances(rows *sql.Rows) ([]AgentInstance, error) {
 	var instances []AgentInstance
 	for rows.Next() {
 		var (
@@ -622,14 +670,17 @@ func (s *SQLiteStore) ListAgentInstances(ctx context.Context, parentID string) (
 			effectiveTools sql.NullString
 			rowParentID    sql.NullString
 			pid            sql.NullInt64
+			processStartNS sql.NullInt64
 			exitStatus     sql.NullString
+			failureReason  sql.NullString
 			usageJSON      sql.NullString
 		)
 		if err := rows.Scan(
 			&inst.ID, &inst.SpecName, &inst.SpecScope, &sourcePath,
 			&inst.SpecHash, &inst.SpecSnapshot, &inst.ResolvedProvider,
 			&inst.ResolvedModel, &effectiveTools, &inst.Depth, &rowParentID,
-			&pid, &startedStr, &endedStr, &exitStatus, &usageJSON,
+			&pid, &processStartNS, &startedStr, &endedStr, &exitStatus,
+			&failureReason, &usageJSON,
 		); err != nil {
 			return nil, fmt.Errorf("store: scan agent instance: %w", err)
 		}
@@ -639,11 +690,15 @@ func (s *SQLiteStore) ListAgentInstances(ctx context.Context, parentID string) (
 		if pid.Valid {
 			inst.PID = int(pid.Int64)
 		}
+		if processStartNS.Valid {
+			inst.ProcessStartNS = processStartNS.Int64
+		}
 		inst.StartedAt, _ = time.Parse(time.RFC3339, startedStr)
 		if endedStr.Valid {
 			inst.EndedAt, _ = time.Parse(time.RFC3339, endedStr.String)
 		}
 		inst.ExitStatus = exitStatus.String
+		inst.FailureReason = failureReason.String
 		inst.UsageJSON = usageJSON.String
 		instances = append(instances, inst)
 	}
@@ -702,6 +757,13 @@ func nullInt(v int) sql.NullInt64 {
 		return sql.NullInt64{}
 	}
 	return sql.NullInt64{Int64: int64(v), Valid: true}
+}
+
+func nullInt64(v int64) sql.NullInt64 {
+	if v == 0 {
+		return sql.NullInt64{}
+	}
+	return sql.NullInt64{Int64: v, Valid: true}
 }
 
 // Helpers

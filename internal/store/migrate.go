@@ -9,7 +9,7 @@ import (
 
 // currentSchemaVersion is the latest migration number. Bump this when adding
 // new migrations and append the SQL to the migrations map below.
-const currentSchemaVersion = 6
+const currentSchemaVersion = 7
 
 // Migrate runs all pending schema migrations in order. It is idempotent —
 // already-applied migrations are skipped.
@@ -30,6 +30,7 @@ func Migrate(ctx context.Context, db *sql.DB) error {
 		4: migrationV4,
 		5: migrationV5,
 		6: migrationV6,
+		7: migrationV7,
 	}
 
 	for v := current + 1; v <= currentSchemaVersion; v++ {
@@ -160,4 +161,14 @@ CREATE INDEX IF NOT EXISTS idx_agent_instances_parent ON agent_instances(parent_
 ALTER TABLE sessions ADD COLUMN agent_instance_id TEXT
     REFERENCES agent_instances(id) ON DELETE SET NULL;
 CREATE INDEX IF NOT EXISTS idx_sessions_agent_instance ON sessions(agent_instance_id);
+`)
+
+// migrationV7 adds process-start identity and structured spawn-failure
+// detail to agent_instances, per docs/specs/agents/
+// 04-storage-and-sessions.md (Orphan sweep: PID check with process-start
+// identity, Stale-age bound). process_start_ns disambiguates a live PID
+// from a recycled one (see G10 review gap).
+var migrationV7 = strings.TrimSpace(`
+ALTER TABLE agent_instances ADD COLUMN process_start_ns INTEGER;
+ALTER TABLE agent_instances ADD COLUMN failure_reason TEXT;
 `)

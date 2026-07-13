@@ -17,6 +17,7 @@ import (
 	tauchat "github.com/samcharles93/tau/internal/chat"
 	"github.com/samcharles93/tau/internal/config"
 	"github.com/samcharles93/tau/internal/eventbus"
+	"github.com/samcharles93/tau/internal/procid"
 	"github.com/samcharles93/tau/internal/store"
 )
 
@@ -234,7 +235,7 @@ func executeSpawn(ctx context.Context, args agentToolArgs, cfg AgentToolConfig) 
 		// a session to run it never will (see spawnChildProcess) — close
 		// it now rather than leaving it "started" forever (G3).
 		if cfg.Store != nil {
-			_ = cfg.Store.CloseAgentInstance(context.WithoutCancel(ctx), instResult.InstanceID, "failed", "")
+			_ = cfg.Store.CloseAgentInstance(context.WithoutCancel(ctx), instResult.InstanceID, "failed", "", fmt.Sprintf("seed child session: %v", err))
 		}
 		return Result{Content: fmt.Sprintf("seed child session: %v", err), IsError: true, ErrorKind: "instantiation_failed"}, nil
 	}
@@ -444,7 +445,7 @@ func spawnChildProcess(ctx context.Context, args agentToolArgs, cfg AgentToolCon
 	instanceClosed := false
 	defer func() {
 		if !instanceClosed && cfg.Store != nil {
-			_ = cfg.Store.CloseAgentInstance(context.WithoutCancel(ctx), instResult.InstanceID, "failed", "")
+			_ = cfg.Store.CloseAgentInstance(context.WithoutCancel(ctx), instResult.InstanceID, "failed", "", "spawn did not reach completion")
 		}
 	}()
 
@@ -517,6 +518,16 @@ func spawnChildProcess(ctx context.Context, args agentToolArgs, cfg AgentToolCon
 
 	if err := cmd.Start(); err != nil {
 		return agentToolError("start child", err), nil
+	}
+
+	// Record the child's OS process identity now that it's known (the
+	// instance row was created before Start() — pid can't be known
+	// earlier). Best effort: a failure here just means the orphan sweep
+	// falls back to "no pid recorded" for this row (G10), not a spawn
+	// failure.
+	if cfg.Store != nil {
+		pid := cmd.Process.Pid
+		_ = cfg.Store.SetAgentInstancePID(context.WithoutCancel(ctx), instResult.InstanceID, pid, procid.CaptureProcessStartNS(pid))
 	}
 
 	childReader := stdio.NewReader(stdout)
@@ -668,7 +679,7 @@ func spawnChildProcess(ctx context.Context, args agentToolArgs, cfg AgentToolCon
 	// Close the instance row and bus client.
 	if cfg.Store != nil && usageAcc != nil {
 		usageJSON, _ := json.Marshal(usageAcc)
-		_ = cfg.Store.CloseAgentInstance(context.WithoutCancel(ctx), instResult.InstanceID, resultEnv.Status, string(usageJSON))
+		_ = cfg.Store.CloseAgentInstance(context.WithoutCancel(ctx), instResult.InstanceID, resultEnv.Status, string(usageJSON), resultEnv.Error)
 		instanceClosed = true
 	}
 	childBusClient.Close()

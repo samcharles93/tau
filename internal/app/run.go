@@ -183,6 +183,14 @@ func RunChat(ctx context.Context, opts ChatOptions) error {
 	// row and resolves the spec, model, and effective tools.
 	var agentInstanceID string
 	if sessionManager != nil {
+		// Orphan sweep runs once at root startup, before this process adds
+		// its own row, so any instance left "started" by a prior crashed
+		// process gets closed rather than accumulating forever. Best
+		// effort: a sweep failure must not block startup.
+		if err := agent.SweepOrphanedInstances(ctx, rawStore, os.Getpid(), opts.Config.Agents.OrphanStaleAge); err != nil {
+			slog.Warn("orphan sweep failed", "err", err)
+		}
+
 		instCfg := agent.InstantiateConfig{
 			Name:              opts.AgentSpec,
 			CWD:               cwd,

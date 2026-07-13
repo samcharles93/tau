@@ -72,7 +72,7 @@ func TestSQLiteStore_ResumeSession_SucceedsWhenPriorInstanceEnded(t *testing.T) 
 		StartedAt: time.Now().UTC(),
 	}
 	require.NoError(t, s.SaveAgentInstance(ctx, orig))
-	require.NoError(t, s.CloseAgentInstance(ctx, orig.ID, "completed", ""))
+	require.NoError(t, s.CloseAgentInstance(ctx, orig.ID, "completed", "", ""))
 
 	require.NoError(t, s.Save(ctx, chat.ChatSessionState{
 		SessionID:       "sess-1",
@@ -176,7 +176,7 @@ func TestSQLiteStore_ResumeSession_ConcurrentRaceYieldsOneOwner(t *testing.T) {
 		StartedAt: time.Now().UTC(),
 	}
 	require.NoError(t, s.SaveAgentInstance(ctx, orig))
-	require.NoError(t, s.CloseAgentInstance(ctx, orig.ID, "completed", ""))
+	require.NoError(t, s.CloseAgentInstance(ctx, orig.ID, "completed", "", ""))
 	require.NoError(t, s.Save(ctx, chat.ChatSessionState{
 		SessionID:       "sess-1",
 		Status:          chat.ChatSessionIdle,

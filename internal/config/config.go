@@ -109,6 +109,13 @@ type AgentsConfig struct {
 	// is rejected with "spawn queue full" when exceeded. Default 8 if
 	// unset.
 	MaxQueuedSpawns int `yaml:"max_queued_spawns" json:"max_queued_spawns"`
+	// OrphanStaleAge bounds how long an instance row may sit with
+	// ended_at IS NULL before the orphan sweep unconditionally closes it,
+	// regardless of what the PID check finds — the backstop against a
+	// hung or zombie process holding a row open forever. Default 24h if
+	// unset. See docs/specs/agents/04-storage-and-sessions.md (Orphan
+	// sweep: Stale-age bound).
+	OrphanStaleAge time.Duration `yaml:"orphan_stale_age" json:"orphan_stale_age"`
 }
 
 func (a *AgentsConfig) UnmarshalYAML(value *yaml.Node) error {
@@ -131,6 +138,8 @@ func (a *AgentsConfig) UnmarshalYAML(value *yaml.Node) error {
 		MaxTotalChildrenCamel  int    `yaml:"maxTotalChildren"`
 		MaxQueuedSpawns        int    `yaml:"max_queued_spawns"`
 		MaxQueuedSpawnsCamel   int    `yaml:"maxQueuedSpawns"`
+		OrphanStaleAge         string `yaml:"orphan_stale_age"`
+		OrphanStaleAgeCamel    string `yaml:"orphanStaleAge"`
 	}
 	var raw rawAgentsConfig
 	if err := value.Decode(&raw); err != nil {
@@ -163,6 +172,13 @@ func (a *AgentsConfig) UnmarshalYAML(value *yaml.Node) error {
 		}
 		a.KillGrace = d
 	}
+	if age := firstNonEmpty(raw.OrphanStaleAge, raw.OrphanStaleAgeCamel); age != "" {
+		d, err := time.ParseDuration(age)
+		if err != nil {
+			return fmt.Errorf("agents.orphan_stale_age: %w", err)
+		}
+		a.OrphanStaleAge = d
+	}
 	return nil
 }
 
@@ -180,6 +196,7 @@ func DefaultAgentsConfig() AgentsConfig {
 		MaxActiveChildren: 4,
 		MaxTotalChildren:  16,
 		MaxQueuedSpawns:   8,
+		OrphanStaleAge:    24 * time.Hour,
 	}
 }
 
@@ -1207,6 +1224,9 @@ func mergeAgentsConfigs(globalCfg, localCfg AgentsConfig) AgentsConfig {
 	if localCfg.MaxQueuedSpawns > 0 {
 		merged.MaxQueuedSpawns = localCfg.MaxQueuedSpawns
 	}
+	if localCfg.OrphanStaleAge > 0 {
+		merged.OrphanStaleAge = localCfg.OrphanStaleAge
+	}
 	return merged
 }
 
@@ -1286,6 +1306,9 @@ func Validate(cfg Config) error {
 	}
 	if cfg.Agents.MaxQueuedSpawns < 0 {
 		return errors.New("agents.max_queued_spawns must be >= 0")
+	}
+	if cfg.Agents.OrphanStaleAge < 0 {
+		return errors.New("agents.orphan_stale_age must be >= 0")
 	}
 
 	return nil

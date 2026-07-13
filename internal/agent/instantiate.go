@@ -3,6 +3,7 @@ package agent
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"os"
 	"strings"
 	"time"
@@ -10,6 +11,7 @@ import (
 	"github.com/samcharles93/tau/internal/agent/spec"
 	"github.com/samcharles93/tau/internal/chat"
 	"github.com/samcharles93/tau/internal/config"
+	"github.com/samcharles93/tau/internal/procid"
 	"github.com/samcharles93/tau/internal/store"
 )
 
@@ -162,6 +164,7 @@ func Instantiate(ctx context.Context, cfg InstantiateConfig) (*InstantiateResult
 		Depth:            depth,
 		ParentInstanceID: cfg.ParentInstanceID,
 		PID:              osPID(),
+		ProcessStartNS:   procid.CaptureProcessStartNS(osPID()),
 		StartedAt:        now,
 	}
 
@@ -281,34 +284,51 @@ func intersectTools(a, b []string) []string {
 
 // toolsToJSON serialises a tool list as a JSON array string, or "" for nil/empty.
 
-// SweepOrphanedInstances closes any agent_instances rows with ended_at IS NULL
-// whose pid is no longer running. Called at root startup. See
-// docs/specs/agents/04-storage-and-sessions.md (Orphan sweep).
-func SweepOrphanedInstances(ctx context.Context, s store.SessionStore, ownPID int) error {
-	insts, err := s.ListAgentInstances(ctx, "")
-	if err != nil {
-		return fmt.Errorf("sweep: list instances: %w", err)
+// defaultOrphanStaleAge is used when staleAge <= 0 (config unset).
+const defaultOrphanStaleAge = 24 * time.Hour
+
+// SweepOrphanedInstances closes any agent_instances row (at any depth) with
+// ended_at IS NULL whose owning process is no longer running, or which has
+// simply run too long to be trusted. Called at root startup. Implements the
+// sweep algorithm from docs/specs/agents/04-storage-and-sessions.md (Orphan
+// sweep): the stale-age bound is checked first and closes unconditionally;
+// pid == 0 (never recorded — e.g. the process crashed before
+// SetAgentInstancePID ran) closes immediately; otherwise a platform PID
+// check with process-start identity decides. A row is never closed on
+// indeterminate evidence (permission denied, TOCTOU) — it's left for the
+// next sweep or the stale-age bound to eventually resolve.
+func SweepOrphanedInstances(ctx context.Context, s store.SessionStore, ownPID int, staleAge time.Duration) error {
+	if staleAge <= 0 {
+		staleAge = defaultOrphanStaleAge
 	}
+	insts, err := s.ListOpenAgentInstances(ctx)
+	if err != nil {
+		return fmt.Errorf("sweep: list open instances: %w", err)
+	}
+	now := time.Now()
 	for _, inst := range insts {
-		if inst.EndedAt.IsZero() && inst.PID > 0 && inst.PID != ownPID {
-			if !pidAlive(inst.PID) {
-				_ = s.CloseAgentInstance(ctx, inst.ID, "failed", "")
-			}
+		if inst.PID == ownPID {
+			continue // this process's own row — never sweep it
+		}
+		if now.Sub(inst.StartedAt) > staleAge {
+			_ = s.CloseAgentInstance(ctx, inst.ID, "failed", "", "orphan sweep: stale age exceeded")
+			continue
+		}
+		if inst.PID <= 0 {
+			_ = s.CloseAgentInstance(ctx, inst.ID, "failed", "", "orphan sweep: no pid recorded")
+			continue
+		}
+		switch procid.CheckPIDIdentity(inst.PID, inst.ProcessStartNS) {
+		case procid.PIDCheckAlive:
+			// Process is alive and identity matches (or no identity could
+			// be recorded) — skip, it may still be doing useful work.
+		case procid.PIDCheckDead:
+			_ = s.CloseAgentInstance(ctx, inst.ID, "failed", "", "orphan sweep: pid not found or identity mismatch")
+		case procid.PIDCheckIndeterminate:
+			slog.Warn("orphan sweep: could not determine pid liveness, skipping", "instance_id", inst.ID, "pid", inst.PID)
 		}
 	}
 	return nil
-}
-
-// pidAlive returns true if the process with the given pid is currently running.
-// Uses a Signal(0) check on Unix; on unsupported platforms returns true
-// (conservative — never closes instances that might still be alive).
-// This is safe because pids are only advisory per
-// docs/specs/agents/04-storage-and-sessions.md.
-func pidAlive(_ int) bool {
-	// Conservative: always assume alive. The orphan sweep is a convenience;
-	// dead pid rows are harmless and get closed eventually on the next sweep.
-	// TODO: add a platform-specific Signal(0) check.
-	return true
 }
 
 // osPID returns the current OS process id.
