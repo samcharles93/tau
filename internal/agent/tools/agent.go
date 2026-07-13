@@ -502,19 +502,10 @@ func spawnChildProcess(ctx context.Context, args agentToolArgs, cfg AgentToolCon
 	if err != nil {
 		return agentToolError("stderr pipe", err), nil
 	}
-	// Drain stderr to slog in background.
-	go func() {
-		buf := make([]byte, 4096)
-		for {
-			n, readErr := stderr.Read(buf)
-			if n > 0 {
-				fmt.Printf("[child %s] %s", instResult.InstanceID, string(buf[:n]))
-			}
-			if readErr != nil {
-				break
-			}
-		}
-	}()
+	// Drain stderr to slog in background: redacted, rate-limited, and
+	// capped per docs/specs/agents/03-wire-protocol.md (stderr handling).
+	// stderr is diagnostic-only and never parsed for protocol messages.
+	go drainChildStderr(stderr, instResult.InstanceID)
 
 	if err := cmd.Start(); err != nil {
 		return agentToolError("start child", err), nil
