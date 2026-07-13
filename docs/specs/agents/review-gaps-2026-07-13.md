@@ -74,6 +74,8 @@ Specify that the parent binds a pipe to the instance it spawned and rejects/quar
 
 ### G5. There is no concurrency or resource ceiling
 
+**Status: RESOLVED (2026-07-13, CAT-91).**
+
 **Ticket: CAT-91**
 
 The design intentionally allows N agent calls in one turn to spawn N children concurrently (`02-spawning-and-lifecycle.md`, line 49), while storage assumes only “a handful” and says depth caps prevent trees beyond tens (`04-storage-and-sessions.md`, line 58). Depth does not bound breadth: one turn can request arbitrarily many siblings, recursively.

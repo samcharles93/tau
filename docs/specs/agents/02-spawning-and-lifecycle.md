@@ -79,6 +79,68 @@ Spawning is a normal registry tool named `agent`, subject to `tools` filtering a
 
 Execution is synchronous: the tool call blocks until the child completes. Fan-out is free because the coordinator already executes a turn's tool calls concurrently (`coordinator_turn.go`, WaitGroup per call): N `agent` calls in one assistant turn run N children in parallel, each result returning as its child finishes.
 
+### Concurrency and resource ceilings
+
+While depth limits bound the tree vertically, nothing in the base design constrains fan-out breadth. One model turn can request arbitrarily many sibling agents, each consuming process slots, file descriptors, provider connections, and SQLite writers. Concurrency ceilings prevent resource exhaustion.
+
+**Configurable limits** (in `config.yaml`):
+
+```yaml
+agents:
+  max_active_children: 4       # per-parent, default 4
+  max_total_children: 16       # process-wide, default 16
+  max_queued_spawns: 8         # per-parent queue depth, default 8
+```
+
+| Limit | Scope | Default | What happens when exceeded |
+|---|---|---|---|
+| `max_active_children` | Per parent instance | 4 | Excess spawns are queued (if queue has room) or rejected (if queue is full) |
+| `max_total_children` | Process-wide (all agents in this OS process) | 16 | Spawn rejected immediately; queueing does not help when the process itself is at capacity |
+| `max_queued_spawns` | Per parent instance | 8 | Spawn rejected; the `agent` tool returns `failed` with `"spawn queue full"` |
+
+**Queue behavior:**
+
+- Queue is FIFO. When an active child completes and is removed from the active set, the next queued spawn is admitted.
+- Queue time consumes the child's timeout/deadline budget. The clock starts when `agent` is called, not when the child process actually starts.
+- A spawn that waits in the queue for longer than its `timeout` or past its `deadline` is removed from the queue and rejected with `"timed out in spawn queue"`.
+- Cancellation of the parent's turn removes all queued spawns for that turn cleanly. The cancelled spawns never start.
+
+**Rejection visibility:**
+
+When a spawn is rejected (due to any ceiling), the `agent` tool returns a structured failed result:
+
+```json
+{
+  "status": "failed",
+  "failure_reason": "spawn rejected: per-parent active children at maximum (4)",
+  "queued": false
+}
+```
+
+The model sees this as a tool result and can decide to wait for existing children to complete before retrying, reduce fan-out, or report the limit to the user.
+
+**File descriptor and process pressure:**
+
+Each active child consumes approximately 2 file descriptors (stdin + stdout pipes) plus one OS process slot. At `max_total_children: 16`, worst-case consumption is ~32 fds + 16 child processes + the parent. This is well within typical `ulimit -n` defaults (1024) and reasonable for the v1 local-only design.
+
+**Resource accounting across tree levels:**
+
+- `max_active_children` applies per-parent. A root with 4 active children does not constrain its children from each having 4 active grandchildren (total: 4 + 16 = 20 active instances across the tree).
+- `max_total_children` is process-wide (the parent OS process). Grandchildren run in separate OS processes (each child is a new `tau` invocation), so they are not counted against the parent's process-wide limit.
+- The `max_total_children` limit is the backstop for a single process spawning too many direct children.
+
+**Saturation test requirements:**
+
+| Scenario | Expected behavior |
+|---|---|
+| 5 agent calls when max_active=4 | 4 start immediately, 1 queued |
+| 13 agent calls when max_active=4, queue=8 | 4 active, 8 queued, 1 rejected |
+| Queued spawn exceeds timeout | Removed from queue, rejected with "timed out in spawn queue" |
+| Parent turn cancelled with queued spawns | All queued spawns removed cleanly |
+| Root spawns 4 children, each spawns 4 grandchildren | ✅ Allowed (per-parent limits, not global) |
+| 17 agent calls when max_total=16 | 16th spawn admitted, 17th rejected immediately |
+| Spawn rejected due to full queue | agent tool returns structured failed result with reason |
+
 Targeting rules, enforced by the executor before anything is spawned:
 
 - Spec must resolve, else the tool returns a failed result naming the miss.
