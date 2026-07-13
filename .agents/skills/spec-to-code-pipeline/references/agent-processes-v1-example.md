@@ -1,59 +1,62 @@
-# Worked Example: CAT-89–106 (Agent Processes v1)
+# Worked Example: Agent Processes v1 Specification
 
-Source: `docs/specs/agents/review-gaps-2026-07-13.md` → 18 Linear tickets. Completed 2026-07-13.
+An illustration of all 6 phases applied to a real project. Source: a gap-review document covering 7 spec files across storage, wire protocol, lifecycle, and UI domains. 18 gaps → 18 tickets → completed in 15 commits.
 
 ## Phase 1: Spec Review
 
-Read 11 documents: `00-overview.md`, `01-agent-spec-format.md`, `02-spawning-and-lifecycle.md`, `03-wire-protocol.md`, `04-storage-and-sessions.md`, `05-ui.md`, `06-implementation-plan.md`, `p0.1-per-run-tool-filtering-adr.md`, `p0.2-coordinator-scoping-audit.md`, `p0.3-prompt-relocation-proposal.md`, `review-gaps-2026-07-13.md`.
+Read 11 documents: overview, spec format, lifecycle, wire protocol, storage, UI, implementation plan, plus 3 design-decision records (ADRs) and the gap-review document itself.
 
 ## Phase 2: Gap Analysis
 
-Output: `review-gaps-2026-07-13.md` — 18 gaps (G1–G18) organized into three tiers.
+Output: a gap-review document with 18 gaps (G1–G18) organized into three tiers:
+- **Critical (4):** correctness/integrity/security hazards
+- **High-priority operational (5):** completeness gaps that would break real usage
+- **Consistency/completeness (9):** hardening items
 
 ## Phase 3: Story Creation
 
-18 Linear tickets, all in project `tau: Agent Processes v1`, conventional-commit titled, with Gap/Scope/Acceptance sections.
+18 tickets in a single project, conventional-commit titled, each with Gap/Scope/Acceptance sections. Examples of scope prefixes: `fix(storage):`, `feat(wire):`, `docs(spec):`, `test(integration):`.
 
 ## Phase 4: Dependency Analysis
 
 ### Layered architecture
 
 ```
-Layer 0: Design Foundation  → CAT-89, CAT-105
-Layer 1: Storage            → CAT-92, CAT-93, CAT-101, CAT-97, CAT-96
-Layer 2: Wire/Protocol      → CAT-94, CAT-98, CAT-99
-Layer 3: Process/Coordinator→ CAT-90, CAT-91, CAT-95
-Layer 4: Security/Trust     → CAT-100, CAT-102
-Layer 5: UI                 → CAT-103
-Layer 6: Cross-cutting      → CAT-104, CAT-106
+Layer 0: Design Foundation  → 2 tickets (spec contracts)
+Layer 1: Storage            → 5 tickets (persistence schema, atomic creation, versioning, identity, constraints)
+Layer 2: Wire/Protocol      → 3 tickets (authority binding, framing, delivery guarantees)
+Layer 3: Process/Runtime    → 3 tickets (resume auth, concurrency, cancellation)
+Layer 4: Security/Trust     → 2 tickets (context framing, root override)
+Layer 5: UI                 → 1 ticket (recovery, accessibility, fan-out bounds)
+Layer 6: Cross-cutting      → 2 tickets (test gates, observability)
 ```
 
 ### Critical path (12 tickets)
 
 ```
-CAT-89 → CAT-92 → CAT-101 → CAT-97 → CAT-90 → CAT-95 → CAT-103
-                          ↘ CAT-94 → CAT-98 → CAT-99 ↗
+T-design-1 → T-storage-1 → T-storage-4 → T-storage-3 → T-process-1 → T-process-3 → T-ui-1
+                                                   ↘ T-wire-1 → T-wire-2 → T-wire-3 ↗
 ```
 
-### Biggest bottleneck: CAT-90
+### Biggest bottleneck
 
-5 upstream dependencies: CAT-89, CAT-92, CAT-94, CAT-101, CAT-97. All had to complete before resume authorization could be specified.
+The resume-authorization ticket (T-process-1) had 5 upstream dependencies across design, storage, and wire layers. All had to complete before its contract could be specified.
 
 ## Phase 5: Execution Process Design
 
-| Phase | Tickets | Rationale |
+| Phase | Pattern | Rationale |
 |-------|---------|-----------|
-| P0: Design | CAT-89 ∥ CAT-105 | Foundation. 2 tickets, parallel. |
-| P1: Storage | CAT-93 ∥ CAT-92 → CAT-101 → CAT-97 ∥ CAT-96 | Build persistence layer. |
-| P2: Wire | CAT-94 → CAT-98 → CAT-99 | Protocol follows storage. |
-| P3: Process | CAT-90 → CAT-91 ∥ CAT-95 | CAT-90 has most deps. |
-| P4: Security | CAT-100 ∥ CAT-102 | Both independent. |
-| P5: UI | CAT-103 | Heavy downstream. |
-| Cross-cut | CAT-104 (alongside), CAT-106 (after P2) | Test gates + observability. |
+| P0: Design | 2 ∥ 2 | Foundation. Resolve the contracts first. |
+| P1: Storage | A ∥ B → C → D ∥ E | Build persistence. Two independent starts, then sequential, then parallel again. |
+| P2: Wire | A → B → C | Protocol follows storage. Strictly sequential. |
+| P3: Process | A → B ∥ C | Most-dependent ticket first, then two that can overlap. |
+| P4: Security | A ∥ B | Both independent of each other. |
+| P5: UI | A | Heavy downstream — depends on 4 prior tickets. |
+| Cross-cut | A (alongside all), B (after P2) | Test gates run parallel to implementation; observability needs state machine + budget model. |
 
 ## Phase 6: Implementation Coordination
 
-Completed all 18 tickets as spec updates across 7 documents in 15 commits. Key principles that held up:
+All 18 tickets completed as spec updates across 7 documents. Key principles that held up:
 
 1. Each gap traced to a specific source line
 2. Each edge had a one-sentence rationale
@@ -62,13 +65,13 @@ Completed all 18 tickets as spec updates across 7 documents in 15 commits. Key p
 
 ## Key decisions made
 
-| Ticket | Decision |
+| Domain | Decision |
 |--------|----------|
-| CAT-89 | `skill` is an ordinary attenuated tool — no auto-injection |
-| CAT-90 | Resume requires ancestor relationship; capabilities recomputed from snapshot ceiling |
-| CAT-92 | Instance + session in one SQLite transaction; ID collision retry up to 3 times |
-| CAT-93 | Canonical usage model: input/output/cached/reasoning tokens, decimal(18,8) cost |
-| CAT-94 | PipeBinding struct validates from/to/instance_id/task_id/session_id before dispatch |
-| CAT-97 | Historical snapshot for resume identity; canonical serialization for stable hashes |
-| CAT-100 | Delegated context framed as `trust="data"` with origin provenance |
-| CAT-102 | Trust-on-first-use for project root-spec overrides with content-hash binding |
+| Tool attenuation | A specific tool is an ordinary attenuated capability — no auto-injection outside the declared intersection |
+| Resume authorization | Requires ancestor relationship; capabilities recomputed from snapshot ceiling, not trusted from persisted state |
+| Atomic creation | Instance row + session create/fork in one transaction; ID collision retry up to 3 times |
+| Budget semantics | Canonical usage model with input/output/cached/reasoning tokens; timeout (relative) vs deadline (absolute) distinction |
+| Authority bindings | Pipe-to-instance binding validates all identity fields before dispatch; 3 violations close the pipe |
+| Snapshot versioning | Historical snapshot for resume identity; canonical serialization for stable hashes |
+| Context trust | Delegated context framed with trust markers and XML-escaping; no implicit inheritance |
+| Root override | Trust-on-first-use with content-hash binding; trust store outside the repository |

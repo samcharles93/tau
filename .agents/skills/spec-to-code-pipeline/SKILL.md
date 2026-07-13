@@ -10,7 +10,7 @@ priority: 14
 
 # Spec → Code Pipeline
 
-A six-phase pipeline for converting spec documents into sequenced, parallelizable, hazard-free implementation tickets. Reference example: the **tau Agent Processes v1** project — 18 tickets (CAT-89–106) derived from one gap-review document.
+A six-phase pipeline for converting spec documents into sequenced, parallelizable, hazard-free implementation tickets.
 
 ## Phase 1: Spec Review
 
@@ -18,12 +18,10 @@ Read every document in the spec directory. Don't skim — note every decision, i
 
 **Required actions:**
 
-1. List all spec files in the target directory with `ls docs/specs/<domain>/`.
+1. List all spec files in the target directory (e.g., `ls docs/specs/<domain>/`).
 2. Read each file end-to-end. Do not trust earlier summaries.
 3. Note which documents are authoritative vs. design-decision records (ADRs) vs. implementation plans — they carry different weight.
 4. Flag any document that says "undecided," "TBD," or contradicts another document.
-
-**Reference artifact:** `docs/specs/agents/` — 7 documents (overview, spec format, lifecycle, wire protocol, storage, UI, implementation plan).
 
 **Concrete output:** A list of every document read, its role (authoritative/ADR/plan), and the key decisions it contains.
 
@@ -59,21 +57,19 @@ Produce a gap-review document that categorizes every missing contract, inconsist
 
 ## Phase 3: Story Creation
 
-Convert each gap into a Linear ticket with structured metadata. One gap → one ticket (rarely, one gap → 2 tickets if it spans unrelated layers).
+Convert each gap into an issue-tracker ticket with structured metadata. One gap → one ticket (rarely, one gap → 2 tickets if it spans unrelated layers).
 
 **Ticket conventions:**
 
 | Field | Rule |
 |-------|------|
-| **Title** | Conventional-commit prefix (`fix(agent):`, `feat(agent-storage):`, `docs(agent-wire):`, `test(agent):`). Scope matches the package/domain. |
+| **Title** | Conventional-commit prefix matching the domain (e.g., `fix(storage):`, `feat(wire):`, `docs(spec):`, `test(integration):`). |
 | **Description** | Three sections: **Gap** (what's missing, cite the gap number + source), **Scope** (concrete list of what to build/change), **Acceptance criteria** (testable, specific). |
-| **Priority** | Critical gaps → Urgent. High-priority operational → High. Consistency/completeness → Medium. |
-| **Labels** | Package/domain labels (`Agents`, `Coordinator`, `Storage`, `TUI`, `WebUI`, `Config`, `Tools`) plus stage markers if needed (`Investigation`). |
-| **Project** | All tickets go in the same Linear project so they sort together. |
+| **Priority** | Critical gaps → Urgent/Critical. High-priority operational → High. Consistency/completeness → Medium. |
+| **Labels** | Package/domain labels matching the project's architecture, plus stage markers if needed. |
+| **Project** | All tickets go in the same project/board so they sort together. |
 
-**Tooling:** Use the `linear_create_issue` MCP tool. After creation, fetch each with `linear_get_issue` to verify the description rendered correctly.
-
-**Concrete output:** N Linear tickets linked to a project, each with a `## Gap` section referencing the gap number, source, and acceptance criteria.
+**Concrete output:** N tickets in the project's issue tracker, each with a `## Gap` section referencing the gap number, source, and acceptance criteria.
 
 ---
 
@@ -83,11 +79,11 @@ Map every ticket onto a layered dependency graph. This is the core analytical ph
 
 ### Method
 
-**Step 1 — Layer identification.** Group tickets by architectural layer. Every gap review naturally clusters into layers (e.g., spec → storage → wire → process → UI). Read each ticket's `## Scope` to confirm which layer it touches.
+**Step 1 — Layer identification.** Group tickets by architectural layer. Every gap review naturally clusters into layers (e.g., spec → storage → wire → process → UI). Read each ticket's scope to confirm which layer it touches.
 
 **Step 2 — Edge enumeration.** For each pair of tickets (A, B), ask: "Can B be implemented without A existing?" If no, A → B. Write a one-sentence rationale for every edge.
 
-**Step 3 — Graph construction.** Draw the graph. Use `└→`, `├→`, `▶`, and `∥` (parallel) symbols so it renders in monospace. Include the edge rationale as a table.
+**Step 3 — Graph construction.** Draw the graph. Use `└→`, `├→`, and `∥` (parallel) symbols so it renders in monospace. Include the edge rationale as a table.
 
 **Step 4 — Independence check.** Identify tickets with **zero incoming edges** — these are parallel candidates. Identify tickets with **4+ incoming edges** — these are bottlenecks.
 
@@ -95,8 +91,8 @@ Map every ticket onto a layered dependency graph. This is the core analytical ph
 
 Some tickets are not layers but **cross-cutting concerns** (testing, observability, documentation audit):
 
-- **Test-gate tickets** (e.g., "add acceptance tests to each story"): Start alongside the first implementation phase and run in parallel with every ticket, not after everything else.
-- **Observability tickets**: Depend only on the layers they instrument (e.g., observability needs the state machine and budget model to exist before it can emit those transitions/metrics).
+- **Test-gate tickets**: Start alongside the first implementation phase and run in parallel with every ticket, not after everything else.
+- **Observability tickets**: Depend only on the layers they instrument.
 - **Documentation-audit tickets**: Usually have zero or minimal code dependencies — can run anytime.
 
 ### Output format
@@ -108,8 +104,6 @@ Deliver a section for each layer with:
 3. A note on parallelism within the layer.
 
 Then deliver the **complete graph** and the **critical path** (the longest chain of strictly sequential tickets).
-
-**Reference:** The CAT-89–106 analysis above is a worked example — 18 tickets layered into 7 architectural tiers with a 12-ticket critical path. Use it as a template.
 
 ---
 
@@ -125,7 +119,7 @@ Each phase groups tickets that can run concurrently. Name phases by theme, not b
 P0: Design Foundation (resolve the contracts)
 P1: Storage (build the persistence layer)
 P2: Wire/Protocol (define communication)
-P3: Process/Coordinator (wire runtime behavior)
+P3: Process/Runtime (wire behavior)
 P4: Security/Trust (cross-cutting invariants)
 P5: UI (presentation — depends on everything)
 Cross-cut: Testing + Observability (run alongside)
@@ -135,14 +129,14 @@ Cross-cut: Testing + Observability (run alongside)
 
 | Phase | Tickets | Rationale |
 |-------|---------|-----------|
-| P0: Design | CAT-89 ∥ CAT-105 | Foundation. 2 tickets, parallel. |
-| P1: Storage | CAT-93 ∥ CAT-92 → CAT-101 → CAT-97 ∥ CAT-96 | Build persistence. … |
+| P0: Design | T-1 ∥ T-2 | Foundation. 2 tickets, parallel. |
+| P1: Storage | T-3 ∥ T-4 → T-5 → T-6 ∥ T-7 | Build persistence. … |
 
 Use `∥` for parallel tickets, `→` for sequential ones within a phase.
 
 ### Executing the plan
 
-When it's time to implement, use the `linear_update_issue` MCP tool to move tickets from Backlog → In Progress as each phase starts. Start with the independent tickets in each phase, then move to the sequential ones as dependencies resolve.
+Start with the independent tickets in each phase, then move to the sequential ones as dependencies resolve. Move tickets through statuses in the issue tracker as phases progress.
 
 ---
 
@@ -150,42 +144,32 @@ When it's time to implement, use the `linear_update_issue` MCP tool to move tick
 
 ### Before starting a phase
 
-1. **Verify prerequisites.** For each ticket in the phase, check that all upstream tickets are `state: Done` (not just In Progress). A dependency that's "mostly done" is not done — the contract may still shift.
+1. **Verify prerequisites.** For each ticket in the phase, check that all upstream tickets are done (not just started). A dependency that's "mostly done" is not done — the contract may still shift.
 2. **Check for drift.** If any upstream ticket's implementation diverged from its original spec, re-read the merged code and update downstream tickets if the contract changed.
-3. **Claim and move.** Use `linear_update_issue` to set each ticket to `In Progress` and assign it as work begins.
+3. **Claim the work.** Set each ticket to In Progress as you begin.
 
 ### During implementation
 
-- **Cross-cut tests alongside code.** Don't defer test gates (CAT-104 pattern). Each implementation story should have its acceptance criteria exercised in the same phase, not in a later testing phase.
-- **One writer per layer.** Don't implement CAT-92 and CAT-101 simultaneously if they touch the same storage schema — the second writer will rebase on the first's changes. Within a phase, parallelize across *different files/packages*, not the same one.
-- **Address contract changes.** If implementing CAT-89 reveals that the capability equation needs a new field that CAT-101's schema must store, open a note on CAT-101 immediately — don't let the downstream ticket assume a stale contract.
+- **Cross-cut tests alongside code.** Each implementation story should have its acceptance criteria exercised in the same phase, not in a later testing phase.
+- **One writer per layer.** Don't implement two tickets simultaneously if they touch the same schema or module — the second writer will rebase on the first's changes. Within a phase, parallelize across *different files/packages*, not the same one.
+- **Address contract changes.** If implementing a ticket reveals a new field or contract that a downstream ticket's scope depends on, open a note on the downstream ticket immediately — don't let it assume a stale contract.
 
 ### After completing a phase
 
 1. **Re-validate the graph.** Check that the next phase's dependencies are genuinely resolved. Sometimes a ticket's scope shifts during implementation.
-2. **Update Linear status.** Move completed tickets to `Done`, add a note summarizing what was built and any contract changes.
+2. **Update tracker status.** Move completed tickets to Done, add a note summarizing what was built and any contract changes.
 3. **Re-read the next phase's tickets.** After a week of implementation, re-reading tickets often reveals new connections or stale assumptions that weren't visible during the dependency analysis.
 
 ---
-
-## Concrete example: Agent Processes v1 (CAT-89–106)
-
-The full worked pipeline for this project — all 6 phases, the layered dependency graph, critical path, execution order, and key decisions — is documented in `references/agent-processes-v1-example.md`. Load that file when you need the complete reference; the summary below covers the essentials.
-
-- **Source:** `docs/specs/agents/review-gaps-2026-07-13.md` (G1–G18)
-- **18 tickets:** CAT-89 through CAT-106, all in `tau: Agent Processes v1`
-- **Critical path:** CAT-89 → CAT-92 → CAT-101 → CAT-97 → CAT-90 → CAT-95 → CAT-103 (12 tickets)
-- **Biggest bottleneck:** CAT-90 (resume authorization) with 5 upstream dependencies
-- **All 18 completed** as spec updates in 15 commits on 2026-07-13
 
 ## Validation checklist
 
 After completing Phase 4 (dependency analysis), validate before committing:
 
 ### Gap traceability
-- [ ] Every gap (G1–GN) has a corresponding `**Ticket: CAT-XX**` line in the gap-review document
-- [ ] Every ticket's `## Gap` section cites the gap number and source document
-- [ ] No gap is referenced by two tickets (one gap → one ticket)
+- [ ] Every gap (G1–GN) has a corresponding ticket reference in the gap-review document
+- [ ] Every ticket's description cites the gap number and source document
+- [ ] No gap is referenced by two tickets (one gap → one ticket, rarely two)
 
 ### Dependency graph
 - [ ] Every edge has a one-sentence rationale (no "A → B" without "because…")
@@ -196,7 +180,7 @@ After completing Phase 4 (dependency analysis), validate before committing:
 ### Layer integrity
 - [ ] Storage-layer tickets don't depend on UI-layer tickets
 - [ ] Wire-layer tickets don't depend on Process-layer tickets
-- [ ] Every ticket's `## Scope` confirms it touches only its declared layer
+- [ ] Every ticket's scope confirms it touches only its declared layer
 
 ### Execution plan
 - [ ] The critical path is identified and explicitly stated
@@ -206,24 +190,10 @@ After completing Phase 4 (dependency analysis), validate before committing:
 
 ### Repository state
 - [ ] `git log --oneline -20` confirms what's already built vs spec-only
-- [ ] Implementation packages named in the spec exist (`ls internal/*/`) and their key functions/types resolve (`grep`)
+- [ ] Implementation packages named in the spec exist and their key functions resolve
 - [ ] No claim about implementation status is made without checking the working tree
 
 ---
-
-## Tools used throughout
-
-| Phase | Tool | Purpose |
-|-------|------|---------|
-| 1 | `read` | Read spec documents |
-| 1 | `bash` (`ls`, `find`) | List spec files |
-| 2 | `write` | Create gap-review document |
-| 3 | `linear_create_issue` | Create tickets from gaps |
-| 3 | `linear_get_issue` | Verify ticket content |
-| 4 | `linear_get_issue` | Fetch all tickets for analysis |
-| 4 | `ctx_batch_execute` | Batch-fetch tickets in parallel |
-| 5-6 | `linear_update_issue` | Move tickets through states |
-| 5-6 | `linear_list_issues` | Check project status |
 
 ## Principles
 
@@ -240,30 +210,23 @@ After completing Phase 4 (dependency analysis), validate before committing:
 
 ### Shell escaping in `git commit -m`
 
-When the commit message contains backticks with double-quoted strings inside them (e.g. `` `"skill"` ``), `bash` interprets the backticks as command substitution and the `"` pairs as shell-quoting. The commit still succeeds (git receives the message via stdin, not the shell), but stderr is noisy with "command not found" errors, and the message may be garbled.
+When the commit message contains backticks with double-quoted strings inside them (e.g. `` `"value"` ``), `bash` interprets the backticks as command substitution. The commit still succeeds (git receives the message via stdin, not the shell), but stderr is noisy with "command not found" errors.
 
-**Fix:** Use single quotes for the `-m` argument when the message contains backticks or double-quoted strings:
-
-```shell
-# BROKEN — shell interprets backticks as command substitution
-git commit -m "fix(agent): remove `m[\"skill\"] = true`"
-
-# CORRECT — single quotes prevent shell interpretation
-git commit -m 'fix(agent): remove m["skill"] = true injection'
-
-# ALSO CORRECT — write the message to a file first
-git commit -F /tmp/commit-msg.txt
-```
-
-Reproduced 2026-07-13 during CAT-89 commit (commit `c4757a0`). Shell noise on stderr but the commit applied correctly.
+**Fix:** Use single quotes for the `-m` argument when the message contains backticks or double-quoted strings, or write the message to a file and use `git commit -F`.
 
 ### Spec work ≠ greenfield
 
-The gap review → story creation → dependency analysis pipeline produces spec updates. These updates land in `docs/specs/agents/`. They do NOT mean the implementation is starting from zero. On the CAT-89–106 project, 1,652 lines of implementation already existed across `internal/agent/instantiate.go`, `internal/agent/tools/agent.go`, `internal/app/child.go`, and `internal/agent/stdio/transport.go` while the spec documents were being gap-filled. Claiming "the implementation hasn't started" without running `ls` or `git log` is a fabrication.
+The gap review → story creation → dependency analysis pipeline produces spec updates. These updates land in spec documents. They do NOT mean the implementation is starting from zero. Implementation code may already exist in the working tree while the spec documents are being gap-filled. Claiming "the implementation hasn't started" without running `ls` or `git log` is a fabrication.
 
 **Rule:** Before reporting on implementation status, always check:
 - `git log --oneline -20` to see recent commits
 - `ls` on the implementation packages named in the spec
 - `grep` for key functions/types to confirm they exist
 
-Reproduced 2026-07-13: a status review claimed all P1–P3 implementation was "not started" when it was live and passing `task check`. Root cause: the agent read spec documents but never checked the working tree.
+### Parallelism markers
+
+Use these ASCII-art conventions consistently:
+- `A ∥ B` — A and B are parallel (no dependency between them)
+- `A → B` — B depends on A (sequential)
+- `├→` and `└→` — branching in the graph
+- `▶` — points to a dependency target
