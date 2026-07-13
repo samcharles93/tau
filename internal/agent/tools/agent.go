@@ -225,13 +225,16 @@ func executeSpawn(ctx context.Context, args agentToolArgs, cfg AgentToolConfig) 
 		return Result{Content: fmt.Sprintf("agent instantiation failed: %v", err), IsError: true, ErrorKind: "instantiation_failed"}, nil
 	}
 
-	// 5. Seed the child session based on context_mode.
+	// 5. Seed the child session based on context_mode. ChildSystemPrompt is
+	// the child's own resolved spec body — its identity — not the
+	// parent's; only "fork" mode (below) inherits the parent's prompt.
 	if err := seedChildSession(ctx, seedSessionConfig{
 		Store:              cfg.Store,
 		SessionID:          instResult.SessionID,
 		ParentSessionID:    cfg.SessionID,
 		ParentInstanceID:   cfg.ParentInstanceID,
 		ParentMessages:     cfg.ParentMessages,
+		ChildSystemPrompt:  renderChildSystemPrompt(def, cfg.CWD, instResult.ResolvedModel, instResult.SessionID),
 		ParentSystemPrompt: cfg.ParentSystemPrompt,
 		ContextMode:        args.ContextMode,
 		Resume:             "",
@@ -862,11 +865,18 @@ func intersectToolLists(a, b []string) []string {
 
 // seedSessionConfig holds the parameters for seeding a child session.
 type seedSessionConfig struct {
-	Store              store.SessionStore
-	SessionID          string
-	ParentSessionID    string
-	ParentInstanceID   string
-	ParentMessages     []tauchat.ChatMessage
+	Store            store.SessionStore
+	SessionID        string
+	ParentSessionID  string
+	ParentInstanceID string
+	ParentMessages   []tauchat.ChatMessage
+	// ChildSystemPrompt is the spawned child's OWN resolved spec body,
+	// rendered — its identity, used for "fresh" context_mode. Not the
+	// parent's prompt.
+	ChildSystemPrompt string
+	// ParentSystemPrompt is the parent's own system prompt, used only for
+	// "fork" context_mode, where the child continues the parent's
+	// identity/context rather than starting a new one.
 	ParentSystemPrompt string
 	ContextMode        string // "fresh" (default), "fork"
 	Resume             string // session ID to resume
@@ -890,6 +900,18 @@ func seedChildSession(ctx context.Context, cfg seedSessionConfig) error {
 	// Resume: no session to create — child loads the existing session.
 	if cfg.Resume != "" {
 		return nil
+	}
+
+	// The parent session may not have a row in the store yet — sessions
+	// are only persisted by the coordinator at close/shutdown, not at
+	// creation (see docs/specs/agents/04-storage-and-sessions.md), so a
+	// session that spawns a child before its first close would otherwise
+	// violate the child row's parent_session_id foreign key. Ensure a row
+	// exists; the coordinator's own later Save is an upsert, so this
+	// placeholder is safely overwritten with real data once the parent
+	// session actually persists.
+	if err := ensureParentSessionExists(ctx, cfg.Store, cfg.ParentSessionID); err != nil {
+		return fmt.Errorf("ensure parent session exists: %w", err)
 	}
 
 	// Default context_mode is "fresh".
@@ -919,7 +941,7 @@ func seedFreshSession(ctx context.Context, cfg seedSessionConfig) error {
 		Status:          tauchat.ChatSessionIdle,
 		CreatedAt:       now,
 		UpdatedAt:       now,
-		SystemPrompt:    cfg.ParentSystemPrompt,
+		SystemPrompt:    cfg.ChildSystemPrompt,
 		Messages: []tauchat.ChatMessage{
 			{
 				Role:      tauchat.ChatRoleUser,
@@ -929,6 +951,31 @@ func seedFreshSession(ctx context.Context, cfg seedSessionConfig) error {
 		},
 	}
 	return cfg.Store.Save(ctx, state, 0)
+}
+
+// ensureParentSessionExists creates a minimal placeholder row for
+// parentSessionID if the store doesn't already have one, so a child
+// session's parent_session_id foreign key reference is always valid. A nil
+// store or empty parentSessionID is a no-op (matches seedFreshSession's
+// existing "store is required" contract — callers with no store fail
+// later at the actual Save, not here).
+func ensureParentSessionExists(ctx context.Context, s store.SessionStore, parentSessionID string) error {
+	if s == nil || parentSessionID == "" {
+		return nil
+	}
+	if _, err := s.Load(ctx, parentSessionID); err == nil {
+		return nil
+	}
+	now := time.Now()
+	if err := s.Save(ctx, tauchat.ChatSessionState{
+		SessionID: parentSessionID,
+		Status:    tauchat.ChatSessionIdle,
+		CreatedAt: now,
+		UpdatedAt: now,
+	}, 0); err != nil {
+		return fmt.Errorf("save placeholder parent session: %w", err)
+	}
+	return nil
 }
 
 // seedForkSession clones the parent's full session history and appends the

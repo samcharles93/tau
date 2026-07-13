@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/samcharles93/tau/internal/agent/spec"
 	tauchat "github.com/samcharles93/tau/internal/chat"
 	"github.com/samcharles93/tau/internal/config"
 	"github.com/samcharles93/tau/internal/eventbus"
@@ -1001,5 +1002,121 @@ func TestExecuteSpawn_RecordsChildPID(t *testing.T) {
 	}
 	if insts[0].PID <= 0 {
 		t.Errorf("PID = %d, want the spawned child's actual pid (> 0)", insts[0].PID)
+	}
+}
+
+// --- child system prompt: fresh mode uses the child's own spec, not the parent's ---
+
+// TestSeedFreshSession_UsesChildSystemPromptNotParent proves fresh-mode
+// children get their own ChildSystemPrompt, not whatever ParentSystemPrompt
+// happens to be set to — a spawned "research" child must not start with
+// the parent's persona/instructions.
+func TestSeedFreshSession_UsesChildSystemPromptNotParent(t *testing.T) {
+	dir := t.TempDir()
+	s, err := store.NewSQLiteStore(context.Background(), dir+"/sessions.db", dir)
+	if err != nil {
+		t.Fatalf("NewSQLiteStore: %v", err)
+	}
+	defer s.Close()
+
+	err = seedFreshSession(context.Background(), seedSessionConfig{
+		Store:              s,
+		SessionID:          "child-session",
+		ParentInstanceID:   "tau#8q2mfe",
+		ChildSystemPrompt:  "you are the research specialist",
+		ParentSystemPrompt: "you are the root tau agent",
+		Prompt:             "look into X",
+	})
+	if err != nil {
+		t.Fatalf("seedFreshSession: %v", err)
+	}
+
+	loaded, err := s.Load(context.Background(), "child-session")
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if loaded.SystemPrompt != "you are the research specialist" {
+		t.Errorf("SystemPrompt = %q, want the child's own prompt, not the parent's", loaded.SystemPrompt)
+	}
+}
+
+func TestRenderChildSystemPrompt_RendersOwnSpecBody(t *testing.T) {
+	def := &spec.Definition{
+		Name: "research",
+		Body: "You are research.\nWorking directory: {{.WorkingDir}}\nModel: {{.ModelName}}",
+	}
+	got := renderChildSystemPrompt(def, "/work/proj", "gpt-5", "child-session-1")
+	if !strings.Contains(got, "Working directory: /work/proj") {
+		t.Errorf("rendered prompt missing WorkingDir substitution: %q", got)
+	}
+	if !strings.Contains(got, "Model: gpt-5") {
+		t.Errorf("rendered prompt missing ModelName substitution: %q", got)
+	}
+	if !strings.Contains(got, "You are research.") {
+		t.Errorf("rendered prompt missing literal spec body text: %q", got)
+	}
+}
+
+// --- parent session not yet persisted: FK violation on child spawn ---
+
+// TestSeedFreshSession_ParentSessionNotYetPersisted proves a child can be
+// seeded even when the parent session has never been saved (the common
+// case: sessions only persist at coordinator close/shutdown, so a spawn
+// during the parent's very first turn would otherwise violate the child
+// row's parent_session_id foreign key).
+func TestSeedFreshSession_ParentSessionNotYetPersisted(t *testing.T) {
+	dir := t.TempDir()
+	s, err := store.NewSQLiteStore(context.Background(), dir+"/sessions.db", dir)
+	if err != nil {
+		t.Fatalf("NewSQLiteStore: %v", err)
+	}
+	defer s.Close()
+
+	// Deliberately no s.Save for "parent-not-yet-saved" — this is the point.
+	err = seedChildSession(context.Background(), seedSessionConfig{
+		Store:             s,
+		SessionID:         "child-session",
+		ParentSessionID:   "parent-not-yet-saved",
+		ParentInstanceID:  "tau#8q2mfe",
+		ChildSystemPrompt: "you are the child",
+		Prompt:            "do the task",
+	})
+	if err != nil {
+		t.Fatalf("seedChildSession with unpersisted parent: %v", err)
+	}
+
+	if _, err := s.Load(context.Background(), "child-session"); err != nil {
+		t.Errorf("child session was not saved: %v", err)
+	}
+	if _, err := s.Load(context.Background(), "parent-not-yet-saved"); err != nil {
+		t.Errorf("parent placeholder session was not created: %v", err)
+	}
+}
+
+// TestEnsureParentSessionExists_DoesNotOverwriteRealSession proves the
+// placeholder-creation is idempotent and never clobbers an already-real
+// (persisted) parent session.
+func TestEnsureParentSessionExists_DoesNotOverwriteRealSession(t *testing.T) {
+	dir := t.TempDir()
+	s, err := store.NewSQLiteStore(context.Background(), dir+"/sessions.db", dir)
+	if err != nil {
+		t.Fatalf("NewSQLiteStore: %v", err)
+	}
+	defer s.Close()
+
+	require.NoError(t, s.Save(context.Background(), tauchat.ChatSessionState{
+		SessionID:    "real-parent",
+		Status:       tauchat.ChatSessionIdle,
+		SystemPrompt: "the real, already-persisted parent prompt",
+	}, 0))
+
+	if err := ensureParentSessionExists(context.Background(), s, "real-parent"); err != nil {
+		t.Fatalf("ensureParentSessionExists: %v", err)
+	}
+
+	loaded, err := s.Load(context.Background(), "real-parent")
+	require.NoError(t, err)
+	if loaded.SystemPrompt != "the real, already-persisted parent prompt" {
+		t.Errorf("real parent session was overwritten: SystemPrompt = %q", loaded.SystemPrompt)
 	}
 }
