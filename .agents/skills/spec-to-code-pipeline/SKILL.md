@@ -170,14 +170,44 @@ When it's time to implement, use the `linear_update_issue` MCP tool to move tick
 
 ## Concrete example: Agent Processes v1 (CAT-89–106)
 
-The full worked pipeline for this project is documented above in the Dependency Analysis. Quick reference:
+The full worked pipeline for this project — all 6 phases, the layered dependency graph, critical path, execution order, and key decisions — is documented in `references/agent-processes-v1-example.md`. Load that file when you need the complete reference; the summary below covers the essentials.
 
 - **Source:** `docs/specs/agents/review-gaps-2026-07-13.md` (G1–G18)
-- **18 tickets:** CAT-89 through CAT-106, all in the `tau: Agent Processes v1` Linear project
-- **Layers:** Design (CAT-89, CAT-105) → Storage (CAT-92, CAT-93, CAT-101, CAT-97, CAT-96) → Wire (CAT-94, CAT-98, CAT-99) → Process (CAT-90, CAT-91, CAT-95) → Security (CAT-100, CAT-102) → UI (CAT-103) + cross-cutting (CAT-104, CAT-106)
+- **18 tickets:** CAT-89 through CAT-106, all in `tau: Agent Processes v1`
 - **Critical path:** CAT-89 → CAT-92 → CAT-101 → CAT-97 → CAT-90 → CAT-95 → CAT-103 (12 tickets)
 - **Biggest bottleneck:** CAT-90 (resume authorization) with 5 upstream dependencies
-- **Parallel slots:** CAT-105, CAT-93, CAT-96, CAT-100, CAT-102, CAT-104, CAT-106
+- **All 18 completed** as spec updates in 15 commits on 2026-07-13
+
+## Validation checklist
+
+After completing Phase 4 (dependency analysis), validate before committing:
+
+### Gap traceability
+- [ ] Every gap (G1–GN) has a corresponding `**Ticket: CAT-XX**` line in the gap-review document
+- [ ] Every ticket's `## Gap` section cites the gap number and source document
+- [ ] No gap is referenced by two tickets (one gap → one ticket)
+
+### Dependency graph
+- [ ] Every edge has a one-sentence rationale (no "A → B" without "because…")
+- [ ] The graph is a DAG (no cycles; cycles mean circular spec definitions)
+- [ ] No ticket depends on a lower-priority ticket without justification
+- [ ] Cross-cutting tickets (test gates, observability) are not on the critical path
+
+### Layer integrity
+- [ ] Storage-layer tickets don't depend on UI-layer tickets
+- [ ] Wire-layer tickets don't depend on Process-layer tickets
+- [ ] Every ticket's `## Scope` confirms it touches only its declared layer
+
+### Execution plan
+- [ ] The critical path is identified and explicitly stated
+- [ ] Parallel tickets (`∥`) are genuinely independent (no shared code paths)
+- [ ] Tickets with 4+ dependencies are flagged as bottlenecks
+- [ ] The phase table shows `→` for sequential and `∥` for parallel
+
+### Repository state
+- [ ] `git log --oneline -20` confirms what's already built vs spec-only
+- [ ] Implementation packages named in the spec exist (`ls internal/*/`) and their key functions/types resolve (`grep`)
+- [ ] No claim about implementation status is made without checking the working tree
 
 ---
 
