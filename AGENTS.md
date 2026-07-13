@@ -300,7 +300,16 @@ Use this section to quickly find the right files for a given change.
 #### Experimental Bubbletea v2 TUI (`internal/tui2/`)
 
 - `internal/tui2/run.go` — `Run()` entry point. Creates `"tui2"` bus client, subscribes `ChatEvent`, wires metrics tracking (UsageTracker + FileSubscriber), calls `OnReady` for deferred plugin loading, creates and runs a `tea.NewProgram`.
-- `internal/tui2/model.go` — Root `model` implementing `tea.Model`. Handles input via `KeyPressMsg`, bridges events via the channel-drain-rearm pattern (`readNextEvent` → `chatEventMsg` → re-arm), renders with lipgloss v2 styles in `View()`. Handles all 24 ChatEvent variants, all ~20 slash commands, completions, status bar, interactive prompts, plugin views, session management, steering, bash mode, input history, context menus (Copy output, Expand/Collapse, View diff), and the diff viewer overlay.
+- `internal/tui2/model.go` — Root `model`, constructor, Bubbletea `Init`/`Update`/`View`, and shared layout computation.
+- `internal/tui2/events.go` — `ChatEvent` reduction, snapshot replay, response finalization, markdown rendering, and notifications.
+- `internal/tui2/input.go` — Input editing/rendering, cursor movement, history, input modes, turn submission, and queueing.
+- `internal/tui2/keybindings.go` — Key dispatch, steering, bash mode, cancellation, and quit handling.
+- `internal/tui2/msgs.go` — Bubbletea message types and commands that bridge runtime events/commands.
+- `internal/tui2/tools.go` — Tool state, live and committed tool groups, rendering, focus, expansion, and child-agent results.
+- `internal/tui2/reasoning.go` — Live and committed reasoning rendering, collapse state, and scrollback splicing.
+- `internal/tui2/selection.go` — Mouse routing, text selection, copying, and viewport hit-testing.
+- `internal/tui2/overlays.go` — Context-menu and plugin-panel state, rendering, hit-testing, and actions.
+- `internal/tui2/render.go` / `styles.go` — Shared message/completion rendering and lipgloss styles.
 - `internal/tui2/diff.go` — Diff viewer overlay for tool results. `openDiffViewer()` creates a centered viewport showing a unified diff (via `go-difflib`) rendered through glamour markdown. `renderUnifiedDiff()` builds and colorizes the diff; `handleDiffViewerKey()` routes Esc/q to close and arrow/PgUp/PgDn to scroll; `compositeDiffViewer()` layers the overlay on top of the base chat using a lipgloss Compositor. Activated by the "View diff" context menu item on edit/write tools that carry `DiffDetails`.
 - **Flag gating**: `--new-tui` flag in `internal/cli/root.go` → `ChatOptions.NewTUI` → `TUIConfig.NewTUI` → `internal/tui/run.go` branches to `tui2.Run()`.
 - **Circular dependency avoidance**: `internal/tui/run.go` imports `internal/tui2`, but `internal/tui2` does NOT import `internal/tui`. Parameters are passed individually (not via `TUIConfig`).
@@ -641,7 +650,17 @@ internal/tui/
 ```tree
 internal/tui2/
 ├── run.go               # Run() entry point — bus clients, metrics, program start
-├── model.go              # Root Bubbletea model — event handling (all 24 ChatEvent variants), input, rendering
+├── model.go              # Root Bubbletea model, lifecycle, and layout
+├── events.go             # ChatEvent reduction, snapshots, notifications
+├── input.go              # Input editing, rendering, history, and submission
+├── keybindings.go        # Key dispatch, steering, bash, cancellation
+├── msgs.go               # Bubbletea/runtime bridge messages and commands
+├── tools.go              # Tool state, rendering, grouping, interaction
+├── reasoning.go          # Reasoning rendering and collapse state
+├── selection.go          # Mouse selection, copying, and hit-testing
+├── overlays.go           # Context menus and plugin panels
+├── render.go             # Shared message and completion rendering
+├── styles.go             # Shared lipgloss styles
 ├── commands.go           # Slash command table and dispatch (all ~20 commands from legacy)
 ├── completions.go        # Tab-completion engine (commands, models, sessions, effort, providers)
 ├── fuzzy.go              # Fuzzy matching for completion filtering
@@ -649,21 +668,22 @@ internal/tui2/
 ├── views.go              # Plugin widget → lipgloss/v2 translation (all 8 widget kinds)
 ├── diff.go               # Unified diff viewer overlay (go-difflib + glamour + viewport)
 ├── *.go (test files)     # Table-driven tests for commands, completions, models, status bar, fuzzy matching
+```
 
 ### Lifecycle
 
-1. `app.RunChat()` creates the coordinator and TUIConfig, then calls `tui.Run()`.
-2. `Run()` delegates to `RunInline()`, which creates the `taui.TUI` engine, subscribes to `ChatEvent` on the event bus, creates an `inlineChat` instance, and enters the render loop.
-3. `inlineChat` starts three goroutines: `eventLoop()` (event dispatch), `spinnerLoop()` (working indicator), and `statusLoop()` (notification display).
-4. `eventLoop()` receives `ChatEvent` values from the bus subscriber and calls `onRuntimeEvent()` to update state and request re-renders.
-5. `onRuntimeEvent()` handles each event type — appending messages, updating tool status, managing streaming state.
+1. `app.RunChat()` creates the coordinator and TUI config, then calls `tui.Run()`.
+2. With `--new-tui`, `tui.Run()` delegates to `tui2.Run()`, which creates the bus subscriber and Bubbletea program.
+3. `model.Init()` starts the channel-drain-rearm event command; `model.Update()` reduces Bubbletea messages and `ChatEvent` values.
+4. `model.View()` calls `computeLayout()` and composites active overlays over the rendered chat.
 
 ### Command Handling
 
-User input is processed by `inlineChat.onSubmit()`:
+User input is processed by `model.submitInput()`:
 
-1. If input starts with `/`, look up the command in `slashByName` and call its `run` closure.
-2. Otherwise, send a `SubmitChatPromptCommand` to the coordinator.
+1. If input starts with `/`, dispatch it through the tui2 slash-command table.
+2. If input starts with `!`, send a bash command.
+3. Otherwise, send or queue a `SubmitChatPromptCommand`.
 
 ---
 

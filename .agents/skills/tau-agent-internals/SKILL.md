@@ -20,12 +20,12 @@ A model can get stuck emitting the same tool call over and over (live-reproduced
 
 Observability was a first-class requirement here, not an afterthought: when adding behaviour like the loop breaker, wire it into structured logging/metrics at the same time, because "have those changes been logged or added to metrics tracking?" is a check that will be applied. Emit a structured record when a streak is blocked or justified rather than silently swallowing it.
 
-## tui2 rendering pipeline invariants (internal/tui2/model.go)
+## tui2 rendering pipeline invariants (internal/tui2/model.go, events.go, input.go)
 
 Three distinct drift bugs all came from the same root shape — a second render path that didn't match the finalized one. Preserve these invariants:
 
 - **Commit history on boundaries, not on a timer.** Committed (finalized) history is always rendered before the live streaming buffer. If commits are flushed on a timer, a tool-call box can be committed and jump *ahead* of text that chronologically preceded it but is still in the live buffer. Commit at content boundaries so on-screen order matches chronological order.
-- **`autoFollow` gates bottom-pinning.** The viewport must not be forced to the bottom on every render while a response streams — that stomps any manual scroll-up. Keep the `autoFollow` flag (model.go ~189): pin to bottom only while it is true, and clear it when the user scrolls away so their scroll position survives incoming stream chunks.
+- **`autoFollow` gates bottom-pinning.** The viewport must not be forced to the bottom on every render while a response streams — that stomps any manual scroll-up. Keep the `autoFollow` flag on the root model: pin to bottom only while it is true, and clear it when the user scrolls away so their scroll position survives incoming stream chunks.
 - **`ChatSessionSnapshotEvent` must re-render through the same renderer as finalized messages.** This event fires routinely (compaction, tool turns, session load — see the many emit sites in `coordinator.go` and `compact.go`), not just on initial load. If its handler rebuilds the viewport from raw text, already-rendered markdown reverts to plain text every time it fires. Route snapshot rebuilds through the same markdown/glamour renderer used for finalized messages.
 
 ## Layout is the single source of truth for render and mouse (internal/tui2/model.go)
@@ -56,6 +56,6 @@ Ollama exposes real capability data (`"capabilities":["completion","tools","thin
 
 ## Two separate TUIs
 
-`internal/tui` (legacy) and `internal/tui2` (current) both exist and both handle chat events — for example `notifyDurationFromChat` in `internal/tui/inline_events.go` and the tool-status/notification logic in `internal/tui2/model.go` are separate implementations of overlapping concerns. Confirm which one is actually active for the behavior under investigation (check whether `tui2.Run(...)` or the legacy path is invoked) before assuming a fix in one applies to both.
+`internal/tui` (legacy) and `internal/tui2` (current) both exist and both handle chat events — for example `notifyDurationFromChat` in `internal/tui/inline_events.go` and the tool-status/notification logic in `internal/tui2/events.go` are separate implementations of overlapping concerns. Confirm which one is actually active for the behavior under investigation (check whether `tui2.Run(...)` or the legacy path is invoked) before assuming a fix in one applies to both.
 
 Tau also has a separate WebUI (Vue) frontend, and the project principle is that the TUI and WebUI must not drift. Before building a display/interaction feature in tui2, check whether the WebUI already implements it and mirror its logic — for example tool-call grouping (consecutive tool calls with no intervening text collapse into one summary) was ported from the WebUI's `ToolGroup.vue`/`ChatMessage.vue` rather than re-invented. The same applies to plugin-facing views: check the plugin/WebUI surfaces before assuming a behaviour is TUI-only.
