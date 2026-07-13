@@ -146,6 +146,8 @@ The orphan sweep treats a live recycled PID as a reason to delay closure (`04-st
 
 ### G11. Prompt/context trust framing is absent
 
+**Status: RESOLVED (2026-07-13, CAT-100).**
+
 **Ticket: CAT-100**
 
 The parent-selected `context` becomes a `<parent_context>` block (`02-spawning-and-lifecycle.md`, lines 35-39), but the spec does not say it is data rather than higher-priority instruction, how delimiters are escaped, or how externally sourced content is labeled. Forked histories may also contain tool output and instructions from different trust origins.
