@@ -124,6 +124,8 @@ Define a small protocol state machine and a single writer goroutine per endpoint
 
 ### G9. Delivery guarantees are overstated
 
+**Status: RESOLVED (2026-07-13, CAT-99).**
+
 **Ticket: CAT-99**
 
 The protocol calls a pipe “ordered, lossless” (`03-wire-protocol.md`, lines 104-108). Ordering is true per byte stream, but end-to-end losslessness is not guaranteed across process death, forced kill, decoder failure, or parent event dropping. This wording could cause implementation code to omit recovery logic.

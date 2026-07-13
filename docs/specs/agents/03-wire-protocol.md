@@ -293,9 +293,60 @@ Result synthesis on violation-triggered pipe closure: the parent emits a `ChatTo
 
 ## Ordering and delivery guarantees
 
-- The wire is a pipe: ordered, lossless, no acks needed in v1.
-- `agent.event` and `agent.usage` may interleave; `agent.result` is always last from the child.
-- The parent must tolerate a result arriving with no prior events (instant tasks) and events with no result (crash).
+### Guarantee scope
+
+Messages on the wire are **ordered and reliable while both endpoints and the pipe remain healthy**. This is a byte-stream guarantee, not an end-to-end delivery guarantee:
+
+- **Ordering**: messages are delivered in the order they were written, because the wire is a single byte stream with one writer per endpoint.
+- **Reliability**: the OS kernel buffers and delivers bytes, not individual messages. A write that succeeds means the kernel accepted the bytes; it does not mean the remote endpoint has processed the message.
+- **No ack/replay in v1**: there is no acknowledgement mechanism and no replay. If a message is written successfully but the reader's process crashes before processing it, that message is lost. The durable store is the recovery path (see Reconciliation below).
+
+This wording replaces the previous "ordered, lossless" — losslessness only holds while both endpoints and the pipe are healthy. Across crashes, forced kills, decoder errors, and dropped UI events, messages can be lost.
+
+### Durable vs streaming messages
+
+| Message | Durable? | Stored in |
+|---|---|---|
+| `agent.ready` | No | Ephemeral — handshake only |
+| `agent.assign` | No | Ephemeral — sent once at startup |
+| `agent.event` | No | Streaming — forwarded to UI, NOT individually persisted |
+| `agent.usage` | **Yes** | Accumulated into `agent_instances.usage_json` and session totals. Cumulative (not deltas), so a dropped message only delays the total, never corrupts it. |
+| `agent.cancel` | No | Ephemeral — signal only |
+| `agent.result` | **Yes** | The result's `status`, `usage`, and `final_text` are written to the instance row (`exit_status`, `usage_json`) and session. The structured envelope fields are authoritative; the streamed text is treated as best-effort. |
+
+The durable store is the source of truth. Streamed events (`agent.event`) are a live feed for the UI; they may be missed on reconnect or restart.
+
+### Reconciliation precedence
+
+When streamed state and durable state disagree, durable state wins:
+
+| Reconciliation | Authoritative source |
+|---|---|
+| Child exit status | `agent_instances.exit_status` (written by parent from `agent.result` or synthesised on crash) |
+| Usage/cost totals | `agent_instances.usage_json` (cumulative from `agent.usage`; last one wins) |
+| Session message history | `sessions` table (written by child on its normal cadence + always before exit) |
+| Final response text | Session's last assistant message (persisted by child before exit) — NOT the streamed deltas |
+
+### UI recovery contract
+
+The TUI and WebUI receive streamed `agent.event` envelopes for live rendering. On reconnect or restart:
+
+1. The UI loads the session's persisted message history from the store. This reconstructs the finalized state.
+2. Any streamed deltas that arrived between the last session save and the disconnect are lost. The UI shows the last persisted state.
+3. The UI does NOT attempt to replay missed events — v1 has no event log to replay from.
+4. For an active session (parent is still running), the UI re-subscribes to the event bus and receives new events from that point forward. Events emitted during the disconnect window are lost.
+5. Cost and usage totals in the UI are reconstructed from `agent_instances.usage_json` and session totals, which are durable.
+
+### Recovery test scenarios
+
+| Scenario | Expected behavior |
+|---|---|
+| Parent restart while child is running | Parent's orphan sweep detects the existing instance. If still alive (PID matches), parent may re-attach (future). In v1: parent treats the child as orphaned, closes the instance as `failed`. |
+| Child crash mid-stream | Parent sees stdout EOF without `agent.result` → synthesises `failed`. Session state recovered from last persistence. |
+| TUI reconnect during active session | TUI loads session from store (last persisted state), re-subscribes to event bus. Missed streaming deltas are lost. |
+| WebUI page refresh during active session | Same as TUI reconnect. Bridge replays last `ChatSessionSnapshotEvent`, then forwards new events. |
+| Force-kill (SIGKILL) of child | No `agent.result` sent. Parent sees EOF → synthesises `failed`. Child's session has whatever was persisted before the kill. Orphan sweep closes the instance row. |
+| Force-kill of parent | Child sees stdin EOF → persist-and-exit. Its instance row remains with `ended_at IS NULL` until the next orphan sweep. |
 
 ## Versioning and spec generation
 
