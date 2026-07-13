@@ -187,10 +187,12 @@ type CoordinatorConfig struct {
 
 	// AllowedTools is the initial tool allowlist for this coordinator.
 	// When non-empty, the LLM can only see tools in this list (plus the
-	// "skill" tool, which is always added for mode switching). An empty
+	// "skill" tool, which participates in normal attenuation). An empty
 	// or nil slice means no restriction — the full registry is available.
 	// This is the process-wide base; individual modes may further narrow
 	// the set via SetAllowedTools, which always intersects with this base.
+	// No tool is injected outside the declared intersection — "skill" is an
+	// ordinary attenuated capability, not a mandatory ambient one.
 	AllowedTools []string
 
 	// ModelLookup resolves a model ID to its full ChatModelRef (with Config,
@@ -255,15 +257,15 @@ func NewCoordinator(ctx context.Context, cfg CoordinatorConfig) (*Coordinator, e
 	logger = logger.With("component", "coordinator")
 
 	// Initialise the tool allowlist from config. Empty/nil means unrestricted.
-	// The "skill" tool is always added to non-empty filters so mode switching
-	// remains available even in restricted tool sets.
+	// "skill" is an ordinary attenuated tool — it is only present when the
+	// spec or spawn restriction explicitly includes it. No tool is injected
+	// outside the declared intersection.
 	var initEffectiveTools map[string]bool
 	if len(cfg.AllowedTools) > 0 {
-		initEffectiveTools = make(map[string]bool, len(cfg.AllowedTools)+1)
+		initEffectiveTools = make(map[string]bool, len(cfg.AllowedTools))
 		for _, name := range cfg.AllowedTools {
 			initEffectiveTools[strings.TrimSpace(name)] = true
 		}
-		initEffectiveTools["skill"] = true
 	}
 
 	c := &Coordinator{

@@ -62,8 +62,23 @@ child effective tools = child spec tools  ∩  parent effective tools  ∩  spaw
 
 - `nil` spec/param means "no restriction from this contributor", not "nothing".
 - The `agent` tool itself participates: a parent whose effective set lacks `agent` cannot spawn at all; a child whose intersection lacks `agent` ends the tree there.
+- `skill` is an ordinary attenuated tool. It participates in the intersection like any other tool — it is present only when explicitly declared in the spec's `tools` list or the spawn restriction. Omitting `skill` disables mode switching (the agent cannot enter another mode mid-session; slash commands from the user still work). No tool is injected outside the declared intersection.
 - The effective set is computed once at spawn, stored in the instance row, and enforced by the child's coordinator via a per-instance filtered view of the registry (the registry itself stays global; the filter is per coordinator run). Registered-tool changes mid-flight (plugins) re-apply the filter.
 - Widening is impossible by construction. An agent that needs more capability returns to its parent; the root returns to the human.
+
+### Tool-list serialisation semantics
+
+| Declared value | Meaning |
+|---|---|
+| `nil` (field omitted) | No restriction from this contributor; inherit parent effective or full registry |
+| `[]` (explicit empty list) | Currently treated as nil (unrestricted); reserved for future "no tools" semantics |
+| `["read", "grep"]` | Only these tools, intersected with other contributors |
+
+### Cross-cutting rules
+
+- **Root process**: `effectiveTools = nil` → full registry available. The root has no parent ceiling.
+- **Mode entry**: the mode spec's `tools` list is intersected with the process's current `effectiveTools` ceiling, stored as the active filter. Exiting the mode reverts to the ceiling.
+- **Plugin registration mid-flight**: new plugin tools are checked against the immutable `effectiveTools` ceiling on the next turn iteration. A plugin tool not in the ceiling is invisible to the LLM.
 
 ## Budgets and limits
 

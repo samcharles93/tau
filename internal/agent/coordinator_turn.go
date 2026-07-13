@@ -684,15 +684,15 @@ func (c *Coordinator) executeToolsParallel(ctx context.Context, sessionID, reque
 	return results, hardStopReason
 }
 
-// SetAllowedTools sets the allowed tool filter for the next LLM call.
-// When non-empty, only tools whose names are in the set are included in
-// the tool schemas sent to the LLM. The "skill" tool is always allowed so
-// that the model can switch skills mid-conversation.
 // SetAllowedTools sets the active tool filter for the current mode/skill.
 // The filter is always intersected with the coordinator's immutable effectiveTools
 // ceiling (set at construction from --tools / spec.tools). An empty or nil
 // toolNames list reverts to the effectiveTools ceiling; passing specific names
 // narrows the active set below the ceiling but never widens beyond it.
+//
+// No tool is injected outside the declared intersection. "skill" is an
+// ordinary attenuated capability — to enable mode switching, include it in
+// the spec's tools list or the spawn restriction.
 func (c *Coordinator) SetAllowedTools(toolNames []string) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -703,15 +703,13 @@ func (c *Coordinator) SetAllowedTools(toolNames []string) {
 		return
 	}
 
-	m := make(map[string]bool, len(toolNames)+1)
+	m := make(map[string]bool, len(toolNames))
 	for _, name := range toolNames {
 		// Intersect with the immutable ceiling: a mode can never widen.
 		if c.effectiveTools == nil || c.effectiveTools[name] {
 			m[name] = true
 		}
 	}
-	// Always allow switching skills regardless of ceiling.
-	m["skill"] = true
 	c.allowedTools = m
 }
 

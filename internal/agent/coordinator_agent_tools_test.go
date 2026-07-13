@@ -532,3 +532,65 @@ func TestAllowedToolsConstructorEmptySliceIsNil(t *testing.T) {
 	require.True(t, active["grep"])
 	require.True(t, active["bash"])
 }
+
+// TestSkillIsNotAutoInjectedAtConstruction verifies that "skill" is no longer
+// hardcoded into the effective tools ceiling. It must be explicitly declared
+// in the spec's or spawn's tools list to participate in attenuation.
+func TestSkillIsNotAutoInjectedAtConstruction(t *testing.T) {
+	// "skill" IS in the registry but NOT in AllowedTools — it should be invisible.
+	reg := newRegistryWithTools(t, "read", "skill")
+	coordinator, err := NewCoordinator(context.Background(), CoordinatorConfig{
+		Bus:          newTestBus(t),
+		TokenSource:  func(context.Context, config.ProviderConfig) (string, error) { return "", nil },
+		Streamer:     noopStreamer{},
+		Registry:     reg,
+		AllowedTools: []string{"read"}, // skill NOT in this list
+	})
+	require.NoError(t, err)
+	defer coordinator.Close()
+
+	active := activeToolNames(coordinator)
+	require.True(t, active["read"])
+	require.False(t, active["skill"], "skill must not be auto-injected into the ceiling")
+}
+
+// TestSkillIsPresentWhenExplicitlyAllowed verifies that when "skill" IS
+// explicitly declared in AllowedTools, it is present in the active set.
+func TestSkillIsPresentWhenExplicitlyAllowed(t *testing.T) {
+	reg := newRegistryWithTools(t, "read", "skill")
+	coordinator, err := NewCoordinator(context.Background(), CoordinatorConfig{
+		Bus:          newTestBus(t),
+		TokenSource:  func(context.Context, config.ProviderConfig) (string, error) { return "", nil },
+		Streamer:     noopStreamer{},
+		Registry:     reg,
+		AllowedTools: []string{"read", "skill"}, // skill explicitly included
+	})
+	require.NoError(t, err)
+	defer coordinator.Close()
+
+	active := activeToolNames(coordinator)
+	require.True(t, active["read"])
+	require.True(t, active["skill"], "skill must be present when explicitly included in the tools list")
+}
+
+// TestSkillNotInjectedBySetAllowedTools verifies that SetAllowedTools no longer
+// hardcodes "skill" into the active filter.
+func TestSkillNotInjectedBySetAllowedTools(t *testing.T) {
+	reg := newRegistryWithTools(t, "read", "grep", "bash", "skill")
+	coordinator, err := NewCoordinator(context.Background(), CoordinatorConfig{
+		Bus:          newTestBus(t),
+		TokenSource:  func(context.Context, config.ProviderConfig) (string, error) { return "", nil },
+		Streamer:     noopStreamer{},
+		Registry:     reg,
+		AllowedTools: []string{"read", "grep"}, // skill NOT in ceiling
+	})
+	require.NoError(t, err)
+	defer coordinator.Close()
+
+	// SetAllowedTools narrows to just ["read"] — skill should still NOT appear.
+	coordinator.SetAllowedTools([]string{"read"})
+	active := activeToolNames(coordinator)
+	require.True(t, active["read"])
+	require.False(t, active["grep"])
+	require.False(t, active["skill"], "SetAllowedTools must not auto-inject skill")
+}
