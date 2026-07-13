@@ -23,10 +23,23 @@ func (f *fakeStreamer) StreamChatCompletionFull(_ context.Context, _ chat.ChatSe
 	}, nil
 }
 
-func newBudgetCoordinator(t *testing.T, maxTurns int, timeout time.Duration, maxTokens int, deadline time.Time) (*Coordinator, *fakeStreamer, *eventbus.Bus) {
+// newBudgetCoordinator subscribes to the bus BEFORE constructing the
+// coordinator — fakeStreamer completes synchronously with no real I/O, so
+// the coordinator's own goroutine can process a submitted turn and publish
+// ChatResponseCompletedEvent fast enough to race ahead of a subscription
+// created afterward (the bus has no replay buffer — see
+// internal/eventbus — so a late subscriber simply never sees an event
+// published before it existed). That race, not genuine slowness, was the
+// actual cause of this file's intermittent CI timeouts; every other
+// coordinator test in this package already subscribes before sending any
+// command (e.g. coordinator_cancel_test.go), which this mirrors.
+func newBudgetCoordinator(t *testing.T, maxTurns int, timeout time.Duration, maxTokens int, deadline time.Time) (*Coordinator, *fakeStreamer, *eventbus.Subscriber[chat.ChatEvent]) {
 	t.Helper()
 	bus := eventbus.New()
 	t.Cleanup(bus.Close)
+	sub := eventbus.Subscribe[chat.ChatEvent](bus.Client("test"))
+	t.Cleanup(sub.Close)
+
 	fs := &fakeStreamer{}
 	c, err := NewCoordinator(context.Background(), CoordinatorConfig{
 		Bus:         bus,
@@ -40,13 +53,11 @@ func newBudgetCoordinator(t *testing.T, maxTurns int, timeout time.Duration, max
 	})
 	require.NoError(t, err)
 	t.Cleanup(c.Close)
-	return c, fs, bus
+	return c, fs, sub
 }
 
-func subscribeCompleted(t *testing.T, bus *eventbus.Bus, d time.Duration) *chat.ChatResponseCompletedEvent {
+func waitCompleted(t *testing.T, sub *eventbus.Subscriber[chat.ChatEvent], d time.Duration) *chat.ChatResponseCompletedEvent {
 	t.Helper()
-	sub := eventbus.Subscribe[chat.ChatEvent](bus.Client("s"))
-	defer sub.Close()
 	deadline := time.After(d)
 	for {
 		select {
@@ -78,47 +89,47 @@ func startAndSubmit(t *testing.T, c *Coordinator, sid, rid string) {
 }
 
 func TestMaxTurnsTrip(t *testing.T) {
-	c, fs, bus := newBudgetCoordinator(t, 1, 0, 0, time.Time{})
+	c, fs, sub := newBudgetCoordinator(t, 1, 0, 0, time.Time{})
 	startAndSubmit(t, c, "s1", "r1")
-	ce := subscribeCompleted(t, bus, 15*time.Second)
+	ce := waitCompleted(t, sub, 15*time.Second)
 	require.False(t, ce.BudgetExhausted, "turn 1 with maxTurns=1 should not trip")
 	require.Equal(t, 1, fs.calls)
 
 	startAndSubmit(t, c, "s2", "r2")
-	ce2 := subscribeCompleted(t, bus, 15*time.Second)
+	ce2 := waitCompleted(t, sub, 15*time.Second)
 	require.True(t, ce2.BudgetExhausted, "turn 2 with maxTurns=1 should trip")
 	require.True(t, ce2.Partial)
 	require.Equal(t, 1, fs.calls, "streamer should not be called on limit breach")
 }
 
 func TestTokenBudgetTrip(t *testing.T) {
-	c, _, bus := newBudgetCoordinator(t, 0, 0, 200, time.Time{})
+	c, _, sub := newBudgetCoordinator(t, 0, 0, 200, time.Time{})
 	startAndSubmit(t, c, "s1", "r1")
-	ce := subscribeCompleted(t, bus, 15*time.Second)
+	ce := waitCompleted(t, sub, 15*time.Second)
 	require.False(t, ce.BudgetExhausted, "150 < 200 should not trip")
 
 	startAndSubmit(t, c, "s2", "r2")
-	ce2 := subscribeCompleted(t, bus, 15*time.Second)
+	ce2 := waitCompleted(t, sub, 15*time.Second)
 	require.False(t, ce2.BudgetExhausted, "150 < 200 at start, passes, accumulates to 300")
 
 	startAndSubmit(t, c, "s3", "r3")
-	ce3 := subscribeCompleted(t, bus, 15*time.Second)
+	ce3 := waitCompleted(t, sub, 15*time.Second)
 	require.True(t, ce3.BudgetExhausted, "300 >= 200 should trip on turn 3")
 	require.True(t, ce3.Partial)
 }
 
 func TestDeadlineTrip(t *testing.T) {
-	c, _, bus := newBudgetCoordinator(t, 0, 0, 0, time.Now().Add(-time.Hour))
+	c, _, sub := newBudgetCoordinator(t, 0, 0, 0, time.Now().Add(-time.Hour))
 	startAndSubmit(t, c, "s1", "r1")
-	ce := subscribeCompleted(t, bus, 15*time.Second)
+	ce := waitCompleted(t, sub, 15*time.Second)
 	require.True(t, ce.TimedOut, "deadline in the past should trip immediately")
 	require.True(t, ce.Partial)
 }
 
 func TestNoLimitsNormal(t *testing.T) {
-	c, _, bus := newBudgetCoordinator(t, 0, 0, 0, time.Time{})
+	c, _, sub := newBudgetCoordinator(t, 0, 0, 0, time.Time{})
 	startAndSubmit(t, c, "s1", "r1")
-	ce := subscribeCompleted(t, bus, 15*time.Second)
+	ce := waitCompleted(t, sub, 15*time.Second)
 	require.False(t, ce.BudgetExhausted)
 	require.False(t, ce.TimedOut)
 	require.False(t, ce.Partial)
