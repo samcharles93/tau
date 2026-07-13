@@ -206,20 +206,35 @@ func (s *spawnAdmission) releaseFunc(parentInstanceID string, maxActive, maxTota
 // must be admitted, per docs/specs/agents/02-spawning-and-lifecycle.md
 // (Queue behavior: "Queue time consumes the child's timeout/deadline
 // budget. The clock starts when agent is called, not when the child
-// process actually starts."). It's the earlier of the resolved spec
-// timeout and an explicit budget.deadline, relative to now. A zero result
-// means no queue timeout beyond ctx cancellation.
-func computeSpawnDeadline(args agentToolArgs, timeout time.Duration) time.Time {
+// process actually starts."). It's the earliest of the resolved spec
+// timeout, an explicit budget.timeout override, and an explicit
+// budget.deadline (absolute RFC 3339), relative to now. A zero result
+// means no queue timeout beyond ctx cancellation. Malformed budget fields
+// are ignored here — they're validated and rejected properly once the
+// spawn is admitted and reaches spawnChildProcess's budget construction.
+func computeSpawnDeadline(args agentToolArgs, specTimeout time.Duration) time.Time {
 	now := time.Now()
 	var deadline time.Time
-	if timeout > 0 {
-		deadline = now.Add(timeout)
+	consider := func(candidate time.Time) {
+		if candidate.IsZero() {
+			return
+		}
+		if deadline.IsZero() || candidate.Before(deadline) {
+			deadline = candidate
+		}
 	}
-	if args.Budget != nil && args.Budget.Deadline != "" {
-		if d, err := time.ParseDuration(args.Budget.Deadline); err == nil {
-			budgetDeadline := now.Add(d)
-			if deadline.IsZero() || budgetDeadline.Before(deadline) {
-				deadline = budgetDeadline
+	if specTimeout > 0 {
+		consider(now.Add(specTimeout))
+	}
+	if args.Budget != nil {
+		if args.Budget.Timeout != "" {
+			if d, err := time.ParseDuration(args.Budget.Timeout); err == nil {
+				consider(now.Add(d))
+			}
+		}
+		if args.Budget.Deadline != "" {
+			if t, err := time.Parse(time.RFC3339, args.Budget.Deadline); err == nil {
+				consider(t)
 			}
 		}
 	}

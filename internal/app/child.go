@@ -88,10 +88,15 @@ func RunChild(ctx context.Context, opts ChatOptions) error {
 	skillsMgr := skills.NewManager(bus)
 	defer skillsMgr.Close()
 
-	// Parse limits before building the coordinator.
+	// Parse limits before building the coordinator. budget.timeout (a
+	// spawn-call override) takes precedence over the structural
+	// limits.timeout (spec/config default) when both are present, per
+	// docs/specs/agents/02-spawning-and-lifecycle.md (Time-based limits).
 	var timeout time.Duration
 	var deadline time.Time
-	if assign.Limits.Timeout != "" {
+	if assign.Budget.Timeout != "" {
+		timeout, _ = time.ParseDuration(assign.Budget.Timeout)
+	} else if assign.Limits.Timeout != "" {
 		timeout, _ = time.ParseDuration(assign.Limits.Timeout)
 	}
 	if assign.Budget.Deadline != "" {

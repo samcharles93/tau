@@ -46,9 +46,15 @@ type AgentLimits struct {
 	Timeout  string `json:"timeout,omitempty"`
 }
 
-// AgentBudget carries per-task budget caps from the spawn call.
+// AgentBudget carries per-task budget caps from the spawn call, per
+// docs/specs/agents/02-spawning-and-lifecycle.md (Time-based limits:
+// timeout and deadline). Timeout is a relative duration ("5m") that
+// overrides the spec/config structural timeout (AgentLimits.Timeout) for
+// this call only; Deadline is an absolute RFC 3339 timestamp. The two are
+// independent — either, both, or neither may be set.
 type AgentBudget struct {
 	MaxTokens int    `json:"max_tokens,omitempty"`
+	Timeout   string `json:"timeout,omitempty"`
 	Deadline  string `json:"deadline,omitempty"`
 }
 

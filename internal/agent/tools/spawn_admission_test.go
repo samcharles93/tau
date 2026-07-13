@@ -279,10 +279,10 @@ func TestSpawnAdmission_TotalLimitRejectsImmediately(t *testing.T) {
 	}
 }
 
-// TestComputeSpawnDeadline_EarlierOfTimeoutAndBudget verifies the deadline
-// derivation picks the earlier of the resolved spec timeout and an
-// explicit budget.deadline.
-func TestComputeSpawnDeadline_EarlierOfTimeoutAndBudget(t *testing.T) {
+// TestComputeSpawnDeadline_EarliestOfTimeoutAndBudget verifies the deadline
+// derivation picks the earliest of the resolved spec timeout, an explicit
+// budget.timeout override, and an explicit absolute budget.deadline.
+func TestComputeSpawnDeadline_EarliestOfTimeoutAndBudget(t *testing.T) {
 	before := time.Now()
 
 	// No timeout, no budget -> zero deadline (no queue timeout).
@@ -290,19 +290,31 @@ func TestComputeSpawnDeadline_EarlierOfTimeoutAndBudget(t *testing.T) {
 		t.Errorf("no timeout/budget: deadline = %v, want zero", got)
 	}
 
-	// Timeout only.
+	// Spec timeout only.
 	got := computeSpawnDeadline(agentToolArgs{}, 5*time.Minute)
 	if got.Before(before.Add(5*time.Minute)) || got.After(time.Now().Add(5*time.Minute)) {
 		t.Errorf("timeout-only deadline = %v, want ~5m from now", got)
 	}
 
-	// Budget deadline earlier than spec timeout wins.
+	// budget.timeout shorter than the spec timeout wins.
 	args := agentToolArgs{Budget: &struct {
 		MaxTokens int    `json:"max_tokens"`
+		Timeout   string `json:"timeout"`
 		Deadline  string `json:"deadline"`
-	}{Deadline: "1m"}}
+	}{Timeout: "1m"}}
 	got = computeSpawnDeadline(args, 5*time.Minute)
 	if got.After(time.Now().Add(90 * time.Second)) {
-		t.Errorf("budget deadline should win over longer spec timeout: got %v", got)
+		t.Errorf("budget.timeout should win over longer spec timeout: got %v", got)
+	}
+
+	// budget.deadline (absolute) earlier than the spec timeout wins.
+	args = agentToolArgs{Budget: &struct {
+		MaxTokens int    `json:"max_tokens"`
+		Timeout   string `json:"timeout"`
+		Deadline  string `json:"deadline"`
+	}{Deadline: time.Now().Add(30 * time.Second).Format(time.RFC3339)}}
+	got = computeSpawnDeadline(args, 5*time.Minute)
+	if got.After(time.Now().Add(90 * time.Second)) {
+		t.Errorf("budget.deadline should win over longer spec timeout: got %v", got)
 	}
 }

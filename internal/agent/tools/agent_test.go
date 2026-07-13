@@ -832,3 +832,141 @@ func TestExecuteSpawn_RejectedBySpawnAdmission(t *testing.T) {
 		t.Errorf("ExitStatus = %q, want %q", insts[0].ExitStatus, "failed")
 	}
 }
+
+// --- G6: budget schema (timeout vs deadline) ---
+
+// budgetTestConfig returns an AgentToolConfig wired to a fake child script
+// that handshakes then sleeps, so budget validation (which runs after the
+// handshake) has a live process to reject against.
+func budgetTestConfig(t *testing.T) (AgentToolConfig, *store.SQLiteStore) {
+	t.Helper()
+	dir := t.TempDir()
+	s, err := store.NewSQLiteStore(context.Background(), dir+"/sessions.db", dir)
+	if err != nil {
+		t.Fatalf("NewSQLiteStore: %v", err)
+	}
+	t.Cleanup(func() { s.Close() })
+
+	require.NoError(t, s.SaveAgentInstance(context.Background(), store.AgentInstance{
+		ID:        "tau#root000",
+		SpecName:  "tau",
+		SpecHash:  "h",
+		StartedAt: time.Now(),
+	}))
+	require.NoError(t, s.Save(context.Background(), tauchat.ChatSessionState{
+		SessionID: "parent-session",
+		Status:    tauchat.ChatSessionIdle,
+	}, 0))
+
+	script := filepath.Join(dir, "fake-child.sh")
+	body := "#!/bin/sh\necho '{\"type\":\"agent.ready\",\"payload\":{\"instance\":\"x\",\"pid\":1,\"protocol\":1}}'\nsleep 100\n"
+	require.NoError(t, os.WriteFile(script, []byte(body), 0o755))
+
+	return AgentToolConfig{
+		CWD:              t.TempDir(),
+		Agents:           config.DefaultAgentsConfig(),
+		ParentDepth:      0,
+		ParentInstanceID: "tau#root000",
+		Bus:              eventbus.New(),
+		Store:            s,
+		SessionID:        "parent-session",
+		TauPath:          script,
+	}, s
+}
+
+func TestExecuteSpawn_RejectsNegativeMaxTokens(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("fake child script is POSIX shell")
+	}
+	cfg, _ := budgetTestConfig(t)
+	result, err := executeAgentTool(context.Background(), mustMarshal(map[string]any{
+		"agent":  "tau",
+		"prompt": "do something",
+		"budget": map[string]any{"max_tokens": -1},
+	}), nil, cfg)
+	if err != nil {
+		t.Fatalf("executeAgentTool returned error: %v", err)
+	}
+	if !result.IsError || result.ErrorKind != "invalid_params" {
+		t.Fatalf("IsError=%v ErrorKind=%q, want invalid_params", result.IsError, result.ErrorKind)
+	}
+}
+
+func TestExecuteSpawn_RejectsSubSecondTimeout(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("fake child script is POSIX shell")
+	}
+	cfg, _ := budgetTestConfig(t)
+	result, err := executeAgentTool(context.Background(), mustMarshal(map[string]any{
+		"agent":  "tau",
+		"prompt": "do something",
+		"budget": map[string]any{"timeout": "500ms"},
+	}), nil, cfg)
+	if err != nil {
+		t.Fatalf("executeAgentTool returned error: %v", err)
+	}
+	if !result.IsError || result.ErrorKind != "invalid_params" {
+		t.Fatalf("IsError=%v ErrorKind=%q, want invalid_params", result.IsError, result.ErrorKind)
+	}
+}
+
+func TestExecuteSpawn_CapsOversizedTimeoutRatherThanRejecting(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("fake child script is POSIX shell")
+	}
+	cfg, _ := budgetTestConfig(t)
+	cfg.Agents.CancelGrace = 20 * time.Millisecond
+	cfg.Agents.KillGrace = 20 * time.Millisecond
+	ctx, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
+	defer cancel()
+	result, err := executeAgentTool(ctx, mustMarshal(map[string]any{
+		"agent":  "tau",
+		"prompt": "do something",
+		"budget": map[string]any{"timeout": "48h"},
+	}), nil, cfg)
+	if err != nil {
+		t.Fatalf("executeAgentTool returned error: %v", err)
+	}
+	// Cancelled by the test's own short ctx, not rejected as invalid_params
+	// — proves the 48h timeout was capped (to 24h) and accepted, not
+	// rejected for exceeding a range.
+	if result.ErrorKind == "invalid_params" {
+		t.Fatalf("48h timeout was rejected as invalid_params, want capped and accepted: %+v", result)
+	}
+}
+
+func TestExecuteSpawn_RejectsPastDeadline(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("fake child script is POSIX shell")
+	}
+	cfg, _ := budgetTestConfig(t)
+	result, err := executeAgentTool(context.Background(), mustMarshal(map[string]any{
+		"agent":  "tau",
+		"prompt": "do something",
+		"budget": map[string]any{"deadline": time.Now().Add(-time.Hour).Format(time.RFC3339)},
+	}), nil, cfg)
+	if err != nil {
+		t.Fatalf("executeAgentTool returned error: %v", err)
+	}
+	if !result.IsError || result.ErrorKind != "invalid_params" {
+		t.Fatalf("IsError=%v ErrorKind=%q, want invalid_params", result.IsError, result.ErrorKind)
+	}
+}
+
+func TestExecuteSpawn_RejectsMalformedDeadline(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("fake child script is POSIX shell")
+	}
+	cfg, _ := budgetTestConfig(t)
+	result, err := executeAgentTool(context.Background(), mustMarshal(map[string]any{
+		"agent":  "tau",
+		"prompt": "do something",
+		"budget": map[string]any{"deadline": "5m"}, // duration, not RFC 3339 — the old (wrong) format
+	}), nil, cfg)
+	if err != nil {
+		t.Fatalf("executeAgentTool returned error: %v", err)
+	}
+	if !result.IsError || result.ErrorKind != "invalid_params" {
+		t.Fatalf("IsError=%v ErrorKind=%q, want invalid_params", result.IsError, result.ErrorKind)
+	}
+}

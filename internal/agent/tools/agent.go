@@ -120,11 +120,15 @@ var agentToolParams = mustMarshal(map[string]any{
 			"properties": map[string]any{
 				"max_tokens": map[string]any{
 					"type":        "integer",
-					"description": "Maximum total tokens the child may consume before returning partial results.",
+					"description": "Maximum total tokens the child may consume before returning partial results. Must be >= 0.",
+				},
+				"timeout": map[string]any{
+					"type":        "string",
+					"description": "Relative wall-clock limit (e.g. '5m', '1h'), overriding the spec/config default for this call. 1s-24h; values over 24h are capped.",
 				},
 				"deadline": map[string]any{
 					"type":        "string",
-					"description": "Wall-clock deadline (e.g. '5m', '1h'). The child returns what it has when the deadline fires.",
+					"description": "Absolute RFC 3339 deadline (e.g. '2026-07-13T12:00:00Z') after which the child must stop, independent of timeout. Must be in the future.",
 				},
 			},
 			"description": "Optional budget caps for this specific task.",
@@ -144,6 +148,7 @@ type agentToolArgs struct {
 	Tools       []string `json:"tools"`
 	Budget      *struct {
 		MaxTokens int    `json:"max_tokens"`
+		Timeout   string `json:"timeout"`
 		Deadline  string `json:"deadline"`
 	} `json:"budget"`
 }
@@ -545,24 +550,71 @@ func spawnChildProcess(ctx context.Context, args agentToolArgs, cfg AgentToolCon
 		limits.Timeout = instResult.Timeout.String()
 	}
 
-	// Build budget from the spawn call, converting the deadline from a
-	// relative duration (the tool-facing schema) to an absolute RFC3339
-	// timestamp (the wire contract child.go expects).
+	// Build budget from the spawn call. timeout and deadline are validated
+	// per docs/specs/agents/02-spawning-and-lifecycle.md (Validation
+	// rules): timeout must parse and be within 1s-24h (capped, not
+	// rejected, above 24h); deadline must parse as RFC 3339 and be in the
+	// future; max_tokens must be non-negative.
 	var budget bridge.AgentBudget
 	if args.Budget != nil {
+		if args.Budget.MaxTokens < 0 {
+			_ = signalProcessGroup(cmd, syscall.SIGKILL)
+			_ = cmd.Wait()
+			return Result{
+				Content:   fmt.Sprintf("invalid budget.max_tokens %d: must be >= 0", args.Budget.MaxTokens),
+				IsError:   true,
+				ErrorKind: "invalid_params",
+			}, nil
+		}
 		budget.MaxTokens = args.Budget.MaxTokens
-		if args.Budget.Deadline != "" {
-			d, err := time.ParseDuration(args.Budget.Deadline)
+
+		if args.Budget.Timeout != "" {
+			d, err := time.ParseDuration(args.Budget.Timeout)
 			if err != nil {
 				_ = signalProcessGroup(cmd, syscall.SIGKILL)
 				_ = cmd.Wait()
 				return Result{
-					Content:   fmt.Sprintf("invalid budget.deadline %q: %v", args.Budget.Deadline, err),
+					Content:   fmt.Sprintf("invalid budget.timeout %q: %v", args.Budget.Timeout, err),
 					IsError:   true,
 					ErrorKind: "invalid_params",
 				}, nil
 			}
-			budget.Deadline = time.Now().Add(d).Format(time.RFC3339)
+			if d < time.Second {
+				_ = signalProcessGroup(cmd, syscall.SIGKILL)
+				_ = cmd.Wait()
+				return Result{
+					Content:   fmt.Sprintf("invalid budget.timeout %q: must be >= 1s", args.Budget.Timeout),
+					IsError:   true,
+					ErrorKind: "invalid_params",
+				}, nil
+			}
+			if d > 24*time.Hour {
+				d = 24 * time.Hour
+			}
+			budget.Timeout = d.String()
+		}
+
+		if args.Budget.Deadline != "" {
+			t, err := time.Parse(time.RFC3339, args.Budget.Deadline)
+			if err != nil {
+				_ = signalProcessGroup(cmd, syscall.SIGKILL)
+				_ = cmd.Wait()
+				return Result{
+					Content:   fmt.Sprintf("invalid budget.deadline %q: must be RFC 3339: %v", args.Budget.Deadline, err),
+					IsError:   true,
+					ErrorKind: "invalid_params",
+				}, nil
+			}
+			if !t.After(time.Now()) {
+				_ = signalProcessGroup(cmd, syscall.SIGKILL)
+				_ = cmd.Wait()
+				return Result{
+					Content:   fmt.Sprintf("invalid budget.deadline %q: must be in the future", args.Budget.Deadline),
+					IsError:   true,
+					ErrorKind: "invalid_params",
+				}, nil
+			}
+			budget.Deadline = args.Budget.Deadline
 		}
 	}
 
