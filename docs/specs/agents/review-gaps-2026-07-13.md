@@ -101,6 +101,8 @@ Define a canonical usage model and conservative behavior when usage is unknown. 
 
 ### G7. Cancellation does not define process-tree termination
 
+**Status: RESOLVED (2026-07-13, CAT-95).**
+
 **Ticket: CAT-95**
 
 The lifecycle table defines cancel, stdin close, grace, and SIGKILL (`02-spawning-and-lifecycle.md`, lines 98-108), but not whether signals target only the direct child or its whole process group. A child may itself have running descendants, provider subprocesses, or shell-tool processes.

@@ -401,14 +401,89 @@ No additional locking column is needed — `ended_at` on the prior instance is t
 
 Child process states: `spawned → ready → working → (result sent) → exited`.
 
+### Process group management
+
+Every child process is created in its own process group where the OS supports it (`Setpgid` on Unix, `CREATE_NEW_PROCESS_GROUP` on Windows). The child's PID is the process group leader. This ensures that:
+
+- The parent can signal the entire process group, not just the direct child.
+- Shell subprocesses spawned by the child (via the `bash` tool) inherit the process group.
+- Provider subprocesses spawned by the child (via libraries) inherit the process group.
+- Grandchild agents spawned by the child inherit the process group (each grandchild is a new `tau` invocation under the child's group).
+
+**Platform behavior:**
+
+| Platform | API | Notes |
+|---|---|---|
+| Linux | `SysProcAttr{Setpgid: true}` | `kill(-pgid, signal)` signals the whole group |
+| macOS | Same as Linux | `kill(-pgid, signal)` works identically |
+| Windows | `SysProcAttr{CreationFlags: CREATE_NEW_PROCESS_GROUP}` | `GenerateConsoleCtrlEvent` sends to group; `TerminateProcess` is the fallback for forced kill |
+
+### Tree-wide cancellation
+
+When the parent cancels a child, it must ensure that the child's entire process tree — including tools, shell subprocesses, and provider connections — is terminated. The cancellation is an escalating sequence:
+
+**Phase 1: Graceful cancel (0s):**
+
+1. Parent sends `agent.cancel` on the wire.
+2. Parent stops admitting new work for that child immediately (no new spawns from queue).
+3. Child receives cancel, aborts the in-flight provider call, persists the session.
+4. Child sends `agent.result` with `cancelled` if possible, exits 0.
+
+**Phase 2: Escalation to SIGTERM (after `cancel_grace` seconds, default 5s):**
+
+If the child is still running after the grace period:
+
+1. Parent sends `SIGTERM` to the child's process group (`kill(-pgid, SIGTERM)`).
+2. This terminates the child AND all subprocesses in the group (shells, tools, provider subprocesses).
+3. After SIGTERM, the parent waits up to 5 more seconds for the child to exit.
+
+**Phase 3: Forced kill (after `kill_grace` seconds, default 5s after SIGTERM):**
+
+If the child is still running after SIGTERM + kill grace:
+
+1. Parent sends `SIGKILL` to the child's process group (`kill(-pgid, SIGKILL)`).
+2. This is non-ignorable. The OS guarantees the processes will terminate.
+3. Parent synthesises `status: cancelled` for the child's instance row (the child never got to send `agent.result`).
+
+**Cancellation of a middle node:**
+
+Cancelling a child that itself has spawned grandchildren:
+
+1. The child receives `agent.cancel`, propagates cancellation to its own children.
+2. Each grandchild follows the same three-phase escalation.
+3. The child only sends its own `agent.result` after all grandchildren have terminated (or been forcefully killed).
+4. The child persists its session before exiting.
+
+**Admission stop:**
+
+From the moment cancellation is initiated (Phase 1, step 1), no new spawns are admitted for the cancelled child. This includes:
+
+- Spawns already in the queue for that child are removed and rejected with `"cancelled"`.
+- New `agent` tool calls from the model are rejected before spawn with `"cancelled"`.
+- The concurrency queue for the cancelled child is drained.
+
+### Lifecycle and failure modes table
+
 | Event | Detection | Behaviour |
 |-------|-----------|-----------|
 | Normal completion | `agent.result` then exit 0 | Parent records result, closes pipes, updates instance row (`ended_at`, `exit_status`, usage) |
 | Child crash | stdout EOF without `agent.result`, nonzero exit | Parent synthesises `status: failed` with the exit detail; child session retains whatever was persisted last |
-| Parent cancels (user Esc, budget cut-off, turn cancelled) | Parent sends `agent.cancel`, then closes stdin after a grace period (default 5s) | Child aborts the in-flight provider call, persists the session, sends `agent.result` with `cancelled` if it can, exits |
+| Parent cancels (user Esc, budget cut-off, turn cancelled) | Parent sends `agent.cancel`, escalates through process group: cancel message → SIGTERM after grace → SIGKILL after kill grace | See Tree-wide cancellation above for the three-phase sequence. All descendant subprocesses in the child's process group are terminated. |
 | Parent dies | Child sees stdin EOF outside the cancel flow | Child treats it as cancel-with-no-listener: persist, exit. Its session and instance row remain in the store for post-mortem or resume |
-| Child hangs | Parent-side deadline (spawn `deadline` or spec `timeout`) fires | Cancel flow, then SIGKILL after grace; `status: timed_out` |
+| Child hangs | Parent-side deadline (spawn `deadline` or spec `timeout`) fires | Cancel flow: same three-phase escalation as parent cancel; `status: timed_out` |
 | Depth/target violation | Executor pre-checks | No process is spawned; tool returns `failed` immediately |
+| Mid-tree node cancelled with grandchildren | Parent cancels child → child propagates cancel to grandchildren → waits for them to terminate → persists → exits | Escalation is recursive: each level follows the three-phase sequence independently. A grandchild that ignores cancellation gets SIGKILL from its own parent. |
+
+**Test requirements for process-group cancellation:**
+
+| Scenario | Expected behavior |
+|---|---|
+| Cancel child with running bash subprocess | Both child and bash subprocess terminate (same process group) |
+| Cancel child with running provider call | Provider subprocess terminates with the child (process group) |
+| Cancel grandparent → grandchild terminates | Cancellation propagates through the tree |
+| Cancel child that ignores SIGTERM | SIGKILL follows after kill_grace; process group terminated |
+| Cancel child with queued spawns | Queued spawns removed; no new processes start post-cancel |
+| Cancel child on Windows | CREATE_NEW_PROCESS_GROUP → GenerateConsoleCtrlEvent → TerminateProcess fallback |
 
 Rules of thumb encoded above: the store is always consistent because the child persists before exiting on every path it controls, and the parent never trusts the child's self-reporting for liveness (pipes and exit codes are the ground truth).
 
