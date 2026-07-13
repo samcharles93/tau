@@ -74,7 +74,7 @@ type Source struct {
 type Skill struct {
 	Name                   string            `yaml:"name" json:"name"`
 	Description            string            `yaml:"description" json:"description"`
-	UserInvocable          bool              `yaml:"user-invocable" json:"user_invocable"`
+	UserInvocable          bool              `yaml:"user-invocable" json:"user-invocable"`
 	DisableModelInvocation bool              `yaml:"disable-model-invocation" json:"disable_model_invocation"`
 	License                string            `yaml:"license,omitempty" json:"license,omitempty"`
 	Compatibility          string            `yaml:"compatibility,omitempty" json:"compatibility,omitempty"`
