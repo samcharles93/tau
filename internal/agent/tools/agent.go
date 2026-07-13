@@ -154,13 +154,21 @@ type agentToolArgs struct {
 	} `json:"budget"`
 }
 
-func executeAgentTool(ctx context.Context, params json.RawMessage, _ UIBridge, cfg AgentToolConfig) (Result, error) {
+func executeAgentTool(ctx context.Context, params json.RawMessage, ui UIBridge, cfg AgentToolConfig) (Result, error) {
 	var args agentToolArgs
 	if err := json.Unmarshal(params, &args); err != nil {
 		return Result{Content: fmt.Sprintf("invalid agent call parameters: %v", err), IsError: true, ErrorKind: "invalid_params"}, nil
 	}
 	if strings.TrimSpace(args.Prompt) == "" {
 		return Result{Content: "agent call failed: prompt is required", IsError: true, ErrorKind: "invalid_params"}, nil
+	}
+
+	// SessionID scopes forwarded child events to the calling session. It's
+	// dynamic per call (a new session per turn/resume), so it can't be
+	// baked into the coordinator-build-time AgentToolConfig — read it from
+	// the bridge instead, unless a caller (e.g. a test) already set it.
+	if cfg.SessionID == "" && ui != nil {
+		cfg.SessionID = ui.SessionID()
 	}
 
 	if args.Resume != "" {

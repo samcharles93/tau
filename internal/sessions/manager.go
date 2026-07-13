@@ -39,6 +39,13 @@ func NewManager(s store.SessionStore) *Manager {
 	return &Manager{store: s}
 }
 
+// Store returns the underlying SessionStore, for callers (e.g. the agent
+// tool) that need direct store access rather than the chat-level CRUD
+// wrapper this Manager provides.
+func (m *Manager) Store() store.SessionStore {
+	return m.store
+}
+
 // OpenStore creates the default SQLite session store using the standard
 // config paths. It creates the sessions directory if needed.
 // Returns an error when the store cannot be opened — callers should warn

@@ -29,6 +29,7 @@ import (
 	commandreg "github.com/samcharles93/tau/internal/registry"
 	"github.com/samcharles93/tau/internal/sessions"
 	"github.com/samcharles93/tau/internal/skills"
+	"github.com/samcharles93/tau/internal/store"
 	"github.com/samcharles93/tau/internal/tui"
 	"github.com/samcharles93/tau/pkg/plugin/api"
 )
@@ -478,7 +479,7 @@ type newCoordinatorResult struct {
 
 // newCoordinator creates and returns an agent coordinator with the standard
 // tool registry, config, and session persistence.
-func newCoordinator(ctx context.Context, opts ChatOptions, bearerToken string, sessionManager *sessions.Manager, startupEvents []tauchat.ChatEvent, bus *eventbus.Bus, streamer agent.Streamer, modelRefs []tauchat.ChatModelRef, skillsMgr *skills.Manager, skillsDiscoveryConfig skills.DiscoveryConfig, deferPlugins bool) (*newCoordinatorResult, error) {
+func newCoordinator(ctx context.Context, opts ChatOptions, bearerToken string, sessionManager *sessions.Manager, startupEvents []tauchat.ChatEvent, bus *eventbus.Bus, streamer agent.Streamer, modelRefs []tauchat.ChatModelRef, skillsMgr *skills.Manager, skillsDiscoveryConfig skills.DiscoveryConfig, deferPlugins bool, agentInstanceID string) (*newCoordinatorResult, error) {
 	cwd, _ := os.Getwd()
 	cmdRegClient := bus.Client("command-registry")
 	cmdReg := commandreg.New(cwd, cmdRegClient)
@@ -502,6 +503,7 @@ func newCoordinator(ctx context.Context, opts ChatOptions, bearerToken string, s
 		SkillsDiscoveryConfig: skillsDiscoveryConfig,
 		DeferPluginLoad:       deferPlugins,
 		GrepIndex:             workspaceIndex,
+		AgentInstanceID:       agentInstanceID,
 	})
 	if err != nil {
 		cmdReg.Close()
@@ -548,6 +550,13 @@ type coordinatorConfig struct {
 	Timeout   time.Duration
 	MaxTokens int
 	Deadline  time.Time
+	// AgentInstanceID is this process's own root agent_instances row
+	// (from agent.Instantiate at startup), used as ParentInstanceID when
+	// registering the agent tool so child spawns/resumes correctly
+	// attribute to the root instance. Empty when instantiation was
+	// skipped or failed (e.g. no session store) — the agent tool then
+	// treats this coordinator as depth-0 with no instance identity.
+	AgentInstanceID string
 }
 
 // buildCoordinator creates a coordinator with the full plugin/tool setup.
@@ -793,15 +802,33 @@ func buildCoordinator(ctx context.Context, cfg coordinatorConfig) (*agent.Coordi
 		pluginMgr.SetViewRenderer(viewRenderer)
 	}
 
-	// Register the agent tool for spawning child processes.
+	// Register the agent tool for spawning child processes. Store/Bus/
+	// ParentInstanceID are this coordinator's own identity (it's always
+	// the root — depth 0, no parent ceiling); SessionID is deliberately
+	// left empty here since it's per-call, not per-coordinator — see
+	// executeAgentTool, which reads it from the UIBridge instead.
+	var agentStore store.SessionStore
+	if cfg.SessionManager != nil {
+		agentStore = cfg.SessionManager.Store()
+	}
+	tauPath, err := os.Executable()
+	if err != nil {
+		tauPath = "" // falls back to PATH lookup in the agent tool
+	}
 	agentCfg := tools.AgentToolConfig{
-		CWD:               cwd,
-		ModelModes:        cfg.ChatOptions.Config.ModelModes,
-		DefaultProvider:   cfg.ChatOptions.Config.DefaultProvider,
-		DefaultModel:      cfg.ChatOptions.Config.DefaultModel,
-		Agents:            cfg.ChatOptions.Config.Agents,
-		InheritedProvider: cfg.ChatOptions.Provider.Name,
-		InheritedModel:    cfg.ChatOptions.Model,
+		CWD:                  cwd,
+		Store:                agentStore,
+		ModelModes:           cfg.ChatOptions.Config.ModelModes,
+		DefaultProvider:      cfg.ChatOptions.Config.DefaultProvider,
+		DefaultModel:         cfg.ChatOptions.Config.DefaultModel,
+		Agents:               cfg.ChatOptions.Config.Agents,
+		ParentInstanceID:     cfg.AgentInstanceID,
+		ParentDepth:          0,
+		ParentEffectiveTools: cfg.ChatOptions.AllowedTools,
+		InheritedProvider:    cfg.ChatOptions.Provider.Name,
+		InheritedModel:       cfg.ChatOptions.Model,
+		TauPath:              tauPath,
+		Bus:                  cfg.Bus,
 	}
 	if err := registry.Register(tools.NewAgentTool(agentCfg)); err != nil {
 		return nil, nil, nil, fmt.Errorf("registering agent tool: %w", err)

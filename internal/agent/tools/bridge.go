@@ -18,9 +18,17 @@ type UIBridge interface {
 	Input(ctx context.Context, title, placeholder string) (string, error)
 	Notify(title, level string)
 	Log(chunk string)
+	// SessionID returns the session this bridge instance is scoped to for
+	// the current tool call, or "" when there is no session context (e.g.
+	// NonInteractiveBridge). Tools that need to correlate their own
+	// forwarded events to the calling session (e.g. the agent tool) read
+	// this instead of requiring it to be threaded through static config.
+	SessionID() string
 }
 
 type NonInteractiveBridge struct{}
+
+func (NonInteractiveBridge) SessionID() string { return "" }
 
 func (NonInteractiveBridge) Confirm(context.Context, string, string) (bool, error) {
 	return false, ErrInteractiveUnsupported

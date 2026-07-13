@@ -20,6 +20,12 @@ type coordinatorUIBridge struct {
 	coordinator *Coordinator
 }
 
+// SessionID returns "" — this bridge is shared across every session the
+// coordinator manages, not scoped to one. Per-call session correlation is
+// provided by loggingUIBridge, which wraps this bridge with the active
+// call's sessionID.
+func (b *coordinatorUIBridge) SessionID() string { return "" }
+
 func (b *coordinatorUIBridge) Confirm(ctx context.Context, title, description string) (bool, error) {
 	if b == nil || b.coordinator == nil || !b.coordinator.interactiveUI {
 		return false, tools.ErrInteractiveUnsupported
@@ -198,6 +204,12 @@ type loggingUIBridge struct {
 	callID    string
 	c         *Coordinator
 }
+
+// SessionID overrides the embedded bridge's (session-agnostic) SessionID
+// with this call's actual session, so tools like the agent tool can
+// correlate their own forwarded events without needing it threaded
+// through static config.
+func (b *loggingUIBridge) SessionID() string { return b.sessionID }
 
 func (b *loggingUIBridge) Log(chunk string) {
 	b.c.emit(chat.ChatToolOutputEvent{
