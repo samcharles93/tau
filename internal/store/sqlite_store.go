@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"path/filepath"
 	"time"
@@ -11,7 +12,7 @@ import (
 	"github.com/samcharles93/tau/internal/chat"
 	"github.com/samcharles93/tau/internal/config"
 
-	_ "modernc.org/sqlite" // database/sql driver
+	sqlite "modernc.org/sqlite"
 )
 
 // SQLiteStore implements SessionStore backed by a local SQLite database.
@@ -425,6 +426,28 @@ func (s *SQLiteStore) SessionJSONLPath(sessionID string, createdAt time.Time) st
 // Close closes the database connection.
 func (s *SQLiteStore) Close() error {
 	return s.db.Close()
+}
+
+// sqliteConstraintPrimaryKey and sqliteConstraintUnique are SQLite result
+// codes (modernc.org/sqlite/lib.SQLITE_CONSTRAINT_PRIMARYKEY/_UNIQUE).
+// Hardcoded rather than importing the lib subpackage, which isn't meant for
+// public consumption — these codes are part of SQLite's stable C ABI.
+const (
+	sqliteConstraintPrimaryKey = 1555
+	sqliteConstraintUnique     = 2067
+)
+
+// IsUniqueConstraintError reports whether err is a SQLite primary-key or
+// unique-constraint violation, e.g. an instance ID collision on
+// SaveAgentInstance. Callers use this to distinguish "retry with a new ID"
+// from a genuine failure.
+func IsUniqueConstraintError(err error) bool {
+	var sqliteErr *sqlite.Error
+	if !errors.As(err, &sqliteErr) {
+		return false
+	}
+	code := sqliteErr.Code()
+	return code == sqliteConstraintPrimaryKey || code == sqliteConstraintUnique
 }
 
 // SaveAgentInstance persists a new agent instance row.

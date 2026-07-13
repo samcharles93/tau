@@ -120,8 +120,8 @@ func Instantiate(ctx context.Context, cfg InstantiateConfig) (*InstantiateResult
 	// Step 3: Compute the effective toolset.
 	effectiveTools := computeEffectiveTools(def.Tools, cfg)
 
-	// Step 4: Mint the instance id and the instance row.
-	instanceID := spec.MintInstanceID(def.Name)
+	// Step 4: mint the instance id and the instance row (ID is minted
+	// below, with collision retry).
 	depth := cfg.ParentDepth
 	if cfg.ParentInstanceID != "" {
 		depth++ // child
@@ -151,7 +151,6 @@ func Instantiate(ctx context.Context, cfg InstantiateConfig) (*InstantiateResult
 
 	now := time.Now()
 	inst := store.AgentInstance{
-		ID:               instanceID,
 		SpecName:         def.Name,
 		SpecScope:        spec.ScopeString(def.Scope),
 		SpecSourcePath:   def.SourcePath,
@@ -165,8 +164,25 @@ func Instantiate(ctx context.Context, cfg InstantiateConfig) (*InstantiateResult
 		PID:              osPID(),
 		StartedAt:        now,
 	}
-	if err := cfg.Store.SaveAgentInstance(ctx, inst); err != nil {
-		return nil, fmt.Errorf("instantiate: save instance: %w", err)
+
+	// Retry with a freshly minted ID on a primary-key collision. 6-char
+	// base32 gives ~30 bits of entropy — rare, but the DB is the
+	// authoritative uniqueness check, not the RNG (see
+	// docs/specs/agents/04-storage-and-sessions.md, G3/G10).
+	instanceID := ""
+	var saveErr error
+	for range spec.MaxInstanceIDCollisionRetries {
+		inst.ID = spec.MintInstanceID(def.Name)
+		if saveErr = cfg.Store.SaveAgentInstance(ctx, inst); saveErr == nil {
+			instanceID = inst.ID
+			break
+		}
+		if !store.IsUniqueConstraintError(saveErr) {
+			return nil, fmt.Errorf("instantiate: save instance: %w", saveErr)
+		}
+	}
+	if instanceID == "" {
+		return nil, fmt.Errorf("instantiate: save instance: id collision after %d attempts: %w", spec.MaxInstanceIDCollisionRetries, saveErr)
 	}
 
 	// Step 5: Build the session config.

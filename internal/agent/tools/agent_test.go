@@ -2,6 +2,7 @@ package tools
 
 import (
 	"context"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -575,5 +576,62 @@ func TestExecuteResume_RejectsSessionWithNoInstance(t *testing.T) {
 	}
 	if result.ErrorKind != "resume_unauthorized" {
 		t.Errorf("expected ErrorKind=resume_unauthorized, got %q (%s)", result.ErrorKind, result.Content)
+	}
+}
+
+// --- G3: spawn-failure compensation ---
+
+// TestExecuteSpawn_ClosesInstanceOnStartFailure verifies that when the
+// child process fails to start (after the instance row is already
+// persisted), the instance is closed as "failed" rather than left
+// "started" forever — see spawnChildProcess's deferred compensating close
+// (docs/specs/agents/04-storage-and-sessions.md, G3).
+func TestExecuteSpawn_ClosesInstanceOnStartFailure(t *testing.T) {
+	dir := t.TempDir()
+	s, err := store.NewSQLiteStore(context.Background(), dir+"/sessions.db", dir)
+	if err != nil {
+		t.Fatalf("NewSQLiteStore: %v", err)
+	}
+	defer s.Close()
+
+	require.NoError(t, s.SaveAgentInstance(context.Background(), store.AgentInstance{
+		ID:        "tau#root000",
+		SpecName:  "tau",
+		SpecHash:  "h",
+		StartedAt: time.Now(),
+	}))
+
+	cfg := AgentToolConfig{
+		CWD:              t.TempDir(),
+		Agents:           config.DefaultAgentsConfig(),
+		ParentDepth:      0,
+		ParentInstanceID: "tau#root000",
+		Bus:              eventbus.New(),
+		Store:            s,
+		SessionID:        "parent-session",
+		// A path that cannot possibly exec — cmd.Start() fails deterministically.
+		TauPath: filepath.Join(dir, "no-such-tau-binary"),
+	}
+	result, err := executeAgentTool(context.Background(), mustMarshal(map[string]any{
+		"agent":  "tau",
+		"prompt": "do something",
+	}), nil, cfg)
+	if err != nil {
+		t.Fatalf("executeAgentTool returned error: %v", err)
+	}
+	if !result.IsError {
+		t.Fatalf("expected spawn failure, got success: %+v", result)
+	}
+
+	insts, err := s.ListAgentInstances(context.Background(), "tau#root000")
+	require.NoError(t, err)
+	if len(insts) != 1 {
+		t.Fatalf("expected exactly 1 instance row, got %d", len(insts))
+	}
+	if insts[0].EndedAt.IsZero() {
+		t.Fatalf("instance was left open (ended_at zero) after a spawn failure — orphaned row")
+	}
+	if insts[0].ExitStatus != "failed" {
+		t.Errorf("ExitStatus = %q, want %q", insts[0].ExitStatus, "failed")
 	}
 }

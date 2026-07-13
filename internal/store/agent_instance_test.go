@@ -35,6 +35,28 @@ func TestSQLiteStore_SaveAndGetAgentInstance(t *testing.T) {
 	require.True(t, got.EndedAt.IsZero())
 }
 
+// TestSQLiteStore_SaveAgentInstance_DuplicateIDIsUniqueConstraintError
+// verifies that an instance-ID collision on SaveAgentInstance is classified
+// by IsUniqueConstraintError — this is what callers (saveInstanceWithIDRetry
+// in internal/agent/tools, Instantiate in internal/agent) rely on to decide
+// "retry with a fresh ID" vs. "genuine failure" (G3/G10: instance ID
+// collision retry).
+func TestSQLiteStore_SaveAgentInstance_DuplicateIDIsUniqueConstraintError(t *testing.T) {
+	s := newTestStore(t)
+	ctx := context.Background()
+
+	inst := store.AgentInstance{ID: "research#aaaaaa", SpecName: "research", SpecHash: "h", StartedAt: time.Now()}
+	require.NoError(t, s.SaveAgentInstance(ctx, inst))
+
+	err := s.SaveAgentInstance(ctx, inst)
+	require.Error(t, err)
+	require.True(t, store.IsUniqueConstraintError(err), "expected IsUniqueConstraintError, got %v", err)
+
+	// A generic not-found error must not be misclassified as a collision.
+	_, notFoundErr := s.GetAgentInstance(ctx, "does-not-exist")
+	require.False(t, store.IsUniqueConstraintError(notFoundErr))
+}
+
 // TestSQLiteStore_ResumeSession_SucceedsWhenPriorInstanceEnded verifies the
 // happy path: a session whose owning instance has ended can be resumed —
 // the new instance is inserted and the session's agent_instance_id is

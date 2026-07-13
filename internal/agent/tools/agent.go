@@ -224,6 +224,12 @@ func executeSpawn(ctx context.Context, args agentToolArgs, cfg AgentToolConfig) 
 		Context:            args.Context,
 		SpecName:           args.Agent,
 	}); err != nil {
+		// The instance row was already saved by instantiateChild; without
+		// a session to run it never will (see spawnChildProcess) — close
+		// it now rather than leaving it "started" forever (G3).
+		if cfg.Store != nil {
+			_ = cfg.Store.CloseAgentInstance(ctx, instResult.InstanceID, "failed", "")
+		}
 		return Result{Content: fmt.Sprintf("seed child session: %v", err), IsError: true, ErrorKind: "instantiation_failed"}, nil
 	}
 
@@ -315,7 +321,6 @@ func executeResume(ctx context.Context, args agentToolArgs, cfg AgentToolConfig)
 	maxTurns, timeout := spec.SnapshotLimits(newSnapshot)
 
 	newInstance := store.AgentInstance{
-		ID:               spec.MintInstanceID(orig.SpecName),
 		SpecName:         orig.SpecName,
 		SpecScope:        orig.SpecScope,
 		SpecSourcePath:   orig.SpecSourcePath,
@@ -329,14 +334,24 @@ func executeResume(ctx context.Context, args agentToolArgs, cfg AgentToolConfig)
 		StartedAt:        time.Now(),
 	}
 
-	if err := cfg.Store.ResumeSession(ctx, args.Resume, newInstance); err != nil {
+	// Retry with a freshly minted ID on a primary-key collision — see
+	// saveInstanceWithIDRetry's doc comment (G3/G10).
+	var resumeErr error
+	for range spec.MaxInstanceIDCollisionRetries {
+		newInstance.ID = spec.MintInstanceID(orig.SpecName)
+		resumeErr = cfg.Store.ResumeSession(ctx, args.Resume, newInstance)
+		if resumeErr == nil || !store.IsUniqueConstraintError(resumeErr) {
+			break
+		}
+	}
+	if resumeErr != nil {
 		switch {
-		case errors.Is(err, store.ErrSessionActive):
+		case errors.Is(resumeErr, store.ErrSessionActive):
 			return Result{Content: "agent call failed: session is still active", IsError: true, ErrorKind: "resume_unauthorized"}, nil
-		case errors.Is(err, store.ErrSessionNotFound):
+		case errors.Is(resumeErr, store.ErrSessionNotFound):
 			return Result{Content: fmt.Sprintf("agent call failed: resume session %q not found", args.Resume), IsError: true, ErrorKind: "session_not_found"}, nil
 		default:
-			return agentToolError("resume session", err), nil
+			return agentToolError("resume session", resumeErr), nil
 		}
 	}
 
@@ -410,6 +425,20 @@ func isAncestorOf(ctx context.Context, s store.SessionStore, candidateInstanceID
 // the fresh-spawn and resume paths, which differ only in how instResult was
 // produced.
 func spawnChildProcess(ctx context.Context, args agentToolArgs, cfg AgentToolConfig, instResult *instantiateResult) (Result, error) {
+	// Compensating close: any return path below that doesn't reach the
+	// normal completion close (which sets instanceClosed) means spawn,
+	// handshake, or streaming failed before a result was ever obtained.
+	// Close the instance deterministically as failed rather than leaving
+	// it "started" forever — see docs/specs/agents/
+	// 04-storage-and-sessions.md (G3: atomic instantiation / spawn-failure
+	// compensation).
+	instanceClosed := false
+	defer func() {
+		if !instanceClosed && cfg.Store != nil {
+			_ = cfg.Store.CloseAgentInstance(ctx, instResult.InstanceID, "failed", "")
+		}
+	}()
+
 	tauPath := cfg.TauPath
 	if tauPath == "" {
 		tauPath, _ = exec.LookPath("tau") // Best effort — let exec fail if not found.
@@ -538,6 +567,7 @@ func spawnChildProcess(ctx context.Context, args agentToolArgs, cfg AgentToolCon
 	if cfg.Store != nil && usageAcc != nil {
 		usageJSON, _ := json.Marshal(usageAcc)
 		_ = cfg.Store.CloseAgentInstance(ctx, instResult.InstanceID, resultEnv.Status, string(usageJSON))
+		instanceClosed = true
 	}
 	childBusClient.Close()
 
@@ -622,7 +652,6 @@ func instantiateChild(ctx context.Context, cfg instantiateConfig) (*instantiateR
 
 	effectiveTools := computeChildEffectiveTools(def.Tools, cfg.ParentEffectiveTools, cfg.SpawnTools)
 
-	instanceID := spec.MintInstanceID(def.Name)
 	depth := cfg.ParentDepth + 1
 
 	if err := checkDepthCap(depth, cfg.Agents); err != nil {
@@ -638,7 +667,6 @@ func instantiateChild(ctx context.Context, cfg instantiateConfig) (*instantiateR
 	now := time.Now()
 	specSnapshot := spec.BuildSpecSnapshot(def, resolvedProvider, resolvedModel, effectiveTools)
 	inst := store.AgentInstance{
-		ID:               instanceID,
 		SpecName:         def.Name,
 		SpecScope:        spec.ScopeString(def.Scope),
 		SpecSourcePath:   def.SourcePath,
@@ -652,10 +680,9 @@ func instantiateChild(ctx context.Context, cfg instantiateConfig) (*instantiateR
 		StartedAt:        now,
 	}
 
-	if cfg.Store != nil {
-		if err := cfg.Store.SaveAgentInstance(ctx, inst); err != nil {
-			return nil, fmt.Errorf("save instance: %w", err)
-		}
+	instanceID, err := saveInstanceWithIDRetry(ctx, cfg.Store, &inst, def.Name)
+	if err != nil {
+		return nil, err
 	}
 
 	return &instantiateResult{
@@ -668,6 +695,30 @@ func instantiateChild(ctx context.Context, cfg instantiateConfig) (*instantiateR
 		MaxTurns:         def.MaxTurns,
 		Timeout:          def.Timeout,
 	}, nil
+}
+
+// saveInstanceWithIDRetry mints an instance ID, sets it on inst, and saves
+// it, retrying with a freshly minted ID on a primary-key/unique collision
+// (store.IsUniqueConstraintError). Returns the ID that was actually saved.
+// A nil store mints an ID but performs no write (matches instantiateChild's
+// existing "store is optional" contract for tests).
+func saveInstanceWithIDRetry(ctx context.Context, s store.SessionStore, inst *store.AgentInstance, specName string) (string, error) {
+	var lastErr error
+	for range spec.MaxInstanceIDCollisionRetries {
+		inst.ID = spec.MintInstanceID(specName)
+		if s == nil {
+			return inst.ID, nil
+		}
+		if err := s.SaveAgentInstance(ctx, *inst); err != nil {
+			if store.IsUniqueConstraintError(err) {
+				lastErr = err
+				continue
+			}
+			return "", fmt.Errorf("save instance: %w", err)
+		}
+		return inst.ID, nil
+	}
+	return "", fmt.Errorf("save instance: id collision after %d attempts: %w", spec.MaxInstanceIDCollisionRetries, lastErr)
 }
 
 // computeChildEffectiveTools computes the child's effective toolset via

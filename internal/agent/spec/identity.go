@@ -135,6 +135,13 @@ func PatchSnapshotResolved(snapshotJSON, provider, model string, tools []string)
 	return string(data), nil
 }
 
+// MaxInstanceIDCollisionRetries bounds instance-ID collision retry loops
+// around SaveAgentInstance/ResumeSession. 6-char base32 gives ~30 bits of
+// entropy, so a collision is already rare; this is a defensive bound per
+// docs/specs/agents/04-storage-and-sessions.md (G3/G10: instance ID
+// collision retry), not an expected steady-state path.
+const MaxInstanceIDCollisionRetries = 5
+
 // MintInstanceID generates a new agent instance address like "research#k3v9qp".
 func MintInstanceID(specName string) string {
 	return fmt.Sprintf("%s#%s", specName, RandomBase32(6))
