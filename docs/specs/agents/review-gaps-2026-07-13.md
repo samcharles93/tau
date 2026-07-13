@@ -48,6 +48,8 @@ Required contract:
 
 ### G3. Instance/session creation is not specified as an atomic operation
 
+**Status: RESOLVED (2026-07-13, CAT-92).**
+
 **Ticket: CAT-92**
 
 Instantiation writes an instance row and then creates or forks a session (`02-spawning-and-lifecycle.md`, lines 15-26), while storage assigns instance lifecycle to the parent and session writes to the child (`04-storage-and-sessions.md`, lines 39-47). The failure behavior between those steps is undefined.
@@ -75,6 +77,8 @@ The design intentionally allows N agent calls in one turn to spawn N children co
 Add configurable per-parent and process-wide concurrent-child limits, plus a queued/rejected behavior. Consider total active processes, file descriptors, pending spawn count, and provider concurrency. Define fair cancellation and whether queued children consume timeout/deadline budget.
 
 ### G6. Budget semantics are underspecified
+
+**Status: RESOLVED (2026-07-13, CAT-93).**
 
 **Ticket: CAT-93**
 

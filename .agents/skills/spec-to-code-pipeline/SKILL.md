@@ -203,3 +203,24 @@ The full worked pipeline for this project is documented above in the Dependency 
 4. **Cross-cutting tickets run alongside, not after.**
 5. **Contract changes propagate.** If an upstream ticket's implementation changes a contract, downstream tickets must be re-examined before they start.
 6. **The gap document is a review artifact, not an amendment.** It captures findings at a point in time. The authoritative spec is the spec documents — the gap review points to them, not replaces them.
+
+## Gotchas
+
+### Shell escaping in `git commit -m`
+
+When the commit message contains backticks with double-quoted strings inside them (e.g. `` `"skill"` ``), `bash` interprets the backticks as command substitution and the `"` pairs as shell-quoting. The commit still succeeds (git receives the message via stdin, not the shell), but stderr is noisy with "command not found" errors, and the message may be garbled.
+
+**Fix:** Use single quotes for the `-m` argument when the message contains backticks or double-quoted strings:
+
+```shell
+# BROKEN — shell interprets backticks as command substitution
+git commit -m "fix(agent): remove `m[\"skill\"] = true`"
+
+# CORRECT — single quotes prevent shell interpretation
+git commit -m 'fix(agent): remove m["skill"] = true injection'
+
+# ALSO CORRECT — write the message to a file first
+git commit -F /tmp/commit-msg.txt
+```
+
+Reproduced 2026-07-13 during CAT-89 commit (commit `c4757a0`). Shell noise on stderr but the commit applied correctly.

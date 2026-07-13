@@ -27,6 +27,7 @@ CREATE TABLE agent_instances (
   started_at         TIMESTAMP NOT NULL,
   ended_at           TIMESTAMP,
   exit_status        TEXT,                      -- completed | failed | cancelled | budget_exhausted | timed_out
+  failure_reason     TEXT,                      -- structured spawn-failure detail ("spawn: exec: permission denied")
   usage_json         TEXT                       -- cumulative totals at end
 );
 CREATE INDEX idx_agent_instances_parent ON agent_instances(parent_instance_id);
@@ -40,11 +41,37 @@ CREATE INDEX idx_sessions_agent_instance ON sessions(agent_instance_id);
 
 | Writer | What it writes |
 |--------|----------------|
-| Spawner (parent, or root startup for itself) | Instance row at creation; `ended_at`/`exit_status`/`usage_json` when the child terminates |
-| Child | Its own session (existing persistence path, unchanged), on the child's normal cadence plus always-before-exit |
-| Modes | Nothing new; modes create no instance rows |
+| Spawner (parent, or root startup for itself) | Instance row + session create/fork **in one transaction**. `ended_at`/`exit_status`/`failure_reason`/`usage_json` when the child terminates or fails to start. |
+| Child | Its own session (existing persistence path, unchanged), on the child's normal cadence plus always-before-exit. |
+| Modes | Nothing new; modes create no instance rows. |
 
 The parent owns instance-row lifecycle because it also owns process lifecycle (it holds the pipes and the exit code). The child owns its session because it is the only writer of that session. No row has two writers, which keeps the WAL single-writer constraint comfortable.
+
+### Transaction boundary
+
+The instantiation function writes the `agent_instances` row and creates/forks the `sessions` row inside a single SQLite transaction (`BEGIN IMMEDIATE … COMMIT`). Both rows commit together or neither does. After commit:
+
+- **Success**: spawn the child process. If spawn or handshake fails, the instance is closed as `failed` (see Compensation below).
+- **Instance-ID collision**: the transaction rolls back and retries with a new ID (up to 3 times).
+- **Any other error**: the transaction rolls back and the caller receives a structured error. No partial state survives.
+
+### ID collision retry
+
+Instance IDs are 6 characters of lowercase base32 from `crypto/rand`. The full address (`spec_name#id`) is the `agent_instances` primary key.
+
+- INSERT is attempted inside the same transaction as the session create/fork.
+- On `UNIQUE` constraint violation, the transaction is rolled back and retried with a fresh random ID.
+- Retry up to 3 times total (3 fresh IDs). After 3 failures, return a structured error to the caller.
+- Collision probability across 3 retries with ~30 bits of entropy is negligible at any realistic instance count (birthday bound: ~2^15 instances before 50% collision probability; retry makes even that harmless).
+
+### Compensation on post-commit failure
+
+If the transaction commits successfully but the child process fails to start (exec error, pipe failure, handshake timeout):
+
+1. The parent writes `ended_at = NOW()`, `exit_status = 'failed'`, and a structured `failure_reason` (e.g. `"spawn: exec: permission denied"`).
+2. No row is deleted — the instance exists as a real, failed entity for audit.
+3. The parent emits a `ChatToolExecutionCompletedEvent` with `status: failed` and the failure reason.
+4. The child session row (created atomically with the instance) is an empty shell. At coordinator load time, an empty session is treated as a fresh session — no messages, no history.
 
 ## Store API additions
 

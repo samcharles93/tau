@@ -16,15 +16,41 @@ One function, used by every path that brings an agent identity into existence:
 
 1. Resolve the spec (built-in, `user:`, `project:`; for the bare name `tau` the root startup path resolves through full discovery so project/user overrides win, see 01).
 2. Resolve the model (precedence in 01) to a concrete provider/model pair.
-3. Compute the effective toolset (for children: attenuation, below; for root: the spec's `tools` or the full registry).
-4. Mint the instance id, write the `agent_instances` row (snapshot, resolved model, effective tools, depth, parent instance, pid, started_at).
-5. Create or fork the session, with `agent_instance_id` and (for children) `parent_session_id` set.
+3. Compute the effective toolset (for children: attenuation; for root: the spec's `tools` or the full registry).
+4. Mint the instance id with bounded uniqueness retry (see below), write the `agent_instances` row (snapshot, resolved model, effective tools, depth, parent instance, pid, started_at) AND create/fork the session — **in one SQLite transaction**.
+5. After commit: spawn the child process. If spawn or handshake fails, close the instance deterministically as `failed` with a structured reason (see compensation, below).
 
 Who runs it:
 
 - **Root**: the interactive process at startup, before the first session exists. Depth 0, no parent.
 - **Children**: the *parent* resolves, attenuates and writes the row, then spawns the child process with the instance id. The child loads its row and session from the shared store. This keeps resolution and permission decisions in the already-trusted process; the child never computes its own capabilities.
 - **Modes**: never. A mode runs under the current process's identity with the mode spec's `tools` applied as a further temporary restriction on the process's effective set (intersection again, so a mode can also never widen).
+
+### ID collision retry
+
+Instance IDs are 6 characters of lowercase base32 from `crypto/rand`. The full address (`spec-name#id`) is the primary key of `agent_instances`. Collision retry:
+
+- After minting the ID, attempt the INSERT within the same transaction as the session create/fork.
+- On `UNIQUE` constraint failure, retry with a new random ID up to 3 times.
+- After 3 retries, fail with a structured error. The caller receives a failed tool result (spawn failure) or the root startup exits.
+- The 6-char ID is the display suffix; the full address (`spec#id`) is the protocol identity. Collision probability across 3 retries with ~30 bits of entropy is negligible at realistic instance counts.
+
+### Compensation on post-commit failure
+
+If the transaction commits successfully but process spawn, pipe creation, or handshake fails:
+
+1. The instance row exists and is visible to queries (intentional — the instance is a real, failed entity).
+2. The parent writes `ended_at = now()`, `exit_status = 'failed'`, and a structured `failure_reason` (e.g. `"spawn: exec failed: permission denied"`).
+3. The parent emits a `ChatToolExecutionCompletedEvent` with `status: failed` and the reason, so the UI shows the failure.
+4. No compensation write touches the child session (it was never started, so there is nothing to save).
+
+### Compensation on child crash before session creation
+
+If the child process starts but exits before creating its first session write (crashes in coordinator init):
+
+1. The parent detects EOF on stdout without a `ready` envelope.
+2. The parent closes the instance as `failed` with exit detail.
+3. The session row is an empty shell (created atomically with the instance) — it is treated as a null session at load time.
 
 ## The `agent` tool
 
@@ -82,14 +108,73 @@ child effective tools = child spec tools  ∩  parent effective tools  ∩  spaw
 
 ## Budgets and limits
 
-Two layers, both enforced by the child's own coordinator:
+### Canonical usage model
 
-- **Structural (from spec)**: `max-turns` per assigned task, `timeout` default. Defaults from config when unset.
-- **Task budget (from spawn call)**: `max_tokens`, `deadline`. The parent may also cancel at any time based on streamed usage.
+Every provider maps into one documented usage model. The canonical fields:
 
-The child emits `agent.usage` after every turn (see 03). On breach the child finishes the current tool call if it is cheap to do so, persists the session, and returns `budget_exhausted` or `timed_out` with partial output. Budgets are data, not exceptions.
+| Field | Type | Semantics |
+|---|---|---|
+| `input_tokens` | uint64 | Prompt tokens consumed this turn, including cached and reasoning tokens. Always ≥ `cached_tokens + reasoning_tokens`. |
+| `output_tokens` | uint64 | Completion tokens produced this turn. |
+| `cached_tokens` | uint64 | Subset of `input_tokens` served from provider cache (billed at the cache-read rate). Zero when the provider does not report cache breakdowns. |
+| `reasoning_tokens` | uint64 | Subset of `input_tokens` consumed by internal reasoning/thinking. Zero when reasoning is not in use or the provider does not report it. |
+| `cache_creation_tokens` | uint64 | Tokens written to the provider cache (billed at the cache-write rate). Zero when not applicable. |
+| `cost` | decimal string (18,8) | Total cost in USD for this turn. Computed as `(input − cached − cache_creation) × input_rate + output × output_rate + cached × cache_read_rate + cache_creation × cache_write_rate`. Precision: 8 decimal places. |
 
-Cost accumulation: the parent adds each child's usage totals to the spawning tool-call record and to its own session totals, so the root session always shows tree-wide cost. Instance rows keep per-instance usage for the audit trail.
+### Direct vs subtree accounting
+
+| Scope | What it counts |
+|---|---|
+| **Direct** | The agent's own provider calls for the current assigned task. Reported on `agent.usage` after every turn. |
+| **Subtree** | Direct + the sum of all descendant instances' direct usage. Accumulated by the parent as each child completes. |
+| **Session total** | Direct + subtree for all turns in the session. Stored in the session row for the UI. |
+| **Instance total** | The agent's own direct usage across all turns of its lifetime. Stored in `agent_instances.usage_json`. |
+
+Subtree aggregation happens in the parent, not the child: the child reports only its own direct usage. The parent adds each child's total to the spawning tool-call record and to its own session totals. This means the root session always shows tree-wide cost without double counting (each instance reports only its own direct calls).
+
+### Admission and breach behavior
+
+**Pre-call admission (token budgets):**
+
+1. Before each LLM call, the coordinator checks whether `(session total input_tokens + session total output_tokens) ≥ max_tokens`.
+2. If the budget is already exhausted, the call is skipped and the turn ends with `budget_exhausted` status.
+3. If the budget allows the call, it proceeds. The coordinator tracks cumulative usage during streaming.
+
+**Post-call breach (token budgets):**
+
+1. After the provider returns and usage is known, the coordinator checks the updated total against `max_tokens`.
+2. If the call breached the budget, the turn ends with `budget_exhausted` status and partial output.
+3. The agent may finish the current tool call if it is cheap to do so (configurable grace: one tool call ≤ 5s wall time), then persists the session.
+
+**Time-based limits (timeout and deadline):**
+
+- **`timeout`** (Go `time.Duration`, specified as `"5m"`, `"30s"`, etc.): a relative wall-clock limit from the moment the child process starts. Enforced by the coordinator via `context.WithTimeout`. On expiry, the in-flight LLM call is cancelled, the session is persisted, and the agent returns `timed_out`.
+- **`deadline`** (RFC 3339 absolute timestamp, e.g. `"2026-07-13T12:00:00Z"`): an absolute point in time after which the agent must stop. Admits if `time.Now() < deadline`; rejects at spawn if the deadline is already past. Enforced via `context.WithDeadline`. The schema distinguishes these by format: duration strings are `timeout`, RFC 3339 strings are `deadline`.
+
+**Validation rules:**
+
+| Field | Valid range | Behavior on invalid |
+|---|---|---|
+| `max_tokens` | 1 … 2^63−1 | ≤ 0: reject at spawn; no budget enforced |
+| `max_turns` | 1 … 2^31−1 | ≤ 0: defer to config default |
+| `timeout` | 1s … 24h | < 1s: reject at spawn; > 24h: cap to 24h |
+| `deadline` | must be in the future at spawn time | In the past: reject at spawn |
+| `cost` | ≥ 0, decimal(18,8) | Negative: treated as 0 (provider bug); unavailable: stored as NULL |
+
+### Conservative handling for missing usage
+
+Providers may delay, omit, or partially report usage:
+
+- **No usage in streaming deltas**: the `agent.usage` envelope carries the cumulative total known so far. If a provider sends no usage deltas, the first cumulative report arrives with the completion chunk. The UI shows "…" until the first usage arrives.
+- **No usage at completion**: the `agent.result` reports `input_tokens: 0, output_tokens: 0`. The parent treats this as "usage unknown" — cost is not accumulated, and the UI shows "unknown" rather than inventing a zero. Budget enforcement is skipped for the turn (cannot prove breach without data).
+- **Partial usage (e.g. only output tokens)**: missing fields are treated as zero. The parent accumulates what it has. Double counting is impossible because each instance reports only its own direct usage.
+
+### Currency and precision
+
+- All costs are in USD.
+- Stored as decimal strings (not floats) with 8 decimal places.
+- Rate multiplication uses arbitrary-precision decimal arithmetic (via `shopspring/decimal` or equivalent).
+- The UI displays up to 4 decimal places (e.g. `$0.0231`); the store keeps 8 for audit.
 
 ## Completion contract
 
