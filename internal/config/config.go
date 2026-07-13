@@ -1172,6 +1172,9 @@ func mergeModelModes(global, local map[string]ModeConfig) map[string]ModeConfig 
 		return nil
 	}
 	merged := normalizeModelModesKeys(global)
+	if merged == nil {
+		merged = make(map[string]ModeConfig, len(local))
+	}
 	for k, v := range local {
 		merged[strings.ToLower(k)] = v
 	}
@@ -1402,8 +1405,14 @@ func ResolveModelMode(
 		return p, s
 	}
 
-	// 3. Inherited pair from the invoking instance.
-	if strings.TrimSpace(inheritedProvider) != "" || strings.TrimSpace(inheritedModel) != "" {
+	// 3. Inherited pair from the invoking instance. Gated on the model
+	// specifically, not "either field" — the provider is very often
+	// already populated (a provider must be selected before any session
+	// starts) even when no model was ever resolved, and returning that
+	// provider paired with an empty model produces an unusable empty
+	// model reference instead of falling through to the config defaults
+	// below.
+	if strings.TrimSpace(inheritedModel) != "" {
 		return inheritedProvider, inheritedModel
 	}
 

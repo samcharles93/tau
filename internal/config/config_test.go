@@ -633,3 +633,86 @@ func containsAll(s string, needles ...string) bool {
 	}
 	return true
 }
+
+// --- ResolveModelMode ---
+
+// TestResolveModelMode_InheritedProviderWithoutModelFallsThroughToDefault
+// proves an inherited provider with no inherited model does NOT win over
+// the config defaults — a non-empty provider paired with an empty model
+// would otherwise produce an unusable empty model reference downstream
+// (this exact case broke agent-tool spawns: the provider is populated
+// from the session's already-selected provider, but no model override was
+// ever given).
+func TestResolveModelMode_InheritedProviderWithoutModelFallsThroughToDefault(t *testing.T) {
+	provider, model := ResolveModelMode(
+		"", "", "", // no spawn override, no spec model/provider
+		"openai", "", // inherited: provider set, model NOT set
+		"anthropic", "claude-default", // defaults
+		nil,
+	)
+	if model != "claude-default" {
+		t.Errorf("model = %q, want the default model (inherited model was empty)", model)
+	}
+	if provider != "anthropic" {
+		t.Errorf("provider = %q, want the default provider", provider)
+	}
+}
+
+// TestResolveModelMode_InheritedPairUsedWhenBothPresent proves a genuinely
+// usable inherited pair still wins over defaults.
+func TestResolveModelMode_InheritedPairUsedWhenBothPresent(t *testing.T) {
+	provider, model := ResolveModelMode(
+		"", "", "",
+		"openai", "gpt-5.6-luna",
+		"anthropic", "claude-default",
+		nil,
+	)
+	if provider != "openai" || model != "gpt-5.6-luna" {
+		t.Errorf("got (%q, %q), want the inherited pair (openai, gpt-5.6-luna)", provider, model)
+	}
+}
+
+// TestResolveModelMode_SpawnOverrideWins proves the spawn-call parameter
+// still takes precedence over everything else, tier or concrete.
+func TestResolveModelMode_SpawnOverrideWins(t *testing.T) {
+	provider, model := ResolveModelMode(
+		"fast", "", "",
+		"openai", "gpt-5.6-luna",
+		"anthropic", "claude-default",
+		map[string]ModeConfig{"fast": {Provider: "groq", Model: "llama-fast"}},
+	)
+	if provider != "groq" || model != "llama-fast" {
+		t.Errorf("got (%q, %q), want the tier-mapped pair (groq, llama-fast)", provider, model)
+	}
+}
+
+// --- mergeModelModes ---
+
+// TestMergeModelModes_NilGlobalWithLocalEntriesDoesNotPanic proves a
+// project-local model_modes entry doesn't crash when the global config has
+// none at all (normalizeModelModesKeys(nil) returns nil, and assigning
+// into that nil map previously panicked).
+func TestMergeModelModes_NilGlobalWithLocalEntriesDoesNotPanic(t *testing.T) {
+	merged := mergeModelModes(nil, map[string]ModeConfig{
+		"fast": {Provider: "openai", Model: "gpt-5.6-luna"},
+	})
+	if merged["fast"].Model != "gpt-5.6-luna" {
+		t.Errorf("merged[fast].Model = %q, want gpt-5.6-luna", merged["fast"].Model)
+	}
+}
+
+func TestMergeModelModes_BothNilReturnsNil(t *testing.T) {
+	if merged := mergeModelModes(nil, nil); merged != nil {
+		t.Errorf("expected nil, got %v", merged)
+	}
+}
+
+func TestMergeModelModes_LocalOverridesGlobal(t *testing.T) {
+	merged := mergeModelModes(
+		map[string]ModeConfig{"fast": {Provider: "groq", Model: "llama"}},
+		map[string]ModeConfig{"fast": {Provider: "openai", Model: "gpt-5.6-luna"}},
+	)
+	if merged["fast"].Provider != "openai" {
+		t.Errorf("local should override global, got provider=%q", merged["fast"].Provider)
+	}
+}
