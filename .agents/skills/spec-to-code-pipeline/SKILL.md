@@ -203,6 +203,8 @@ The full worked pipeline for this project is documented above in the Dependency 
 4. **Cross-cutting tickets run alongside, not after.**
 5. **Contract changes propagate.** If an upstream ticket's implementation changes a contract, downstream tickets must be re-examined before they start.
 6. **The gap document is a review artifact, not an amendment.** It captures findings at a point in time. The authoritative spec is the spec documents — the gap review points to them, not replaces them.
+7. **Verify, don't assume.** Before making any claim about repository state — "this doesn't exist", "this isn't implemented", "nothing has been built" — check `git log`, `ls`, and actual file contents. Spec work and implementation work can happen in parallel on the same branch. A session spent editing spec documents doesn't mean the code is absent; it means you haven't looked at the code. Fabricating a status report from assumptions rather than evidence is the single most expensive mistake in this pipeline.
+8. **Read code before writing code.** When implementing a spec gap, read the existing implementation first. Compare against the spec. Fix only what's missing. Do not re-implement what already works.
 
 ## Gotchas
 
@@ -224,3 +226,14 @@ git commit -F /tmp/commit-msg.txt
 ```
 
 Reproduced 2026-07-13 during CAT-89 commit (commit `c4757a0`). Shell noise on stderr but the commit applied correctly.
+
+### Spec work ≠ greenfield
+
+The gap review → story creation → dependency analysis pipeline produces spec updates. These updates land in `docs/specs/agents/`. They do NOT mean the implementation is starting from zero. On the CAT-89–106 project, 1,652 lines of implementation already existed across `internal/agent/instantiate.go`, `internal/agent/tools/agent.go`, `internal/app/child.go`, and `internal/agent/stdio/transport.go` while the spec documents were being gap-filled. Claiming "the implementation hasn't started" without running `ls` or `git log` is a fabrication.
+
+**Rule:** Before reporting on implementation status, always check:
+- `git log --oneline -20` to see recent commits
+- `ls` on the implementation packages named in the spec
+- `grep` for key functions/types to confirm they exist
+
+Reproduced 2026-07-13: a status review claimed all P1–P3 implementation was "not started" when it was live and passing `task check`. Root cause: the agent read spec documents but never checked the working tree.
