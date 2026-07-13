@@ -25,6 +25,131 @@ The agent wire extends the existing bridge envelope (`internal/bridge/wire.go`),
 
 Future transports (Unix socket per instance for attach, TCP/WebSocket with discovery for cross-machine) carry the identical envelope. They are deferred; patterns to lift when they arrive: p2pchat's channel event loop and mDNS discovery, nell-engine's peer heartbeat/state tracking.
 
+## JSONL framing: protocol state machine
+
+Every stdio connection between parent and child follows a strict state machine. The rules below apply to both endpoints independently — the parent's reader for the child's stdout and the child's reader for the parent's stdin are separate state-machine instances.
+
+### Writer semantics
+
+- **One serialized writer per endpoint.** The child has a single goroutine writing to stdout; the parent has a single goroutine writing to the child's stdin. All outgoing messages are sent through a channel to the writer goroutine.
+- **Bounded output queue.** The write channel has a configurable capacity (default: 64). When the queue is full, the sender blocks. This provides backpressure: a slow consumer (e.g., a parent not reading child events quickly enough) eventually blocks the child's event publisher.
+- **No interleaving.** Because only one goroutine writes to each fd, concurrent events are serialized at the write channel. No two messages' bytes can interleave.
+
+### Frame rules
+
+| Condition | Parent-side behavior (reading child stdout) | Child-side behavior (reading parent stdin) |
+|---|---|---|
+| **Line exceeds 8 MiB** | Discard the line, increment `oversized_frames` counter. If counter ≥ 3, close pipe (synthesise `failed`). | Discard the line. Fatal: log, exit 1 (the parent is misbehaving). |
+| **Invalid UTF-8** | Discard the line, log at WARN with a hex dump of the first 64 bytes. | Discard the line, exit 1 (the parent should never send non-UTF-8). |
+| **Malformed JSON** (parse error) | Discard the line, log at WARN with the parse error and first 256 bytes of the line. Increment `parse_errors` counter. If counter ≥ 3, close pipe. | Discard the line. Fatal: log, exit 1. |
+| **Unknown message type** (valid JSON, unknown `type`) | Discard the envelope, handle as authority violation (see Parent-child authority validation). | Discard the envelope. Fatal: log, exit 1. |
+| **Duplicate terminal message** (`agent.result` received twice) | Discard the second message, log at WARN. Pipe is already being closed after the first result. | N/A (parent sends only one `agent.assign`). |
+| **Message after terminal** (any message after `agent.result`) | Discard, log at WARN. The pipe is already being closed. | N/A. |
+| **Partial final line** (no trailing LF) | Discard the partial line, log at INFO. Treated as EOF without a result (child crash). | N/A (parent always writes complete lines). |
+| **Empty line** (\n with no content) | Skip silently (tolerated). | Skip silently (tolerated). |
+
+### stdout contamination
+
+If a child process or one of its libraries writes unstructured text to stdout (not a JSON envelope), the parent's reader detects it as either malformed JSON or an unknown message type. The behavior:
+
+- The offending line is discarded.
+- The `parse_errors` or validation counter is incremented.
+- If 3 such lines are seen, the pipe is closed and the child is treated as crashed.
+
+This means a single stray `printf` from a C library does not kill the child, but persistent stdout contamination does. Plugin authors should write diagnostics to stderr, not stdout.
+
+### stderr handling
+
+stderr is **never parsed** for protocol messages. It is treated as diagnostic output only.
+
+- **Rate limiting**: stderr output is limited to 4096 bytes per second, averaged over a 5-second window. Bursts are allowed (a full panic trace will be captured), but sustained high-volume stderr is truncated with a `[... stderr truncated: rate limit exceeded ...]` marker.
+- **Redaction**: stderr lines matching known secret patterns (API keys, tokens matching `sk-[a-zA-Z0-9]{20,}`, `Bearer [a-zA-Z0-9_\-.]{20,}`, and environment-variable-style `KEY=value` patterns for known-sensitive keys) are replaced with `[REDACTED]` before logging.
+- **Maximum total capture**: at most 64 KiB of stderr is retained per instance. Excess is discarded with a truncation marker.
+- stderr output is logged at ERROR level to the parent's logger, tagged with the child's instance ID.
+
+### Endpoint state machine
+
+Each endpoint follows this state machine:
+
+```
+         ┌─────────┐
+         │  INIT   │
+         └────┬────┘
+              │ write agent.ready (child) / read agent.ready (parent)
+              ▼
+         ┌─────────┐
+         │  READY  │ ←── ready_deadline applies (default: 5s from spawn)
+         └────┬────┘
+              │ read agent.assign (child) / write agent.assign (parent)
+              ▼
+         ┌─────────┐
+         │ WORKING │ ←── assign_deadline applies (child must start within 30s)
+         └────┬────┘
+              │ agent.event, agent.usage, agent.cancel flow freely
+              │
+              │ write agent.result (child) / read agent.result (parent)
+              ▼
+         ┌─────────┐
+         │ CLOSING │ ←── shutdown_deadline (default: 5s for final flush)
+         └────┬────┘
+              │ pipe closed
+              ▼
+         ┌─────────┐
+         │  CLOSED │
+         └─────────┘
+```
+
+**Invalid transitions:**
+
+| From | Attempted action | Result |
+|---|---|---|
+| INIT | Write any message other than `agent.ready` | Protocol error. Parent kills spawn. |
+| INIT | Read timeout (ready deadline) | Parent kills spawn with `"child did not send ready"`. |
+| READY | Read timeout (assign deadline) | Child exits with `"parent did not send assign"`. |
+| WORKING | Second `agent.assign` received | Child discards, logs at ERROR, continues. No state change. |
+| WORKING | `agent.cancel` received after `agent.result` sent | Ignored — result takes priority. |
+| CLOSING | Any message received | Discarded, logged at INFO. |
+| CLOSED | Any action | No-op. |
+
+### Protocol error kinds
+
+All protocol errors carry a structured `error_kind` for logging, metrics, and debugging:
+
+| Error kind | Description |
+|---|---|
+| `frame_oversized` | Line exceeded 8 MiB limit |
+| `frame_utf8` | Line contained invalid UTF-8 |
+| `frame_malformed` | Line was not valid JSON |
+| `frame_partial` | Last line had no trailing LF |
+| `protocol_unknown_type` | Valid JSON with unknown `type` field |
+| `protocol_duplicate_result` | `agent.result` received twice |
+| `protocol_post_result_message` | Message received after `agent.result` |
+| `protocol_unexpected_message` | Message type not valid for current state |
+| `protocol_deadline_exceeded` | `ready` or `assign` or `shutdown` deadline elapsed |
+| `protocol_violation` | Authority binding violation (from/to/instance_id mismatch) |
+| `protocol_stderr_flood` | stderr rate limit exceeded |
+
+### Conformance test requirements
+
+| Test case | Expected behavior |
+|---|---|
+| Valid message exchange (ready → assign → events → result) | ✅ Full lifecycle completes |
+| Oversized line (9 MiB) | Discarded, counter incremented, child survives first 2 |
+| Invalid UTF-8 line | Discarded, hex dump logged, parent survives |
+| Malformed JSON line | Discarded, parse error logged, counter incremented |
+| Unknown message type | Discarded, logged at WARN |
+| Duplicate result message | Second discarded, logged at WARN |
+| Message after result | Discarded, logged at WARN |
+| Partial final line (no LF) | Discarded, treated as EOF |
+| Empty line (bare \n) | Skipped silently |
+| Concurrent writes from multiple goroutines | Bytes never interleaved (single serialized writer) |
+| Write queue full (slow consumer) | Writer blocks until queue drains |
+| Ready deadline exceeded | Parent kills spawn with clear error |
+| Assign deadline exceeded | Child exits with clear error |
+| 3 consecutive oversized/malformed frames | Pipe closed, child treated as crashed |
+| stderr exceeds rate limit | Truncated with rate-limit marker |
+| stderr contains API key pattern | Redacted before logging |
+
 ## Message catalogue
 
 ### `agent.ready` (child → parent)

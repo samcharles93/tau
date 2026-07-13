@@ -107,6 +107,8 @@ Specify process-group creation and tree-wide cancellation propagation, ordering,
 
 ### G8. JSONL framing lacks implementation-level failure rules
 
+**Status: RESOLVED (2026-07-13, CAT-98).**
+
 **Ticket: CAT-98**
 
 The wire defines UTF-8 JSONL, an 8 MiB line cap, first-message ordering, and EOF behavior (`03-wire-protocol.md`, lines 18-24), but omits:
