@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.21.1](https://github.com/samcharles93/tau/compare/v0.21.0...v0.21.1) (2026-07-13)
+
+
+### Bug Fixes
+
+* **test:** subscribe before submitting in coordinator budget tests ([74418b7](https://github.com/samcharles93/tau/commit/74418b787b21da2950838b22ada2028aa646711d))
+
 ## [0.21.0](https://github.com/samcharles93/tau/compare/v0.20.0...v0.21.0) (2026-07-13)
 
 
