@@ -181,6 +181,8 @@ Tree traversal should state whether `ListAgentInstances(parentID)` means parent 
 
 ### G14. Root identity override has an unresolved trust boundary
 
+**Status: RESOLVED (2026-07-13, CAT-102).**
+
 **Ticket: CAT-102**
 
 The root `tau` spec can be overridden through normal discovery, with project precedence (`00-overview.md`, decision 1; `02-spawning-and-lifecycle.md`, line 17). Entering an untrusted repository could therefore replace the root agent's prompt while it retains the full registry.

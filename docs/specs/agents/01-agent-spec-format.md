@@ -83,6 +83,50 @@ Notes:
 - `tau` is deliberately spawnable (`disable-model-invocation` unset): a general-purpose child worker is a legitimate delegation target, matching `task.agent.md`'s original intent, and the two should be rationalised during implementation (task may become a thin restriction of tau, or be retired).
 - A user or project `tau.agent.md` overrides the built-in through the existing precedence scheme, which is the sanctioned way to customise the root agent per project. This makes prefix-less resolution of the name `tau` a special case to handle carefully: today bare names only match built-ins; the root startup path should resolve `tau` through full discovery (project > user > built-in) so overrides work. This is the one place bare-name resolution differs, and it must be documented in code.
 
+### Root-spec override trust
+
+A project-level `tau.agent.md` replaces the root agent's identity — its prompt, rules, and behavior — while the root retains the full tool registry. This is a privilege escalation vector: cloning an untrusted repository and running `tau` in it should not silently grant the repository control over the root agent.
+
+**Trust-on-first-use with content binding:**
+
+1. When tau starts and discovers a project-level `tau.agent.md`, it computes `sha256(file_bytes)` of the spec file.
+2. It checks `~/.config/tau/trust.yaml` for a trust entry matching the project path + spec hash.
+3. If no matching entry exists, tau displays the resolved scope, source path, spec hash, and a summary of the override (what changes: tools list, model, prompt body summary). It prompts: `"Project /path/to/.tau/agents/tau.agent.md overrides the root agent. Trust this override? [y/N/a]"`
+   - `y`: trust this specific hash. Persist in `trust.yaml`.
+   - `N`: reject. Fall back to the built-in `tau` spec.
+   - `a`: trust this project directory permanently (any future hash changes will still prompt).
+4. If a matching entry exists but the hash has changed (the spec file was modified), tau treats it as untrusted: displays a diff summary and prompts again.
+5. If no project-level `tau.agent.md` exists or the user rejects it, tau uses the built-in `tau` spec.
+
+**Trust store** (`~/.config/tau/trust.yaml`):
+
+```yaml
+trusted_specs:
+  - project_path: "/home/user/work/my-project"
+    spec_hash: "sha256:abc123def456..."
+    trusted_at: "2026-07-13T01:00:00Z"
+    trust_mode: "hash"          # "hash" = only this hash; "path" = any hash in this project dir
+```
+
+The trust store lives in tau's config directory, NOT in the project repository. A project cannot self-approve by shipping a trust entry.
+
+**Headless mode** (`tau --agent <name>`, `--prompt`, `--no-tui`, CI/non-interactive):
+
+- If a project root-spec override requires approval and there is no TUI to prompt, tau fails with exit code 1 and a clear message: `"project root-spec override at /path/to/tau.agent.md requires trust approval; run interactively first or add to ~/.config/tau/trust.yaml"`.
+- A `--trust-project-root-spec` CLI flag bypasses the prompt and trusts the override immediately for that invocation (useful in CI where the project is known).
+- A `TAU_TRUST_PROJECT_ROOT_SPEC=1` env var provides the same bypass.
+- If the override is already trusted (hash match in `trust.yaml`), headless mode proceeds without prompting.
+
+**Display before execution:**
+
+Every time the root spec is resolved from a non-built-in source (even when trusted), the startup log and TUI status area display:
+
+```
+Resolved root spec: project:/home/user/work/my-project/.tau/agents/tau.agent.md (sha256:abc123de, trusted 2026-07-13)
+```
+
+This makes the override visible throughout the session, not just at startup.
+
 ## Built-in inventory after the change
 
 `init`, `plan`, `research`, `rubber-duck`, `compact`, `summarise`, `tau`.
