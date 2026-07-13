@@ -488,3 +488,90 @@ From the moment cancellation is initiated (Phase 1, step 1), no new spawns are a
 Rules of thumb encoded above: the store is always consistent because the child persists before exiting on every path it controls, and the parent never trusts the child's self-reporting for liveness (pipes and exit codes are the ground truth).
 
 Orphaned instance rows (machine crash, SIGKILL) are detected lazily: any row with `ended_at IS NULL` whose pid is dead may be closed as `failed` by the next process that notices (root startup is a natural sweep point). No daemon is introduced for this.
+
+## Observability
+
+### Structured lifecycle telemetry
+
+Every lifecycle transition emits a structured log record with correlation IDs. These are emitted at INFO level (normal transitions) or ERROR level (failures).
+
+| Transition | Fields |
+|---|---|
+| `spawn_initiated` | `instance_id`, `spec_name`, `parent_instance_id`, `depth`, `task_id` |
+| `spawn_queued` | `instance_id`, `queue_depth`, `queue_position` |
+| `spawn_admitted` | `instance_id`, `queue_wait_ms` |
+| `spawn_rejected` | `instance_id`, `rejection_reason` (`active_limit`/`queue_full`/`total_limit`/`target_violation`) |
+| `child_ready` | `instance_id`, `child_pid`, `protocol_version`, `ready_latency_ms` (time from spawn to ready) |
+| `child_assigned` | `instance_id`, `task_id`, `session_id` |
+| `child_event_forwarded` | `instance_id`, `event_type`, `event_count` (cumulative per child) |
+| `child_usage` | `instance_id`, `turn_number`, `input_tokens`, `output_tokens`, `cached_tokens`, `cost` |
+| `child_result` | `instance_id`, `status`, `total_turns`, `total_input_tokens`, `total_output_tokens`, `total_cost`, `wall_time_ms` |
+| `child_cancelled` | `instance_id`, `cancel_reason`, `grace_phase` (`message`/`sigterm`/`sigkill`) |
+| `protocol_violation` | `instance_id`, `error_kind`, `violation_count` |
+
+All records carry `session_id` (the parent's session), `instance_id`, and `task_id` for correlation. The `instance_id` alone is sufficient to join across the transition sequence.
+
+### Direct vs subtree metrics
+
+Metrics are tagged with a `scope` label to prevent double counting:
+
+| Scope | What it measures |
+|---|---|
+| `direct` | The instance's own provider calls (LLM API calls made by this process) |
+| `subtree` | Direct + the sum of all descendant instances' direct usage |
+| `total` | Direct + subtree (same as subtree for non-leaf nodes) |
+
+Usage events (`child_usage`) always carry `scope: direct`. The parent accumulates subtree totals in a separate metric. The UI and dashboards must query `direct` for per-instance costs and `subtree` for tree-aware costs.
+
+### Resource rejection metrics
+
+When a spawn is rejected due to a resource ceiling:
+
+```json
+{
+  "event": "spawn_rejected",
+  "instance_id": "tau#8q2mfe",
+  "rejection_reason": "active_limit",
+  "current_active": 4,
+  "max_active": 4,
+  "queue_depth": 3,
+  "max_queue": 8
+}
+```
+
+These are emitted at WARN level so operators can detect when limits are being hit in production.
+
+### Redaction contract
+
+The following categories are NEVER logged or included in telemetry payloads:
+
+| Category | Examples |
+|---|---|
+| **Prompts** | User messages, task descriptions, `prompt` field from spawn calls |
+| **Context** | Parent context, forked histories, workspace files |
+| **Tool arguments** | All `ChatToolCall.Arguments` values |
+| **Tool results** | File contents, shell output, search results |
+| **Environment variables** | Any `os.Environ()` value; `TAU_*`, `PATH`, etc. |
+| **Secrets** | API keys, tokens matching `sk-[a-zA-Z0-9]{20,}`, `Bearer` headers, OAuth tokens |
+| **File paths in tool args** | Absolute paths in arguments (may reveal project structure) — redacted to basename only |
+
+**What IS logged:**
+
+- Instance/session/task correlation IDs
+- Lifecycle transition names and timestamps
+- Usage totals (counts, no content)
+- Protocol error kinds and violation counts
+- Resource limit status (active count, queue depth)
+- Exit status and wall-clock duration
+- stderr output (rate-limited and redacted per the wire protocol spec, 03)
+
+### Redaction test requirements
+
+| Scenario | Expected behavior |
+|---|---|
+| Log entry at INFO level | Contains no prompt text, context, tool args, or env values |
+| Log entry at ERROR level | Contains correlation IDs and error kind only; no sensitive payloads |
+| stderr line contains `TAU_API_KEY=sk-abc123` | Redacted to `TAU_API_KEY=[REDACTED]` |
+| stderr line contains `Authorization: Bearer tok_abc123` | Redacted to `Authorization: Bearer [REDACTED]` |
+| Tool call arguments contain absolute paths | Paths redacted to basename in logs |
+| Usage event | Contains only token counts and cost; no prompt or completion text |

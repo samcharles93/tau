@@ -207,6 +207,8 @@ The UI receives the full child event stream and keeps live drill-down state in m
 
 ### G16. Observability and redaction are not requirements
 
+**Status: RESOLVED (2026-07-13, CAT-106).**
+
 **Ticket: CAT-106**
 
 Add structured spawn/ready/assign/cancel/result transition logs with instance/task/session correlation, durations, exit classification, protocol error kind, queue time, and resource-limit rejection. Never log prompts, parent context, tool arguments, environment, or raw stderr by default. Metrics should separate direct usage from subtree aggregate usage to avoid double counting.
