@@ -63,6 +63,7 @@ func (c *Coordinator) handleListSessions(cmd chat.ListSessionsCommand) {
 	c.emit(chat.SessionsListedEvent{
 		Sessions:   summaries,
 		NextCursor: nextCursor,
+		Silent:     cmd.Silent,
 	})
 }
 
@@ -116,6 +117,40 @@ func (c *Coordinator) handleLoadSession(cmd chat.LoadSessionCommand) {
 	c.mu.Unlock()
 
 	c.emit(chat.SessionLoadedEvent{State: loaded})
+}
+
+// handleLoadChildTranscript loads a finished child agent's session for
+// read-only drill-down. Unlike handleLoadSession, it never touches
+// c.sessions — the child is never the runtime's active session.
+func (c *Coordinator) handleLoadChildTranscript(cmd chat.LoadChildTranscriptCommand) {
+	if c.sessionManager == nil {
+		c.emit(chat.ChatRuntimeErrorEvent{
+			SessionID:  cmd.SessionID,
+			Message:    "Session persistence is not available",
+			Fatal:      false,
+			OccurredAt: time.Now().UTC(),
+		})
+		return
+	}
+
+	ctx, cancel := context.WithTimeout(c.ctx, 10*time.Second)
+	defer cancel()
+
+	loaded, err := c.sessionManager.Load(ctx, cmd.SessionID, nil)
+	if err != nil {
+		c.emit(chat.ChatRuntimeErrorEvent{
+			SessionID:  cmd.SessionID,
+			Message:    fmt.Sprintf("loading child transcript: %v", err),
+			Fatal:      false,
+			OccurredAt: time.Now().UTC(),
+		})
+		return
+	}
+
+	c.emit(chat.ChildTranscriptLoadedEvent{
+		SessionID: loaded.SessionID,
+		Messages:  loaded.Messages,
+	})
 }
 
 func (c *Coordinator) handleDeleteSession(cmd chat.DeleteSessionCommand) {
@@ -221,6 +256,12 @@ func (c *Coordinator) handleExportSession(cmd chat.ExportSessionCommand) {
 // persistence is best-effort.
 func (c *Coordinator) persistSession(state chat.ChatSessionState, duration time.Duration) {
 	if c.sessionManager == nil || c.noPersist {
+		return
+	}
+	// Nothing was ever said — persisting an empty row just clutters the
+	// session list (/session, --resume) with entries that can never be
+	// resumed into anything.
+	if len(state.Messages) == 0 {
 		return
 	}
 

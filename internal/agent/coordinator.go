@@ -373,11 +373,39 @@ func (c *Coordinator) loop() {
 	for {
 		select {
 		case <-c.ctx.Done():
+			// Send() only enqueues onto the buffered c.commands channel and
+			// returns — it never waits for the loop to actually process the
+			// command. So a command sent right before shutdown (e.g. the TUI
+			// submitting a prompt, then the user immediately quitting) can
+			// already be sitting in the channel when ctx.Done() fires, and
+			// Go's select picks between two ready cases pseudo-randomly. If
+			// shutdown wins, that command is silently dropped: BeginTurn
+			// never runs, the message never lands in session.state, and
+			// cancelAllSessions persists a stale snapshot that's missing it
+			// — the user sees their message in the TUI (which echoes it
+			// locally, optimistically) but it's gone from the saved session.
+			// Draining first processes anything already enqueued before
+			// treating shutdown as final.
+			c.drainPendingCommands()
 			c.cancelAllSessions()
 			c.turnWG.Wait()
 			return
 		case cmd := <-c.commands:
 			c.handleCommand(cmd)
+		}
+	}
+}
+
+// drainPendingCommands processes every command already sitting in
+// c.commands without blocking — see loop's ctx.Done() case for why this
+// must run before a shutdown snapshot is taken.
+func (c *Coordinator) drainPendingCommands() {
+	for {
+		select {
+		case cmd := <-c.commands:
+			c.handleCommand(cmd)
+		default:
+			return
 		}
 	}
 }
@@ -410,6 +438,8 @@ func (c *Coordinator) handleCommand(cmd chat.ChatCommand) {
 		c.handleListSessions(command)
 	case chat.LoadSessionCommand:
 		c.handleLoadSession(command)
+	case chat.LoadChildTranscriptCommand:
+		c.handleLoadChildTranscript(command)
 	case chat.DeleteSessionCommand:
 		c.handleDeleteSession(command)
 	case chat.ExportSessionCommand:
@@ -924,6 +954,8 @@ func chatCommandLogAttrs(cmd chat.ChatCommand) []any {
 	case chat.RespondInteractivePromptCommand:
 		attrs = append(attrs, "prompt_request_id", c.RequestID, "confirmed", c.Confirmed, "canceled", c.Canceled, "response_bytes", len(c.Response))
 	case chat.LoadSessionCommand:
+		attrs = append(attrs, "session_id", c.SessionID)
+	case chat.LoadChildTranscriptCommand:
 		attrs = append(attrs, "session_id", c.SessionID)
 	case chat.DeleteSessionCommand:
 		attrs = append(attrs, "session_id", c.SessionID)
