@@ -80,6 +80,7 @@ type Skill struct {
 	Compatibility          string            `yaml:"compatibility,omitempty" json:"compatibility,omitempty"`
 	Metadata               map[string]string `yaml:"metadata,omitempty" json:"metadata,omitempty"`
 	AllowedTools           string            `yaml:"allowed-tools,omitempty" json:"allowed_tools,omitempty"`
+	Enabled                bool              `yaml:"enabled" json:"enabled"`
 	Instructions           string            `yaml:"-" json:"instructions"`
 	Path                   string            `yaml:"-" json:"path"`
 	SkillFilePath          string            `yaml:"-" json:"skill_file_path"`
@@ -258,6 +259,13 @@ func Parse(path string) (*Skill, []Diagnostic, error) {
 	skill.SkillFilePath = path
 	skill.Instructions = strings.TrimSpace(body)
 
+	// Default Enabled to true when the key is absent from frontmatter.
+	// Go zero-value for bool is false, so we check the raw YAML to
+	// distinguish absent from explicit false.
+	if !strings.Contains(frontmatter, "enabled:") {
+		skill.Enabled = true
+	}
+
 	diagnostics := validateSkill(&skill)
 	if HasErrors(diagnostics) {
 		return nil, diagnostics, errors.New("skill validation failed")
@@ -266,7 +274,8 @@ func Parse(path string) (*Skill, []Diagnostic, error) {
 	return &skill, diagnostics, nil
 }
 
-// FilterDisabled returns skills not listed in disabledNames.
+// FilterDisabled returns skills not listed in disabledNames and with
+// Enabled != false (absent defaults to true).
 func FilterDisabled(skillSet []*Skill, disabledNames []string) []*Skill {
 	if len(disabledNames) == 0 {
 		return cloneSkills(skillSet)
@@ -287,6 +296,9 @@ func FilterDisabled(skillSet []*Skill, disabledNames []string) []*Skill {
 			continue
 		}
 		if _, blocked := disabled[strings.ToLower(skill.Name)]; blocked {
+			continue
+		}
+		if !skill.Enabled {
 			continue
 		}
 		filtered = append(filtered, cloneSkill(skill))

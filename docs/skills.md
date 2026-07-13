@@ -19,9 +19,7 @@ A skill file is a markdown document with YAML frontmatter:
 ---
 name: my-skill
 description: A concise description of what this skill does
-source: project
-scope: project
-enabled: true
+user-invocable: true
 ---
 
 # My Skill
@@ -33,32 +31,68 @@ Instructions and context for the agent...
 
 | Field | Type | Description |
 | ----- | ---- | ----------- |
-| `name` | string | Unique skill identifier |
+| `name` | string | Unique skill identifier (lowercase, hyphens only) |
 | `description` | string | Human-readable description |
-| `source` | string | Source location (e.g., "project", "user") |
-| `scope` | string | "project" or "user" |
+| `user-invocable` | bool | Whether the user can invoke this skill directly (default: false when absent) |
 | `enabled` | bool | Whether the skill is active (default: true) |
-| `user_invocable` | bool | Whether the user can invoke this skill directly |
-| `priority` | int | Ordering priority (lower = earlier in prompt) |
+| `disable-model-invocation` | bool | Reserved for model-driven skill selection |
+| `license` | string | License name or reference (agentskills.io spec) |
+| `compatibility` | string | Environment requirements (agentskills.io spec) |
+| `metadata` | map[string]string | Arbitrary key-value metadata (agentskills.io spec) |
+| `allowed-tools` | string | Space-separated pre-approved tools (experimental) |
 
-The frontmatter is separated from the body by `---` delimiters and parsed as YAML.
+Fields not in the YAML frontmatter (derived at runtime by the discovery system):
+
+| Field | Source |
+| ----- | ------ |
+| `scope` | Set from the discovery source root (`"user"` or `"project"`) |
+| `priority` | Set from the discovery source's configured priority |
+| `path` | Filesystem path to the skill directory |
+| `skill_file_path` | Absolute path to the SKILL.md file |
+
+The frontmatter is separated from the body by `---` delimiters and parsed as YAML. Unknown keys are silently ignored by the YAML parser.
+
+### Example with optional fields
+
+```markdown
+---
+name: pdf-processing
+description: Extract PDF text, fill forms, merge files. Use when handling PDFs.
+license: Apache-2.0
+compatibility: Requires Python 3.10+
+metadata:
+  author: example-org
+  version: "1.0"
+---
+
+# PDF Processing
+
+Instructions...
+```
 
 ## Skill Type
 
 ```go
 type Skill struct {
-    Name         string
-    Description  string
-    Source       string
-    Scope        Scope       // "project" or "user"
-    Path         string      // filesystem path to the SKILL.md file
-    Body         string      // markdown body (after frontmatter)
-    Enabled      bool
-    UserInvocable bool
-    Priority     int
-    Diagnostics  []Diagnostic
+    Name                   string
+    Description            string
+    UserInvocable          bool              // yaml:"user-invocable"
+    DisableModelInvocation bool              // yaml:"disable-model-invocation"
+    License                string            // yaml:"license"
+    Compatibility          string            // yaml:"compatibility"
+    Metadata               map[string]string // yaml:"metadata"
+    AllowedTools           string            // yaml:"allowed-tools"
+    Enabled                bool              // yaml:"enabled" (default: true)
+    Instructions           string            // body after frontmatter
+    Path                   string            // skill directory (runtime)
+    SkillFilePath          string            // absolute path to SKILL.md (runtime)
+    Scope                  Scope             // "user" or "project" (runtime)
+    SourceRoot             string            // discovery source root (runtime)
+    Priority               int               // from discovery source (runtime)
 }
 ```
+
+All fields match the `agentskills.io` specification for the skill format. Tau adds `user-invocable`, `disable-model-invocation`, and `enabled` as extensions.
 
 ## Discovery
 

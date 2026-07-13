@@ -159,7 +159,7 @@ Every snapshot carries a `snapshot_version` field. The current version is `1`.
   "max_turns": 30,
   "timeout": "10m",
   "disable_model_invocation": false,
-  "user_invocable": true,
+  "user-invocable": true,
   "mode_switcher": true,
   "body": "You are a research agent. ...",
   "timestamp": "2026-07-13T01:00:00Z"
@@ -177,7 +177,7 @@ Every snapshot carries a `snapshot_version` field. The current version is `1`.
 | `model_tier` | From spec `model` field | The tier name (`"fast"`, `"smart"`, `"deep"`) or empty if a concrete model was used. |
 | `effective_tools` | Attenuation intersection at instantiation | `null` = unrestricted; `[]` = no tools. |
 | `max_turns`, `timeout` | Spec frontmatter, defaulted from config | The structural limits in effect at spawn. |
-| `disable_model_invocation`, `user_invocable`, `mode_switcher` | Spec frontmatter | As resolved at instantiation time. |
+| `disable-model-invocation`, `user-invocable`, `mode-switcher` | Spec frontmatter | As resolved at instantiation time. |
 | `timestamp` | `time.Now().UTC()` at snapshot creation | Audit trail; not used for decisions. |
 
 ### Canonical serialization and hashing
