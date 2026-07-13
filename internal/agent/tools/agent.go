@@ -443,6 +443,33 @@ func spawnChildProcess(ctx context.Context, args agentToolArgs, cfg AgentToolCon
 		}
 	}()
 
+	// Concurrency admission (G5): gate the actual process spawn behind the
+	// per-parent/process-wide ceilings. This runs after instantiation (so
+	// the instance row already exists — the instanceClosed defer above
+	// cleans it up on rejection, same as any other pre-start failure) and
+	// before anything OS-level happens, per docs/specs/agents/
+	// 02-spawning-and-lifecycle.md (Concurrency and resource ceilings).
+	deadline := computeSpawnDeadline(args, instResult.Timeout)
+	release, admitErr := acquireSpawnSlot(ctx, cfg.ParentInstanceID, cfg.Agents, deadline)
+	if admitErr != nil {
+		var rej *spawnRejected
+		if errors.As(admitErr, &rej) {
+			detailsJSON, _ := json.Marshal(map[string]any{
+				"status":         "failed",
+				"failure_reason": rej.reason,
+				"queued":         rej.queued,
+			})
+			return Result{
+				Content:   fmt.Sprintf("agent call failed: %s", rej.reason),
+				Details:   detailsJSON,
+				IsError:   true,
+				ErrorKind: "spawn_rejected",
+			}, nil
+		}
+		return agentToolError("spawn admission", admitErr), nil
+	}
+	defer release()
+
 	tauPath := cfg.TauPath
 	if tauPath == "" {
 		tauPath, _ = exec.LookPath("tau") // Best effort — let exec fail if not found.

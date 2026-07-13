@@ -731,3 +731,104 @@ func TestExecuteSpawn_CancellationEscalatesToSIGKILL(t *testing.T) {
 		t.Fatalf("instance not closed after cancellation: %+v", insts)
 	}
 }
+
+// --- G5: concurrency and resource ceilings (end-to-end) ---
+
+// TestExecuteSpawn_RejectedBySpawnAdmission proves the concurrency limiter
+// is actually wired into the spawn path: with the (process-wide)
+// max_active_children/max_queued_spawns ceiling for this parent already
+// saturated, a spawn is rejected with a structured "spawn_rejected" result
+// and the newly-created instance row is closed rather than left "started"
+// forever — it never reaches process exec.
+func TestExecuteSpawn_RejectedBySpawnAdmission(t *testing.T) {
+	dir := t.TempDir()
+	s, err := store.NewSQLiteStore(context.Background(), dir+"/sessions.db", dir)
+	if err != nil {
+		t.Fatalf("NewSQLiteStore: %v", err)
+	}
+	defer s.Close()
+
+	const parentID = "tau#admissiontest"
+	require.NoError(t, s.SaveAgentInstance(context.Background(), store.AgentInstance{
+		ID:        parentID,
+		SpecName:  "tau",
+		SpecHash:  "h",
+		StartedAt: time.Now(),
+	}))
+	require.NoError(t, s.Save(context.Background(), tauchat.ChatSessionState{
+		SessionID: "parent-session",
+		Status:    tauchat.ChatSessionIdle,
+	}, 0))
+
+	agentsCfg := config.AgentsConfig{
+		DefaultMaxDepth:   2,
+		DepthCeiling:      4,
+		MaxActiveChildren: 1,
+		MaxTotalChildren:  16,
+		MaxQueuedSpawns:   1,
+	}
+
+	// Saturate this parent's only active slot, then its only queue slot
+	// (the second acquire blocks in the queue since nothing releases the
+	// active slot), directly against the same global limiter
+	// executeAgentTool uses — so the tool call under test has nowhere to
+	// go and must reject immediately rather than queue or block.
+	release, err := acquireSpawnSlot(context.Background(), parentID, agentsCfg, time.Time{})
+	if err != nil {
+		t.Fatalf("pre-saturating active acquire: %v", err)
+	}
+	defer release()
+	queuedCtx := t.Context()
+	go func() {
+		_, _ = acquireSpawnSlot(queuedCtx, parentID, agentsCfg, time.Time{})
+	}()
+	time.Sleep(50 * time.Millisecond) // let the queued acquire above register
+
+	cfg := AgentToolConfig{
+		CWD:              t.TempDir(),
+		Agents:           agentsCfg,
+		ParentDepth:      0,
+		ParentInstanceID: parentID,
+		Bus:              eventbus.New(),
+		Store:            s,
+		SessionID:        "parent-session",
+		TauPath:          filepath.Join(dir, "no-such-tau-binary"),
+	}
+
+	result, err := executeAgentTool(context.Background(), mustMarshal(map[string]any{
+		"agent":  "tau",
+		"prompt": "do something",
+	}), nil, cfg)
+	if err != nil {
+		t.Fatalf("executeAgentTool returned error: %v", err)
+	}
+	if !result.IsError || result.ErrorKind != "spawn_rejected" {
+		t.Fatalf("expected spawn_rejected, got IsError=%v ErrorKind=%q Content=%q", result.IsError, result.ErrorKind, result.Content)
+	}
+
+	detailsJSON, ok := result.Details.([]byte)
+	if !ok {
+		t.Fatalf("Details is %T, want []byte", result.Details)
+	}
+	var details map[string]any
+	if err := json.Unmarshal(detailsJSON, &details); err != nil {
+		t.Fatalf("unmarshal details: %v", err)
+	}
+	if details["status"] != "failed" {
+		t.Errorf("status = %v, want %q", details["status"], "failed")
+	}
+	if details["queued"] != false {
+		t.Errorf("queued = %v, want false (queue depth is 0)", details["queued"])
+	}
+
+	// The instance row instantiateChild created must be closed as failed,
+	// not left dangling "started" forever (G3 compensation applies here too).
+	insts, err := s.ListAgentInstances(context.Background(), parentID)
+	require.NoError(t, err)
+	if len(insts) != 1 || insts[0].EndedAt.IsZero() {
+		t.Fatalf("instance not closed after spawn rejection: %+v", insts)
+	}
+	if insts[0].ExitStatus != "failed" {
+		t.Errorf("ExitStatus = %q, want %q", insts[0].ExitStatus, "failed")
+	}
+}

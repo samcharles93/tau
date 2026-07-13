@@ -96,22 +96,41 @@ type AgentsConfig struct {
 	// escalating to SIGKILL on the child's process group. Default 5s if
 	// unset.
 	KillGrace time.Duration `yaml:"kill_grace" json:"kill_grace"`
+	// MaxActiveChildren is the per-parent-instance concurrent active child
+	// limit. Excess spawns are queued (if queue has room) or rejected.
+	// Default 4 if unset. See docs/specs/agents/02-spawning-and-lifecycle.md
+	// (Concurrency and resource ceilings).
+	MaxActiveChildren int `yaml:"max_active_children" json:"max_active_children"`
+	// MaxTotalChildren is the process-wide concurrent active child limit
+	// across all agents in this OS process. Spawn is rejected immediately
+	// when exceeded. Default 16 if unset.
+	MaxTotalChildren int `yaml:"max_total_children" json:"max_total_children"`
+	// MaxQueuedSpawns is the per-parent-instance spawn queue depth. Spawn
+	// is rejected with "spawn queue full" when exceeded. Default 8 if
+	// unset.
+	MaxQueuedSpawns int `yaml:"max_queued_spawns" json:"max_queued_spawns"`
 }
 
 func (a *AgentsConfig) UnmarshalYAML(value *yaml.Node) error {
 	type rawAgentsConfig struct {
-		DefaultMaxDepth      int    `yaml:"default_max_depth"`
-		DefaultMaxDepthCamel int    `yaml:"defaultMaxDepth"`
-		DepthCeiling         int    `yaml:"depth_ceiling"`
-		DepthCeilingCamel    int    `yaml:"depthCeiling"`
-		DefaultMaxTurns      int    `yaml:"default_max_turns"`
-		DefaultMaxTurnsCamel int    `yaml:"defaultMaxTurns"`
-		DefaultTimeout       string `yaml:"default_timeout"`
-		DefaultTimeoutCamel  string `yaml:"defaultTimeout"`
-		CancelGrace          string `yaml:"cancel_grace"`
-		CancelGraceCamel     string `yaml:"cancelGrace"`
-		KillGrace            string `yaml:"kill_grace"`
-		KillGraceCamel       string `yaml:"killGrace"`
+		DefaultMaxDepth        int    `yaml:"default_max_depth"`
+		DefaultMaxDepthCamel   int    `yaml:"defaultMaxDepth"`
+		DepthCeiling           int    `yaml:"depth_ceiling"`
+		DepthCeilingCamel      int    `yaml:"depthCeiling"`
+		DefaultMaxTurns        int    `yaml:"default_max_turns"`
+		DefaultMaxTurnsCamel   int    `yaml:"defaultMaxTurns"`
+		DefaultTimeout         string `yaml:"default_timeout"`
+		DefaultTimeoutCamel    string `yaml:"defaultTimeout"`
+		CancelGrace            string `yaml:"cancel_grace"`
+		CancelGraceCamel       string `yaml:"cancelGrace"`
+		KillGrace              string `yaml:"kill_grace"`
+		KillGraceCamel         string `yaml:"killGrace"`
+		MaxActiveChildren      int    `yaml:"max_active_children"`
+		MaxActiveChildrenCamel int    `yaml:"maxActiveChildren"`
+		MaxTotalChildren       int    `yaml:"max_total_children"`
+		MaxTotalChildrenCamel  int    `yaml:"maxTotalChildren"`
+		MaxQueuedSpawns        int    `yaml:"max_queued_spawns"`
+		MaxQueuedSpawnsCamel   int    `yaml:"maxQueuedSpawns"`
 	}
 	var raw rawAgentsConfig
 	if err := value.Decode(&raw); err != nil {
@@ -120,6 +139,9 @@ func (a *AgentsConfig) UnmarshalYAML(value *yaml.Node) error {
 	a.DefaultMaxDepth = firstNonZero(raw.DefaultMaxDepth, raw.DefaultMaxDepthCamel)
 	a.DepthCeiling = firstNonZero(raw.DepthCeiling, raw.DepthCeilingCamel)
 	a.DefaultMaxTurns = firstNonZero(raw.DefaultMaxTurns, raw.DefaultMaxTurnsCamel)
+	a.MaxActiveChildren = firstNonZero(raw.MaxActiveChildren, raw.MaxActiveChildrenCamel)
+	a.MaxTotalChildren = firstNonZero(raw.MaxTotalChildren, raw.MaxTotalChildrenCamel)
+	a.MaxQueuedSpawns = firstNonZero(raw.MaxQueuedSpawns, raw.MaxQueuedSpawnsCamel)
 	if timeout := firstNonEmpty(raw.DefaultTimeout, raw.DefaultTimeoutCamel); timeout != "" {
 		d, err := time.ParseDuration(timeout)
 		if err != nil {
@@ -149,12 +171,15 @@ func (a *AgentsConfig) UnmarshalYAML(value *yaml.Node) error {
 // zero values in the parsed config mean "use the defaults".
 func DefaultAgentsConfig() AgentsConfig {
 	return AgentsConfig{
-		DefaultMaxDepth: 2,
-		DepthCeiling:    4,
-		DefaultMaxTurns: 30,
-		DefaultTimeout:  10 * time.Minute,
-		CancelGrace:     5 * time.Second,
-		KillGrace:       5 * time.Second,
+		DefaultMaxDepth:   2,
+		DepthCeiling:      4,
+		DefaultMaxTurns:   30,
+		DefaultTimeout:    10 * time.Minute,
+		CancelGrace:       5 * time.Second,
+		KillGrace:         5 * time.Second,
+		MaxActiveChildren: 4,
+		MaxTotalChildren:  16,
+		MaxQueuedSpawns:   8,
 	}
 }
 
@@ -1173,6 +1198,15 @@ func mergeAgentsConfigs(globalCfg, localCfg AgentsConfig) AgentsConfig {
 	if localCfg.KillGrace > 0 {
 		merged.KillGrace = localCfg.KillGrace
 	}
+	if localCfg.MaxActiveChildren > 0 {
+		merged.MaxActiveChildren = localCfg.MaxActiveChildren
+	}
+	if localCfg.MaxTotalChildren > 0 {
+		merged.MaxTotalChildren = localCfg.MaxTotalChildren
+	}
+	if localCfg.MaxQueuedSpawns > 0 {
+		merged.MaxQueuedSpawns = localCfg.MaxQueuedSpawns
+	}
 	return merged
 }
 
@@ -1243,6 +1277,15 @@ func Validate(cfg Config) error {
 		cfg.Agents.DefaultMaxDepth > cfg.Agents.DepthCeiling {
 		return fmt.Errorf("agents.default_max_depth (%d) must not exceed agents.depth_ceiling (%d)",
 			cfg.Agents.DefaultMaxDepth, cfg.Agents.DepthCeiling)
+	}
+	if cfg.Agents.MaxActiveChildren < 0 {
+		return errors.New("agents.max_active_children must be >= 0")
+	}
+	if cfg.Agents.MaxTotalChildren < 0 {
+		return errors.New("agents.max_total_children must be >= 0")
+	}
+	if cfg.Agents.MaxQueuedSpawns < 0 {
+		return errors.New("agents.max_queued_spawns must be >= 0")
 	}
 
 	return nil
