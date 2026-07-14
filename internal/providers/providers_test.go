@@ -97,6 +97,54 @@ func TestStateRoundTripAtomic(t *testing.T) {
 	assert.False(t, ok)
 }
 
+func TestStateAPIKeyRoundTrip(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "auth.yaml")
+	s, err := loadStateFrom(path)
+	require.NoError(t, err)
+
+	s.SetAPIKey("deepseek", "sk-deepseek-test")
+	require.NoError(t, s.Save())
+
+	info, err := os.Stat(path)
+	require.NoError(t, err)
+	if runtime.GOOS != "windows" {
+		assert.Equal(t, os.FileMode(0o600), info.Mode().Perm())
+	}
+
+	reloaded, err := loadStateFrom(path)
+	require.NoError(t, err)
+	key, ok := reloaded.APIKeyFor("deepseek")
+	require.True(t, ok)
+	assert.Equal(t, "sk-deepseek-test", key)
+
+	// A managed key does not enable/disable the provider — those lists are
+	// only for suppressing auto-detection of env-var-backed providers.
+	assert.False(t, reloaded.IsEnabled("deepseek"))
+	assert.False(t, reloaded.IsDisabled("deepseek"))
+
+	reloaded.RemoveAPIKey("deepseek")
+	require.NoError(t, reloaded.Save())
+
+	again, err := loadStateFrom(path)
+	require.NoError(t, err)
+	_, ok = again.APIKeyFor("deepseek")
+	assert.False(t, ok)
+}
+
+func TestStateAPIKeyEmptyMapOmittedOnSave(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "auth.yaml")
+	s, err := loadStateFrom(path)
+	require.NoError(t, err)
+
+	s.SetAPIKey("deepseek", "sk-test")
+	s.RemoveAPIKey("deepseek")
+	require.NoError(t, s.Save())
+
+	data, err := os.ReadFile(path)
+	require.NoError(t, err)
+	assert.NotContains(t, string(data), "api_keys")
+}
+
 func TestLoadStateMissingFileIsEmpty(t *testing.T) {
 	s, err := loadStateFrom(filepath.Join(t.TempDir(), "nope.yaml"))
 	require.NoError(t, err)

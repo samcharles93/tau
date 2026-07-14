@@ -55,6 +55,7 @@ type State struct {
 	Enabled  []string                    `yaml:"enabled,omitempty"`
 	Disabled []string                    `yaml:"disabled,omitempty"`
 	OAuth    map[string]OAuthCredentials `yaml:"oauth,omitempty"`
+	APIKeys  map[string]string           `yaml:"api_keys,omitempty"`
 
 	// path records where the state was loaded from so Save can round-trip
 	// without the caller re-deriving it. Not serialized.
@@ -93,6 +94,9 @@ func loadStateFrom(path string) (State, error) {
 	s.path = path
 	if s.OAuth == nil {
 		s.OAuth = map[string]OAuthCredentials{}
+	}
+	if s.APIKeys == nil {
+		s.APIKeys = map[string]string{}
 	}
 	return s, nil
 }
@@ -151,6 +155,9 @@ func (s *State) normalize() {
 	s.Disabled = dedupeSorted(s.Disabled)
 	if len(s.OAuth) == 0 {
 		s.OAuth = nil
+	}
+	if len(s.APIKeys) == 0 {
+		s.APIKeys = nil
 	}
 }
 
@@ -241,4 +248,29 @@ func (s *State) OAuthFor(name string) (OAuthCredentials, bool) {
 // persist.
 func (s *State) RemoveOAuth(name string) {
 	delete(s.OAuth, strings.TrimSpace(name))
+}
+
+// SetAPIKey stores a managed API key for a provider, entered explicitly by the
+// user (e.g. via the setup wizard). It does not persist; call Save.
+func (s *State) SetAPIKey(name, key string) {
+	name = strings.TrimSpace(name)
+	if name == "" {
+		return
+	}
+	if s.APIKeys == nil {
+		s.APIKeys = map[string]string{}
+	}
+	s.APIKeys[name] = key
+}
+
+// APIKeyFor returns the managed API key for a provider, if any.
+func (s *State) APIKeyFor(name string) (string, bool) {
+	key, ok := s.APIKeys[strings.TrimSpace(name)]
+	return key, ok
+}
+
+// RemoveAPIKey deletes the managed API key for a provider. It does not
+// persist.
+func (s *State) RemoveAPIKey(name string) {
+	delete(s.APIKeys, strings.TrimSpace(name))
 }
