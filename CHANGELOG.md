@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.21.2](https://github.com/samcharles93/tau/compare/v0.21.1...v0.21.2) (2026-07-14)
+
+
+### Bug Fixes
+
+* **release:** restore full platform matrix, drop darwin/amd64 exclusion ([35278bc](https://github.com/samcharles93/tau/commit/35278bc64625840e852a1c11c7984331086b94ea))
+
 ## [0.21.1](https://github.com/samcharles93/tau/compare/v0.21.0...v0.21.1) (2026-07-13)
 
 
