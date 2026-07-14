@@ -29,7 +29,15 @@ func TestArchiveName(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, "tau_1.2.3_windows_arm64.zip", name)
 
-	_, err = archiveName("v1.2.3", "darwin", "amd64")
+	name, err = archiveName("v1.2.3", "darwin", "amd64")
+	require.NoError(t, err)
+	require.Equal(t, "tau_1.2.3_darwin_amd64.tar.gz", name)
+
+	name, err = archiveName("v1.2.3", "darwin", "arm64")
+	require.NoError(t, err)
+	require.Equal(t, "tau_1.2.3_darwin_arm64.tar.gz", name)
+
+	_, err = archiveName("", "linux", "amd64")
 	require.Error(t, err)
 }
 

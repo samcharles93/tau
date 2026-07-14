@@ -219,9 +219,6 @@ func archiveName(tag, goos, goarch string) (string, error) {
 	if tag == "" {
 		return "", errors.New("release tag is empty")
 	}
-	if goos == "darwin" && goarch == "amd64" {
-		return "", errors.New("tau does not publish darwin/amd64 release assets")
-	}
 	ext := ".tar.gz"
 	if goos == "windows" {
 		ext = ".zip"
