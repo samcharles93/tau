@@ -82,7 +82,7 @@ func pickProviderThenFirst(want string) func(call int, options []SetupOption) Se
 
 func TestRunSetupNoPrompterErrors(t *testing.T) {
 	sandboxConfigDir(t)
-	err := RunSetup(context.Background(), RunSetupOptions{})
+	_, err := RunSetup(context.Background(), RunSetupOptions{})
 	require.Error(t, err)
 }
 
@@ -90,8 +90,10 @@ func TestRunSetupKeylessProviderPersists(t *testing.T) {
 	sandboxConfigDir(t)
 	prompter := &fakeSetupPrompter{selectPick: pickProviderThenFirst("ollama")}
 
-	err := RunSetup(context.Background(), RunSetupOptions{Prompter: prompter})
+	result, err := RunSetup(context.Background(), RunSetupOptions{Prompter: prompter})
 	require.NoError(t, err)
+	assert.Equal(t, "ollama", result.ProviderID)
+	assert.Equal(t, "Ollama (local)", result.ProviderName)
 
 	state, err := providers.LoadState()
 	require.NoError(t, err)
@@ -109,8 +111,9 @@ func TestRunSetupAPIKeyProviderPersists(t *testing.T) {
 		secretQueue: []string{"sk-test-key"},
 	}
 
-	err := RunSetup(context.Background(), RunSetupOptions{Prompter: prompter})
+	result, err := RunSetup(context.Background(), RunSetupOptions{Prompter: prompter})
 	require.NoError(t, err)
+	assert.Equal(t, "deepseek", result.ProviderID)
 
 	state, err := providers.LoadState()
 	require.NoError(t, err)
@@ -131,7 +134,7 @@ func TestRunSetupAPIKeyEmptyEntryReprompts(t *testing.T) {
 		secretQueue: []string{"  ", "", "sk-test-key"},
 	}
 
-	err := RunSetup(context.Background(), RunSetupOptions{Prompter: prompter})
+	_, err := RunSetup(context.Background(), RunSetupOptions{Prompter: prompter})
 	require.NoError(t, err)
 	assert.Len(t, prompter.secretPrompts, 3, "empty/whitespace-only entries must re-prompt, not error")
 
@@ -146,7 +149,7 @@ func TestRunSetupCanceledAtProviderSelectionWritesNothing(t *testing.T) {
 	sandboxConfigDir(t)
 	prompter := &fakeSetupPrompter{selectErr: ErrSetupCanceled}
 
-	err := RunSetup(context.Background(), RunSetupOptions{Prompter: prompter})
+	_, err := RunSetup(context.Background(), RunSetupOptions{Prompter: prompter})
 	require.ErrorIs(t, err, ErrSetupCanceled)
 
 	state, err := providers.LoadState()
@@ -162,7 +165,7 @@ func TestRunSetupCanceledAtAPIKeyEntryWritesNothing(t *testing.T) {
 		secretErr:  ErrSetupCanceled,
 	}
 
-	err := RunSetup(context.Background(), RunSetupOptions{Prompter: prompter})
+	_, err := RunSetup(context.Background(), RunSetupOptions{Prompter: prompter})
 	require.ErrorIs(t, err, ErrSetupCanceled)
 
 	state, err := providers.LoadState()
@@ -179,6 +182,6 @@ func TestRunSetupUnknownProviderChoiceErrors(t *testing.T) {
 			return SetupOption{Label: "bogus", Value: "not-a-real-provider"}
 		},
 	}
-	err := RunSetup(context.Background(), RunSetupOptions{Prompter: prompter})
+	_, err := RunSetup(context.Background(), RunSetupOptions{Prompter: prompter})
 	require.Error(t, err)
 }

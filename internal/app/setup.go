@@ -55,6 +55,16 @@ type RunSetupOptions struct {
 	Insecure   bool
 }
 
+// SetupResult summarizes a successful RunSetup call, for a caller to print
+// confirmation/guidance without re-deriving what was just configured.
+type SetupResult struct {
+	ProviderID   string
+	ProviderName string
+	// Model is the selected default model ID, or empty if none was selected
+	// (e.g. the provider had no discoverable tool-capable models).
+	Model string
+}
+
 // RunSetup walks the interactive setup flow: select a provider, authenticate
 // it (OAuth device-code, API-key entry, or keyless enable), discover its
 // tool-capable models, select a default, and persist provider+model to the
@@ -62,9 +72,9 @@ type RunSetupOptions struct {
 // chosen provider actually succeeds, and nothing is written at all if the
 // flow is canceled before then. See internal/providers/manage.go for the
 // underlying state transitions.
-func RunSetup(ctx context.Context, opts RunSetupOptions) error {
+func RunSetup(ctx context.Context, opts RunSetupOptions) (SetupResult, error) {
 	if opts.Prompter == nil {
-		return errors.New("setup: no prompter configured")
+		return SetupResult{}, errors.New("setup: no prompter configured")
 	}
 	stdout := opts.Stdout
 	if stdout == nil {
@@ -73,39 +83,39 @@ func RunSetup(ctx context.Context, opts RunSetupOptions) error {
 
 	entry, err := setupSelectProvider(ctx, opts)
 	if err != nil {
-		return err
+		return SetupResult{}, err
 	}
 
 	manage := providers.NewManage(nil)
 	switch entry.Auth {
 	case providers.AuthOAuth:
 		if err := setupAuthenticateOAuth(ctx, stdout, manage, entry); err != nil {
-			return err
+			return SetupResult{}, err
 		}
 	case providers.AuthAPIKey:
 		if err := setupAuthenticateAPIKey(ctx, opts, manage, entry); err != nil {
-			return err
+			return SetupResult{}, err
 		}
 	default: // providers.AuthNone: keyless, e.g. a local Ollama server.
 		if err := manage.Enable(entry.ID); err != nil {
-			return fmt.Errorf("enable %s: %w", entry.DisplayName, err)
+			return SetupResult{}, fmt.Errorf("enable %s: %w", entry.DisplayName, err)
 		}
 	}
 
 	providerCfg, err := setupResolveProviderConfig(ctx, manage, entry.ID)
 	if err != nil {
-		return err
+		return SetupResult{}, err
 	}
 
 	modelID, err := setupSelectModel(ctx, opts, providerCfg)
 	if err != nil {
-		return err
+		return SetupResult{}, err
 	}
 
 	if err := tauconfig.SaveDefaultProviderAndModel(opts.ProjectDir, entry.ID, modelID); err != nil {
-		return fmt.Errorf("save default provider/model: %w", err)
+		return SetupResult{}, fmt.Errorf("save default provider/model: %w", err)
 	}
-	return nil
+	return SetupResult{ProviderID: entry.ID, ProviderName: entry.DisplayName, Model: modelID}, nil
 }
 
 func setupSelectProvider(ctx context.Context, opts RunSetupOptions) (providers.CatalogEntry, error) {

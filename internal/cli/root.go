@@ -61,6 +61,7 @@ func NewRootCommand(version string) *urfavecli.Command {
 		Usage:   "Provider-agnostic OpenAI-compatible chat client",
 		Version: version,
 		Commands: []*urfavecli.Command{
+			setupCmd(),
 			tokenCmd(),
 			modelsCmd(),
 			refreshCmd(),

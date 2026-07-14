@@ -1,7 +1,6 @@
 package cli
 
 import (
-	"bufio"
 	"context"
 	"errors"
 	"fmt"
@@ -32,6 +31,16 @@ type SelectOption struct {
 // started, so a background goroutine reading it may outlive a canceled
 // Select call; that's fine here since the caller is expected to exit shortly
 // after cancellation.
+//
+// Lines are read one byte at a time rather than through a bufio.Scanner:
+// a setup flow calls Select more than once over the same os.Stdin (and may
+// follow it with ReadSecret, which needs raw, unbuffered access to the same
+// fd for term.ReadPassword). A buffered reader created fresh per call reads
+// ahead greedily on piped/non-TTY input and silently discards whatever it
+// buffered past the first newline when that call returns — the next
+// Select/ReadSecret call then never sees it. Reading exactly up to the
+// newline and no further means nothing is ever left stranded in a
+// throwaway buffer.
 func Select(ctx context.Context, w io.Writer, r io.Reader, title string, options []SelectOption) (SelectOption, error) {
 	if len(options) == 0 {
 		return SelectOption{}, errors.New("no options to select from")
@@ -43,22 +52,18 @@ func Select(ctx context.Context, w io.Writer, r io.Reader, title string, options
 		_, _ = fmt.Fprintf(w, "  %d) %s\n", i+1, opt.Label)
 	}
 
-	scanner := bufio.NewScanner(r)
 	for {
-		fmt.Fprint(w, "> ")
+		_, _ = fmt.Fprint(w, "> ")
 
 		lines := make(chan string, 1)
 		errs := make(chan error, 1)
 		go func() {
-			if scanner.Scan() {
-				lines <- scanner.Text()
-				return
-			}
-			if err := scanner.Err(); err != nil {
+			line, err := readLine(r)
+			if err != nil {
 				errs <- err
 				return
 			}
-			errs <- io.EOF
+			lines <- line
 		}()
 
 		select {
@@ -69,10 +74,35 @@ func Select(ctx context.Context, w io.Writer, r io.Reader, title string, options
 		case line := <-lines:
 			n, err := strconv.Atoi(strings.TrimSpace(line))
 			if err != nil || n < 1 || n > len(options) {
-				fmt.Fprintf(w, "please enter a number between 1 and %d\n", len(options))
+				_, _ = fmt.Fprintf(w, "please enter a number between 1 and %d\n", len(options))
 				continue
 			}
 			return options[n-1], nil
+		}
+	}
+}
+
+// readLine reads from r one byte at a time up to and including the next
+// '\n' (stripped, along with any preceding '\r'), so it never consumes more
+// than a single line's worth of bytes from r. A final line with no trailing
+// newline before EOF is still returned; io.EOF is only surfaced when no
+// bytes were read at all.
+func readLine(r io.Reader) (string, error) {
+	var line []byte
+	buf := make([]byte, 1)
+	for {
+		n, err := r.Read(buf)
+		if n > 0 {
+			if buf[0] == '\n' {
+				return strings.TrimSuffix(string(line), "\r"), nil
+			}
+			line = append(line, buf[0])
+		}
+		if err != nil {
+			if errors.Is(err, io.EOF) && len(line) > 0 {
+				return string(line), nil
+			}
+			return "", err
 		}
 	}
 }
