@@ -47,6 +47,11 @@ tasks:
       - pnpm install --prefer-offline
       - pnpm test
 
+  test:install:
+    desc: Test install.sh's checksum verification (bash only; install.ps1 needs Pester on Windows/pwsh)
+    cmds:
+      - bash install_test.sh
+
   check:webui:
     desc: Run Web UI quality checks (test and build type-check)
     dir: internal/webui
