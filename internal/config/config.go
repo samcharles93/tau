@@ -1336,36 +1336,104 @@ func ResolveProvider(cfg Config, providerName string) (ProviderConfig, error) {
 
 // SaveDefaultProviderAndModel writes default_provider and/or default_model
 // to the global Tau config file (config dir + config.yaml) so the selection
-// persists across restarts. Other fields are preserved. The file is created
-// if it doesn't already exist. An empty provider or model string is silently
-// skipped.
+// persists across restarts. Unlike a naive map-based rewrite, this parses the
+// file as a yaml.Node tree and updates or inserts only those two keys in
+// place: every other key, comment, and formatting choice in a hand-edited
+// config survives untouched. The file is created if it doesn't already
+// exist. An empty provider or model string is silently skipped.
 func SaveDefaultProviderAndModel(cwd, provider, model string) error {
 	path := GlobalPath()
 	_ = cwd // kept for API compatibility
 
-	data := make(map[string]any)
-
-	if b, err := os.ReadFile(path); err == nil {
-		_ = yaml.Unmarshal(b, &data)
-	} else if !errors.Is(err, os.ErrNotExist) {
-		return fmt.Errorf("read local config: %w", err)
+	provider = strings.TrimSpace(provider)
+	model = strings.TrimSpace(model)
+	if provider == "" && model == "" {
+		return nil
 	}
 
-	if strings.TrimSpace(provider) != "" {
-		data["default_provider"] = provider
-	}
-	if strings.TrimSpace(model) != "" {
-		data["default_model"] = model
+	var doc yaml.Node
+	data, err := os.ReadFile(path)
+	switch {
+	case err == nil:
+		if strings.TrimSpace(string(data)) != "" {
+			if err := yaml.Unmarshal(data, &doc); err != nil {
+				return fmt.Errorf("parse config %s: %w", path, err)
+			}
+		}
+	case errors.Is(err, os.ErrNotExist):
+		// No existing file: doc stays zero-valued and configMappingNode below
+		// builds a fresh empty mapping for it.
+	default:
+		return fmt.Errorf("read config %s: %w", path, err)
 	}
 
-	out, err := yaml.Marshal(data)
+	root := configMappingNode(&doc)
+	if provider != "" {
+		setMappingString(root, "default_provider", provider)
+	}
+	if model != "" {
+		setMappingString(root, "default_model", model)
+	}
+
+	out, err := yaml.Marshal(&doc)
 	if err != nil {
-		return fmt.Errorf("marshal local config: %w", err)
+		return fmt.Errorf("marshal config %s: %w", path, err)
 	}
-	if err := os.WriteFile(path, out, 0o644); err != nil {
-		return fmt.Errorf("write local config: %w", err)
+
+	dir := filepath.Dir(path)
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		return fmt.Errorf("create config dir: %w", err)
+	}
+	tmp, err := os.CreateTemp(dir, filepath.Base(path)+".*.tmp")
+	if err != nil {
+		return fmt.Errorf("create temp config file: %w", err)
+	}
+	tmpName := tmp.Name()
+	defer os.Remove(tmpName) // no-op once renamed
+	if _, err := tmp.Write(out); err != nil {
+		tmp.Close()
+		return fmt.Errorf("write temp config file: %w", err)
+	}
+	if err := tmp.Close(); err != nil {
+		return fmt.Errorf("close temp config file: %w", err)
+	}
+	if err := os.Rename(tmpName, path); err != nil {
+		return fmt.Errorf("replace config file: %w", err)
 	}
 	return nil
+}
+
+// configMappingNode returns doc's root mapping node, building an empty
+// document and mapping node in place first if doc is zero-valued (parsed
+// from a missing or empty file) or otherwise not already a mapping document.
+func configMappingNode(doc *yaml.Node) *yaml.Node {
+	if doc.Kind != yaml.DocumentNode || len(doc.Content) == 0 {
+		doc.Kind = yaml.DocumentNode
+		doc.Content = []*yaml.Node{{Kind: yaml.MappingNode}}
+	}
+	root := doc.Content[0]
+	if root.Kind != yaml.MappingNode {
+		root.Kind = yaml.MappingNode
+		root.Tag = ""
+		root.Content = nil
+	}
+	return root
+}
+
+// setMappingString sets key to a scalar string value within a YAML mapping
+// node: updates the value node in place (preserving its comments) if key
+// already exists, or appends a new key/value pair at the end otherwise.
+func setMappingString(mapping *yaml.Node, key, value string) {
+	for i := 0; i+1 < len(mapping.Content); i += 2 {
+		if mapping.Content[i].Value == key {
+			mapping.Content[i+1].SetString(value)
+			return
+		}
+	}
+	keyNode := &yaml.Node{Kind: yaml.ScalarNode, Value: key}
+	valueNode := &yaml.Node{Kind: yaml.ScalarNode}
+	valueNode.SetString(value)
+	mapping.Content = append(mapping.Content, keyNode, valueNode)
 }
 
 // ResolveModelMode resolves a tier name or concrete model string to a

@@ -716,3 +716,206 @@ func TestMergeModelModes_LocalOverridesGlobal(t *testing.T) {
 		t.Errorf("local should override global, got provider=%q", merged["fast"].Provider)
 	}
 }
+
+// --- SaveDefaultProviderAndModel ---
+
+// TestSaveDefaultProviderAndModelPreservesCommentsAndFormatting guards
+// against the original bug: SaveDefaultProviderAndModel used to round-trip
+// the whole file through a map[string]any, which discards comments, key
+// order, and every YAML formatting choice. Setup writes defaults during
+// first-run onboarding, so destroying a user's hand-edited config there is
+// unacceptable.
+func TestSaveDefaultProviderAndModelPreservesCommentsAndFormatting(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("TAU_CONFIG_DIR", dir)
+	path := GlobalPath()
+	writeFile(t, path, `# my personal tau config, hand-tuned
+default_provider: acme # was the cheapest option
+
+providers:
+  - name: acme
+    base_url: https://acme.example
+    auth:
+      type: none
+
+ui:
+  show_reasoning: true # I like seeing the thinking
+`)
+
+	if err := SaveDefaultProviderAndModel("", "openrouter", "gpt-5.6"); err != nil {
+		t.Fatalf("SaveDefaultProviderAndModel() error = %v", err)
+	}
+
+	out, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("ReadFile() error = %v", err)
+	}
+	got := string(out)
+	if !containsAll(
+		got,
+		"# my personal tau config, hand-tuned",
+		"# was the cheapest option",
+		"# I like seeing the thinking",
+		"base_url: https://acme.example",
+	) {
+		t.Fatalf("expected comments and other fields to survive, got:\n%s", got)
+	}
+
+	var cfg Config
+	if err := yaml.Unmarshal(out, &cfg); err != nil {
+		t.Fatalf("Unmarshal() error = %v", err)
+	}
+	if cfg.DefaultProvider != "openrouter" {
+		t.Fatalf("DefaultProvider = %q, want openrouter", cfg.DefaultProvider)
+	}
+	if cfg.DefaultModel != "gpt-5.6" {
+		t.Fatalf("DefaultModel = %q, want gpt-5.6", cfg.DefaultModel)
+	}
+	if !cfg.UI.ShowReasoning {
+		t.Fatal("expected ui.show_reasoning to remain true")
+	}
+	if len(cfg.Providers) != 1 || cfg.Providers[0].Name != "acme" {
+		t.Fatalf("expected the acme provider to survive untouched, got %+v", cfg.Providers)
+	}
+}
+
+// TestSaveDefaultProviderAndModelUpdatesOnlyTargetKeys guards against
+// inserting a duplicate default_provider/default_model pair alongside an
+// existing one instead of updating in place.
+func TestSaveDefaultProviderAndModelUpdatesOnlyTargetKeys(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("TAU_CONFIG_DIR", dir)
+	path := GlobalPath()
+	writeFile(t, path, `default_provider: acme
+default_model: acme-fast
+providers:
+  - name: acme
+    base_url: https://acme.example
+    auth:
+      type: none
+`)
+
+	if err := SaveDefaultProviderAndModel("", "openrouter", "gpt-5.6"); err != nil {
+		t.Fatalf("SaveDefaultProviderAndModel() error = %v", err)
+	}
+
+	out, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("ReadFile() error = %v", err)
+	}
+	if n := strings.Count(string(out), "default_provider:"); n != 1 {
+		t.Fatalf("expected exactly one default_provider key, got %d in:\n%s", n, out)
+	}
+	if n := strings.Count(string(out), "default_model:"); n != 1 {
+		t.Fatalf("expected exactly one default_model key, got %d in:\n%s", n, out)
+	}
+
+	var cfg Config
+	if err := yaml.Unmarshal(out, &cfg); err != nil {
+		t.Fatalf("Unmarshal() error = %v", err)
+	}
+	if cfg.DefaultProvider != "openrouter" || cfg.DefaultModel != "gpt-5.6" {
+		t.Fatalf("got provider=%q model=%q, want openrouter/gpt-5.6", cfg.DefaultProvider, cfg.DefaultModel)
+	}
+}
+
+func TestSaveDefaultProviderAndModelCreatesFileWhenMissing(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("TAU_CONFIG_DIR", dir)
+	path := GlobalPath()
+
+	if _, err := os.Stat(path); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("expected no config file yet, stat err = %v", err)
+	}
+
+	if err := SaveDefaultProviderAndModel("", "openrouter", "gpt-5.6"); err != nil {
+		t.Fatalf("SaveDefaultProviderAndModel() error = %v", err)
+	}
+
+	var cfg Config
+	out, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("ReadFile() error = %v", err)
+	}
+	if err := yaml.Unmarshal(out, &cfg); err != nil {
+		t.Fatalf("Unmarshal() error = %v", err)
+	}
+	if cfg.DefaultProvider != "openrouter" || cfg.DefaultModel != "gpt-5.6" {
+		t.Fatalf("got provider=%q model=%q, want openrouter/gpt-5.6", cfg.DefaultProvider, cfg.DefaultModel)
+	}
+}
+
+// TestSaveDefaultProviderAndModelAddsKeysToConfigWithoutThem guards the
+// fourth acceptance criterion: an existing config with no default_provider/
+// default_model yet gets them appended, not rejected or ignored.
+func TestSaveDefaultProviderAndModelAddsKeysToConfigWithoutThem(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("TAU_CONFIG_DIR", dir)
+	path := GlobalPath()
+	writeFile(t, path, `providers:
+  - name: acme
+    base_url: https://acme.example
+    auth:
+      type: none
+`)
+
+	if err := SaveDefaultProviderAndModel("", "openrouter", "gpt-5.6"); err != nil {
+		t.Fatalf("SaveDefaultProviderAndModel() error = %v", err)
+	}
+
+	out, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("ReadFile() error = %v", err)
+	}
+	var cfg Config
+	if err := yaml.Unmarshal(out, &cfg); err != nil {
+		t.Fatalf("Unmarshal() error = %v", err)
+	}
+	if cfg.DefaultProvider != "openrouter" || cfg.DefaultModel != "gpt-5.6" {
+		t.Fatalf("got provider=%q model=%q, want openrouter/gpt-5.6", cfg.DefaultProvider, cfg.DefaultModel)
+	}
+	if len(cfg.Providers) != 1 || cfg.Providers[0].Name != "acme" {
+		t.Fatalf("expected the acme provider to survive untouched, got %+v", cfg.Providers)
+	}
+}
+
+func TestSaveDefaultProviderAndModelEmptyArgsIsNoop(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("TAU_CONFIG_DIR", dir)
+	path := GlobalPath()
+
+	if err := SaveDefaultProviderAndModel("", "", ""); err != nil {
+		t.Fatalf("SaveDefaultProviderAndModel() error = %v", err)
+	}
+	if _, err := os.Stat(path); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("expected no file to be created for empty provider/model, stat err = %v", err)
+	}
+}
+
+func TestSaveDefaultProviderAndModelPartialUpdateLeavesOtherKeyAlone(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("TAU_CONFIG_DIR", dir)
+	path := GlobalPath()
+	writeFile(t, path, `default_provider: acme
+default_model: acme-fast
+`)
+
+	if err := SaveDefaultProviderAndModel("", "", "gpt-5.6"); err != nil {
+		t.Fatalf("SaveDefaultProviderAndModel() error = %v", err)
+	}
+
+	out, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("ReadFile() error = %v", err)
+	}
+	var cfg Config
+	if err := yaml.Unmarshal(out, &cfg); err != nil {
+		t.Fatalf("Unmarshal() error = %v", err)
+	}
+	if cfg.DefaultProvider != "acme" {
+		t.Fatalf("DefaultProvider = %q, want it left as acme when provider arg is empty", cfg.DefaultProvider)
+	}
+	if cfg.DefaultModel != "gpt-5.6" {
+		t.Fatalf("DefaultModel = %q, want gpt-5.6", cfg.DefaultModel)
+	}
+}
