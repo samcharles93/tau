@@ -4,6 +4,12 @@ set -euo pipefail
 REPO="samcharles93/tau"
 BASE_URL="https://github.com/${REPO}/releases"
 
+# Supported OS/ARCH pairs and the "tau_{version}_{os}_{arch}.{ext}" archive
+# name below must match internal/updater/targets.go's SupportedTargets()/
+# ArchiveName() exactly — that's the canonical source. This script can't
+# import Go code (it runs before Go is even on the machine), so keep the
+# two in sync by hand whenever the platform matrix changes.
+
 # ---------- helpers ----------
 bold()   { printf '\033[1m%s\033[0m' "$*"; }
 green()  { printf '\033[32m%s\033[0m' "$*"; }

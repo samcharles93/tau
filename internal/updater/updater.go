@@ -79,7 +79,7 @@ func Run(ctx context.Context, opts Options) (Result, error) {
 		return result, ErrNoUpdate
 	}
 
-	assetName, err := archiveName(rel.TagName, opts.GOOS, opts.GOARCH)
+	assetName, err := ArchiveName(rel.TagName, opts.GOOS, opts.GOARCH)
 	if err != nil {
 		return Result{}, err
 	}
@@ -213,17 +213,6 @@ func fetchBytes(ctx context.Context, opts Options, url string) ([]byte, error) {
 		return nil, fmt.Errorf("download failed: %s: %s", resp.Status, strings.TrimSpace(string(body)))
 	}
 	return io.ReadAll(resp.Body)
-}
-
-func archiveName(tag, goos, goarch string) (string, error) {
-	if tag == "" {
-		return "", errors.New("release tag is empty")
-	}
-	ext := ".tar.gz"
-	if goos == "windows" {
-		ext = ".zip"
-	}
-	return fmt.Sprintf("tau_%s_%s_%s%s", strings.TrimPrefix(tag, "v"), goos, goarch, ext), nil
 }
 
 func findAsset(assets []releaseAsset, name string) (releaseAsset, bool) {

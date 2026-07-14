@@ -18,27 +18,40 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+func TestSupportedTargets(t *testing.T) {
+	t.Parallel()
+
+	targets := SupportedTargets()
+	require.ElementsMatch(t, []Target{
+		{OS: "darwin", Arch: "amd64"},
+		{OS: "darwin", Arch: "arm64"},
+		{OS: "linux", Arch: "amd64"},
+		{OS: "linux", Arch: "arm64"},
+		{OS: "windows", Arch: "amd64"},
+		{OS: "windows", Arch: "arm64"},
+	}, targets, "must match .goreleaser.yaml's builds.goos/goarch matrix")
+}
+
 func TestArchiveName(t *testing.T) {
 	t.Parallel()
 
-	name, err := archiveName("v1.2.3", "linux", "amd64")
-	require.NoError(t, err)
-	require.Equal(t, "tau_1.2.3_linux_amd64.tar.gz", name)
+	// Every supported target produces the expected archive name, with the
+	// right extension per OS.
+	for _, target := range SupportedTargets() {
+		name, err := ArchiveName("v1.2.3", target.OS, target.Arch)
+		require.NoError(t, err)
+		wantExt := ".tar.gz"
+		if target.OS == "windows" {
+			wantExt = ".zip"
+		}
+		require.Equal(t, fmt.Sprintf("tau_1.2.3_%s_%s%s", target.OS, target.Arch, wantExt), name)
+	}
 
-	name, err = archiveName("v1.2.3", "windows", "arm64")
-	require.NoError(t, err)
-	require.Equal(t, "tau_1.2.3_windows_arm64.zip", name)
+	_, err := ArchiveName("", "linux", "amd64")
+	require.Error(t, err, "empty tag must be rejected")
 
-	name, err = archiveName("v1.2.3", "darwin", "amd64")
-	require.NoError(t, err)
-	require.Equal(t, "tau_1.2.3_darwin_amd64.tar.gz", name)
-
-	name, err = archiveName("v1.2.3", "darwin", "arm64")
-	require.NoError(t, err)
-	require.Equal(t, "tau_1.2.3_darwin_arm64.tar.gz", name)
-
-	_, err = archiveName("", "linux", "amd64")
-	require.Error(t, err)
+	_, err = ArchiveName("v1.2.3", "plan9", "amd64")
+	require.ErrorContains(t, err, "unsupported release target", "unsupported target must return a clear error")
 }
 
 func TestChecksumForAsset(t *testing.T) {

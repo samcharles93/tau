@@ -6,6 +6,12 @@ param(
 $repo = "samcharles93/tau"
 $baseUrl = "https://github.com/${repo}/releases"
 
+# Supported ARCH values and the "tau_{version}_windows_{arch}.zip" archive
+# name below must match internal/updater/targets.go's SupportedTargets()/
+# ArchiveName() exactly -- that's the canonical source. This script can't
+# import Go code (it runs before Go is even on the machine), so keep the
+# two in sync by hand whenever the platform matrix changes.
+
 # ---------- detect arch ----------
 $arch = switch ([System.Runtime.InteropServices.RuntimeInformation]::ProcessArchitecture) {
     "X64"    { "amd64" }
