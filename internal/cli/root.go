@@ -2,6 +2,8 @@ package cli
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"log/slog"
 	"os"
 	"path/filepath"
@@ -11,6 +13,7 @@ import (
 	tauconfig "github.com/samcharles93/tau/internal/config"
 	taulogger "github.com/samcharles93/tau/internal/logger"
 	urfavecli "github.com/urfave/cli/v3"
+	"golang.org/x/term"
 )
 
 func initLogging(debug bool, version string) {
@@ -158,6 +161,10 @@ func NewRootCommand(version string) *urfavecli.Command {
 				Usage:   "Do not persist this session to the session store",
 				Sources: urfavecli.EnvVars("TAU_EPHEMERAL"),
 			},
+			&urfavecli.BoolFlag{
+				Name:  "skip-setup",
+				Usage: "Do not auto-launch the setup wizard when no provider is configured",
+			},
 		},
 		Action: func(ctx context.Context, cmd *urfavecli.Command) error {
 			// Support explicit provider:model syntax (preferred), e.g.
@@ -174,7 +181,24 @@ func NewRootCommand(version string) *urfavecli.Command {
 
 			cfg, selectedProvider, err := loadProvider(ctx, cmd)
 			if err != nil {
-				return err
+				switch {
+				case shouldAutoSetup(err, cmd):
+					cfg, selectedProvider, err = autoInvokeSetup(ctx, cmd)
+					if err != nil {
+						if errors.Is(err, app.ErrSetupCanceled) {
+							fmt.Fprintln(os.Stderr, "setup canceled")
+							os.Exit(130)
+						}
+						return err
+					}
+				case shouldSkipSetupContinue(err, cmd):
+					// Fall through into RunChat/RunStdIn with zero providers:
+					// its existing "No models available — use /provider to
+					// enable a provider" startup guidance (run.go) takes over
+					// instead of hard-failing before the user ever sees the app.
+				default:
+					return err
+				}
 			}
 			initLogging(cmd.Bool("verbose") || cfg.Debug, version)
 			opts := chatOptionsFromCmd(cmd, cfg, selectedProvider, version)
@@ -197,6 +221,60 @@ func NewRootCommand(version string) *urfavecli.Command {
 			return app.RunChat(ctx, opts)
 		},
 	}
+}
+
+// shouldAutoSetup reports whether the root command should launch the setup
+// wizard in place of failing outright. Only applies to the specific "zero
+// usable providers" failure (an already-configured-but-unavailable provider
+// should surface its own actionable error, not trigger a wizard the user
+// didn't ask for), and only when a human is actually present to drive it:
+// not suppressed via --skip-setup, not a headless child process, not
+// one-shot --prompt mode (which may be scripted even with a TTY attached),
+// and stdin is a real terminal (so a piped invocation like `echo hi | tau`
+// gets the plain actionable error instead of hanging on a prompt no one can
+// answer).
+func shouldAutoSetup(err error, cmd *urfavecli.Command) bool {
+	if !errors.Is(err, errNoProviders) {
+		return false
+	}
+	if cmd.Bool("skip-setup") || cmd.Bool("child") || cmd.String("prompt") != "" {
+		return false
+	}
+	return term.IsTerminal(int(os.Stdin.Fd()))
+}
+
+// shouldSkipSetupContinue reports whether the root command should proceed
+// into the interactive chat path anyway, with zero configured providers,
+// rather than failing on the "no usable providers" error. Only applies when
+// the user explicitly passed --skip-setup (opting into this on purpose) and
+// only for the genuinely interactive path — a headless --child process or
+// one-shot --prompt run has no coherent way to "continue with guidance" the
+// way the interactive TUI's existing startup messaging does (run.go's
+// RunChat), so those still get the plain actionable error.
+func shouldSkipSetupContinue(err error, cmd *urfavecli.Command) bool {
+	if !errors.Is(err, errNoProviders) {
+		return false
+	}
+	if !cmd.Bool("skip-setup") {
+		return false
+	}
+	return !cmd.Bool("child") && cmd.String("prompt") == ""
+}
+
+// autoInvokeSetup runs the interactive setup wizard, then re-resolves the
+// provider the same way the normal startup path does, so a freshly
+// configured default_provider/default_model (or an explicit --provider/
+// --model flag) is picked up immediately without a second process launch.
+func autoInvokeSetup(ctx context.Context, cmd *urfavecli.Command) (tauconfig.Config, tauconfig.ProviderConfig, error) {
+	fmt.Println(styleBold("No usable provider is configured — let's set one up."))
+	if _, err := app.RunSetup(ctx, app.RunSetupOptions{
+		Prompter: cliSetupPrompter{},
+		Stdout:   os.Stdout,
+		Insecure: cmd.Bool("insecure"),
+	}); err != nil {
+		return tauconfig.Config{}, tauconfig.ProviderConfig{}, err
+	}
+	return loadProvider(ctx, cmd)
 }
 
 func splitProviderModel(raw string) (providerPart string, modelPart string, ok bool) {

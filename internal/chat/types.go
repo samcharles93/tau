@@ -270,11 +270,17 @@ func (c ChatSessionConfig) withDefaults() ChatSessionConfig {
 }
 
 func (c ChatSessionConfig) Validate() error {
-	if strings.TrimSpace(c.Provider.Name) == "" || strings.TrimSpace(c.Provider.BaseURL) == "" {
+	// An empty provider is permitted, the same way an empty model already is:
+	// the session launches unconfigured and the user picks a provider with
+	// /provider (and then a model with /model). A partially-set provider —
+	// one field present, the other missing — is still rejected, since that
+	// can only be a real mistake, not a deliberate "nothing configured yet".
+	name := strings.TrimSpace(c.Provider.Name)
+	baseURL := strings.TrimSpace(c.Provider.BaseURL)
+	if (name == "") != (baseURL == "") {
 		return errors.New("chat provider is required")
 	}
-	// An empty model is permitted: the session launches unselected and the user
-	// picks a model with /model. A model that is set must still be valid.
+	// A model that is set must still be valid, whether or not a provider is.
 	if strings.TrimSpace(c.Model.ID) != "" {
 		if err := c.Model.Validate(); err != nil {
 			return err

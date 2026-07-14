@@ -244,11 +244,17 @@ func unavailableProviderError(resolved []providers.ResolvedProvider, requested, 
 	return ""
 }
 
+// errNoProviders is the sentinel wrapped by noProvidersError, so the root
+// command's auto-setup path (CAT-125) can distinguish "no usable providers
+// at all" from any other loadProvider failure (e.g. an unavailable named
+// provider) without parsing error text.
+var errNoProviders = errors.New("no usable providers")
+
 // noProvidersError explains how to get providers when none are usable, covering
 // both auto-detected env keys and the interactive /provider flow.
 func noProvidersError() error {
-	return fmt.Errorf("no usable providers: set a provider API key (e.g. OPENROUTER_API_KEY), "+
-		"run tau and use /provider to enable a provider, or declare one in %s", config.GlobalPath())
+	return fmt.Errorf("%w: set a provider API key (e.g. OPENROUTER_API_KEY), "+
+		"run tau and use /provider to enable a provider, or declare one in %s", errNoProviders, config.GlobalPath())
 }
 
 func skillsCmd() *urfavecli.Command {

@@ -16,6 +16,35 @@ func testProvider() config.ProviderConfig {
 	}
 }
 
+// TestChatSessionConfigValidateAllowsUnconfiguredProvider guards a real
+// startup path: `tau --skip-setup` on a machine with no providers must be
+// able to launch the TUI showing "use /provider" guidance rather than
+// hard-failing before the app ever appears, the same way an empty model
+// already launches unselected with a "use /model" hint.
+func TestChatSessionConfigValidateAllowsUnconfiguredProvider(t *testing.T) {
+	cfg := ChatSessionConfig{}
+	if err := cfg.Validate(); err != nil {
+		t.Fatalf("Validate() error = %v, want nil for a fully empty (unconfigured) provider+model", err)
+	}
+}
+
+// TestChatSessionConfigValidateRejectsPartialProvider guards against a
+// config with only one of Name/BaseURL set slipping through as if it were
+// deliberately "unconfigured" — that combination can only be a real mistake
+// (e.g. a bug upstream partially populating the struct), not a user
+// choosing to configure a provider later.
+func TestChatSessionConfigValidateRejectsPartialProvider(t *testing.T) {
+	nameOnly := ChatSessionConfig{Provider: config.ProviderConfig{Name: "openai"}}
+	if err := nameOnly.Validate(); err == nil {
+		t.Fatal("Validate() error = nil, want an error for Name set without BaseURL")
+	}
+
+	urlOnly := ChatSessionConfig{Provider: config.ProviderConfig{BaseURL: "https://api.openai.com/v1"}}
+	if err := urlOnly.Validate(); err == nil {
+		t.Fatal("Validate() error = nil, want an error for BaseURL set without Name")
+	}
+}
+
 func TestNewChatSessionStateDefaultsAndRequest(t *testing.T) {
 	now := time.Date(2026, 5, 21, 10, 0, 0, 0, time.UTC)
 	session, err := NewChatSessionState("s1", ChatSessionConfig{
