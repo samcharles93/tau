@@ -3,7 +3,6 @@ package tui
 import (
 	"context"
 	"fmt"
-	"os"
 	"slices"
 	"strings"
 
@@ -87,34 +86,12 @@ func (c *inlineChat) handleProviderToggle(name string) {
 		return
 	}
 
-	state, err := providers.LoadState()
+	enabled, warning, err := providers.NewManage(nil).Toggle(entry.ID)
 	if err != nil {
-		c.engine.PrintAbove("%s %s", c.grey("✗"), "load provider state: "+err.Error())
+		c.engine.PrintAbove("%s %s", c.grey("✗"), err.Error())
 		return
 	}
-
-	enabled := false
-	for _, e := range providers.Menu(c.providerCfg(), state, nil) {
-		if e.ID == entry.ID {
-			enabled = e.Enabled
-			break
-		}
-	}
-
-	var warning string
-	if enabled {
-		state.Disable(entry.ID)
-	} else {
-		state.Enable(entry.ID)
-		if envVar, present := entry.DetectEnvVar(os.Getenv); !present && envVar != "" {
-			warning = "no API key found — set $" + envVar
-		}
-	}
-	if err := state.Save(); err != nil {
-		c.engine.PrintAbove("%s %s", c.grey("✗"), "save provider state: "+err.Error())
-		return
-	}
-	c.refreshAfterProviderChange(entry.DisplayName, !enabled, warning)
+	c.refreshAfterProviderChange(entry.DisplayName, enabled, warning)
 }
 
 // handleProviderLogin handles /provider login <name> [enterprise-domain].
@@ -155,15 +132,8 @@ func (c *inlineChat) handleProviderLogin(args string) {
 			c.engine.PrintAbove("%s %s", c.grey("✗"), providerui.FailureMessage(entry.DisplayName, err))
 			return
 		}
-		state, err := providers.LoadState()
-		if err != nil {
-			c.engine.PrintAbove("%s %s", c.grey("✗"), "load provider state: "+err.Error())
-			return
-		}
-		state.Enable(entry.ID)
-		state.SetOAuth(entry.ID, creds)
-		if err := state.Save(); err != nil {
-			c.engine.PrintAbove("%s %s", c.grey("✗"), "save provider state: "+err.Error())
+		if err := providers.NewManage(nil).LoginComplete(entry.ID, creds); err != nil {
+			c.engine.PrintAbove("%s %s", c.grey("✗"), err.Error())
 			return
 		}
 		c.refreshAfterProviderChange(entry.DisplayName, true, "")
@@ -196,15 +166,8 @@ func (c *inlineChat) handleProviderLogout(name string) {
 		c.engine.PrintAbove("%s %s", c.grey("✗"), fmt.Sprintf("unknown provider %q", name))
 		return
 	}
-	state, err := providers.LoadState()
-	if err != nil {
-		c.engine.PrintAbove("%s %s", c.grey("✗"), "load provider state: "+err.Error())
-		return
-	}
-	state.Disable(entry.ID)
-	state.RemoveOAuth(entry.ID)
-	if err := state.Save(); err != nil {
-		c.engine.PrintAbove("%s %s", c.grey("✗"), "save provider state: "+err.Error())
+	if err := providers.NewManage(nil).Logout(entry.ID); err != nil {
+		c.engine.PrintAbove("%s %s", c.grey("✗"), err.Error())
 		return
 	}
 	c.refreshAfterProviderChange(entry.DisplayName, false, "")
@@ -273,7 +236,7 @@ func (c *inlineChat) refreshAfterProviderChange(displayName string, enabled bool
 // providerCfg re-resolves provider config. inlineChat (the legacy TUI) has no
 // request-scoped context to thread through, so this uses Background directly.
 func (c *inlineChat) providerCfg() config.Config {
-	cfg, _, _ := providers.Effective(context.Background())
+	cfg, _, _ := providers.NewManage(nil).Effective(context.Background())
 	return cfg
 }
 

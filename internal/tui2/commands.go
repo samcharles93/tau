@@ -490,32 +490,11 @@ func (m *model) providerToggle(name string) tea.Cmd {
 		return m.setNotification(fmt.Sprintf("%s uses OAuth — use /provider login %s", entry.DisplayName, entry.ID))
 	}
 
-	state, err := providers.LoadState()
+	enabled, warning, err := providers.NewManage(nil).Toggle(entry.ID)
 	if err != nil {
-		return m.setNotification("load provider state: " + err.Error())
+		return m.setNotification(err.Error())
 	}
-
-	enabled := false
-	for _, e := range providers.Menu(providerCfg(m.ctx), state, nil) {
-		if e.ID == entry.ID {
-			enabled = e.Enabled
-			break
-		}
-	}
-
-	var warning string
-	if enabled {
-		state.Disable(entry.ID)
-	} else {
-		state.Enable(entry.ID)
-		if envVar, present := entry.DetectEnvVar(os.Getenv); !present && envVar != "" {
-			warning = "no API key found — set $" + envVar
-		}
-	}
-	if err := state.Save(); err != nil {
-		return m.setNotification("save provider state: " + err.Error())
-	}
-	return m.refreshAfterProviderChange(entry.DisplayName, !enabled, warning)
+	return m.refreshAfterProviderChange(entry.DisplayName, enabled, warning)
 }
 
 // providerLogin handles /provider login <name> [enterprise-domain].
@@ -583,13 +562,7 @@ func (m *model) providerLoginPoll(providerID, displayName string, session provid
 		if err != nil {
 			return providerLoginResultMsg{displayName: displayName, err: err}
 		}
-		state, err := providers.LoadState()
-		if err != nil {
-			return providerLoginResultMsg{displayName: displayName, err: err}
-		}
-		state.Enable(providerID)
-		state.SetOAuth(providerID, creds)
-		if err := state.Save(); err != nil {
+		if err := providers.NewManage(nil).LoginComplete(providerID, creds); err != nil {
 			return providerLoginResultMsg{displayName: displayName, err: err}
 		}
 		if m.refresh == nil {
@@ -611,14 +584,8 @@ func (m *model) providerLogout(name string) tea.Cmd {
 	if !ok {
 		return m.setNotification(fmt.Sprintf("unknown provider %q", name))
 	}
-	state, err := providers.LoadState()
-	if err != nil {
-		return m.setNotification("load provider state: " + err.Error())
-	}
-	state.Disable(entry.ID)
-	state.RemoveOAuth(entry.ID)
-	if err := state.Save(); err != nil {
-		return m.setNotification("save provider state: " + err.Error())
+	if err := providers.NewManage(nil).Logout(entry.ID); err != nil {
+		return m.setNotification(err.Error())
 	}
 	return m.refreshAfterProviderChange(entry.DisplayName, false, "")
 }
@@ -672,7 +639,7 @@ type providerLoginResultMsg struct {
 // providerCfg/providerState mirror internal/tui/inline_providers.go's helpers
 // of the same name.
 func providerCfg(ctx context.Context) config.Config {
-	cfg, _, _ := providers.Effective(ctx)
+	cfg, _, _ := providers.NewManage(nil).Effective(ctx)
 	return cfg
 }
 
