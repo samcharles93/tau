@@ -128,6 +128,54 @@ func TestManageLogoutUnknownProvider(t *testing.T) {
 	require.Error(t, err)
 }
 
+func TestManageStoreAPIKeyEnablesAndPersists(t *testing.T) {
+	sandboxConfigDir(t)
+	m := NewManage(nil)
+
+	require.NoError(t, m.StoreAPIKey("deepseek", "sk-test"))
+
+	state, err := LoadState()
+	require.NoError(t, err)
+	assert.True(t, state.IsEnabled("deepseek"))
+	key, ok := state.APIKeyFor("deepseek")
+	require.True(t, ok)
+	assert.Equal(t, "sk-test", key)
+}
+
+func TestManageStoreAPIKeyRejectsEmptyKey(t *testing.T) {
+	sandboxConfigDir(t)
+	m := NewManage(nil)
+	require.Error(t, m.StoreAPIKey("deepseek", "   "))
+}
+
+func TestManageStoreAPIKeyRejectsNonAPIKeyProvider(t *testing.T) {
+	sandboxConfigDir(t)
+	m := NewManage(nil)
+	require.Error(t, m.StoreAPIKey("github-copilot", "ghu_x"))
+}
+
+func TestManageEnableIsIdempotentUnlikeToggle(t *testing.T) {
+	sandboxConfigDir(t)
+	m := NewManage(fakeEnv(nil))
+
+	require.NoError(t, m.Enable("ollama"))
+	state, err := LoadState()
+	require.NoError(t, err)
+	assert.True(t, state.IsEnabled("ollama"))
+
+	// A second Enable call must not flip it back off, unlike Toggle.
+	require.NoError(t, m.Enable("ollama"))
+	state, err = LoadState()
+	require.NoError(t, err)
+	assert.True(t, state.IsEnabled("ollama"))
+}
+
+func TestManageEnableRejectsOAuthProvider(t *testing.T) {
+	sandboxConfigDir(t)
+	m := NewManage(nil)
+	require.Error(t, m.Enable("github-copilot"))
+}
+
 func TestManageEffectiveUsesInjectedEnv(t *testing.T) {
 	sandboxConfigDir(t)
 	m := NewManage(fakeEnv(map[string]string{"DEEPSEEK_API_KEY": "sk-d"}))

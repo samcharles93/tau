@@ -2,6 +2,7 @@ package providers
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 
@@ -123,6 +124,61 @@ func (m *Manage) Logout(name string) error {
 	state.Disable(entry.ID)
 	state.RemoveOAuth(entry.ID)
 	state.RemoveAPIKey(entry.ID)
+	if err := state.Save(); err != nil {
+		return fmt.Errorf("save provider state: %w", err)
+	}
+	return nil
+}
+
+// StoreAPIKey persists a managed API key for a provider and enables it.
+// Unlike Toggle, this always ends with the provider enabled regardless of
+// its current state — appropriate for a setup flow where the user has just
+// explicitly chosen and authenticated this provider, not a flip-flop toggle.
+func (m *Manage) StoreAPIKey(name, key string) error {
+	name = strings.ToLower(strings.TrimSpace(name))
+	entry, ok := Lookup(name)
+	if !ok {
+		return fmt.Errorf("unknown provider %q", name)
+	}
+	if entry.Auth != AuthAPIKey {
+		return fmt.Errorf("%s doesn't use an API key", entry.DisplayName)
+	}
+	key = strings.TrimSpace(key)
+	if key == "" {
+		return errors.New("API key must not be empty")
+	}
+
+	state, err := LoadState()
+	if err != nil {
+		return fmt.Errorf("load provider state: %w", err)
+	}
+	state.Enable(entry.ID)
+	state.SetAPIKey(entry.ID, key)
+	if err := state.Save(); err != nil {
+		return fmt.Errorf("save provider state: %w", err)
+	}
+	return nil
+}
+
+// Enable turns on a non-OAuth provider unconditionally — unlike Toggle, it
+// never flips an already-active provider off, so it's safe to call
+// idempotently from a setup flow when the user (re-)selects a keyless or
+// env-var-backed provider they may already have enabled.
+func (m *Manage) Enable(name string) error {
+	name = strings.ToLower(strings.TrimSpace(name))
+	entry, ok := Lookup(name)
+	if !ok {
+		return fmt.Errorf("unknown provider %q", name)
+	}
+	if entry.Auth == AuthOAuth {
+		return fmt.Errorf("%s uses OAuth login — use LoginComplete", entry.DisplayName)
+	}
+
+	state, err := LoadState()
+	if err != nil {
+		return fmt.Errorf("load provider state: %w", err)
+	}
+	state.Enable(entry.ID)
 	if err := state.Save(); err != nil {
 		return fmt.Errorf("save provider state: %w", err)
 	}
