@@ -22,6 +22,10 @@ const (
 	SourceEnv Source = "env"
 	// SourceOAuth is a catalog provider authenticated through a login flow.
 	SourceOAuth Source = "oauth"
+	// SourceManaged is a catalog API-key provider backed by a key stored via
+	// the setup wizard or `tau provider login`, used when no env var is
+	// active for that provider.
+	SourceManaged Source = "managed"
 )
 
 // ResolvedProvider is an effective provider tau can build a runtime for, plus
@@ -90,7 +94,10 @@ func ResolveWithRefresh(ctx context.Context, cfg config.Config, state State, get
 
 	// 2. Catalog API-key providers: auto-active when their env var is present
 	//    (unless explicitly disabled), plus any the user enabled explicitly.
-	//    Config-declared providers win and are skipped here.
+	//    Config-declared providers win and are skipped here. Entries that
+	//    aren't env-active but carry a stored managed key are deferred to
+	//    step 3, so managed providers always sort after env providers.
+	var managedCandidates []CatalogEntry
 	for _, entry := range catalog {
 		if entry.Auth == AuthOAuth {
 			continue
@@ -102,6 +109,9 @@ func ResolveWithRefresh(ctx context.Context, cfg config.Config, state State, get
 		available := present || entry.Auth == AuthNone
 		active := (available && !state.IsDisabled(entry.ID)) || state.IsEnabled(entry.ID)
 		if !active {
+			if entry.Auth == AuthAPIKey {
+				managedCandidates = append(managedCandidates, entry)
+			}
 			continue
 		}
 		msg := ""
@@ -117,7 +127,23 @@ func ResolveWithRefresh(ctx context.Context, cfg config.Config, state State, get
 		})
 	}
 
-	// 3. OAuth providers with stored credentials.
+	// 3. Managed API-key providers: a stored key used as a fallback when no
+	//    env var is active for that provider. Env always wins over a managed
+	//    key — it's the session-scoped, easily-rotated override, while a
+	//    managed key is a persisted default that could go stale.
+	for _, entry := range managedCandidates {
+		key, ok := state.APIKeyFor(entry.ID)
+		if !ok || strings.TrimSpace(key) == "" {
+			continue
+		}
+		out = append(out, ResolvedProvider{
+			Config:    managedProviderConfig(entry, key),
+			Source:    SourceManaged,
+			Available: true,
+		})
+	}
+
+	// 4. OAuth providers with stored credentials.
 	oauthIDs := make([]string, 0, len(state.OAuth))
 	for id := range state.OAuth {
 		oauthIDs = append(oauthIDs, id)
@@ -185,6 +211,16 @@ func Menu(cfg config.Config, state State, getenv func(string) string) []MenuEntr
 			entry.Available = available
 			// Active = auto-on (key present, not disabled) or explicitly enabled.
 			entry.Enabled = (available && !state.IsDisabled(e.ID)) || state.IsEnabled(e.ID)
+			// A stored managed key is a fallback when no env var is active —
+			// env always wins, matching Resolve's precedence.
+			if !entry.Enabled && e.Auth == AuthAPIKey {
+				if _, ok := state.APIKeyFor(e.ID); ok {
+					entry.Source = SourceManaged
+					entry.Available = true
+					entry.Enabled = true
+					entry.Message = "stored key"
+				}
+			}
 		}
 		out = append(out, entry)
 	}
@@ -204,6 +240,22 @@ func apiKeyProviderConfig(entry CatalogEntry, envVar string) config.ProviderConf
 		BaseURL: entry.BaseURL,
 		Headers: cloneStringMap(entry.Headers),
 		Auth:    auth,
+	}
+}
+
+// managedProviderConfig builds a config.ProviderConfig for a catalog API-key
+// provider whose credential is a key stored via setup rather than an
+// environment variable.
+func managedProviderConfig(entry CatalogEntry, key string) config.ProviderConfig {
+	return config.ProviderConfig{
+		Name:    entry.ID,
+		Type:    entry.Class,
+		BaseURL: entry.BaseURL,
+		Headers: cloneStringMap(entry.Headers),
+		Auth: config.AuthConfig{
+			Type:   config.AuthTypeAPIKey,
+			APIKey: key,
+		},
 	}
 }
 

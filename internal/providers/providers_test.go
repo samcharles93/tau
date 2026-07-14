@@ -204,6 +204,92 @@ func TestResolvePrecedence(t *testing.T) {
 	assert.Equal(t, "ctok", byName["anthropic"].Config.Auth.APIKey)
 }
 
+func TestResolveManagedKeyPrecedence(t *testing.T) {
+	cfg := config.Config{Providers: []config.ProviderConfig{
+		{Name: "mistral", Auth: config.AuthConfig{Type: config.AuthTypeAPIKey, APIKeyEnv: "MISTRAL_API_KEY"}},
+	}}
+	state := State{
+		Disabled: []string{"groq"}, // suppresses groq's env auto-detection only
+		APIKeys: map[string]string{
+			"deepseek":   "sk-deepseek-managed",   // no env var -> managed wins
+			"openrouter": "sk-openrouter-managed", // env var also set -> env wins
+			"groq":       "sk-groq-managed",       // env disabled -> managed key still independent
+			"mistral":    "sk-mistral-managed",    // config-declared -> config wins outright
+		},
+	}
+	env := fakeEnv(map[string]string{
+		"OPENROUTER_API_KEY": "sk-openrouter-env",
+		"GROQ_API_KEY":       "sk-groq-env",
+	})
+
+	got := Resolve(context.Background(), cfg, state, env)
+	byName := map[string]ResolvedProvider{}
+	for _, p := range got {
+		byName[p.Config.Name] = p
+	}
+
+	assert.Equal(t, SourceManaged, byName["deepseek"].Source)
+	assert.True(t, byName["deepseek"].Available)
+	assert.Equal(t, "sk-deepseek-managed", byName["deepseek"].Config.Auth.APIKey)
+
+	assert.Equal(t, SourceEnv, byName["openrouter"].Source, "env must win over a managed key for the same provider")
+	assert.Equal(t, 1, countByName(got, "openrouter"), "env winning must not also emit a managed duplicate")
+
+	assert.Equal(t, SourceManaged, byName["groq"].Source, "Disabled only suppresses env auto-detection, not a managed key")
+	assert.True(t, byName["groq"].Available)
+
+	assert.Equal(t, SourceConfig, byName["mistral"].Source, "hand-written config wins over env and managed both")
+	assert.Equal(t, 1, countByName(got, "mistral"), "config winning must not also emit a managed duplicate")
+
+	envIdx, managedIdx := -1, -1
+	for i, p := range got {
+		if p.Config.Name == "openrouter" && envIdx == -1 {
+			envIdx = i
+		}
+		if p.Config.Name == "deepseek" && managedIdx == -1 {
+			managedIdx = i
+		}
+	}
+	require.NotEqual(t, -1, envIdx)
+	require.NotEqual(t, -1, managedIdx)
+	assert.Less(t, envIdx, managedIdx, "managed providers must sort after env providers")
+}
+
+func countByName(resolved []ResolvedProvider, name string) int {
+	n := 0
+	for _, p := range resolved {
+		if p.Config.Name == name {
+			n++
+		}
+	}
+	return n
+}
+
+func TestMenuManagedKey(t *testing.T) {
+	cfg := config.Config{}
+	state := State{
+		APIKeys: map[string]string{
+			"deepseek":   "sk-deepseek-managed",
+			"openrouter": "sk-openrouter-managed",
+		},
+	}
+	env := fakeEnv(map[string]string{"OPENROUTER_API_KEY": "sk-openrouter-env"})
+
+	menu := Menu(cfg, state, env)
+	byID := map[string]MenuEntry{}
+	for _, e := range menu {
+		byID[e.ID] = e
+	}
+
+	assert.Equal(t, SourceManaged, byID["deepseek"].Source)
+	assert.True(t, byID["deepseek"].Enabled)
+	assert.True(t, byID["deepseek"].Available)
+	assert.Equal(t, "stored key", byID["deepseek"].Message)
+
+	assert.Equal(t, SourceEnv, byID["openrouter"].Source, "env must win over a managed key in the menu too")
+	assert.Empty(t, byID["openrouter"].Message)
+}
+
 func TestMenuReflectsState(t *testing.T) {
 	cfg := config.Config{}
 	state := State{
