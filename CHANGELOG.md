@@ -1,5 +1,23 @@
 # Changelog
 
+## [0.22.0](https://github.com/samcharles93/tau/compare/v0.21.2...v0.22.0) (2026-07-16)
+
+
+### Features
+
+* **app:** add setup orchestration for provider auth and model selection ([6f7ddb9](https://github.com/samcharles93/tau/commit/6f7ddb9fbbb3ff14dc2325d808f7e2006c4d7d04))
+* **cli:** add tau setup command wrapping shared setup orchestration ([45026fe](https://github.com/samcharles93/tau/commit/45026fe812d979778f2397378e9c25e486bbb9f9))
+* **cli:** add terminal selector and secret input adapters for setup prompts ([9ff62f4](https://github.com/samcharles93/tau/commit/9ff62f46b1db3d2b75a8accf2bb5a3f16c422fae))
+* **cli:** auto-invoke setup for first-run terminal sessions ([f4abdb2](https://github.com/samcharles93/tau/commit/f4abdb2f6ce16667ffce62105931a81f1c39ab29))
+* **providers:** add managed API-key storage to auth.yaml state ([b85e586](https://github.com/samcharles93/tau/commit/b85e586d0537ff6876a8a84bb894d905e0f023cb))
+* **providers:** add managed-key source to provider resolution and menus ([638193e](https://github.com/samcharles93/tau/commit/638193eafb2d8332476d5af258c4be87be8b017d))
+
+
+### Bug Fixes
+
+* **config:** make default-provider/model persistence preserve YAML comments ([8da0aa7](https://github.com/samcharles93/tau/commit/8da0aa76b06b0ece7da6bcddc039af90ea1fb689))
+* **installer:** add checksum verification to install.sh and install.ps1 ([30442c0](https://github.com/samcharles93/tau/commit/30442c02200fa96a7dd52127bee59cc898034b3b))
+
 ## [0.21.2](https://github.com/samcharles93/tau/compare/v0.21.1...v0.21.2) (2026-07-14)
 
 
