@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.23.0](https://github.com/samcharles93/tau/compare/v0.22.0...v0.23.0) (2026-07-16)
+
+
+### Features
+
+* **cli:** add provider command group with list, login, and logout subcommands ([e3e12b7](https://github.com/samcharles93/tau/commit/e3e12b7f6533f7196b30060256f7d17983af16c5))
+
 ## [0.22.0](https://github.com/samcharles93/tau/compare/v0.21.2...v0.22.0) (2026-07-16)
 
 
