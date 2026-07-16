@@ -137,7 +137,7 @@ func (r *Reader) ReadMessage() ([]byte, error) {
 		}
 		return nil, io.EOF
 	}
-	// Copy the bytes — the scanner reuses its buffer.
+	// Copy the bytes - the scanner reuses its buffer.
 	data := r.scanner.Bytes()
 	line := make([]byte, len(data))
 	copy(line, data)

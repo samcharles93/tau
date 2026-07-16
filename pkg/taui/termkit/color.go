@@ -1,6 +1,6 @@
 // Package termkit provides zero-dependency ANSI terminal rendering primitives.
-// It is designed for CLI/TUI apps that need polished inline output — spinners,
-// progress bars, hyperlinks, and three-state tool-call lifecycles — without
+// It is designed for CLI/TUI apps that need polished inline output - spinners,
+// progress bars, hyperlinks, and three-state tool-call lifecycles - without
 // coupling to any particular TUI framework.
 //
 // The package respects NO_COLOR (https://no-color.org) and automatically
@@ -16,7 +16,7 @@ import (
 )
 
 // ─────────────────────────────────────────────────────────────────────────────
-// ANSI escape sequences — CSI ("\033[") and OSC ("\033]")
+// ANSI escape sequences - CSI ("\033[") and OSC ("\033]")
 // ─────────────────────────────────────────────────────────────────────────────
 
 const (
@@ -30,7 +30,7 @@ const (
 // Color is an RGB triple for truecolor SGR sequences.
 type Color [3]uint8
 
-// Common colours — keep the palette small; callers can construct their own.
+// Common colours - keep the palette small; callers can construct their own.
 var (
 	ColorAmber    = Color{255, 158, 0}
 	ColorGreen    = Color{0, 200, 83}
@@ -87,7 +87,7 @@ func DisableColor() {
 	colorChecked = true
 }
 
-// ForceColor forces colour on — useful in tests that run under a pipe.
+// ForceColor forces colour on - useful in tests that run under a pipe.
 func ForceColor() {
 	colorMu.Lock()
 	defer colorMu.Unlock()

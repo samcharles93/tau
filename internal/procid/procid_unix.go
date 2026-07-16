@@ -10,7 +10,7 @@ import (
 
 // CaptureProcessStartNS has no implementation on this platform (see
 // docs/specs/agents/04-storage-and-sessions.md, Orphan sweep: the macOS
-// KERN_PROC_PID path is documented but not implemented here — it can't be
+// KERN_PROC_PID path is documented but not implemented here - it can't be
 // verified without a macOS build/test target, and a wrong syscall
 // implementation is worse than an honest PID-only fallback). Returns 0
 // (unavailable); the sweep falls back to PID-only + the stale-age bound.
@@ -31,6 +31,6 @@ func CheckPIDIdentity(pid int, _ int64) PIDCheck {
 		return PIDCheckDead
 	}
 	// EPERM (pid exists, owned by another user) or another transient
-	// error — can't prove either way.
+	// error - can't prove either way.
 	return PIDCheckIndeterminate
 }

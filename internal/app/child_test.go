@@ -172,7 +172,7 @@ func TestRunChild_BadHandshakeContents(t *testing.T) {
 
 // TestRunChild_HandshakeRoundTripWithValidStore runs the full handshake
 // with a valid instance row in the store. Because there is no live LLM
-// provider, the child will fail at the coordinator creation step —
+// provider, the child will fail at the coordinator creation step -
 // but it should succeed through handshake and store validation first.
 func TestRunChild_HandshakeRoundTripWithValidStore(t *testing.T) {
 	dir := t.TempDir()

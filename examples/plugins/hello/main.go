@@ -1,4 +1,4 @@
-// Tau Hello Plugin — minimal example of the go-plugin extension API.
+// Tau Hello Plugin - minimal example of the go-plugin extension API.
 //
 // Build:
 //
@@ -143,7 +143,7 @@ func (p *HelloPlugin) RunCommand(ctx context.Context, name, args string) (string
 			return "", nil, fmt.Errorf("hello plugin: host not available")
 		}
 		p.startWatch()
-		return "opened watch panel — it refreshes every second; /hello close to close it", nil, nil
+		return "opened watch panel - it refreshes every second; /hello close to close it", nil, nil
 
 	case "hello close":
 		if p.host == nil {
@@ -185,7 +185,7 @@ func (p *HelloPlugin) RunCommand(ctx context.Context, name, args string) (string
 // previously running watch goroutine so only one is active at a time.
 func (p *HelloPlugin) startWatch() {
 	p.stopWatch()
-	// Use an independent context, not the gRPC call context — that one is
+	// Use an independent context, not the gRPC call context - that one is
 	// cancelled as soon as RunCommand returns, which would kill the watch
 	// goroutine before its first RenderView lands.
 	ctx, cancel := context.WithCancel(context.Background())
@@ -223,7 +223,7 @@ func (p *HelloPlugin) stopWatch() {
 func livePanel() *pluginapi.View {
 	return &pluginapi.View{
 		Id:    watchViewID,
-		Title: "Hello Plugin — Live Panel",
+		Title: "Hello Plugin - Live Panel",
 		Widgets: []*pluginapi.Widget{
 			{Kind: &pluginapi.Widget_KeyValue{KeyValue: &pluginapi.KeyValueWidget{
 				Entries: []*pluginapi.KeyValueWidget_Entry{

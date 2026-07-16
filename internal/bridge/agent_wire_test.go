@@ -51,7 +51,7 @@ func TestAgentWireRoundTrip(t *testing.T) {
 	})
 
 	t.Run("agent.assign minimal", func(t *testing.T) {
-		// No optional fields — tools, context, limits, budget.
+		// No optional fields - tools, context, limits, budget.
 		orig := AgentAssign{
 			TaskID:     "t-02",
 			InstanceID: "plan#a1b2c3",

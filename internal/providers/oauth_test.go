@@ -306,7 +306,7 @@ func TestGithubEndpointsEnterpriseServer(t *testing.T) {
 // TestGitHubCopilotLoginEndToEnd exercises beginGitHubCopilotLogin +
 // session.Poll against a local mock server, verifying the enterprise domain
 // travels through to every request (device code, access token, and Copilot
-// token exchange) rather than silently falling back to github.com — the bug
+// token exchange) rather than silently falling back to github.com - the bug
 // this test guards against previously went unnoticed because the endpoint
 // consts weren't swappable at all.
 func TestGitHubCopilotLoginEndToEnd(t *testing.T) {
@@ -422,7 +422,7 @@ func TestRefreshGitHubCopilotUsesStoredDomain(t *testing.T) {
 }
 
 // swapGitHubEndpoints points all three GitHub OAuth/Copilot endpoints at a
-// local mock server for the duration of a test and returns a restore func —
+// local mock server for the duration of a test and returns a restore func -
 // mirrors swapCodexEndpoints above. It ignores the domain argument since the
 // mock server serves all three paths itself; domain-to-URL mapping is
 // covered separately by TestGithubEndpoints*.

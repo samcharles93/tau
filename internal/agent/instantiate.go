@@ -56,7 +56,7 @@ type InstantiateConfig struct {
 	// re-resolving the root spec. The root startup path resolves once via
 	// ResolveRootSpec to apply the root-spec override trust gate (G14; see
 	// docs/specs/agents/01-agent-spec-format.md, Root-spec override trust)
-	// before instantiation — this avoids a second, potentially
+	// before instantiation - this avoids a second, potentially
 	// inconsistent, discovery pass and the TOCTOU window that would open
 	// between the trust check and the actual instantiation. Ignored for
 	// children (ParentInstanceID != "").
@@ -180,7 +180,7 @@ func Instantiate(ctx context.Context, cfg InstantiateConfig) (*InstantiateResult
 	}
 
 	// Retry with a freshly minted ID on a primary-key collision. 6-char
-	// base32 gives ~30 bits of entropy — rare, but the DB is the
+	// base32 gives ~30 bits of entropy - rare, but the DB is the
 	// authoritative uniqueness check, not the RNG (see
 	// docs/specs/agents/04-storage-and-sessions.md, G3/G10).
 	instanceID := ""
@@ -236,7 +236,7 @@ func resolveTauRoot(cwd string) *spec.Definition {
 // ResolveRootSpec resolves the root agent's spec exactly as Instantiate
 // does internally for the bare name "tau" (project > user > built-in full
 // discovery). Exported so the root startup path can inspect the resolution
-// — specifically its Scope and SourcePath — to apply the root-spec
+// - specifically its Scope and SourcePath - to apply the root-spec
 // override trust gate (G14) before instantiation, then pass the same
 // *spec.Definition back in via InstantiateConfig.PreResolvedRootDef.
 func ResolveRootSpec(cwd string) *spec.Definition {
@@ -245,7 +245,7 @@ func ResolveRootSpec(cwd string) *spec.Definition {
 
 // ResolveBuiltinTau resolves the built-in "tau" spec directly, bypassing
 // filesystem discovery. Used as the fallback when a project-level root-spec
-// override is rejected by the trust gate (G14) — the spec's documented
+// override is rejected by the trust gate (G14) - the spec's documented
 // "N: reject. Fall back to the built-in tau spec."
 func ResolveBuiltinTau() *spec.Definition {
 	d, _ := spec.Lookup("tau")
@@ -272,11 +272,11 @@ func computeEffectiveTools(specTools []string, cfg InstantiateConfig) []string {
 
 	// Child: intersect spec tools ∩ parent effective ∩ spawn narrowing.
 	if len(cfg.ParentEffectiveTools) == 0 {
-		// Parent is unrestricted — child gets spec ∩ spawn only.
+		// Parent is unrestricted - child gets spec ∩ spawn only.
 		return intersectTools(specTools, cfg.SpawnTools)
 	}
 
-	// Parent has restrictions — intersect all three.
+	// Parent has restrictions - intersect all three.
 	step1 := intersectTools(specTools, cfg.ParentEffectiveTools)
 	return intersectTools(step1, cfg.SpawnTools)
 }
@@ -309,7 +309,7 @@ func intersectTools(a, b []string) []string {
 // hashSpec returns the hex-encoded SHA-256 of the spec snapshot JSON.
 // Hashing the full snapshot (which includes all frontmatter fields and the
 // resolved model/tools) means any change to tools:, model:, description, or
-// the body will produce a different hash — correctly detecting spec drift
+// the body will produce a different hash - correctly detecting spec drift
 // rather than silently colliding on identical bodies with different frontmatter.
 
 // toolsToJSON serialises a tool list as a JSON array string, or "" for nil/empty.
@@ -322,10 +322,10 @@ const defaultOrphanStaleAge = 24 * time.Hour
 // simply run too long to be trusted. Called at root startup. Implements the
 // sweep algorithm from docs/specs/agents/04-storage-and-sessions.md (Orphan
 // sweep): the stale-age bound is checked first and closes unconditionally;
-// pid == 0 (never recorded — e.g. the process crashed before
+// pid == 0 (never recorded - e.g. the process crashed before
 // SetAgentInstancePID ran) closes immediately; otherwise a platform PID
 // check with process-start identity decides. A row is never closed on
-// indeterminate evidence (permission denied, TOCTOU) — it's left for the
+// indeterminate evidence (permission denied, TOCTOU) - it's left for the
 // next sweep or the stale-age bound to eventually resolve.
 func SweepOrphanedInstances(ctx context.Context, s store.SessionStore, ownPID int, staleAge time.Duration) error {
 	if staleAge <= 0 {
@@ -338,7 +338,7 @@ func SweepOrphanedInstances(ctx context.Context, s store.SessionStore, ownPID in
 	now := time.Now()
 	for _, inst := range insts {
 		if inst.PID == ownPID {
-			continue // this process's own row — never sweep it
+			continue // this process's own row - never sweep it
 		}
 		if now.Sub(inst.StartedAt) > staleAge {
 			_ = s.CloseAgentInstance(ctx, inst.ID, "failed", "", "orphan sweep: stale age exceeded")
@@ -351,7 +351,7 @@ func SweepOrphanedInstances(ctx context.Context, s store.SessionStore, ownPID in
 		switch procid.CheckPIDIdentity(inst.PID, inst.ProcessStartNS) {
 		case procid.PIDCheckAlive:
 			// Process is alive and identity matches (or no identity could
-			// be recorded) — skip, it may still be doing useful work.
+			// be recorded) - skip, it may still be doing useful work.
 		case procid.PIDCheckDead:
 			_ = s.CloseAgentInstance(ctx, inst.ID, "failed", "", "orphan sweep: pid not found or identity mismatch")
 		case procid.PIDCheckIndeterminate:

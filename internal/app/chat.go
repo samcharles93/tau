@@ -55,7 +55,7 @@ type ChatOptions struct {
 	AgentSpec       string   // --agent: spec name for the root agent identity (default "tau")
 	// TrustProjectRootSpec bypasses the root-spec override trust prompt
 	// (--trust-project-root-spec / TAU_TRUST_PROJECT_ROOT_SPEC), trusting
-	// a project-level tau.agent.md override for this invocation only —
+	// a project-level tau.agent.md override for this invocation only -
 	// not persisted to trust.yaml. See docs/specs/agents/
 	// 01-agent-spec-format.md (Root-spec override trust).
 	TrustProjectRootSpec bool
@@ -75,13 +75,13 @@ func printExitSummary(ctx context.Context, m *sessions.Manager, sessionID, extra
 	if latest.ID != sessionID {
 		return
 	}
-	// Nothing was ever sent — there's no conversation to save or resume,
+	// Nothing was ever sent - there's no conversation to save or resume,
 	// so claiming "saved" and offering a resume hint would be misleading.
 	if latest.MessageCount == 0 {
 		return
 	}
 
-	fmt.Fprintf(os.Stderr, "\nSession %s saved — %d messages, %s tokens",
+	fmt.Fprintf(os.Stderr, "\nSession %s saved - %d messages, %s tokens",
 		latest.ID, latest.MessageCount, formatTokensHuman(latest.TotalTokens))
 	if latest.Cost > 0 {
 		fmt.Fprintf(os.Stderr, ", $%.4f", latest.Cost)
@@ -156,7 +156,7 @@ func aggregateModelRefs(ctx context.Context, rt *runtime.Runtime, insecure bool,
 	return out
 }
 
-// toolCapable keeps only models that advertise tool / function calling — the
+// toolCapable keeps only models that advertise tool / function calling - the
 // minimum capability tau's agent loop needs, so models that can't call tools
 // never clutter the picker. If none of a provider's models advertise it (the
 // catalogue carries no capability data for that provider), the full list is
@@ -331,11 +331,15 @@ func buildDynamicStreamer(pr *providerRuntime) agent.Streamer {
 	return NewDynamicStreamer(func(ctx context.Context, session tauchat.ChatSessionState) (aisdkchat.Provider, string, error) {
 		providerName := strings.TrimSpace(session.Provider.Name)
 		modelID := strings.TrimSpace(session.Model.ID)
-		if providerName == "" || modelID == "" {
-			return nil, "", errors.New("no model selected — enable a provider with /provider, then choose a model with /model")
+		rt, configuredProviders := pr.snapshot()
+		if providerName == "" || len(configuredProviders) == 0 {
+			return nil, "", errors.New("no provider selected: enable a provider with /provider, then choose a model with /model")
+		}
+		if modelID == "" {
+			return nil, "", errors.New("no model selected - enable a provider with /provider, then choose a model with /model")
 		}
 		ref := providerName + "/" + modelID
-		provider, resolvedID, err := pr.runtime().ChatProvider(ctx, ref)
+		provider, resolvedID, err := rt.ChatProvider(ctx, ref)
 		if err != nil {
 			return nil, "", fmt.Errorf("resolving provider for %q: %w", ref, err)
 		}
@@ -367,7 +371,7 @@ func buildStreamer(
 // correct, coherent default. We deliberately do not derive the class from the
 // models.dev npm mapping: that data is inconsistent (id mismatches, unmapped
 // packages) and would pair a non-OpenAI client with our OpenAI-style base URLs.
-// tau's deployment kinds — `hosted`, `local` — are not runtime classes and fall
+// tau's deployment kinds - `hosted`, `local` - are not runtime classes and fall
 // through to the default here.
 func resolveProviderClass(provider tauconfig.ProviderConfig) string {
 	if t := strings.TrimSpace(provider.Type); t != "" {
@@ -559,7 +563,7 @@ type coordinatorConfig struct {
 	// (from agent.Instantiate at startup), used as ParentInstanceID when
 	// registering the agent tool so child spawns/resumes correctly
 	// attribute to the root instance. Empty when instantiation was
-	// skipped or failed (e.g. no session store) — the agent tool then
+	// skipped or failed (e.g. no session store) - the agent tool then
 	// treats this coordinator as depth-0 with no instance identity.
 	AgentInstanceID string
 }
@@ -615,7 +619,7 @@ func buildCoordinator(ctx context.Context, cfg coordinatorConfig) (*agent.Coordi
 		})
 	}
 
-	// Plugin manager — discovers and manages extension binaries.
+	// Plugin manager - discovers and manages extension binaries.
 	pluginLogger := slog.Default()
 	if cfg.ChatOptions.Logger != nil {
 		pluginLogger = cfg.ChatOptions.Logger
@@ -730,7 +734,7 @@ func buildCoordinator(ctx context.Context, cfg coordinatorConfig) (*agent.Coordi
 		}()
 	}
 
-	// Command registry — the caller creates this and passes it in so the
+	// Command registry - the caller creates this and passes it in so the
 	// initial command snapshot can be seeded into the TUI before the bus
 	// delivers the first CommandsChangedEvent.
 	if cfg.CommandRegistry != nil {
@@ -809,8 +813,8 @@ func buildCoordinator(ctx context.Context, cfg coordinatorConfig) (*agent.Coordi
 
 	// Register the agent tool for spawning child processes. Store/Bus/
 	// ParentInstanceID are this coordinator's own identity (it's always
-	// the root — depth 0, no parent ceiling); SessionID is deliberately
-	// left empty here since it's per-call, not per-coordinator — see
+	// the root - depth 0, no parent ceiling); SessionID is deliberately
+	// left empty here since it's per-call, not per-coordinator - see
 	// executeAgentTool, which reads it from the UIBridge instead.
 	var agentStore store.SessionStore
 	if cfg.SessionManager != nil {

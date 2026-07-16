@@ -1,7 +1,7 @@
 # DeepSeek configuration example.
 # Copy to .tau.yaml in your project, or merge into ~/.config/tau/config.yaml.
 #
-# Set DEEPSEEK_API_KEY in your environment — tau auto-detects it, so you can
+# Set DEEPSEEK_API_KEY in your environment - tau auto-detects it, so you can
 # run `tau` without any config file at all once the key is exported.
 #
 # Model metadata (context window, reasoning, pricing) comes from the embedded

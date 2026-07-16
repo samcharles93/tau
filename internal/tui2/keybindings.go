@@ -14,7 +14,7 @@ import (
 
 // handleKey dispatches a keypress and then re-syncs the completions
 // selection against whatever the keystroke just did to m.input. The sync
-// can't happen only inside handleCompletionKey's own pre-dispatch check —
+// can't happen only inside handleCompletionKey's own pre-dispatch check -
 // that check runs BEFORE a character insertion/deletion below it in the same
 // keystroke, so it always compares against the token as of the START of this
 // call. Without the post-dispatch sync, a query-narrowing keystroke leaves
@@ -42,21 +42,21 @@ func (m *model) dispatchKey(msg tea.KeyPressMsg) tea.Cmd {
 		return m.handlePromptKey(msg)
 	}
 
-	// /help overlay open: any key closes it (see handleHelpOverlayKey) — it's
+	// /help overlay open: any key closes it (see handleHelpOverlayKey) - it's
 	// a reference card, not something you type into, so there's no reason to
 	// route specific keys anywhere else while it's up.
 	if m.helpOverlay != nil {
 		return m.handleHelpOverlayKey(msg)
 	}
 
-	// Diff viewer open: route keys to it, above the context menu — opening
+	// Diff viewer open: route keys to it, above the context menu - opening
 	// the viewer always closes the menu that spawned it, so the two are
 	// mutually exclusive, but this ordering keeps that invariant explicit.
 	if m.diffViewer != nil {
 		return m.handleDiffViewerKey(msg)
 	}
 
-	// Child transcript viewer open: same exclusivity story as diffViewer —
+	// Child transcript viewer open: same exclusivity story as diffViewer -
 	// opening either overlay closes the other (see openChildTranscriptViewer).
 	if m.childTranscriptViewer != nil {
 		return m.handleChildTranscriptViewerKey(msg)
@@ -65,8 +65,8 @@ func (m *model) dispatchKey(msg tea.KeyPressMsg) tea.Cmd {
 	// Session navigator (Ctrl+O) open: route keys to it, same "opening a
 	// modal always wins" precedence as diffViewer/childTranscriptViewer
 	// above. (Ctrl+P's command palette and Ctrl+L's model picker have no
-	// separate modal state of their own — see openCommandPalette/
-	// openModelPalette in palette.go — so there's nothing to route to here
+	// separate modal state of their own - see openCommandPalette/
+	// openModelPalette in palette.go - so there's nothing to route to here
 	// for those; they're handled by the completions dropdown further down,
 	// same as any other "/" input.)
 	if m.sessionTreeOverlay != nil {
@@ -75,8 +75,8 @@ func (m *model) dispatchKey(msg tea.KeyPressMsg) tea.Cmd {
 
 	// Context menu open: route keys to the menu, above the completions
 	// dropdown (both use up/down/enter/esc and completions can legitimately
-	// be visible at the same time — input still has a "/slash" token while
-	// right-clicking a tool box — so completions would otherwise eat every
+	// be visible at the same time - input still has a "/slash" token while
+	// right-clicking a tool box - so completions would otherwise eat every
 	// menu keystroke), below activePrompt (a blocking host-service
 	// round-trip must win over a UI affordance the user can re-open).
 	if m.contextMenu != nil {
@@ -96,7 +96,7 @@ func (m *model) dispatchKey(msg tea.KeyPressMsg) tea.Cmd {
 	}
 
 	// The completions dropdown gets first refusal on every keystroke while
-	// visible — matches taui's OverlayStack precedence (a "soft" overlay
+	// visible - matches taui's OverlayStack precedence (a "soft" overlay
 	// that consumes only the keys it recognizes; everything else falls
 	// through unchanged to the bindings below).
 	if cmd, handled := m.handleCompletionKey(msg); handled {
@@ -121,7 +121,7 @@ func (m *model) dispatchKey(msg tea.KeyPressMsg) tea.Cmd {
 		return m.cmdCopy("")
 
 	case "ctrl+r":
-		// Toggles the reasoning block from the turn that just finished —
+		// Toggles the reasoning block from the turn that just finished -
 		// there's no per-block focus-navigation the way tools have
 		// (focusNextTool), so this always reaches the most recent one
 		// (m.lastReasoningKey). A no-op while reasoning is off, before any
@@ -197,14 +197,14 @@ func (m *model) dispatchKey(msg tea.KeyPressMsg) tea.Cmd {
 		return nil
 
 	// Up/Down recall history from the first/last logical line, and move the
-	// cursor vertically within a multi-line buffer otherwise — matching
+	// cursor vertically within a multi-line buffer otherwise - matching
 	// pkg/taui/lineinput.go's atFirstLineStart/atLastLineEnd gate.
 	// Phase 1: when input is empty and history is exhausted, Up/Down navigate
 	// tool focus among completed tools.
 	case "up":
 		if m.atFirstLineStart() {
 			m.recallHistory(-1)
-			// No history to recall — navigate tool focus.
+			// No history to recall - navigate tool focus.
 			if m.shouldNavigateTools() {
 				m.focusNextTool(-1)
 			}
@@ -260,7 +260,7 @@ func (m *model) dispatchKey(msg tea.KeyPressMsg) tea.Cmd {
 	case "tab":
 		// Tab is only meaningful while the completions dropdown is visible
 		// (handleCompletionKey, checked before this switch, handles that
-		// case) — matches taui, where a bare Tab with no dropdown showing is
+		// case) - matches taui, where a bare Tab with no dropdown showing is
 		// a no-op (LineInput has no binding for it).
 		// Phase 1: when not in response, no prompt, and input empty, Tab
 		// navigates tool focus among completed tools.
@@ -316,7 +316,7 @@ func (m *model) dispatchKey(msg tea.KeyPressMsg) tea.Cmd {
 	}
 }
 
-// handleSteer sends a steering command mid-turn, or — while idle — falls
+// handleSteer sends a steering command mid-turn, or - while idle - falls
 // through to a normal submit rather than rejecting the keystroke, so
 // whatever the user typed is never silently lost. Mirrors
 // internal/tui/inline_chat.go's onSteer.
@@ -335,7 +335,7 @@ func (m *model) handleSteer() tea.Cmd {
 
 	m.clearInput()
 	if text == "" {
-		// No visible feedback needed here — the status bar already shows a
+		// No visible feedback needed here - the status bar already shows a
 		// "steering…" segment (see computeStatusBar) whenever m.steering is true.
 		m.steering = !m.steering
 		return nil
@@ -352,7 +352,7 @@ func (m *model) handleSteer() tea.Cmd {
 }
 
 // handleBashCommand runs a "!" (or "!!") bash-mode command. trimmed is the
-// full submitted text, bang(s) included — "!!" (or "!!!", "!!!!", ...) marks
+// full submitted text, bang(s) included - "!!" (or "!!!", "!!!!", ...) marks
 // the command as Exclude: true, meaning it's hidden from what the model
 // sees in the conversation history. Every leading "!" is stripped, not just
 // one or two, so "!!!ls" doesn't leave a literal "!" glued onto the front
@@ -394,13 +394,13 @@ func (m *model) cancelBash() tea.Cmd {
 }
 
 // quitConfirmWindow is how long a second Ctrl+C is honored as "confirm
-// quit" — matches internal/tui/inline_chat.go's quitConfirmWindow.
+// quit" - matches internal/tui/inline_chat.go's quitConfirmWindow.
 const quitConfirmWindow = 800 * time.Millisecond
 
 // handleCtrlC triages a Ctrl+C press exactly like inline_chat.go's
 // inlineCtrl.HandleInput: cancel an in-flight turn or bash command first,
 // clear any pending input next, and only treat Ctrl+C as "quit" (with a
-// double-tap confirmation) when there's nothing running or typed to clear —
+// double-tap confirmation) when there's nothing running or typed to clear -
 // so an accidental Ctrl+C during generation never silently kills the
 // program.
 func (m *model) handleCtrlC() tea.Cmd {

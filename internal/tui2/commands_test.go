@@ -3,6 +3,8 @@ package tui2
 import (
 	"context"
 	"errors"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -12,6 +14,7 @@ import (
 
 	tauchat "github.com/samcharles93/tau/internal/chat"
 	"github.com/samcharles93/tau/internal/config"
+	"github.com/samcharles93/tau/internal/providers"
 )
 
 var errIntentional = errors.New("intentional error for testing")
@@ -382,7 +385,7 @@ func TestCmdHelpOpensOverlayWithoutTouchingScrollback(t *testing.T) {
 		t.Fatal("expected cmdHelp to open a help overlay")
 	}
 	if len(m.renderedLines) != 0 {
-		t.Errorf("renderedLines = %v, want untouched — /help is an overlay, not a scrollback message", m.renderedLines)
+		t.Errorf("renderedLines = %v, want untouched - /help is an overlay, not a scrollback message", m.renderedLines)
 	}
 }
 
@@ -476,7 +479,7 @@ func TestHelpOverlayScrollClampsToValidRange(t *testing.T) {
 
 func TestHelpOverlayClickExpandsAndCollapsesRow(t *testing.T) {
 	m := newTestModel(&fakeRuntime{}, nil)
-	m.width, m.height = 70, 40 // single-column layout — simpler, deterministic hit coordinates
+	m.width, m.height = 70, 40 // single-column layout - simpler, deterministic hit coordinates
 	drainCmd(m.cmdHelp(""))
 
 	rendered, hits := m.renderHelpOverlayBox()
@@ -562,7 +565,7 @@ func TestCmdSessionInfoFound(t *testing.T) {
 
 	cmd := m.cmdSession("info sess-abc")
 	if cmd != nil {
-		t.Error("expected nil Cmd — session detail is appended directly, not via notification")
+		t.Error("expected nil Cmd - session detail is appended directly, not via notification")
 	}
 	joined := strings.Join(m.renderedLines, "\n")
 	for _, want := range []string{"sess-abc", "gpt-4", "openai", "3"} {
@@ -1015,7 +1018,7 @@ func TestCmdProviderEmptyShowsMenu(t *testing.T) {
 	m := newTestModel(&fakeRuntime{}, nil)
 	cmd := m.cmdProvider("")
 	if cmd != nil {
-		t.Error("expected nil Cmd — the menu is appended directly, not via notification")
+		t.Error("expected nil Cmd - the menu is appended directly, not via notification")
 	}
 	if len(m.renderedLines) == 0 {
 		t.Error("expected the provider menu to be appended as a system message")
@@ -1139,6 +1142,39 @@ func TestProviderCompletionsSecondArgAfterPlainName(t *testing.T) {
 	}
 }
 
+func TestProviderLoginPollPropagatesStateLoadAndSaveErrors(t *testing.T) {
+	configDir := t.TempDir()
+	t.Setenv("TAU_CONFIG_DIR", configDir)
+	if err := os.WriteFile(filepath.Join(configDir, "auth.yaml"), []byte("oauth: [unterminated"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	m := newTestModel(&fakeRuntime{}, nil)
+	session := providers.OAuthLoginSession{
+		Poll: func(context.Context) (providers.OAuthCredentials, error) {
+			return providers.OAuthCredentials{Access: "token"}, nil
+		},
+	}
+
+	msg, ok := m.providerLoginPoll("github-copilot", "GitHub Copilot", session)().(providerLoginResultMsg)
+	if !ok {
+		t.Fatalf("message type = %T, want providerLoginResultMsg", msg)
+	}
+	if msg.err == nil || !strings.Contains(msg.err.Error(), "load provider state") {
+		t.Fatalf("load error = %v, want provider state parse failure", msg.err)
+	}
+
+	m.completeProviderLogin = func(string, providers.OAuthCredentials) error {
+		return errors.New("save provider state: injected failure")
+	}
+	msg, ok = m.providerLoginPoll("github-copilot", "GitHub Copilot", session)().(providerLoginResultMsg)
+	if !ok {
+		t.Fatalf("message type = %T, want providerLoginResultMsg", msg)
+	}
+	if msg.err == nil || !strings.Contains(msg.err.Error(), "save provider state") {
+		t.Fatalf("save error = %v, want injected persistence failure", msg.err)
+	}
+}
+
 // --- refreshAfterProviderChange / providerToggleResultMsg ------------------
 
 func TestRefreshAfterProviderChangeNoRefresher(t *testing.T) {
@@ -1178,7 +1214,7 @@ func TestProviderToggleResultMsgWithWarning(t *testing.T) {
 	m.Update(providerToggleResultMsg{
 		displayName: "OpenRouter",
 		action:      "enabled",
-		warning:     "no API key found — set $OPENROUTER_API_KEY",
+		warning:     "no API key found - set $OPENROUTER_API_KEY",
 		models:      nil,
 	})
 

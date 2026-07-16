@@ -11,7 +11,7 @@ import (
 // new migrations and append the SQL to the migrations map below.
 const currentSchemaVersion = 7
 
-// Migrate runs all pending schema migrations in order. It is idempotent —
+// Migrate runs all pending schema migrations in order. It is idempotent -
 // already-applied migrations are skipped.
 func Migrate(ctx context.Context, db *sql.DB) error {
 	if err := ensureSchemaVersionTable(db, ctx); err != nil {
@@ -118,7 +118,7 @@ ALTER TABLE sessions ADD COLUMN tool_errors INTEGER NOT NULL DEFAULT 0;
 `)
 
 // migrationV4 adds a stable, client-assigned message identity. The table's
-// existing `id INTEGER PRIMARY KEY AUTOINCREMENT` is not usable for this —
+// existing `id INTEGER PRIMARY KEY AUTOINCREMENT` is not usable for this -
 // Save() deletes and re-inserts every message on every save, so that
 // autoincrement value is reassigned each time, not stable across saves.
 // client_id is a separate, application-generated string (see

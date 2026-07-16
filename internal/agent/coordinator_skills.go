@@ -109,12 +109,12 @@ func (c *Coordinator) handleRunSkill(cmd chat.RunSkillCommand) {
 // prompt: these are distinct operating modes, not stacked knowledge.
 //
 // Filesystem-discovered definitions (agentspec.Resolve returning a
-// Definition with SourcePath set — i.e. not one of the embedded built-ins)
+// Definition with SourcePath set - i.e. not one of the embedded built-ins)
 // are untrusted relative to built-ins: they may have been authored by the
 // model itself rather than reviewed and shipped in the binary. Their
 // requested Tools are clamped to the session's current allowlist rather
 // than applied as-is, so activating one can never grant a wider tool set
-// than the session already had — see clampToolsToCurrentAllowlist.
+// than the session already had - see clampToolsToCurrentAllowlist.
 func (c *Coordinator) handleRunAgent(cmd chat.RunAgentCommand) {
 	now := normalizedTime(cmd.RequestedAt)
 
@@ -163,7 +163,7 @@ func (c *Coordinator) handleRunAgent(cmd chat.RunAgentCommand) {
 		if len(clamped) > 0 {
 			c.SetAllowedTools(clamped)
 		}
-		// Else every requested tool was clamped away — do NOT call
+		// Else every requested tool was clamped away - do NOT call
 		// SetAllowedTools(clamped) with an empty slice: SetAllowedTools
 		// treats an empty list as "no restriction" (its nil-allowedTools
 		// sentinel), which would grant everything, the opposite of this
@@ -173,7 +173,7 @@ func (c *Coordinator) handleRunAgent(cmd chat.RunAgentCommand) {
 		c.SetAllowedTools(def.Tools)
 	case discovered:
 		// A discovered definition with no tools list at all declares no
-		// restriction — but for an untrusted definition, treating that as
+		// restriction - but for an untrusted definition, treating that as
 		// "grant every tool" would be the single largest possible
 		// escalation. Leave the session's current allowlist untouched
 		// instead of clearing it.
@@ -290,7 +290,7 @@ func (c *Coordinator) handleListSkills(_ chat.ListSkillsCommand) {
 		Skills: skills,
 	})
 
-	// The notification banner is a single-line widget, not a list view —
+	// The notification banner is a single-line widget, not a list view -
 	// dumping the full catalog into it renders as an unwrapped wall of
 	// text. SkillsChangedEvent above already gives both TUIs a proper
 	// list rendering, so keep this to a short heads-up.

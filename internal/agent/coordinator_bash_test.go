@@ -162,7 +162,7 @@ completed:
 
 // TestCoordinatorHandleRunBashCommand_RealShellTool exercises the actual
 // registered shell tool (internal/agent/tools/shell.go) rather than a fake,
-// running a real subprocess end to end through handleRunBashCommand — the
+// running a real subprocess end to end through handleRunBashCommand - the
 // same tool.Execute call an LLM-invoked "shell" tool call would use.
 func TestCoordinatorHandleRunBashCommand_RealShellTool(t *testing.T) {
 	bus := newTestBus(t)
@@ -217,7 +217,7 @@ func TestCoordinatorHandleCancelBash(t *testing.T) {
 	defer sub.Close()
 
 	started := make(chan struct{})
-	release := make(chan struct{}) // never closed — only ctx cancellation unblocks Execute
+	release := make(chan struct{}) // never closed - only ctx cancellation unblocks Execute
 
 	reg := tools.NewRegistry()
 	require.NoError(t, reg.Register(fakeShellTool(started, release)))

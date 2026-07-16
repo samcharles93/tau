@@ -9,7 +9,7 @@ import (
 )
 
 // ErrSessionActive is returned by ResumeSession when the session's current
-// owning instance has not ended — another process is actively running it.
+// owning instance has not ended - another process is actively running it.
 var ErrSessionActive = errors.New("store: session is still active")
 
 // ErrSessionNotFound is returned by ResumeSession when the target session
@@ -17,7 +17,7 @@ var ErrSessionActive = errors.New("store: session is still active")
 var ErrSessionNotFound = errors.New("store: session not found")
 
 // SessionSummary is a metadata-only view of a saved session. It is the wire
-// type used for session listing — no full message content is included.
+// type used for session listing - no full message content is included.
 type SessionSummary struct {
 	ID              string    `json:"id"`
 	ModelID         string    `json:"model_id"`
@@ -55,7 +55,7 @@ type AgentInstance struct {
 	// ProcessStartNS is the platform-specific process-start identity token
 	// (monotonic nanos since boot on Linux, absolute Unix nanos on macOS/
 	// Windows) used to detect PID recycling during the orphan sweep. Zero
-	// means unavailable — the sweep falls back to a PID-only check.
+	// means unavailable - the sweep falls back to a PID-only check.
 	ProcessStartNS int64     `json:"process_start_ns,omitempty"`
 	StartedAt      time.Time `json:"started_at"`
 	EndedAt        time.Time `json:"ended_at"`
@@ -68,10 +68,10 @@ type AgentInstance struct {
 }
 
 // SessionStore persists and retrieves chat sessions. SQLite is the single
-// source of truth. JSONL export files are a derived artifact — the app never
+// source of truth. JSONL export files are a derived artifact - the app never
 // reads them for its own operations.
 type SessionStore interface {
-	// Save writes session metadata and messages to SQLite. It is an upsert —
+	// Save writes session metadata and messages to SQLite. It is an upsert -
 	// existing sessions are updated, new sessions are inserted.
 	Save(ctx context.Context, state chat.ChatSessionState, duration time.Duration) error
 
@@ -105,7 +105,7 @@ type SessionStore interface {
 
 	// SetAgentInstancePID records the OS process identity for an instance
 	// once its child process has actually started (pid isn't known at
-	// SaveAgentInstance time — the row is created before exec.Start()).
+	// SaveAgentInstance time - the row is created before exec.Start()).
 	// processStartNS is the platform-specific process-start identity token
 	// (see docs/specs/agents/04-storage-and-sessions.md, Orphan sweep);
 	// zero means "unavailable on this platform".
@@ -136,7 +136,7 @@ type SessionStore interface {
 	// inserts newInstance, and repoints the session's agent_instance_id, all
 	// within one transaction. Returns ErrSessionNotFound if the session
 	// doesn't exist, or ErrSessionActive if another instance currently owns
-	// it (ended_at IS NULL) — see docs/specs/agents/04-storage-and-sessions.md
+	// it (ended_at IS NULL) - see docs/specs/agents/04-storage-and-sessions.md
 	// (Active session ownership).
 	ResumeSession(ctx context.Context, sessionID string, newInstance AgentInstance) error
 }

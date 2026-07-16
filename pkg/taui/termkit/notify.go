@@ -21,7 +21,7 @@ const notifyBodyMaxRunes = 300
 // multiplexer is in the picture):
 //
 //   - OSC 99 (Kitty, Ghostty): rich notification, sent as two chunks sharing
-//     one id — a bare OSC 99 payload is title-only, so title and body need
+//     one id - a bare OSC 99 payload is title-only, so title and body need
 //     separate chunks per the spec.
 //   - OSC 777 (rxvt-style; also honored by some other emulators): simpler
 //     "notify;title;body" form with no escaping mechanism of its own, so
@@ -29,11 +29,11 @@ const notifyBodyMaxRunes = 300
 //   - OSC 9 (iTerm2 and broad fallback): body-only, so title is folded in as
 //     "title: body" when present.
 //   - BEL (\a): universal audible/visual bell, understood by every terminal
-//     since forever — the last-resort signal if none of the above land.
+//     since forever - the last-resort signal if none of the above land.
 //
 // A terminal that recognizes none of the first three simply ignores each
 // (correctly terminated) OSC sequence rather than printing it as garbage,
-// so layering them costs nothing on terminals that support fewer of them —
+// so layering them costs nothing on terminals that support fewer of them -
 // except that a terminal supporting more than one may show more than one
 // notification for the same event. That's a deliberate trade for broad
 // compatibility over fragile terminal sniffing.

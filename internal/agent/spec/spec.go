@@ -32,7 +32,7 @@ var builtinFiles = []string{
 	"rubber-duck.agent.md",
 	"compact.agent.md",
 	"summarise.agent.md",
-	// task.agent.md was retired in P0.4 — tau is now spawnable and
+	// task.agent.md was retired in P0.4 - tau is now spawnable and
 	// fills the general-purpose child-worker role; task's body was a
 	// subset of tau's personality. File kept for reference.
 }
@@ -88,7 +88,7 @@ type Definition struct {
 	DisplayName string
 
 	// Color is an xterm-256 palette index (e.g. "134"), as a string so this
-	// leaf package doesn't need a termkit dependency — internal/tui converts
+	// leaf package doesn't need a termkit dependency - internal/tui converts
 	// it. Empty means "use the default agent-mode accent."
 	Color string
 
@@ -127,7 +127,7 @@ type frontmatter struct {
 	Metadata               map[string]string `yaml:"metadata,omitempty"`
 }
 
-// titleCase uppercases the first rune of s, leaving the rest unchanged — used
+// titleCase uppercases the first rune of s, leaving the rest unchanged - used
 // to derive a default DisplayName ("plan" -> "Plan") for agent commands that
 // don't set display-name explicitly.
 func titleCase(s string) string {
@@ -274,7 +274,7 @@ func (d *Definition) CommandPrefix() string {
 }
 
 // Resolve looks up an agent definition by the name it was invoked with. A
-// bare name (no prefix) only matches a built-in — filesystem-discovered
+// bare name (no prefix) only matches a built-in - filesystem-discovered
 // definitions are never reachable by their bare name, exactly mirroring how
 // internal/registry lists them (prefixed, and skipped entirely when the
 // bare name collides with a built-in). A "user:" or "project:" prefixed

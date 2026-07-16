@@ -7,7 +7,7 @@ import (
 
 // TestQueue_ZeroDurationPersists guards against a regression where
 // Duration: 0 (documented as "never expires") was computed as
-// expiresAt = time.Now(), so prune() discarded it on the very next check —
+// expiresAt = time.Now(), so prune() discarded it on the very next check -
 // a "persistent" notification vanished almost instantly instead of staying
 // current until Dismiss.
 func TestQueue_ZeroDurationPersists(t *testing.T) {

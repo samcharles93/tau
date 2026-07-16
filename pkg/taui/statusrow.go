@@ -12,9 +12,9 @@ const (
 	StatusRowNeutral
 )
 
-// StatusRow renders a single "<glyph> label — detail" line, reusing ToolRow's
+// StatusRow renders a single "<glyph> label - detail" line, reusing ToolRow's
 // visual language (spinner / ✓ / ✗) without ToolRow's tool-call-specific
-// "name (args)" formatting — this is what a plugin's generic StatusWidget
+// "name (args)" formatting - this is what a plugin's generic StatusWidget
 // renders through. Neutral renders a static bullet with no animation, for
 // status that isn't an in-progress lifecycle.
 type StatusRow struct {
@@ -56,7 +56,7 @@ func (s *StatusRow) glyph() string {
 func (s *StatusRow) Render(width int) []string {
 	line := s.glyph() + " " + s.label
 	if s.detail != "" {
-		line += " — " + s.detail
+		line += " - " + s.detail
 	}
 	if width > 0 {
 		line = TruncateToWidth(line, width, "…")

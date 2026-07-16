@@ -7,7 +7,7 @@ import (
 	"github.com/samcharles93/tau/pkg/taui/termkit"
 )
 
-// Paragraph is a multi-line, word-wrapped text block — the component for
+// Paragraph is a multi-line, word-wrapped text block - the component for
 // streaming assistant output. Append tokens as they arrive; Render re-wraps to
 // the current width, honoring any embedded newlines. Safe for concurrent use
 // (an application goroutine appends while the render goroutine reads).

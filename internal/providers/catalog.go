@@ -5,7 +5,7 @@
 // live environment into the effective set of providers tau should use.
 //
 // The user's hand-written config.yaml / .tau.yaml is treated as authoritative
-// and is never written by this package — everything tau manages lives in a
+// and is never written by this package - everything tau manages lives in a
 // separate auth.yaml so comments and literal secrets are never clobbered.
 package providers
 
@@ -89,7 +89,7 @@ var catalog = []CatalogEntry{
 
 	// Anthropic speaks its native Messages API (not OpenAI-compatible), so it
 	// uses the dedicated "anthropic" runtime class with an x-api-key. Base URL
-	// is the host without /v1 — the anthropic client appends /v1/messages.
+	// is the host without /v1 - the anthropic client appends /v1/messages.
 	{ID: "anthropic", DisplayName: "Anthropic (Claude)", BaseURL: "https://api.anthropic.com", EnvVars: []string{"ANTHROPIC_API_KEY"}, Auth: AuthAPIKey, Class: "anthropic"},
 
 	{ID: "github-copilot", DisplayName: "GitHub Copilot", BaseURL: "https://api.githubcopilot.com", Auth: AuthOAuth, OAuthHandler: "github-copilot", CatalogID: "github-copilot", Headers: map[string]string{

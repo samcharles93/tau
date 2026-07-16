@@ -69,7 +69,7 @@ func (c *inlineChat) handleProviderCommand(args string) {
 }
 
 // handleProviderToggle enables an API-key/no-auth provider if it's
-// currently off, or disables it if it's currently on — the effective on/off
+// currently off, or disables it if it's currently on - the effective on/off
 // state as shown in the /provider menu, not just the raw explicit-enable
 // list, so toggling an auto-detected (env-key-present) provider off
 // actually takes effect. OAuth providers aren't toggleable this way; they
@@ -78,11 +78,11 @@ func (c *inlineChat) handleProviderToggle(name string) {
 	name = strings.ToLower(strings.TrimSpace(name))
 	entry, ok := providers.Lookup(name)
 	if !ok {
-		c.engine.PrintAbove("%s %s", c.grey("✗"), fmt.Sprintf("unknown provider %q — see /provider for the list", name))
+		c.engine.PrintAbove("%s %s", c.grey("✗"), fmt.Sprintf("unknown provider %q - see /provider for the list", name))
 		return
 	}
 	if entry.Auth == providers.AuthOAuth {
-		c.engine.PrintAbove("%s %s", c.grey("ℹ"), fmt.Sprintf("%s uses OAuth — use /provider login %s", entry.DisplayName, entry.ID))
+		c.engine.PrintAbove("%s %s", c.grey("ℹ"), fmt.Sprintf("%s uses OAuth - use /provider login %s", entry.DisplayName, entry.ID))
 		return
 	}
 
@@ -111,7 +111,7 @@ func (c *inlineChat) handleProviderLogin(args string) {
 		return
 	}
 	if entry.Auth != providers.AuthOAuth {
-		c.engine.PrintAbove("%s %s", c.grey("ℹ"), fmt.Sprintf("%s doesn't use OAuth — use /provider %s to toggle it", entry.DisplayName, entry.ID))
+		c.engine.PrintAbove("%s %s", c.grey("ℹ"), fmt.Sprintf("%s doesn't use OAuth - use /provider %s to toggle it", entry.DisplayName, entry.ID))
 		return
 	}
 	enterpriseDomain := ""
@@ -153,7 +153,7 @@ func (c *inlineChat) copyProviderLoginCode(code string) bool {
 	return true
 }
 
-// handleProviderLogout handles /provider logout <name> — disables the
+// handleProviderLogout handles /provider logout <name> - disables the
 // provider and clears any stored OAuth credentials, for any provider kind.
 func (c *inlineChat) handleProviderLogout(name string) {
 	name = strings.ToLower(strings.TrimSpace(name))
@@ -203,7 +203,7 @@ func (c *inlineChat) printProviderMenu() {
 // refreshAfterProviderChange re-discovers models after a provider toggle and
 // prints a single combined scrollback line reporting both the toggle
 // outcome and the resulting model count (e.g. "OpenRouter enabled, models
-// available: 42") once the (async) refresh completes — a separate toggle
+// available: 42") once the (async) refresh completes - a separate toggle
 // notice and a separate "refreshed: N models" notice would otherwise race
 // each other or simply show as two disconnected messages.
 func (c *inlineChat) refreshAfterProviderChange(displayName string, enabled bool, warning string) {

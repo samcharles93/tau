@@ -47,7 +47,7 @@ var (
 )
 
 // githubEndpoints resolves the device-code, access-token, and Copilot-token
-// URLs for a normalized GitHub host (see normalizeEnterpriseDomain — empty
+// URLs for a normalized GitHub host (see normalizeEnterpriseDomain - empty
 // input becomes "github.com"). It is a var, not a function, so tests can
 // redirect it at a local httptest server instead of resolving real
 // github.com/GHE hosts.
@@ -59,7 +59,7 @@ var (
 //     "/api/v3" on the same host instead.
 //
 // This mapping is a best-effort convention, not something verified against a
-// real GHE instance — treat it as unproven until confirmed against one.
+// real GHE instance - treat it as unproven until confirmed against one.
 var githubEndpoints = func(domain string) (deviceCodeURL, accessTokenURL, copilotTokenURL string) {
 	deviceCodeURL = "https://" + domain + "/login/device/code"
 	accessTokenURL = "https://" + domain + "/login/oauth/access_token"
@@ -312,7 +312,7 @@ func openAITokenCredentials(token oauthTokenResponse) OAuthCredentials {
 // pollCodexDeviceToken polls Codex's device-token endpoint until the user
 // completes browser authorization. Unlike the standard RFC 8628 poll (which
 // signals "still waiting" via a JSON {"error":"authorization_pending"} body),
-// Codex signals it with a bare HTTP 403/404 — any other status is a real
+// Codex signals it with a bare HTTP 403/404 - any other status is a real
 // failure.
 func pollCodexDeviceToken(ctx context.Context, deviceAuthID, userCode string, intervalSeconds int, onStatus func(string)) (codexDeviceTokenResponse, error) {
 	if intervalSeconds <= 0 {

@@ -20,7 +20,7 @@ func TestBuiltins_ParsesAllDefinitions(t *testing.T) {
 		names[def.Name] = def
 	}
 
-	// task.agent.md was retired in P0.4 — tau is now the spawnable
+	// task.agent.md was retired in P0.4 - tau is now the spawnable
 	// general-purpose child worker. tau is not user-invocable.
 	// Everything else defaults (or is explicitly set) to user-invocable.
 	for _, def := range defs {
@@ -109,7 +109,7 @@ func TestParse_DisplayNameDefaultsToTitleCase(t *testing.T) {
 }
 
 // TestParse_ColorPassthrough verifies the optional xterm-256 color string is
-// carried through unmodified (as a string — the spec package intentionally
+// carried through unmodified (as a string - the spec package intentionally
 // has no termkit dependency; internal/tui converts it).
 func TestParse_ColorPassthrough(t *testing.T) {
 	def, err := Parse([]byte("---\nname: x\ndescription: y\ncolor: \"134\"\n---\nbody"))
@@ -148,7 +148,7 @@ func TestParse_MaxTurnsRejected(t *testing.T) {
 	require.Contains(t, err.Error(), "max-turns")
 
 	_, err = Parse([]byte("---\nname: x\ndescription: y\nmax-turns: 0\n---\nbody"))
-	require.NoError(t, err) // 0 is valid — defers to config
+	require.NoError(t, err) // 0 is valid - defers to config
 }
 
 func TestParse_TimeoutValid(t *testing.T) {

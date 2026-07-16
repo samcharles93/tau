@@ -124,7 +124,7 @@ func parseCSI(seq string) (keyNum, modifier int, final byte, ok bool) {
 		return 1, 0, final, true // bare cursor key, e.g. "\x1b[A"
 	}
 	if body[0] < '0' || body[0] > '9' {
-		return 0, 0, 0, false // "?", "<", etc. — not a plain key event
+		return 0, 0, 0, false // "?", "<", etc. - not a plain key event
 	}
 
 	keyField, modField, hasMod := strings.Cut(body, ";")
@@ -153,7 +153,7 @@ func parseCSI(seq string) (keyNum, modifier int, final byte, ok bool) {
 // Ported from Pi's stdin-buffer.ts, simplified for Go's blocking-read model:
 // terminals emit a full escape sequence in a single write, so a read returns
 // complete sequences atomically. We therefore skip Pi's 10ms completion timer
-// and hold only genuinely partial tails until the next chunk — except a lone
+// and hold only genuinely partial tails until the next chunk - except a lone
 // ESC, which is flushed immediately so the Escape key still fires.
 type stdinBuffer struct {
 	buf       string

@@ -38,15 +38,14 @@ type AuthConfig struct {
 
 ### Auth Types
 
-| Type | Description |
-| ---- | ----------- |
-| `api_key` | Static API key from environment variable (`api_key_env`) |
-| `none` | No credential required |
-| `oauth_pkce` | Browser OAuth PKCE for hand-written config providers |
+| Type         | Description                                              |
+| ------------ | -------------------------------------------------------- |
+| `api_key`    | Static API key from environment variable (`api_key_env`) |
+| `none`       | No credential required                                   |
+| `oauth_pkce` | Browser OAuth PKCE for hand-written config providers     |
 
-Tau-managed catalog OAuth logins, currently `github-copilot` and
-`openai-codex`, are handled with `/provider login <name>` and persisted in
-`~/.config/tau/auth.yaml`, not in `config.yaml`.
+Tau-managed catalog OAuth logins, currently `github-copilot` and `openai-codex`, are handled with
+`/provider login <name>` and persisted in `~/.config/tau/auth.yaml`, not in `config.yaml`.
 
 ## UIConfig
 
@@ -57,7 +56,8 @@ type UIConfig struct {
 ```
 
 Controls terminal UI presentation:
-- `show_reasoning: true` — display reasoning/chain-of-thought content.
+
+- `show_reasoning: true` - display reasoning/chain-of-thought content.
 
 ## Plugin Config
 
@@ -70,7 +70,7 @@ plugins:
     endpoint: https://api.example.com
 ```
 
-Tau does not validate or interpret plugin config — each plugin parses its own section.
+Tau does not validate or interpret plugin config - each plugin parses its own section.
 
 ## Example Configurations
 
@@ -133,33 +133,33 @@ plugins:
 
 ## Environment Variables
 
-| Variable | Purpose |
-| -------- | ------- |
-| `TAU_PROVIDER` | Default provider (overrides config) |
-| `TAU_INSECURE` | Skip TLS verification |
-| `TAU_VERBOSE` | Enable verbose logging |
-| `TAU_MODELS_CATALOG_URL` | Override models.dev catalog URL |
-| `TAU_MODELS_CATALOG_TTL` | Override catalog cache TTL |
-| `TAU_SCHEDULE_INTERVAL` | Set plugin schedule tick interval |
+| Variable                      | Purpose                                                 |
+| ----------------------------- | ------------------------------------------------------- |
+| `TAU_PROVIDER`                | Default provider (overrides config)                     |
+| `TAU_INSECURE`                | Skip TLS verification                                   |
+| `TAU_VERBOSE`                 | Enable verbose logging                                  |
+| `TAU_MODELS_CATALOG_URL`      | Override models.dev catalog URL                         |
+| `TAU_MODELS_CATALOG_TTL`      | Override catalog cache TTL                              |
+| `TAU_SCHEDULE_INTERVAL`       | Set plugin schedule tick interval                       |
 | Provider-specific `*_API_KEY` | API key for each provider (configured in `api_key_env`) |
 
 ## CLI Flags
 
 CLI flags override configuration:
 
-| Flag | Config Equivalent |
-| ---- | ----------------- |
-| `--provider <name>` | `default_provider` |
-| `--model <id>` | `default_model` |
-| `--max-tokens <n>` | Session parameter |
-| `--temperature <f>` | Session parameter |
-| `--web` | Start web UI + open browser |
-| `--port <n>` | Web UI port (0 = auto) |
-| `--no-web` | Disable web UI |
-| `--insecure` | `TAU_INSECURE` |
-| `--verbose` | `TAU_VERBOSE` |
-| `--prompt <text>` | One-shot stdin mode |
-| `--resume <id>` | Resume saved session |
+| Flag                | Config Equivalent           |
+| ------------------- | --------------------------- |
+| `--provider <name>` | `default_provider`          |
+| `--model <id>`      | `default_model`             |
+| `--max-tokens <n>`  | Session parameter           |
+| `--temperature <f>` | Session parameter           |
+| `--web`             | Start web UI + open browser |
+| `--port <n>`        | Web UI port (0 = auto)      |
+| `--no-web`          | Disable web UI              |
+| `--insecure`        | `TAU_INSECURE`              |
+| `--verbose`         | `TAU_VERBOSE`               |
+| `--prompt <text>`   | One-shot stdin mode         |
+| `--resume <id>`     | Resume saved session        |
 
 ## Config Resolution
 
@@ -168,11 +168,13 @@ CLI flags override configuration:
 3. Apply environment variable overrides.
 4. Apply CLI flag overrides.
 
-The merge is a shallow merge at the top level. Provider lists are merged by name — a provider in `.tau.yaml` with the same name as one in `config.yaml` replaces it entirely.
+The merge is a shallow merge at the top level. Provider lists are merged by name - a provider in `.tau.yaml` with the
+same name as one in `config.yaml` replaces it entirely.
 
 ## Models.dev Catalog
 
-Model metadata (context windows, pricing, capabilities) comes from the [models.dev](https://models.dev) catalog, cached at `~/.config/tau/models.json`. See [Providers](providers.md) for details.
+Model metadata (context windows, pricing, capabilities) comes from the [models.dev](https://models.dev) catalog, cached
+at `~/.config/tau/models.json`. See [Providers](providers.md) for details.
 
 ### Catalog Overrides
 

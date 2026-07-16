@@ -218,7 +218,7 @@ func loadProvider(ctx context.Context, cmd *urfavecli.Command) (config.Config, c
 }
 
 // unavailableProviderError distinguishes "you typo'd a provider name" from
-// "this provider is known and enabled but not currently usable" — e.g. it
+// "this provider is known and enabled but not currently usable" - e.g. it
 // tells you ANTHROPIC_API_KEY isn't set rather than making an already
 // -configured provider look unrecognized. Returns "" when the requested name
 // doesn't match any known-but-unavailable entry, so the caller falls back to

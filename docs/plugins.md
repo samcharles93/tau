@@ -22,9 +22,9 @@ Use `/reload` to rediscover plugins without restarting Tau.
 7. [Tools (Agent-Callable Functions)](#tools-agent-callable-functions)
 8. [Slash Commands (User-Callable)](#slash-commands-user-callable)
 9. [Lifecycle Events](#lifecycle-events)
-10. [EventResponse — Modifying Runtime Behaviour](#eventresponse--modifying-runtime-behaviour)
-11. [HostService — Calling Back Into Tau](#hostservice--calling-back-into-tau)
-12. [Panels and Views — Rendering Structured UI](#panels-and-views-rendering-structured-ui)
+10. [EventResponse - Modifying Runtime Behaviour](#eventresponse--modifying-runtime-behaviour)
+11. [HostService - Calling Back Into Tau](#hostservice--calling-back-into-tau)
+12. [Panels and Views - Rendering Structured UI](#panels-and-views-rendering-structured-ui)
 13. [Plugin Configuration](#plugin-configuration)
 14. [Building, Installing, and go.mod](#building-installing-and-gomod)
 15. [Complete Working Example](#complete-working-example)
@@ -66,22 +66,22 @@ view, and `/hello watch` opens a live panel you can re-run to update in place
 
 ## Plugin Lifecycle
 
-1. **Discovery** — Tau scans `~/.config/tau/plugins/` for executable files.
-2. **Launch** — Each plugin binary is started as a subprocess. Communication
+1. **Discovery** - Tau scans `~/.config/tau/plugins/` for executable files.
+2. **Launch** - Each plugin binary is started as a subprocess. Communication
    happens over gRPC with a negotiated handshake.
-3. **Capability check** — Tau calls `GetCapabilities()` to learn what the
+3. **Capability check** - Tau calls `GetCapabilities()` to learn what the
    plugin provides. Plugins that don't implement the optional `Capable`
    interface default to the full legacy surface (commands + tools + events).
-4. **Init** — Tau calls `Init()` and hands the plugin a broker ID so it can
+4. **Init** - Tau calls `Init()` and hands the plugin a broker ID so it can
    dial the host's `HostService` for config, session state, and notifications.
-5. **Metadata** — Tau calls `Metadata()` to learn the plugin's name and slash
+5. **Metadata** - Tau calls `Metadata()` to learn the plugin's name and slash
    commands. Commands are registered in the TUI/Web UI command palette.
-6. **Tool discovery** — If the plugin advertises `CapabilityTools`, Tau calls
+6. **Tool discovery** - If the plugin advertises `CapabilityTools`, Tau calls
    `Tools()` and registers each tool in the agent tool registry as
    `plugin:<plugin-name>:<tool-name>`. The agent sees only `<tool-name>`.
-7. **Runtime** — Tau forwards slash commands and tool calls to the plugin, and
+7. **Runtime** - Tau forwards slash commands and tool calls to the plugin, and
    dispatches lifecycle events via `DispatchEvent()`.
-8. **Unload** — On shutdown or `/reload`, Tau calls `client.Kill()` on the
+8. **Unload** - On shutdown or `/reload`, Tau calls `client.Kill()` on the
    go-plugin process and unregisters all tools belonging to the plugin.
 
 ---
@@ -103,7 +103,7 @@ type Extension interface {
 
 All six methods are required. Return empty slices / nil / `""` for
 capabilities your plugin does not support. `RunCommand`'s `view` return is
-optional — see [Panels and Views](#panels-and-views-rendering-structured-ui)
+optional - see [Panels and Views](#panels-and-views-rendering-structured-ui)
 for what it does and when to use it instead of, or alongside, `output`.
 
 ### Method Reference
@@ -196,7 +196,7 @@ Plugins that do NOT implement `Capable` are assumed to support the full legacy
 surface (commands + tools + events). Tau skips unsupported calls at runtime,
 which avoids unnecessary gRPC round-trips. `CapabilityViews` is the one
 exception to this default: since rendering UI is a net-new surface, it is
-**never** assumed for plugins that don't implement `Capable` — you must
+**never** assumed for plugins that don't implement `Capable` - you must
 declare it explicitly to use panels.
 
 Example:
@@ -214,7 +214,7 @@ func (p *MyPlugin) Capabilities() []string {
 
 Tau's built-in `docs` tool (the one the agent calls when a user asks "how do
 I configure X") only knows about the documentation shipped inside tau
-itself — it has no visibility into a plugin's source tree, whether the
+itself - it has no visibility into a plugin's source tree, whether the
 plugin is one of tau's own examples or a third-party binary someone
 installed. A plugin that wants its own configuration/usage docs to be
 answerable through that tool must say so explicitly, by implementing
@@ -227,7 +227,7 @@ type Documented interface {
 ```
 
 `Docs()` is called once per load (alongside `Metadata()`) and should return
-markdown content — typically a file the plugin embeds with `go:embed`:
+markdown content - typically a file the plugin embeds with `go:embed`:
 
 ```go
 //go:embed docs.md
@@ -245,7 +245,7 @@ func (p *MyPlugin) Docs() string {
 Tau merges the returned content into the docs tool under the virtual path
 `plugins/<plugin-name>.md`, so it shows up in listings, full-text search, and
 direct reads exactly like tau's own docs. Plugins that don't implement
-`Documented` are simply invisible to the docs tool — no error, no fallback.
+`Documented` are simply invisible to the docs tool - no error, no fallback.
 See the [hello plugin](https://github.com/samcharles93/tau/blob/main/examples/plugins/hello/main.go)
 for a working example.
 
@@ -289,7 +289,7 @@ func (p *MyPlugin) Tools(ctx context.Context) ([]*pluginapi.ToolDefinition, erro
 | Field | Type | Description |
 |-------|------|-------------|
 | `Name` | `string` | Tool identifier. Must be unique within the plugin. The agent sees `plugin:<pluginName>.<Name>` internally but the model uses just `<Name>`. |
-| `Description` | `string` | Human-readable description. Sent to the LLM — write it for the model, not the user. Include return format, side effects, and constraints. |
+| `Description` | `string` | Human-readable description. Sent to the LLM - write it for the model, not the user. Include return format, side effects, and constraints. |
 | `InputSchema` | `string` | JSON Schema object serialised as a string. Describes the parameters the LLM must provide. Must be valid JSON. |
 
 ### Tool Naming and Registration
@@ -304,7 +304,7 @@ When Tau registers your tool, the internal name becomes `plugin:<pluginName>.<to
 
 1. **Always include `"type": "object"`** at the root.
 2. **Use `"required"`** to declare which fields are mandatory.
-3. **Provide `"description"`** for every property — the LLM reads these.
+3. **Provide `"description"`** for every property - the LLM reads these.
 4. **Use `"default"`** for optional fields so the model knows what happens when omitted.
 5. **Keep the schema focused.** Too many parameters confuse the model. 2-5 is ideal.
 6. **Use `"enum"`** to constrain choices where possible.
@@ -622,7 +622,7 @@ func (p *MyPlugin) DispatchEvent(ctx context.Context, event, sessionID string, p
 
 ---
 
-## EventResponse — Modifying Runtime Behaviour
+## EventResponse - Modifying Runtime Behaviour
 
 The `EventResponse` struct is the primary mechanism for plugins to influence
 the coordinator at runtime.
@@ -665,7 +665,7 @@ type EventResponse struct {
     Diagnostics []*Diagnostic
 
     // SuppressDefault prevents Tau's default handling of this event.
-    // Use with caution — most plugins should leave this false.
+    // Use with caution - most plugins should leave this false.
     SuppressDefault bool
 }
 ```
@@ -690,7 +690,7 @@ the event type and only applies relevant fields:
 
 ---
 
-## HostService — Calling Back Into Tau
+## HostService - Calling Back Into Tau
 
 Plugins can call back into the Tau host process via the `HostService` gRPC
 service. Implement the `HostAware` interface to receive a `Host` handle:
@@ -789,23 +789,23 @@ func (p *MyPlugin) ExecuteTool(ctx context.Context, toolName, arguments string) 
 
 ---
 
-## Panels and Views — Rendering Structured UI
+## Panels and Views - Rendering Structured UI
 
 Beyond plain-text command output, notifications, and tool results, plugins
-can render structured panels — key/value summaries, tables, lists, progress
-bars — directly into the TUI. A panel is a `View`: a tree of `Widget`s
+can render structured panels - key/value summaries, tables, lists, progress
+bars - directly into the TUI. A panel is a `View`: a tree of `Widget`s
 identified by an `Id` that's scoped to your plugin.
 
 There are two ways to deliver a `View`:
 
-1. **Sync** — return it from `RunCommand`. It renders once, in place of (or
+1. **Sync** - return it from `RunCommand`. It renders once, in place of (or
    alongside) the plain-text `output`, when that command completes.
-2. **Async** — push it any time via `Host.RenderView`, independent of command
+2. **Async** - push it any time via `Host.RenderView`, independent of command
    invocation. Useful for live-updating panels (a dashboard, a log tail).
    Re-sending a `View` with the same `Id` replaces its content in place; call
    `Host.CloseView` to remove it. Async panels persist until closed, until
    your plugin is unloaded/reloaded (Tau closes them for you), or until Tau
-   exits — there's no cross-restart persistence.
+   exits - there's no cross-restart persistence.
 
 Panels are opt-in: declare `api.CapabilityViews` in `Capabilities()` before
 using either path (see [Declaring Capabilities](#declaring-capabilities-optional)).
@@ -845,8 +845,8 @@ type Widget struct {
 | `StatusWidget` | `State` (`RUNNING`/`SUCCESS`/`FAILED`/`NEUTRAL`), `Label`, `Detail` | A status line with glyph |
 
 `Style` (used at the panel, widget, and entry level) carries a semantic
-`Tone` — `TONE_INFO`, `TONE_SUCCESS`, `TONE_WARN`, `TONE_ERROR`, `TONE_MUTED`
-— resolved against Tau's theme palette, so your panel's colors stay
+`Tone` - `TONE_INFO`, `TONE_SUCCESS`, `TONE_WARN`, `TONE_ERROR`, `TONE_MUTED`
+- resolved against Tau's theme palette, so your panel's colors stay
 consistent as the user's theme changes. `FgHex`/`BgHex` are an escape hatch
 for when a specific color matters more than theme consistency. Prefer `Tone`.
 
@@ -901,10 +901,10 @@ func (p *MyPlugin) RunCommand(ctx context.Context, name, args string) (string, *
 
 - Each plugin may have at most `MaxViewsPerPlugin` (default 5) distinct
   **open** async views at once. Updating an already-open view's content never
-  counts against this limit — only opening a new `Id` does. Exceeding the
+  counts against this limit - only opening a new `Id` does. Exceeding the
   limit returns an error from `RenderView`.
 - A plugin cannot close another plugin's view, even if it guesses the exact
-  `Id` — Tau namespaces every view internally by plugin name.
+  `Id` - Tau namespaces every view internally by plugin name.
 - On unload or `/reload`, Tau closes every view your plugin left open, so a
   killed or restarted plugin process never leaves a stale panel on screen.
 

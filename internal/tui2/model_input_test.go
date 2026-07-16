@@ -27,7 +27,7 @@ func TestStreamCursorAppearsWhileStreaming(t *testing.T) {
 }
 
 // TestStreamCursorAbsentBeforeStreamingStarts checks the working indicator
-// state (in response, nothing streamed yet) shows no cursor — there's no
+// state (in response, nothing streamed yet) shows no cursor - there's no
 // content for it to sit after.
 func TestStreamCursorAbsentBeforeStreamingStarts(t *testing.T) {
 	m := newTestModel(&fakeRuntime{}, nil)
@@ -43,7 +43,7 @@ func TestStreamCursorAbsentBeforeStreamingStarts(t *testing.T) {
 }
 
 // TestStreamCursorAbsentOnCompletedMessage checks the cursor never survives
-// into committed scrollback — it's presentation-only, drawn fresh from
+// into committed scrollback - it's presentation-only, drawn fresh from
 // m.streaming each frame, never written into renderedLines.
 func TestStreamCursorAbsentOnCompletedMessage(t *testing.T) {
 	m := newTestModel(&fakeRuntime{}, nil)
@@ -73,7 +73,7 @@ func TestStreamCursorIsPresentationOnly(t *testing.T) {
 	m.inResponse = true
 	m.streaming = "plain text response"
 
-	// While actively streaming, the raw buffer itself must stay untouched —
+	// While actively streaming, the raw buffer itself must stay untouched -
 	// rendering must never mutate the source string the cursor is drawn from.
 	_ = m.viewportLinesForView(false)
 	if strings.Contains(m.streaming, streamCursor) {
@@ -110,7 +110,7 @@ func TestStreamCursorClearsOnCancelAndError(t *testing.T) {
 
 // TestRenderStreamingLinesCursorPlacement checks the cursor lands correctly
 // after plain text, a wrapped multi-line response, and a trailing newline
-// (its own blank row) — and that reserving room for it never pushes any
+// (its own blank row) - and that reserving room for it never pushes any
 // line past the wrap width, which is what would cause terminal-level
 // reflow/jitter on every delta.
 func TestRenderStreamingLinesCursorPlacement(t *testing.T) {
@@ -193,7 +193,7 @@ func TestSubmitInputEmpty(t *testing.T) {
 // TestSubmitInputDuringResponseQueuesByDefault guards the intended design:
 // a plain Enter while a response is in flight queues the message behind the
 // running turn (startOrQueueTurn's existing inResponse branch) rather than
-// steering — steering is reserved for the dedicated Ctrl+S hotkey
+// steering - steering is reserved for the dedicated Ctrl+S hotkey
 // (handleSteer). See TestHandleSteerWithText for the Ctrl+S path.
 func TestSubmitInputDuringResponseQueuesByDefault(t *testing.T) {
 	rt := &fakeRuntime{}
@@ -203,7 +203,7 @@ func TestSubmitInputDuringResponseQueuesByDefault(t *testing.T) {
 
 	drainCmd(m.submitInput())
 
-	if m.notification != "queued — will send after current response" {
+	if m.notification != "queued - will send after current response" {
 		t.Fatalf("notification = %q, want the queued notification", m.notification)
 	}
 	if m.input != "" {
@@ -218,7 +218,7 @@ func TestSubmitInputDuringResponseQueuesByDefault(t *testing.T) {
 }
 
 // TestSubmitInputDuringResponseSlashCommandRunsImmediately guards that a
-// slash command isn't queued as plain text — it still executes right away
+// slash command isn't queued as plain text - it still executes right away
 // even mid-turn, since it's not itself an LLM prompt.
 func TestSubmitInputDuringResponseSlashCommandRunsImmediately(t *testing.T) {
 	rt := &fakeRuntime{}
@@ -229,7 +229,7 @@ func TestSubmitInputDuringResponseSlashCommandRunsImmediately(t *testing.T) {
 	drainCmd(m.submitInput())
 
 	if len(m.turnQueue) != 0 {
-		t.Fatalf("turnQueue = %v, want empty — slash commands must not be queued as prompts", m.turnQueue)
+		t.Fatalf("turnQueue = %v, want empty - slash commands must not be queued as prompts", m.turnQueue)
 	}
 	if len(rt.sent) != 1 {
 		t.Fatalf("sent = %d commands, want 1 (the slash command ran immediately)", len(rt.sent))
@@ -303,7 +303,7 @@ func TestSubmitInputDebounce(t *testing.T) {
 		t.Fatal("expected a Cmd even with debounce")
 	}
 	// The debounce check is 300ms; if we just called now, it should fire.
-	// Actually the guard checks elapsed < 300ms — let's test the guard fires.
+	// Actually the guard checks elapsed < 300ms - let's test the guard fires.
 }
 
 func TestSubmitInputRecordsHistory(t *testing.T) {
@@ -369,7 +369,7 @@ func TestStartOrQueueTurnSendsWhenIdle(t *testing.T) {
 		t.Fatalf("expected SubmitChatPromptCommand, got %T", rt.sent[0])
 	}
 	// RequestID is mandatory server-side (ChatSessionState.BeginTurn rejects
-	// an empty one with "request id is required") — this exact regression
+	// an empty one with "request id is required") - this exact regression
 	// shipped once because no test asserted it was actually populated.
 	if sent.RequestID == "" {
 		t.Fatal("expected a non-empty RequestID")
@@ -644,7 +644,7 @@ func TestMoveCursorVertPreservesColumnWhenTargetLineShorter(t *testing.T) {
 	m.inputCursor = 3 // end of line 0 (col 3)
 
 	m.moveCursorVert(1)
-	// Line 1 is "de" (2 chars) — should clamp to col 2, i.e. index 4 (start
+	// Line 1 is "de" (2 chars) - should clamp to col 2, i.e. index 4 (start
 	// of line 1) + 2 = 6.
 	if m.inputCursor != 6 {
 		t.Fatalf("cursor = %d, want 6 (end of line 1, col 2)", m.inputCursor)
@@ -796,7 +796,7 @@ func TestRenderInputAreaWrapsCursorOntoContinuationLine(t *testing.T) {
 
 // TestRenderInputAreaCapsHeightAndScrollsOverflow guards against the input
 // box growing past inputBoxHeightFrac of the terminal and pushing the
-// viewport off the top — a long multi-line paste must scroll inside a
+// viewport off the top - a long multi-line paste must scroll inside a
 // capped box instead of rendering every line.
 func TestRenderInputAreaCapsHeightAndScrollsOverflow(t *testing.T) {
 	m := newTestModel(&fakeRuntime{}, nil)

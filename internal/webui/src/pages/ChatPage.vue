@@ -80,7 +80,7 @@ function onSubmit(text: string) {
   scrollToBottom()
 }
 
-// Esc anywhere on the page stops a running request — mirrors Ctrl+C in the
+// Esc anywhere on the page stops a running request - mirrors Ctrl+C in the
 // TUI. We avoid intercepting Esc when a modal dialog (interactive prompt,
 // settings drawer) is open because those have their own Esc semantics; the
 // browser's default Esc behaviour on the input element still works, and our
@@ -88,11 +88,11 @@ function onSubmit(text: string) {
 function onGlobalKeydown(e: KeyboardEvent) {
   if (e.key !== 'Escape' || !session.streaming) return
   // Don't hijack Esc when a modal dialog is open or focus is in an input
-  // element (textarea, settings fields, prompt answer box) — those have
+  // element (textarea, settings fields, prompt answer box) - those have
   // their own native or component-level Esc handling.
   if (session.activePrompt) return
   // Prevent hijacking Esc when any overlay sheet or modal (like Settings or
-  // Sessions switcher) is open — they use Radix dialog under the hood.
+  // Sessions switcher) is open - they use Radix dialog under the hood.
   if (document.querySelector('[role="dialog"]') || document.querySelector('[role="alertdialog"]')) {
     return
   }

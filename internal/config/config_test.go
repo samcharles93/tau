@@ -13,7 +13,7 @@ import (
 // TestConfigUnmarshalYAMLPopulatesMetrics guards against a real bug:
 // Config.UnmarshalYAML's internal rawConfig struct omitted the Metrics
 // field entirely, so metrics.dir/session/tui in a user's config.yaml were
-// silently discarded on every load — cfg.Metrics always ended up as the Go
+// silently discarded on every load - cfg.Metrics always ended up as the Go
 // zero value in memory regardless of what was actually written to disk.
 func TestConfigUnmarshalYAMLPopulatesMetrics(t *testing.T) {
 	var cfg Config
@@ -530,7 +530,7 @@ metrics:
 // empty metrics.dir in an existing config almost always means the "metrics:"
 // block was auto-added by an earlier run of syncConfigSchema itself (back
 // when this field had no non-zero default), not a user deliberately opting
-// out of metrics export — so it must be healed to MetricsDir() rather than
+// out of metrics export - so it must be healed to MetricsDir() rather than
 // left silently disabling every metrics.jsonl consumer forever.
 func TestSyncConfigSchemaBackfillsEmptyMetricsDir(t *testing.T) {
 	dir := t.TempDir()
@@ -638,7 +638,7 @@ func containsAll(s string, needles ...string) bool {
 
 // TestResolveModelMode_InheritedProviderWithoutModelFallsThroughToDefault
 // proves an inherited provider with no inherited model does NOT win over
-// the config defaults — a non-empty provider paired with an empty model
+// the config defaults - a non-empty provider paired with an empty model
 // would otherwise produce an unusable empty model reference downstream
 // (this exact case broke agent-tool spawns: the provider is populated
 // from the session's already-selected provider, but no model override was

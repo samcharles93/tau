@@ -95,7 +95,7 @@ func TestHashFile_ChangesWithContent(t *testing.T) {
 		t.Fatalf("HashFile after edit: %v", err)
 	}
 	if h1 == h2 {
-		t.Error("hash did not change after editing the file — content binding is broken")
+		t.Error("hash did not change after editing the file - content binding is broken")
 	}
 }
 

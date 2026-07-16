@@ -28,14 +28,14 @@ type rootSpecDisplay struct {
 	// Hash is the hex sha256 of Source's contents; empty for built-ins.
 	Hash string
 	// Trusted is true when Source's override is in effect (built-ins and
-	// user-scope specs are always "trusted" — no untrusted-repo risk).
+	// user-scope specs are always "trusted" - no untrusted-repo risk).
 	Trusted bool
 }
 
 // resolveRootSpecWithTrust resolves the root agent's spec and, for a
 // project-level override, applies the trust-on-first-use gate before
 // returning it. A rejected or unapproved project override falls back to
-// the built-in "tau" spec rather than failing startup — matching the
+// the built-in "tau" spec rather than failing startup - matching the
 // spec's documented "N: reject. Fall back to the built-in tau spec."
 // Returns an error only for the headless-mode "no way to prompt" case, or
 // an unexpected I/O failure reading/hashing the spec file or trust store.
@@ -49,7 +49,7 @@ func resolveRootSpecWithTrust(cwd string, opts ChatOptions) (*spec.Definition, r
 
 	if def.Scope != skills.ScopeProject || strings.TrimSpace(def.SourcePath) == "" {
 		// Built-in or user-level: the user's own machine, not a cloned
-		// repository — no privilege-escalation risk to gate.
+		// repository - no privilege-escalation risk to gate.
 		display.Trusted = true
 		return def, display, nil
 	}
@@ -102,7 +102,7 @@ func resolveRootSpecWithTrust(cwd string, opts ChatOptions) (*spec.Definition, r
 	return def, display, nil
 }
 
-// isInteractiveTTY reports whether stdin is a real terminal — the
+// isInteractiveTTY reports whether stdin is a real terminal - the
 // prerequisite for showing an interactive y/N/a prompt. CI runs, piped
 // stdin, and other headless invocations report false. A package var (not
 // a plain func) so tests can force either branch deterministically instead
@@ -116,7 +116,7 @@ var isInteractiveTTY = func() bool {
 // asks the user to approve it, per docs/specs/agents/
 // 01-agent-spec-format.md (Trust-on-first-use with content binding). Prints
 // to stderr so it never contaminates stdout. Any read failure or
-// unrecognised input is treated as "N" (reject) — a security prompt must
+// unrecognised input is treated as "N" (reject) - a security prompt must
 // fail closed. A package var so tests can stub the interactive prompt.
 var promptRootSpecTrust = func(def *spec.Definition, hash string) (approved bool, mode string) {
 	fmt.Fprintf(os.Stderr, "Project %s overrides the root agent. Trust this override? [y/N/a] ", def.SourcePath)

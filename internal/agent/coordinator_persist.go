@@ -121,7 +121,7 @@ func (c *Coordinator) handleLoadSession(cmd chat.LoadSessionCommand) {
 
 // handleLoadChildTranscript loads a finished child agent's session for
 // read-only drill-down. Unlike handleLoadSession, it never touches
-// c.sessions — the child is never the runtime's active session.
+// c.sessions - the child is never the runtime's active session.
 func (c *Coordinator) handleLoadChildTranscript(cmd chat.LoadChildTranscriptCommand) {
 	if c.sessionManager == nil {
 		c.emit(chat.ChatRuntimeErrorEvent{
@@ -252,13 +252,13 @@ func (c *Coordinator) handleExportSession(cmd chat.ExportSessionCommand) {
 }
 
 // persistSession saves the session state to the store. It is called on graceful
-// close and on forced shutdown. Errors are logged but not surfaced to the TUI —
+// close and on forced shutdown. Errors are logged but not surfaced to the TUI -
 // persistence is best-effort.
 func (c *Coordinator) persistSession(state chat.ChatSessionState, duration time.Duration) {
 	if c.sessionManager == nil || c.noPersist {
 		return
 	}
-	// Nothing was ever said — persisting an empty row just clutters the
+	// Nothing was ever said - persisting an empty row just clutters the
 	// session list (/session, --resume) with entries that can never be
 	// resumed into anything.
 	if len(state.Messages) == 0 {

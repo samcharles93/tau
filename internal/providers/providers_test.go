@@ -1,10 +1,14 @@
 package providers
 
 import (
+	"bytes"
 	"context"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"runtime"
+	"strings"
+	"sync"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -117,7 +121,7 @@ func TestStateAPIKeyRoundTrip(t *testing.T) {
 	require.True(t, ok)
 	assert.Equal(t, "sk-deepseek-test", key)
 
-	// A managed key does not enable/disable the provider — those lists are
+	// A managed key does not enable/disable the provider - those lists are
 	// only for suppressing auto-detection of env-var-backed providers.
 	assert.False(t, reloaded.IsEnabled("deepseek"))
 	assert.False(t, reloaded.IsDisabled("deepseek"))
@@ -143,6 +147,76 @@ func TestStateAPIKeyEmptyMapOmittedOnSave(t *testing.T) {
 	data, err := os.ReadFile(path)
 	require.NoError(t, err)
 	assert.NotContains(t, string(data), "api_keys")
+}
+
+func TestStoreAPIKeyNeverExposesKeyInErrorsOrLogs(t *testing.T) {
+	secret := "sk-sensitive-provider-key"
+	path := filepath.Join(t.TempDir(), "not-a-directory")
+	require.NoError(t, os.WriteFile(path, []byte("x"), 0o600))
+	t.Setenv("TAU_CONFIG_DIR", path)
+
+	var logs bytes.Buffer
+	original := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(&logs, nil)))
+	t.Cleanup(func() { slog.SetDefault(original) })
+
+	err := NewManage(nil).StoreAPIKey("deepseek", secret)
+	require.Error(t, err)
+	assert.NotContains(t, err.Error(), secret)
+	assert.NotContains(t, logs.String(), secret)
+}
+
+func TestStateConcurrentSavesAlwaysProduceValidYAML(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "auth.yaml")
+	initial := State{Version: stateVersion, path: path}
+	require.NoError(t, initial.Save())
+
+	const writers = 24
+	start := make(chan struct{})
+	releaseAfterProbe := make(chan struct{})
+	errs := make(chan error, writers)
+	var firstSaves sync.WaitGroup
+	firstSaves.Add(writers)
+	var wg sync.WaitGroup
+	for i := range writers {
+		wg.Go(func() {
+			<-start
+			for attempt := range 10 {
+				state := State{Version: stateVersion, path: path}
+				state.SetAPIKey("deepseek", strings.Repeat("x", i+1))
+				if err := state.Save(); err != nil {
+					if attempt == 0 {
+						firstSaves.Done()
+					}
+					errs <- err
+					return
+				}
+				if attempt == 0 {
+					firstSaves.Done()
+					<-releaseAfterProbe
+				}
+			}
+			errs <- nil
+		})
+	}
+
+	close(start)
+	firstSaves.Wait()
+	observed, observedErr := loadStateFrom(path)
+	close(releaseAfterProbe)
+	wg.Wait()
+	close(errs)
+	for err := range errs {
+		require.NoError(t, err)
+	}
+	require.NoError(t, observedErr, "state must remain valid after simultaneous writers")
+	_, hasObservedKey := observed.APIKeyFor("deepseek")
+	require.True(t, hasObservedKey)
+	final, err := loadStateFrom(path)
+	require.NoError(t, err)
+	key, ok := final.APIKeyFor("deepseek")
+	require.True(t, ok)
+	assert.NotEmpty(t, key)
 }
 
 func TestLoadStateMissingFileIsEmpty(t *testing.T) {

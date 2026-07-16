@@ -184,7 +184,7 @@ func init() {
 
 	// Filesystem-discovered agent definitions (.agents/agents/*.agent.md),
 	// listed under a user:/project: prefix exactly like internal/registry
-	// does — a name colliding with a built-in is skipped so a discovered
+	// does - a name colliding with a built-in is skipped so a discovered
 	// definition can never shadow one.
 	cwd, _ := os.Getwd()
 	discovered, _ := agentspec.DiscoverFromDisk(agentspec.DefaultSources(cwd))
@@ -237,14 +237,14 @@ func (m *model) handleSlashCommand(text string) tea.Cmd {
 		})
 	}
 
-	// /skills-reload — hot-reload skills from disk.
+	// /skills-reload - hot-reload skills from disk.
 	if name == "skills-reload" {
 		return sendCommand(m.runtime, tauchat.ReloadSkillsCommand{
 			RequestedAt: time.Now().UTC(),
 		})
 	}
 
-	// /skill:<name> — user-invoked skill activation.
+	// /skill:<name> - user-invoked skill activation.
 	if after, ok := strings.CutPrefix(name, "skill:"); ok {
 		skillName := strings.TrimSpace(after)
 		if skillName == "" {
@@ -275,7 +275,7 @@ func (m *model) cmdClear(_ string) tea.Cmd {
 
 // cmdHelp opens the keybinding reference as a floating overlay (see
 // help.go), centered on top of the current view rather than appended to
-// scrollback — a reference card isn't conversation history, and baking it
+// scrollback - a reference card isn't conversation history, and baking it
 // into renderedLines just left a permanent, ever-growing block behind every
 // time it was opened. It closes on any keypress or a click outside it (see
 // handleHelpOverlayKey/handleHelpOverlayClick), and clicking a row inside it
@@ -340,7 +340,7 @@ func (m *model) cmdModel(modelID string) tea.Cmd {
 	modelID = strings.TrimSpace(modelID)
 	if modelID == "" {
 		if len(m.availableModels) == 0 {
-			return m.setNotification("no models available — try /refresh")
+			return m.setNotification("no models available - try /refresh")
 		}
 		// Prefill input for completion picker.
 		m.input = "/model "
@@ -356,7 +356,7 @@ func (m *model) cmdModel(modelID string) tea.Cmd {
 		}
 	}
 	if !found {
-		return m.setNotification(fmt.Sprintf("model %q not found — try /refresh", modelID))
+		return m.setNotification(fmt.Sprintf("model %q not found - try /refresh", modelID))
 	}
 
 	effort := defaultEffortForModel(ref)
@@ -476,7 +476,7 @@ func (m *model) cmdProvider(args string) tea.Cmd {
 }
 
 // providerToggle enables an API-key/no-auth provider if it's currently off,
-// or disables it if it's currently on — the effective on/off state as shown
+// or disables it if it's currently on - the effective on/off state as shown
 // in the /provider menu, not just the raw explicit-enable list, so toggling
 // an auto-detected (env-key-present) provider off actually takes effect.
 // OAuth providers aren't toggleable this way; they need /provider login.
@@ -484,10 +484,10 @@ func (m *model) providerToggle(name string) tea.Cmd {
 	name = strings.ToLower(strings.TrimSpace(name))
 	entry, ok := providers.Lookup(name)
 	if !ok {
-		return m.setNotification(fmt.Sprintf("unknown provider %q — see /provider for the list", name))
+		return m.setNotification(fmt.Sprintf("unknown provider %q - see /provider for the list", name))
 	}
 	if entry.Auth == providers.AuthOAuth {
-		return m.setNotification(fmt.Sprintf("%s uses OAuth — use /provider login %s", entry.DisplayName, entry.ID))
+		return m.setNotification(fmt.Sprintf("%s uses OAuth - use /provider login %s", entry.DisplayName, entry.ID))
 	}
 
 	enabled, warning, err := providers.NewManage(nil).Toggle(entry.ID)
@@ -512,7 +512,7 @@ func (m *model) providerLogin(args string) tea.Cmd {
 		return m.setNotification(fmt.Sprintf("unknown provider %q", name))
 	}
 	if entry.Auth != providers.AuthOAuth {
-		return m.setNotification(fmt.Sprintf("%s doesn't use OAuth — use /provider %s to toggle it", entry.DisplayName, entry.ID))
+		return m.setNotification(fmt.Sprintf("%s doesn't use OAuth - use /provider %s to toggle it", entry.DisplayName, entry.ID))
 	}
 	// A domain given inline keeps working unchanged for scripting/muscle
 	// memory: /provider login github-copilot mycompany.ghe.com.
@@ -520,7 +520,7 @@ func (m *model) providerLogin(args string) tea.Cmd {
 		return m.startProviderOAuthLogin(entry, fields[1])
 	}
 
-	// GitHub Copilot silently defaulted to personal github.com here before —
+	// GitHub Copilot silently defaulted to personal github.com here before -
 	// ask interactively instead, so picking an Enterprise host doesn't
 	// require already knowing the positional-arg syntax. Empty input (bare
 	// Enter) still means personal GitHub.
@@ -562,7 +562,7 @@ func (m *model) providerLoginPoll(providerID, displayName string, session provid
 		if err != nil {
 			return providerLoginResultMsg{displayName: displayName, err: err}
 		}
-		if err := providers.NewManage(nil).LoginComplete(providerID, creds); err != nil {
+		if err := m.completeProviderLogin(providerID, creds); err != nil {
 			return providerLoginResultMsg{displayName: displayName, err: err}
 		}
 		if m.refresh == nil {
@@ -573,7 +573,7 @@ func (m *model) providerLoginPoll(providerID, displayName string, session provid
 	}
 }
 
-// providerLogout handles /provider logout <name> — disables the provider and
+// providerLogout handles /provider logout <name> - disables the provider and
 // clears any stored OAuth credentials, for any provider kind.
 func (m *model) providerLogout(name string) tea.Cmd {
 	name = strings.ToLower(strings.TrimSpace(name))
@@ -593,7 +593,7 @@ func (m *model) providerLogout(name string) tea.Cmd {
 // refreshAfterProviderChange re-discovers models after a provider toggle and
 // returns a Cmd that reports the outcome (enabled/disabled + resulting
 // model count) as a single combined scrollback line once the refresh
-// completes — e.g. "OpenRouter enabled, models available: 42". Reporting
+// completes - e.g. "OpenRouter enabled, models available: 42". Reporting
 // the toggle and the refresh separately let cmdRefresh's own
 // refreshResultMsg handler silently overwrite the toggle's own transient
 // notification with "refreshed: N models available" moments later.
@@ -648,7 +648,7 @@ func providerState() providers.State {
 	return s
 }
 
-// providerMenuText renders the catalog with each provider's current state —
+// providerMenuText renders the catalog with each provider's current state -
 // mirrors internal/tui/inline_providers.go's printProviderMenu.
 func providerMenuText(ctx context.Context) string {
 	menu := providers.Menu(providerCfg(ctx), providerState(), nil)

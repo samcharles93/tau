@@ -10,7 +10,7 @@ import (
 
 // Redaction patterns per docs/specs/agents/03-wire-protocol.md (stderr
 // handling: Redaction) and 02-spawning-and-lifecycle.md (Redaction
-// contract). reBearerToken has no minimum length — the spec's own
+// contract). reBearerToken has no minimum length - the spec's own
 // redaction test requirement uses a 10-character example token
 // ("tok_abc123"), shorter than the {20,} it documents elsewhere for the
 // sk- pattern, so this errs toward redacting too much rather than missing
@@ -33,7 +33,7 @@ func redactSecrets(line string) string {
 
 const (
 	// stderrRateLimitBytesPerSec and stderrRateLimitWindow implement "4096
-	// bytes per second, averaged over a 5-second window" — bursts within
+	// bytes per second, averaged over a 5-second window" - bursts within
 	// the window are allowed (a full panic trace is captured), sustained
 	// high-volume output past the window budget is truncated.
 	stderrRateLimitBytesPerSec = 4096
@@ -47,7 +47,7 @@ const (
 // drainChildStderr reads r line-by-line, redacts known secret patterns,
 // rate-limits and caps total capture, and logs surviving lines at ERROR
 // level tagged with the child's instance ID. Never parsed for protocol
-// messages — stderr is diagnostic-only (see docs/specs/agents/
+// messages - stderr is diagnostic-only (see docs/specs/agents/
 // 03-wire-protocol.md). Blocks until r is exhausted (EOF on process exit);
 // callers run it in its own goroutine.
 func drainChildStderr(r io.Reader, instanceID string) {

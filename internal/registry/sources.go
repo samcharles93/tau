@@ -31,7 +31,7 @@ func builtinCommands(cwd string) []Command {
 // merges in user- and project-level agent definitions discovered on disk
 // under ~/.agents/agents/ and <cwd>/.agents/agents/.
 //
-// Discovered definitions are listed here for visibility only — invoking one
+// Discovered definitions are listed here for visibility only - invoking one
 // still resolves through agentspec.Lookup, which only searches built-ins, so
 // a discovered agent will report "agent not found" until execution is wired
 // up (tracked separately, since running an agent-authored definition needs a

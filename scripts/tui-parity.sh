@@ -6,22 +6,22 @@
 # Drives an identical scripted interaction against both renderers via termvis
 # (https://github.com/samcharles93/termvis) and saves before/after screenshots
 # for manual comparison. Requires `termvis`, `ttyd`, and a Chrome/Chromium
-# browser on PATH — see `termvis skill show` or the termvis skill's
+# browser on PATH - see `termvis skill show` or the termvis skill's
 # check-deps.sh for a preflight check.
 #
 # Runs against a REAL provider (whatever your ~/.config/tau is configured
-# with) — this makes real, billed API calls. Config/auth/model cache are
+# with) - this makes real, billed API calls. Config/auth/model cache are
 # copied into an isolated scratch dir first, so your real session history is
 # never touched.
 #
 # Known flakiness: tau negotiates advanced terminal features on startup
 # (Kitty keyboard protocol, synchronized-output mode, focus reporting) that
-# ttyd's canvas-mode xterm.js bridge doesn't always handle cleanly — this can
+# ttyd's canvas-mode xterm.js bridge doesn't always handle cleanly - this can
 # surface as a screenshot showing ttyd's own "Press <Enter> to Reconnect"
 # placeholder instead of tau's UI, even though tau itself is running fine
 # (verified separately by running it in a real pty with no ttyd in between).
 # This looks like a termvis/ttyd/xterm.js compatibility gap, not a tau bug.
-# If you hit it, just rerun — if it's still visible in a screenshot, delete
+# If you hit it, just rerun - if it's still visible in a screenshot, delete
 # that run's --out dir and try again before concluding something regressed.
 #
 # Usage:
@@ -80,7 +80,7 @@ for variant in legacy tui2; do
 done
 
 # Scripted interaction, shared between both variants: initial render, a plain
-# chat turn, a tool-triggering turn, and /help — matches the plan's
+# chat turn, a tool-triggering turn, and /help - matches the plan's
 # verification checklist (send a message, trigger a tool call, resize).
 # termvis's wait_for/stable polls the actual redraw instead of guessing a
 # fixed sleep, and self-corrects (returns timed_out instead of erroring) if a

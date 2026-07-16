@@ -8,7 +8,7 @@ import "strings"
 // maxWidth is left intact (callers truncate elsewhere if needed).
 //
 // Mirrors pkg/taui's wrapWords (paragraph.go) but uses visibleWidth
-// (statusbar.go) which delegates to lipgloss.Width — the same
+// (statusbar.go) which delegates to lipgloss.Width - the same
 // uniseg-based measurement the viewport uses, so wrapped lines fit.
 func wrapWords(text string, maxWidth int) []string {
 	if maxWidth <= 0 {

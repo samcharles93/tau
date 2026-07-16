@@ -23,7 +23,7 @@ func newTestManager(t *testing.T) *Manager {
 // TestManagerListCarriesLineageAndAttribution verifies that List() maps
 // parent_session_id and agent_instance_id (and the previously-dropped
 // tool_calls/tool_errors) from the store row through to the chat-level
-// SessionSummary — this is what the TUI/WebUI session tree is built from.
+// SessionSummary - this is what the TUI/WebUI session tree is built from.
 func TestManagerListCarriesLineageAndAttribution(t *testing.T) {
 	m := newTestManager(t)
 	ctx := context.Background()

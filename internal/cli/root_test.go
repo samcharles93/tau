@@ -73,7 +73,7 @@ func TestSplitProviderModel(t *testing.T) {
 // buildTestCommand parses args against a command exposing the same
 // skip-setup/child/prompt flags root.go's Action reads, returning the
 // resulting *urfavecli.Command for shouldAutoSetup/shouldSkipSetupContinue
-// to inspect — mirrors how those functions actually receive their cmd
+// to inspect - mirrors how those functions actually receive their cmd
 // argument in production, rather than hand-constructing flag state.
 func buildTestCommand(t *testing.T, args []string) *urfavecli.Command {
 	t.Helper()
@@ -118,7 +118,7 @@ func TestShouldAutoSetupRejectsOneShotPrompt(t *testing.T) {
 // stdin) isn't exercised here: term.IsTerminal(stdin) is always false under
 // `go test`, so this function can't distinguish that branch from the
 // rejection cases above in a unit test. Verified manually instead via tmux
-// (a real pty) during CAT-125 — see the ticket for the transcript: the
+// (a real pty) during CAT-125 - see the ticket for the transcript: the
 // wizard fires, provider+model get picked, and the same process continues
 // into chat with the newly configured provider.
 

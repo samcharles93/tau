@@ -126,7 +126,7 @@ func (t *UsageTracker) handle(e chat.MetricEvent) {
 		case "session.provider.changed":
 			totals.ProviderSwitches++
 		default:
-			// session.created, session.closed — no numeric aggregate.
+			// session.created, session.closed - no numeric aggregate.
 		}
 	}
 }

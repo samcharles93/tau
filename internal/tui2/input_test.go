@@ -12,7 +12,7 @@ import (
 )
 
 // key builds a tea.KeyPressMsg for a special key (Home, Left, ctrl+backspace,
-// etc.) — no Text, matching what a real terminal sends for non-printable /
+// etc.) - no Text, matching what a real terminal sends for non-printable /
 // modified keys (see the model_test.go sanity check in conversation history:
 // setting Text on a Ctrl-modified letter suppresses the modifier in String()).
 func key(code rune, mod tea.KeyMod) tea.KeyPressMsg {
@@ -34,7 +34,7 @@ func TestTypingInsertsAtCursorNotJustAppend(t *testing.T) {
 		t.Fatalf("input=%q cursor=%d, want %q/10", m.input, m.inputCursor, "helloworld")
 	}
 
-	// Move left 5 (to between "hello" and "world") and insert a space —
+	// Move left 5 (to between "hello" and "world") and insert a space -
 	// a pure append model would tack it onto the end instead.
 	for range 5 {
 		m.handleKey(key(tea.KeyLeft, 0))
@@ -141,7 +141,7 @@ func TestShiftEnterInsertsNewlineInsteadOfSubmitting(t *testing.T) {
 		t.Fatalf("shift+enter: input = %q, want a trailing newline appended", m.input)
 	}
 	if len(rt.sent) != 0 {
-		t.Error("shift+enter must not submit — nothing should be sent to the runtime")
+		t.Error("shift+enter must not submit - nothing should be sent to the runtime")
 	}
 	if m.inResponse {
 		t.Error("shift+enter must not start a turn")
@@ -241,7 +241,7 @@ func TestUpDownRecallHistoryAtBufferEdgesElseMoveVertically(t *testing.T) {
 	m.history = []string{"first prompt", "second prompt"}
 	m.historyIdx = -1
 
-	// Single-line, cursor at start (0) — Up must recall history, not move.
+	// Single-line, cursor at start (0) - Up must recall history, not move.
 	m.input = ""
 	m.inputCursor = 0
 	m.handleKey(key(tea.KeyUp, 0))
@@ -249,7 +249,7 @@ func TestUpDownRecallHistoryAtBufferEdgesElseMoveVertically(t *testing.T) {
 		t.Fatalf("up at buffer start: input = %q, want history recall", m.input)
 	}
 
-	// Multi-line buffer, cursor on the last line (not at line 0) — Up must
+	// Multi-line buffer, cursor on the last line (not at line 0) - Up must
 	// move the cursor vertically instead of recalling history.
 	m.history = []string{"h1"}
 	m.historyIdx = -1
@@ -294,7 +294,7 @@ func TestNotificationOnlyFiresWhenUnfocused(t *testing.T) {
 	m := newTestModel(rt, nil)
 
 	// Focused (the default): completing a response must NOT raise a
-	// tea.Raw notification — the text already streamed on-screen.
+	// tea.Raw notification - the text already streamed on-screen.
 	m.handleChatEvent(tauchat.ChatResponseStartedEvent{})
 	m.handleChatEvent(tauchat.ChatResponseDeltaEvent{Delta: "hi there"})
 	cmd := m.handleChatEvent(tauchat.ChatResponseCompletedEvent{})

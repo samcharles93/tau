@@ -11,9 +11,9 @@ body:
         Thanks for contributing to Tau's extensibility!
 
         Tau supports three ways to extend its behaviour:
-        1. **Skills (`SKILL.md`)** — Markdown instructions discovered project-locally or globally.
-        2. **Custom Slash Commands** — User/project level templates loaded from `.tau/commands/`.
-        3. **gRPC Plugins** — Native external processes that register custom tools and event handlers.
+        1. **Skills (`SKILL.md`)** - Markdown instructions discovered project-locally or globally.
+        2. **Custom Slash Commands** - User/project level templates loaded from `.tau/commands/`.
+        3. **gRPC Plugins** - Native external processes that register custom tools and event handlers.
 
   - type: dropdown
     id: kind

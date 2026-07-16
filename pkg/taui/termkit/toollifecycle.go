@@ -14,10 +14,10 @@ import (
 //
 // Two modes are available:
 //
-//	// Determinate — spinner + progress bar (for tools with a known step count):
+//	// Determinate - spinner + progress bar (for tools with a known step count):
 //	tl := NewToolLifecycle("go build", "./...", w)
 //
-//	// Indeterminate — spinner only (for tools with unknown duration):
+//	// Indeterminate - spinner only (for tools with unknown duration):
 //	tl := NewIndeterminateToolLifecycle("fetch", "https://api.example.com", w)
 //
 //	tl.Start()
@@ -48,7 +48,7 @@ func NewToolLifecycle(toolName, args string, w io.Writer) *ToolLifecycle {
 }
 
 // NewIndeterminateToolLifecycle creates a ToolLifecycle that shows only a
-// spinner with elapsed time — no progress bar. Use this for tools whose
+// spinner with elapsed time - no progress bar. Use this for tools whose
 // duration is unknown (network calls, user prompts, etc.).
 func NewIndeterminateToolLifecycle(toolName, args string, w io.Writer) *ToolLifecycle {
 	return &ToolLifecycle{
@@ -124,18 +124,18 @@ func (tl *ToolLifecycle) Resolve(ok bool, detail string) {
 
 	if ok {
 		badge := Style(" SUCCESS ", ColorGreen.Bg(), ColorObsidian.Fg(), Bold)
-		timing := Style(fmt.Sprintf("— %s", detail), ColorGrey.Fg())
+		timing := Style(fmt.Sprintf("- %s", detail), ColorGrey.Fg())
 		if detail == "" {
-			timing = Style(fmt.Sprintf("— done in %.1fs", elapsed), ColorGrey.Fg())
+			timing = Style(fmt.Sprintf("- done in %.1fs", elapsed), ColorGrey.Fg())
 		}
 		fmt.Fprintf(tl.writer(), "%s %s %s %s\n",
 			badge, Style(tl.toolName, Bold), meta, timing)
 	} else {
 		badge := Style(" FAILED  ", ColorRed.Bg(), ColorWhite.Fg(), Bold)
 		logLink := Style(Hyperlink("view log", "https://example.com/logs/"+tl.toolName), Underline)
-		tail := Style(fmt.Sprintf("— %s ·", detail), ColorGrey.Fg())
+		tail := Style(fmt.Sprintf("- %s ·", detail), ColorGrey.Fg())
 		if detail == "" {
-			tail = Style("— exit 1 ·", ColorGrey.Fg())
+			tail = Style("- exit 1 ·", ColorGrey.Fg())
 		}
 		fmt.Fprintf(tl.writer(), "%s %s %s %s %s\n",
 			badge, Style(tl.toolName, Bold), meta, tail, logLink)

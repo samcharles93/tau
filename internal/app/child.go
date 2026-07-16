@@ -21,24 +21,24 @@ import (
 )
 
 // RunChild is the headless child entry point. It writes agent.ready first
-// (before reading anything — see step 1 below), reads agent.assign, loads
+// (before reading anything - see step 1 below), reads agent.assign, loads
 // its instance and session from the shared store, runs the coordinator
 // headless with injected model/tools/limits, and exits after writing
 // agent.result on stdout.
-// stderr is reserved for log messages only — never protocol.
+// stderr is reserved for log messages only - never protocol.
 // Exit codes: 0 after result; 1 for protocol errors; 2 for fatal runtime errors.
 func RunChild(ctx context.Context, opts ChatOptions) error {
 	stdin := stdio.NewReader(os.Stdin)
 	stdout := stdio.NewWriter(os.Stdout)
 
-	// Step 1: Write agent.ready as the first line on stdout — this MUST
+	// Step 1: Write agent.ready as the first line on stdout - this MUST
 	// come before reading anything from stdin. The parent blocks reading
 	// agent.ready before it will send agent.assign (docs/specs/agents/
 	// 03-wire-protocol.md: "The child writes agent.ready as its first
 	// line; the parent replies with agent.assign"); reading assign first
 	// here deadlocked unconditionally, both sides waiting on each other.
 	// The real instance ID isn't known yet (the parent assigns it via
-	// agent.assign, next) — the parent doesn't validate this field.
+	// agent.assign, next) - the parent doesn't validate this field.
 	if err := stdout.WriteHandshake("", os.Getpid()); err != nil {
 		return fmt.Errorf("write agent.ready: %w", err)
 	}
@@ -139,7 +139,7 @@ func RunChild(ctx context.Context, opts ChatOptions) error {
 
 	// Apply the injected tool allowlist so buildToolDefs respects it from
 	// the first turn. (agent.ready was already written in step 1, before
-	// the instance ID was even known — see above.)
+	// the instance ID was even known - see above.)
 	if len(assign.Tools) > 0 {
 		coordinator.SetAllowedTools(assign.Tools)
 	}
@@ -178,7 +178,7 @@ func RunChild(ctx context.Context, opts ChatOptions) error {
 			typ, _, err := stdin.ReadEnvelope()
 			if err != nil {
 				// stdin EOF: parent died or closed the pipe.
-				// Treat as cancel-with-no-listener — persist and exit silently.
+				// Treat as cancel-with-no-listener - persist and exit silently.
 				slog.Info("child: stdin closed, treating as cancel", "err", err)
 				close(cancelCh)
 				return
@@ -202,11 +202,11 @@ func RunChild(ctx context.Context, opts ChatOptions) error {
 	for {
 		select {
 		case <-ctx.Done():
-			// Context cancelled — exit without writing result.
+			// Context cancelled - exit without writing result.
 			return fmt.Errorf("context cancelled: %w", ctx.Err())
 
 		case <-cancelCh:
-			// Parent cancelled or stdin EOF — cancel the active turn.
+			// Parent cancelled or stdin EOF - cancel the active turn.
 			_ = coordinator.Send(tauchat.CancelChatRequestCommand{
 				SessionID: assign.SessionID,
 			})

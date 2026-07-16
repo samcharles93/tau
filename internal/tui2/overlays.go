@@ -13,7 +13,7 @@ import (
 )
 
 // contextMenuTarget identifies what kind of element a context menu was
-// opened against — tool calls have two distinct on-screen forms (see
+// opened against - tool calls have two distinct on-screen forms (see
 // contextMenuTargetTool vs contextMenuTargetToolRow), because a live,
 // uncommitted tool box and a committed group's unfolded per-tool row are
 // resolved through completely different hit-testing paths.
@@ -45,7 +45,7 @@ type contextMenuItem struct {
 }
 
 // contextMenu is the state of an open right-click menu. A nil *contextMenu
-// on model means no menu is open — mirrors activePrompt's nil-sentinel
+// on model means no menu is open - mirrors activePrompt's nil-sentinel
 // idiom. x/y are the raw click position; positioning/clamping onto the
 // screen happens at render/hit-test time (see clampContextMenuPosition),
 // not here, so this struct stays purely "what was clicked and what can be
@@ -59,7 +59,7 @@ type contextMenu struct {
 }
 
 // diffViewerState is the state of an open "View diff" overlay. A nil
-// *diffViewerState on model means no viewer is open — mirrors contextMenu's
+// *diffViewerState on model means no viewer is open - mirrors contextMenu's
 // nil-sentinel idiom.
 type diffViewerState struct {
 	title    string
@@ -73,14 +73,14 @@ type pluginPanel struct {
 }
 
 // compositeContextMenu overlays the open context menu on top of base using a
-// lipgloss Compositor — tui2's only (x,y)-stamping compositing path, used
+// lipgloss Compositor - tui2's only (x,y)-stamping compositing path, used
 // nowhere else, since every other piece of chrome is flow-laid-out below
 // the viewport rather than floating on top of arbitrary content. Compositing
 // happens at the decoded-cell level (via lipgloss.Layer's underlying
 // uv.StyledString), so this never corrupts either base's or menuStr's ANSI
 // regardless of what's already styled underneath.
 //
-// This must go through a Compositor, not bare Canvas.Compose(layer) calls —
+// This must go through a Compositor, not bare Canvas.Compose(layer) calls -
 // Canvas.Compose(drawer) always calls drawer.Draw(canvas, canvas.Bounds()),
 // and a bare Layer.Draw ignores its own X/Y and just stamps its content
 // starting at whatever area it's handed, filling that entire area (blanking
@@ -93,7 +93,7 @@ func (m *model) compositeContextMenu(base string) string {
 
 	// Compositor.Render() would auto-size the canvas to the union of layer
 	// bounds, which could come up short of the real terminal size if base's
-	// widest line is narrower than m.width — pin it explicitly instead, so
+	// widest line is narrower than m.width - pin it explicitly instead, so
 	// the composited frame always matches what bubbletea expects.
 	compositor := lipgloss.NewCompositor(
 		lipgloss.NewLayer(base).X(0).Y(0),
@@ -111,7 +111,7 @@ func (m *model) compositeContextMenu(base string) string {
 // taller than the terminal itself (which the flip alone doesn't guarantee).
 // Shared by compositeContextMenu (render) and handleContextMenuClick
 // (click-away hit-test) so the two can never disagree about where the menu
-// actually is — same rationale as computeLayout being the single source of
+// actually is - same rationale as computeLayout being the single source of
 // truth for the rest of the screen.
 func (m *model) clampContextMenuPosition(menuStr string) (x, y int) {
 	mw := lipgloss.Width(menuStr)
@@ -148,7 +148,7 @@ func renderContextMenu(items []contextMenuItem, selected int) string {
 
 // handleContextMenuClick resolves a left-click while a context menu is open
 // against the menu's clamped on-screen bounds (see clampContextMenuPosition
-// — the same function compositeContextMenu uses to render it, so hit-test
+// - the same function compositeContextMenu uses to render it, so hit-test
 // and render can never disagree about where the menu actually is). A click
 // inside the menu activates the item under it; a click anywhere else closes
 // the menu without performing the click's underlying region action.
@@ -172,9 +172,9 @@ func (m *model) handleContextMenuClick(x, y int) tea.Cmd {
 	return m.activateContextMenuItem(m.contextMenu.items[itemIdx])
 }
 
-// openContextMenuAt resolves the element under (x, y) — a live tool box or a
+// openContextMenuAt resolves the element under (x, y) - a live tool box or a
 // committed tool group/row (chat messages are added in a later change via
-// messageAtRow) — and opens a context menu for it. Mirrors handleMousePress's
+// messageAtRow) - and opens a context menu for it. Mirrors handleMousePress's
 // region dispatch but queries state rather than mutating it. A click on
 // input/status/empty space, or on nothing resolvable, leaves the menu
 // closed (silent no-op), matching how right-click on those regions is
@@ -253,7 +253,7 @@ func (m *model) buildLiveToolContextMenu(id string, x, y int) *contextMenu {
 }
 
 // toolSupportsDiffView reports whether t's context menu should offer a "View
-// diff" item — true for edit/write tool calls that carry populated
+// diff" item - true for edit/write tool calls that carry populated
 // tools.DiffDetails.
 func toolSupportsDiffView(t toolState) bool {
 	if t.name != "edit" && t.name != "write" {
@@ -264,7 +264,7 @@ func toolSupportsDiffView(t toolState) bool {
 }
 
 // buildCommittedToolContextMenu resolves renderedLines index idx against
-// m.committedGroups and builds the appropriate menu — a single row's menu if
+// m.committedGroups and builds the appropriate menu - a single row's menu if
 // idx lands on a specific tool row within an unfolded multi-tool group, or
 // the whole group's menu otherwise. Mirrors toggleCommittedToolAtLine's same
 // fold/row-expand precedence exactly, so right-click and left-click always
@@ -318,9 +318,9 @@ func (m *model) buildToolRowContextMenu(g *committedToolGroup, toolID string, x,
 }
 
 // buildCommittedGroupContextMenu builds a menu for a whole committed group
-// (folded, or a click that landed outside every row of an unfolded group —
+// (folded, or a click that landed outside every row of an unfolded group -
 // the header/border, same as the fold trigger). Uses the group's first
-// tool's id as the menu's stable identity — findCommittedGroupWithTool
+// tool's id as the menu's stable identity - findCommittedGroupWithTool
 // resolves it back to this same group at activation time. Groups always
 // have at least one tool.
 func (m *model) buildCommittedGroupContextMenu(g *committedToolGroup, x, y int) *contextMenu {
@@ -333,7 +333,7 @@ func (m *model) buildCommittedGroupContextMenu(g *committedToolGroup, x, y int) 
 		{label: expandLabel, action: contextMenuActionToggleExpand},
 	}
 	// Only offer "View diff" from the group-level menu for a single-tool
-	// group — a multi-tool group's individual tools are reachable (and
+	// group - a multi-tool group's individual tools are reachable (and
 	// disambiguated) via buildToolRowContextMenu once unfolded.
 	if len(g.tools) == 1 && toolSupportsDiffView(g.tools[0]) {
 		items = append(items, contextMenuItem{label: "View diff", action: contextMenuActionViewDiff})
@@ -348,10 +348,10 @@ func (m *model) buildCommittedGroupContextMenu(g *committedToolGroup, x, y int) 
 }
 
 // handleContextMenuKey handles keyboard input while a context menu is open.
-// Up/Down wrap (matches focusNextTool's wraparound — a menu conventionally
+// Up/Down wrap (matches focusNextTool's wraparound - a menu conventionally
 // wraps, unlike the completions dropdown's clamped window). Enter activates
 // the selected item and closes the menu. Esc performs a real, unconditional
-// dismiss — unlike the completions dropdown's swallow-without-closing, this
+// dismiss - unlike the completions dropdown's swallow-without-closing, this
 // is an explicit modal the user deliberately opened. Every other key is
 // swallowed while the menu is open rather than falling through to input
 // editing.
@@ -398,7 +398,7 @@ func (m *model) activateContextMenuItem(item contextMenuItem) tea.Cmd {
 
 // activateMessageContextAction performs action against the message
 // identified by id, looked up in messageRanges for its raw (unstyled)
-// content — Copy is currently the only message action.
+// content - Copy is currently the only message action.
 func (m *model) activateMessageContextAction(id string, action contextMenuAction) tea.Cmd {
 	if action != contextMenuActionCopy {
 		return nil
@@ -412,7 +412,7 @@ func (m *model) activateMessageContextAction(id string, action contextMenuAction
 }
 
 // activateToolContextAction performs action against either the live tool or
-// the whole committed group identified by id — whichever collection
+// the whole committed group identified by id - whichever collection
 // currently contains it (see findLiveTool/findCommittedGroupWithTool).
 func (m *model) activateToolContextAction(id string, action contextMenuAction) tea.Cmd {
 	if i := m.findLiveTool(id); i >= 0 {
@@ -486,7 +486,7 @@ func (m *model) activateToolRowContextAction(id string, action contextMenuAction
 }
 
 // copyText copies text to the clipboard via OSC 52, matching copySelection's
-// size-guard and notification pattern — context-menu Copy actions have no
+// size-guard and notification pattern - context-menu Copy actions have no
 // selectionState/bounds of their own to route through copySelection itself.
 func (m *model) copyText(text string) tea.Cmd {
 	if text == "" {

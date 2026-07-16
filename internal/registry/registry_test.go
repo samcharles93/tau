@@ -161,10 +161,10 @@ func TestPublishDoesNotPanic(t *testing.T) {
 
 	reg := New("/nonexistent", pubClient)
 
-	// Discover publishes via the bus — should not panic even with no commands.
+	// Discover publishes via the bus - should not panic even with no commands.
 	reg.Discover()
 
-	// MergeSkills publishes via the bus — should not panic.
+	// MergeSkills publishes via the bus - should not panic.
 	reg.MergeSkills([]*skills.Skill{
 		{Name: "test-skill", Description: "test", UserInvocable: true, Scope: skills.ScopeUser},
 	})

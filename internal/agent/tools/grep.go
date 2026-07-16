@@ -146,7 +146,7 @@ func makeGrepExecutor(cwd string, workspaceIndex GrepIndex) Executor {
 		binary, err := grepBinary()
 		if err != nil {
 			searchBackend = "direct"
-			// No external binary available — use pure-Go fallback.
+			// No external binary available - use pure-Go fallback.
 			output, err := grepFallback(ctx, p, searchPath, cwd, searchTargets)
 			if err != nil {
 				return grepBackendResult(Result{Content: fmt.Sprintf("grep error: %v", err), IsError: true}, searchBackend), nil

@@ -34,7 +34,7 @@ func (m *model) handleChatEvent(evt tauchat.ChatEvent) tea.Cmd {
 		return spinTick()
 
 	case tauchat.ChatResponseDeltaEvent:
-		// New text after a tool-calling batch means that batch is over —
+		// New text after a tool-calling batch means that batch is over -
 		// commit it now so it lands in scrollback before (not after) this
 		// text, and so the live tool-call box doesn't linger below text that
 		// chronologically comes after it.
@@ -56,11 +56,16 @@ func (m *model) handleChatEvent(evt tauchat.ChatEvent) tea.Cmd {
 		}
 
 	case tauchat.ChatToolCallDeltaEvent:
+		m.adoptStreamedToolCallID(e.CallID, e.Index)
 		m.upsertToolCall(e.CallID, e.ToolName, e.ArgumentsSummary, "")
 
 	case tauchat.ChatToolExecutionStartedEvent:
 		m.upsertToolCall(e.CallID, e.ToolName, e.ArgumentsSummary, e.Summary)
 		m.setToolStatus(e.CallID, "running")
+		if e.ToolName == "shell" {
+			m.toolGroupCollapsed = false
+			m.expandedID = e.CallID
+		}
 		m.agentState = agentRunningTool
 
 	case tauchat.ChatToolExecutionCompletedEvent:
@@ -99,7 +104,7 @@ func (m *model) handleChatEvent(evt tauchat.ChatEvent) tea.Cmd {
 		// collapses working states and shows terminal summaries.
 		// ChildAgentStateEvent never carries a session ID (only the
 		// completed-tool-call details JSON does, via extractChildAgentResult
-		// above) — preserve any sessionID already recorded rather than
+		// above) - preserve any sessionID already recorded rather than
 		// clobbering it with a live update that arrives after the terminal
 		// one (ordering isn't guaranteed across event types).
 		sessionID := m.childAgents[e.CallID].sessionID
@@ -127,7 +132,7 @@ func (m *model) handleChatEvent(evt tauchat.ChatEvent) tea.Cmd {
 		// to drain and no desktop notification to fire.
 		cmds := []tea.Cmd{noopCmd, m.drainTurnQueue()}
 		// Only nudge the user via desktop notification when they've
-		// actually looked away — while focused, the response already
+		// actually looked away - while focused, the response already
 		// streamed onto their screen. Matches internal/tui/inline_events.go.
 		if content != "" && !m.focused {
 			cmds = append(cmds, tea.Raw(termkit.Notify("tau", content)))
@@ -144,9 +149,9 @@ func (m *model) handleChatEvent(evt tauchat.ChatEvent) tea.Cmd {
 	case tauchat.ChatRuntimeErrorEvent:
 		// A failed background session-list prefetch (see
 		// maybePrefetchSessions) must not leave sessionsFetchInFlight stuck
-		// true forever with no retry — harmless no-op otherwise.
+		// true forever with no retry - harmless no-op otherwise.
 		m.sessionsFetchInFlight = false
-		// A failed child-transcript load is not a failed chat turn — it must
+		// A failed child-transcript load is not a failed chat turn - it must
 		// not fall through into the turn-interruption logic below. Close the
 		// stuck "Loading…" overlay (if this error matches it) and notify,
 		// same stale-response guard as ChildTranscriptLoadedEvent.
@@ -159,7 +164,7 @@ func (m *model) handleChatEvent(evt tauchat.ChatEvent) tea.Cmd {
 		// buffers so failed in-flight tool groups do not vanish when the next
 		// prompt starts. hadLoneTool is captured before flushing (which
 		// clears m.tools) so the appendMessage call below knows whether that
-		// commit already put this exact reason in scrollback — a lone tool
+		// commit already put this exact reason in scrollback - a lone tool
 		// box (renderCommittedGroup/renderToolBox: len(tools)==1) shows a
 		// compact result summary inline with nothing to expand, so it
 		// already displays the reason; a MULTI-tool group instead collapses
@@ -171,9 +176,9 @@ func (m *model) handleChatEvent(evt tauchat.ChatEvent) tea.Cmd {
 		m.inResponse = false
 		// Shown via the notification banner (above the input area) at error
 		// level, auto-clearing after notificationClearDelay like any other
-		// notification — the scrollback line below is the permanent record,
+		// notification - the scrollback line below is the permanent record,
 		// so the banner doesn't need to persist until dismissed too. Also
-		// printed to scrollback so it isn't lost once the banner clears —
+		// printed to scrollback so it isn't lost once the banner clears -
 		// but only when nothing else in scrollback already shows it (see
 		// hadLoneTool above). Truncated: some providers return an unbounded
 		// error body (e.g. a full HTML edge error page) that would
@@ -188,7 +193,7 @@ func (m *model) handleChatEvent(evt tauchat.ChatEvent) tea.Cmd {
 
 	case tauchat.ChatNotificationEvent:
 		// Covers the "session persistence unavailable" path a background
-		// session-list prefetch can hit — see the ChatRuntimeErrorEvent case
+		// session-list prefetch can hit - see the ChatRuntimeErrorEvent case
 		// above for why this reset matters.
 		m.sessionsFetchInFlight = false
 		msg := truncateErrorText(e.Message)
@@ -207,7 +212,7 @@ func (m *model) handleChatEvent(evt tauchat.ChatEvent) tea.Cmd {
 		m.sessionsFetchInFlight = false
 		if e.Silent {
 			// A background cache-refresh for the /session and /resume
-			// argument-completion dropdowns (see maybePrefetchSessions) —
+			// argument-completion dropdowns (see maybePrefetchSessions) -
 			// not a user-facing "/session list", so nothing prints to
 			// scrollback. The dropdown picks up m.sessionSummaries on its
 			// own next render.
@@ -218,7 +223,7 @@ func (m *model) handleChatEvent(evt tauchat.ChatEvent) tea.Cmd {
 
 	case tauchat.SessionLoadedEvent:
 		// Reuses the same state-sync + message-replay logic as an initial
-		// snapshot — mirrors internal/tui/inline_chat.go's syncState +
+		// snapshot - mirrors internal/tui/inline_chat.go's syncState +
 		// printMessage-per-message replay, so a loaded session's history is
 		// actually visible instead of just a notification.
 		m.applySnapshot(tauchat.ChatSessionSnapshotEvent(e))
@@ -257,7 +262,7 @@ func (m *model) handleChatEvent(evt tauchat.ChatEvent) tea.Cmd {
 		return nil
 
 	case tauchat.CommandsChangedEvent:
-		// Registry commands changed — no-op for now (completion picks them up
+		// Registry commands changed - no-op for now (completion picks them up
 		// from slashTable which is static).
 		return nil
 
@@ -288,7 +293,7 @@ func (m *model) handleChatEvent(evt tauchat.ChatEvent) tea.Cmd {
 
 	// Skills events. Rendered through glamour (like assistant markdown)
 	// rather than appendMessage, so long descriptions wrap with a hanging
-	// indent instead of spilling into one unstyled blob — see
+	// indent instead of spilling into one unstyled blob - see
 	// skillsChangedText.
 	case tauchat.SkillsChangedEvent:
 		rendered := m.renderMarkdown(skillsChangedText(e.Skills), m.width)
@@ -314,26 +319,26 @@ func (m *model) applySnapshot(e tauchat.ChatSessionSnapshotEvent) {
 		m.provider = state.ProviderName
 	}
 	// N15: statusText consistently means "model @ provider"; never carry
-	// error text here — errors go through m.notification.
+	// error text here - errors go through m.notification.
 	m.statusText = fmt.Sprintf("%s @ %s", m.modelName, m.provider)
 
 	// Rebuild viewport content from session history. Snapshots arrive
-	// routinely (not just on session load/resume) — e.g. after every
-	// submitted prompt — so this must reproduce finalizeResponse's/
+	// routinely (not just on session load/resume) - e.g. after every
+	// submitted prompt - so this must reproduce finalizeResponse's/
 	// flushToolGroup's rendering exactly, or an already-committed message
 	// reverts to raw/unbatched form the next time a snapshot rebuilds the
 	// viewport.
 	//
 	// toolCallsByID tracks each assistant tool_call's name/arguments so a
 	// later ChatRoleTool message (which only carries the call's ID and
-	// result) can be rendered as a real tool call instead of being dropped —
+	// result) can be rendered as a real tool call instead of being dropped -
 	// history has no per-call elapsed time or error flag, so replayed calls
 	// always show status "done" with no timing. pendingTools batches a run of
 	// consecutive tool results (uninterrupted by user/assistant text) so a
 	// turn with many tool calls renders as one compact group instead of
 	// burying the surrounding conversation.
 	// oldGroups lets a fold/row-expand the user made on a committed group
-	// survive this rebuild — without it, every submitted prompt (which
+	// survive this rebuild - without it, every submitted prompt (which
 	// triggers a fresh snapshot) would silently refold anything they'd
 	// opened. Keyed by committedGroupKey, which stays stable across
 	// rebuilds (see its doc comment).
@@ -344,7 +349,7 @@ func (m *model) applySnapshot(e tauchat.ChatSessionSnapshotEvent) {
 	m.committedGroups = m.committedGroups[:0]
 
 	// oldReasoning is the same fold-survival mechanism as oldGroups, for
-	// completed reasoning blocks — keyed by committedReasoningKey.
+	// completed reasoning blocks - keyed by committedReasoningKey.
 	oldReasoning := make(map[string]*committedReasoningBlock, len(m.committedReasoning))
 	for _, b := range m.committedReasoning {
 		oldReasoning[b.key] = b
@@ -370,7 +375,7 @@ func (m *model) applySnapshot(e tauchat.ChatSessionSnapshotEvent) {
 		case tauchat.ChatRoleUser:
 			if cmd, output, ok := parseBashHistoryMessage(msg.Content); ok {
 				pendingTools = append(pendingTools, toolState{
-					// A stable, index-derived ID (not uuid.NewString()) —
+					// A stable, index-derived ID (not uuid.NewString()) -
 					// this entry has no real call ID, and committedGroupKey
 					// needs the same ID back on every rebuild for fold
 					// state to carry over instead of resetting.
@@ -397,7 +402,7 @@ func (m *model) applySnapshot(e tauchat.ChatSessionSnapshotEvent) {
 			}
 		case tauchat.ChatRoleAssistant:
 			// Reasoning is persisted per-message (ChatMessage.ReasoningContent)
-			// specifically so it survives a snapshot rebuild — without this,
+			// specifically so it survives a snapshot rebuild - without this,
 			// finalizeResponse's live-turn commit would render fine once, then
 			// vanish the moment the next prompt triggered a rebuild here, since
 			// this function is the sole source of truth for renderedLines.
@@ -440,7 +445,7 @@ func (m *model) applySnapshot(e tauchat.ChatSessionSnapshotEvent) {
 // history for the transcript drill-down overlay (childtranscript.go). It is
 // a local, non-mutating counterpart to applySnapshot: applySnapshot cannot
 // be reused directly because it mutates live model state (m.renderedLines,
-// m.committedGroups, fold-state maps) via struct-copy-unsafe map aliasing —
+// m.committedGroups, fold-state maps) via struct-copy-unsafe map aliasing -
 // see the CAT-65 plan. Tool call groups always render collapsed (no
 // accordion state needed for a static, read-only overlay); reasoning always
 // renders expanded (no fold state to restore).
@@ -514,25 +519,26 @@ func (m *model) renderChildTranscriptLines(messages []tauchat.ChatMessage, width
 // finalizeResponse returns the finalized assistant text (empty if none) so
 // the caller can decide whether to fire a desktop notification. id, if
 // non-empty, is the just-completed assistant ChatMessage's ID (see
-// lastAssistantMessageID) — recorded into messageRanges the same way
+// lastAssistantMessageID) - recorded into messageRanges the same way
 // applySnapshot records every other message's range, so this message is
 // immediately right-clickable without waiting for the next snapshot rebuild.
 func (m *model) finalizeResponse(id string) string {
 	// A turn that ends purely on tool calls (no trailing text) still needs
-	// its tools committed to scrollback — flushToolGroup renders the real
+	// its tools committed to scrollback - flushToolGroup renders the real
 	// group instead of a synthetic placeholder, so the user sees exactly
 	// what ran.
 	if len(m.tools) > 0 {
+		m.failUnfinishedTools("inference ended before tool execution completed")
 		m.flushToolGroup()
 	}
 	// Commit reasoning to scrollback before the final answer, styled the
 	// same as the live reasoning view. Previously reasoning only ever
-	// existed in the live view and was discarded here unread — on a fast
+	// existed in the live view and was discarded here unread - on a fast
 	// model, reasoning and the answer can both finish inside a second, so
 	// it would flash on screen and vanish before anyone could read it.
 	//
 	// autoCollapse: fold the block automatically only when the turn also
-	// produced a trailing answer — final-answer generation actually began,
+	// produced a trailing answer - final-answer generation actually began,
 	// so there's an answer for the block to sit above once folded. A
 	// reasoning-only turn (no answer) stays expanded, matching the existing
 	// "reasoning-only" regression behavior.
@@ -576,7 +582,7 @@ func lastAssistantMessageID(state tauchat.ChatSessionState) string {
 
 // mdCacheWidth normalizes a raw width to the key mdCache actually stores
 // renderers under. Glamour renders unusably narrow at very small widths, so
-// anything below 20 clamps up to 20 — every populate and lookup against
+// anything below 20 clamps up to 20 - every populate and lookup against
 // mdCache must go through this same normalization, or a narrow width (or
 // width 0, before the first WindowSizeMsg) silently misses a renderer that
 // was stored under its clamped key.
@@ -592,7 +598,7 @@ func mdCacheWidth(width int) int {
 // a custom glamour theme (glamour.WithStyles) would give full visual
 // control over code blocks and headings, matching tau's theme palette.
 // A nil cache (e.g. markdown rendering deliberately disabled) is a no-op,
-// not a panic — renderMarkdown/renderToolBox then fall back to raw text.
+// not a panic - renderMarkdown/renderToolBox then fall back to raw text.
 func ensureMDRenderer(cache map[int]*glamour.TermRenderer, width int) {
 	if cache == nil {
 		return
@@ -614,7 +620,7 @@ func ensureMDRenderer(cache map[int]*glamour.TermRenderer, width int) {
 // renderMarkdown converts raw markdown to ANSI-styled terminal output using
 // a glamour renderer memoized for width. Falls back to plain text when no
 // renderer exists for width, and before the real terminal width is known
-// (width == 0, prior to the first WindowSizeMsg) — rendering at a guessed
+// (width == 0, prior to the first WindowSizeMsg) - rendering at a guessed
 // width would wrap content for a size that isn't the actual terminal's.
 func (m *model) renderMarkdown(content string, width int) string {
 	if width <= 0 {
@@ -634,7 +640,7 @@ func (m *model) renderMarkdown(content string, width int) string {
 
 // flushStreamingText commits any accumulated streaming text to scrollback
 // without ending the turn. Called right before a new tool call starts: that
-// text was authored before the call, so it must land in history now —
+// text was authored before the call, so it must land in history now -
 // otherwise the tool call/group that commits later (flushToolGroup) would
 // render ahead of text that chronologically came first. Reasoning is
 // discarded rather than persisted, matching finalizeResponse.
@@ -657,6 +663,11 @@ func (m *model) flushInterruptedTurn(reason string) {
 	if len(m.tools) == 0 {
 		return
 	}
+	m.failUnfinishedTools(reason)
+	m.flushToolGroup()
+}
+
+func (m *model) failUnfinishedTools(reason string) {
 	for i := range m.tools {
 		t := &m.tools[i]
 		switch t.status {
@@ -674,7 +685,6 @@ func (m *model) flushInterruptedTurn(reason string) {
 			t.elapsed = time.Since(t.startedAt)
 		}
 	}
-	m.flushToolGroup()
 }
 
 func appendInterruptReason(result, reason string) string {
@@ -694,7 +704,7 @@ func appendInterruptReason(result, reason string) string {
 // commands: `fmt.Sprintf("Ran `+"`"+`%s`+"`"+`\n\n```\n%s\n```", cmd, output)`.
 // Those commands run outside the normal tool-call loop, so the backend
 // records them as plain ChatRoleUser text rather than a tool_call/tool
-// result pair — parseBashHistoryMessage reverses that back into a command
+// result pair - parseBashHistoryMessage reverses that back into a command
 // and output so a replayed session still shows the tool box instead of raw
 // markdown text.
 const (
@@ -732,19 +742,19 @@ const (
 var notificationClearDelay = defaultNotificationClearDelay
 
 // setNotification sets an info-level notification that auto-clears.
-// For a level (drives its color) or a custom duration — e.g. an error that
-// should persist until superseded rather than silently vanish — use
+// For a level (drives its color) or a custom duration - e.g. an error that
+// should persist until superseded rather than silently vanish - use
 // setNotificationWithLevel.
 func (m *model) setNotification(text string) tea.Cmd {
 	return m.setNotificationWithLevel(text, notify.LevelInfo, notificationClearDelay)
 }
 
 // setNotificationWithLevel sets the notification banner (rendered above the
-// input area, wrapping to as many lines as it needs — see computeLayout)
+// input area, wrapping to as many lines as it needs - see computeLayout)
 // with an explicit level and auto-clear duration, using a generation counter
 // so a newer notification is not clobbered by an older timer that fires
 // late (N1). duration <= 0 means the notification persists until replaced,
-// rather than auto-clearing — used for errors.
+// rather than auto-clearing - used for errors.
 func (m *model) setNotificationWithLevel(text string, level notify.Level, duration time.Duration) tea.Cmd {
 	m.notificationGen++
 	m.notification = text
@@ -776,7 +786,7 @@ func notifyLevelFromChat(level tauchat.ChatNotificationLevel) notify.Level {
 // internal/tui/inline_events.go's notifyDurationFromChat.
 // notifyWarnDuration/notifyInfoDuration are package variables (not literals
 // inline in notifyDurationFromChat) so tests can shrink them the same way
-// TestMain shrinks notificationClearDelay — otherwise a test that drives a
+// TestMain shrinks notificationClearDelay - otherwise a test that drives a
 // ChatNotificationEvent through Update actually waits out the real
 // tea.Tick duration now that it schedules a genuine auto-clear Cmd instead
 // of being handed to the old (never-rendered) notifyQ.
@@ -797,13 +807,13 @@ func notifyDurationFromChat(level tauchat.ChatNotificationLevel) time.Duration {
 }
 
 // notifyReservedLines is how many rows the notification banner always
-// occupies (see padOrClipLines) — enough for most messages to show in
+// occupies (see padOrClipLines) - enough for most messages to show in
 // full without wrapping past it.
 const notifyReservedLines = 2
 
 // padOrClipLines pads or clips s to exactly n lines, so a fixed-height
 // chrome region's reserved space never changes based on whether there's
-// currently anything to show in it — that's what stops the viewport from
+// currently anything to show in it - that's what stops the viewport from
 // visibly growing/shrinking every time a notification appears or clears.
 // A message that doesn't fit within n lines is clipped, not wrapped
 // further; that's rare (most notifications are one line) and preferable to

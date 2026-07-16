@@ -8,11 +8,11 @@ import (
 
 // modeLabelLeftMargin is how many rule dashes precede a mode's label, e.g.
 // "──── Shell ──────...". Unlike a static Divider label (which is centered),
-// a mode label sits near the left edge — it's an indicator meant to catch
+// a mode label sits near the left edge - it's an indicator meant to catch
 // the eye immediately, not a centered section heading.
 const modeLabelLeftMargin = 4
 
-// InputMode is a named, colored mode a Divider can render itself as — e.g.
+// InputMode is a named, colored mode a Divider can render itself as - e.g.
 // "Shell" while a "!" bash command is being typed, or "Planning" while
 // typing "/plan". Color is used both as the rule foreground and as the
 // background behind the label.
@@ -24,7 +24,7 @@ type InputMode struct {
 // Divider renders a full-width horizontal rule, with an optional centered
 // label. If SetModeFunc is given, the label and color are resolved fresh on
 // every render from the current mode instead of the static label passed to
-// NewDivider — see SetModeFunc.
+// NewDivider - see SetModeFunc.
 type Divider struct {
 	label       string
 	modeFn      func() *InputMode
@@ -39,12 +39,12 @@ func NewDivider(label string) *Divider {
 // SetModeFunc installs a getter consulted on every Render to determine the
 // divider's current color (and, unless HideModeLabel was called, its
 // label). When fn is nil or returns nil, Render falls back to the static
-// label passed to NewDivider, uncolored — so a Divider with no mode func
+// label passed to NewDivider, uncolored - so a Divider with no mode func
 // behaves identically to before this existed.
 func (d *Divider) SetModeFunc(fn func() *InputMode) { d.modeFn = fn }
 
 // HideModeLabel makes this Divider render the active mode's color as a
-// plain full-width rule without its name — e.g. the bottom divider around
+// plain full-width rule without its name - e.g. the bottom divider around
 // an input box, so only the top one names the mode.
 func (d *Divider) HideModeLabel() { d.labelHidden = true }
 
@@ -87,7 +87,7 @@ func (d *Divider) Render(width int) []string {
 	return []string{strings.Repeat("─", left) + text + strings.Repeat("─", right)}
 }
 
-// renderModeLabel renders a left-aligned, colored mode label — the label
+// renderModeLabel renders a left-aligned, colored mode label - the label
 // pill sits modeLabelLeftMargin dashes from the start of the line, with the
 // remaining width filled by colored dashes.
 func renderModeLabel(width int, mode InputMode) string {
@@ -115,7 +115,7 @@ func renderModeLabel(width int, mode InputMode) string {
 
 	// The label pill sets both fg AND bg (FgBgOnly/Wrap emits no trailing
 	// Reset), so without an explicit Reset before the trailing dashes, the
-	// pill's background would bleed forward — the dashesR segment only
+	// pill's background would bleed forward - the dashesR segment only
 	// overwrites the foreground, leaving stray background fill instead of
 	// colored dash glyphs.
 	pill := termkit.FgBgOnly(text, termkit.ContrastFg(mode.Color), mode.Color)

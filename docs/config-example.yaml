@@ -2,7 +2,7 @@
 # Copy to ~/.config/tau/config.yaml for global use, or .tau.yaml in a project.
 #
 # Most model metadata (context window, pricing, reasoning capabilities) is
-# loaded from the embedded offline snapshot — you do not need to repeat it
+# loaded from the embedded offline snapshot - you do not need to repeat it
 # here. Only specify auth and optional overrides.
 #
 # Well-known providers are auto-detected when their API key env var is set.
@@ -27,7 +27,7 @@ providers:
       type: none
 
   # Anthropic uses the native Messages API (not OpenAI-compatible).
-  # type: anthropic is required. base_url must be the host only — no /v1.
+  # type: anthropic is required. base_url must be the host only - no /v1.
   - name: anthropic
     base_url: https://api.anthropic.com
     type: anthropic

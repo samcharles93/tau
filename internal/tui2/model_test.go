@@ -84,7 +84,7 @@ func TestBashSendFailureClearsRunning(t *testing.T) {
 	m.Update(msgs[0])
 
 	if m.bashRunning {
-		t.Error("expected bashRunning=false after a failed send — otherwise input is locked forever")
+		t.Error("expected bashRunning=false after a failed send - otherwise input is locked forever")
 	}
 	if m.bashCallID != "" {
 		t.Error("expected bashCallID cleared after a failed send")
@@ -127,7 +127,7 @@ func TestProviderLoginStartedCopiesDeviceCode(t *testing.T) {
 
 // TestMessageRangesSkipMessagesWithoutID verifies a message with no ID (e.g.
 // a pre-migration session loaded before per-message IDs existed) gets no
-// range recorded — right-clicking it should simply find nothing, not panic
+// range recorded - right-clicking it should simply find nothing, not panic
 // or record a bogus entry.
 func TestMessageRangesSkipMessagesWithoutID(t *testing.T) {
 	m := newTestModel(&fakeRuntime{}, nil)
@@ -148,7 +148,7 @@ func TestMessageRangesSkipMessagesWithoutID(t *testing.T) {
 // in place (the only site that does, besides pure trailing appends) when a
 // committed tool group folds/unfolds, and must shift every messageRange
 // that comes after it by the same delta it already applies to other
-// committedGroups' lineIdx — otherwise a message after the toggled group
+// committedGroups' lineIdx - otherwise a message after the toggled group
 // silently desyncs and a later right-click resolves to the wrong message.
 func TestMessageRangesShiftAfterCommittedGroupToggle(t *testing.T) {
 	m := newTestModel(&fakeRuntime{}, nil)
@@ -207,7 +207,7 @@ func TestMessageRangesShiftAfterCommittedGroupToggle(t *testing.T) {
 			after, before.startLine+delta, before.endLine+delta, before, delta)
 	}
 
-	// messageAtRow must still resolve to a1 at its new (shifted) position —
+	// messageAtRow must still resolve to a1 at its new (shifted) position -
 	// these test messages are short enough (width 80) that no line
 	// soft-wraps, so a renderedLines index and a screen-row offset coincide.
 	id, ok := m.messageAtRow(after.startLine)
@@ -219,7 +219,7 @@ func TestMessageRangesShiftAfterCommittedGroupToggle(t *testing.T) {
 // TestScrollUpDuringResponseIsNotUndoneByRender guards against a real bug:
 // computeLayout forced the viewport back to the bottom on every render while
 // m.inResponse was true, so a manual scroll-up made during a live turn got
-// stomped by the very next tick-driven re-render — the user couldn't scroll
+// stomped by the very next tick-driven re-render - the user couldn't scroll
 // at all while the agent was working.
 func TestScrollUpDuringResponseIsNotUndoneByRender(t *testing.T) {
 	m := newTestModel(&fakeRuntime{}, nil)
@@ -405,7 +405,7 @@ func TestViewStreamsOverflowLikeBottomFollowingScroll(t *testing.T) {
 	if latestStreamingLine < 0 {
 		t.Fatalf("latest streaming line missing:\n%s", stripANSI(streamingView.Content))
 	}
-	// Title stays "chat" (not "steer") here — a response in flight no longer
+	// Title stays "chat" (not "steer") here - a response in flight no longer
 	// implies steering by default; only the Ctrl+S hotkey (m.steering) does.
 	inputLine := lineContaining(streamingLines, "╭ chat")
 	if inputLine < 0 {
@@ -452,8 +452,8 @@ func TestViewPreservesIdleManualScrollback(t *testing.T) {
 	}
 	m.View()
 	// Scroll via the real key path (not m.viewport.ScrollUp directly) so
-	// autoFollow — which now gates GotoBottom instead of inResponse/
-	// PastBottom — actually clears, matching what a real manual scroll does.
+	// autoFollow - which now gates GotoBottom instead of inResponse/
+	// PastBottom - actually clears, matching what a real manual scroll does.
 	m.dispatchKey(tea.KeyPressMsg{Code: tea.KeyPgUp})
 	offset := m.viewport.YOffset()
 
@@ -523,7 +523,7 @@ func TestMouseWheelScrollsViewport(t *testing.T) {
 // class where computeLayout's own row bookkeeping disagrees with what
 // actually lands on screen. Earlier mouse-hit tests fed computeLayout's
 // coordinates straight back into hit-testing, which stays self-consistent
-// even if the underlying math is wrong — this test instead cross-checks
+// even if the underlying math is wrong - this test instead cross-checks
 // geom's row numbers against real lines split out of m.View().Content, with
 // every optional chrome section (tools, prompt, completions) simultaneously
 // present so any drift accumulated across sections shows up.

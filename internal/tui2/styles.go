@@ -30,12 +30,12 @@ var (
 	userStyle      = lipgloss.NewStyle()
 	assistantStyle = lipgloss.NewStyle()
 	// reasoningLabelStyle colors the "│ " bar prefixed to every line of a
-	// reasoning block — the one deliberate, sparing use of Warm Ochre in
+	// reasoning block - the one deliberate, sparing use of Warm Ochre in
 	// reasoning output, giving the whole block its own visual lane next to
 	// the (unstyled) user/assistant text around it. reasoningStyle is the
 	// body: an explicit muted grey (theme.ToneMuted) is used instead of
 	// relying on ANSI Faint alone, since several terminals render faint as
-	// visually identical to normal weight — pairing it with Faint still
+	// visually identical to normal weight - pairing it with Faint still
 	// helps on terminals that do support it, and Italic adds a second cue
 	// so the block stays clearly secondary to the un-styled, full-brightness
 	// final answer even in terminals with little contrast headroom.
@@ -48,7 +48,7 @@ var (
 	assistantContinuationStyle = lipgloss.NewStyle().PaddingLeft(6)
 	continuationStyle          = lipgloss.NewStyle().Faint(true).PaddingLeft(6)
 
-	// inputCursorStyle is the block-cursor background — matches the default
+	// inputCursorStyle is the block-cursor background - matches the default
 	// mid-grey pkg/taui/lineinput.go uses (\x1b[48;2;128;134;150m).
 	// #808696 = R=128 G=134 B=150 = theme.ToneMuted.
 	inputCursorStyle = lipgloss.NewStyle().Background(themeHex(theme.ToneMuted))
@@ -66,24 +66,24 @@ var (
 	compMoreStyle        = lipgloss.NewStyle().Faint(true).Italic(true)
 	panelStyle           = lipgloss.NewStyle().Foreground(themeHex(theme.AccentColor))
 
-	// streamCursorStyle marks the live streaming cursor — Warm Ochre, the
+	// streamCursorStyle marks the live streaming cursor - Warm Ochre, the
 	// same marker color already used for every other small interactive
 	// glyph in the UI (userGlyphStyle, reasoningLabelStyle), at a mid-tone
 	// luminance legible against both light and dark terminal backgrounds,
 	// unlike a saturated color that could wash out or vanish on one extreme.
 	streamCursorStyle = lipgloss.NewStyle().Foreground(themeHex(theme.AccentColor))
 
-	// Muted trailing metadata — the per-tool elapsed suffix. Faint (terminal-
+	// Muted trailing metadata - the per-tool elapsed suffix. Faint (terminal-
 	// native dim) rather than a fixed color, so the tool name stays the focus
 	// and the timing reads as ambient against whatever foreground the user's
 	// terminal actually has.
 	toolMetaStyle = lipgloss.NewStyle().Faint(true)
 
-	// Tool status styles — per-state foreground colors for tool call rows.
+	// Tool status styles - per-state foreground colors for tool call rows.
 	toolRunningStyle = lipgloss.NewStyle().Foreground(themeHex(theme.ToolRunning.FG))
 	toolSuccessStyle = lipgloss.NewStyle().Foreground(themeHex(theme.SuccessColor))
 	toolErrorStyle   = lipgloss.NewStyle().Foreground(themeHex(theme.ErrorColor))
-	// Skill tool gets lilac variants — same as theme.SkillRunning/SkillSuccess/SkillFailed.
+	// Skill tool gets lilac variants - same as theme.SkillRunning/SkillSuccess/SkillFailed.
 	skillRunningStyle = lipgloss.NewStyle().Foreground(themeHex(theme.SkillRunning.FG))
 	skillSuccessStyle = lipgloss.NewStyle().Foreground(themeHex(theme.SkillSuccess.FG))
 	skillFailedStyle  = lipgloss.NewStyle().Foreground(themeHex(theme.SkillFailed.FG))
@@ -95,7 +95,7 @@ var (
 	inputBoxStyle         = lipgloss.NewStyle().Foreground(themeHex(theme.SecondaryColor))
 	separatorStyle        = lipgloss.NewStyle().Foreground(themeHex(theme.SecondaryColor))
 
-	// Phase 1: tool box styles — bordered boxes for each lifecycle state,
+	// Phase 1: tool box styles - bordered boxes for each lifecycle state,
 	// foreground/border only (no Background fill): a tool box can span many
 	// lines of live tail output or expanded result content, and painting a
 	// saturated background across that much text is exactly the "large
@@ -133,9 +133,9 @@ var (
 				Foreground(themeHex(theme.SkillFailed.FG)).
 				Padding(0, 1)
 
-	// Context menu — a floating overlay composited on top of arbitrary
+	// Context menu - a floating overlay composited on top of arbitrary
 	// already-rendered content (see compositeContextMenu). No Background():
-	// a terminal's "rounded" border is only rounded in the corner glyphs —
+	// a terminal's "rounded" border is only rounded in the corner glyphs -
 	// the cell grid underneath is always a hard rectangle, so an explicit
 	// fill just makes that rectangle's edge obvious as a harsh square
 	// around the border. Foreground-only (like the prompt/completions
@@ -156,7 +156,7 @@ var (
 				Padding(0, 1)
 
 	// toolGroupBoxStyle wraps a live multi-tool-call batch (renderToolGroup)
-	// — neutral (not status-colored, since it holds a mix of statuses).
+	// - neutral (not status-colored, since it holds a mix of statuses).
 	toolGroupBoxStyle      = lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).BorderForeground(themeHex(theme.SecondaryColor))
 	toolGroupHeaderStyle   = lipgloss.NewStyle().Faint(true).Bold(true)
 	toolFocusMarkerStyle   = lipgloss.NewStyle().Foreground(themeHex(theme.AccentColor)).Bold(true)

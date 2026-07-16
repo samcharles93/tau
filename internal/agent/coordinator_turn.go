@@ -40,7 +40,7 @@ func (c *Coordinator) runTurn(ctx context.Context, state chat.ChatSessionState) 
 	bearerToken, err := c.tokenSource(ctx, state.Provider)
 	if err != nil {
 		c.loggerWithTurn(sessionID, requestID).Debug(
-			"turn failed — token source error",
+			"turn failed - token source error",
 			"err", err,
 		)
 		c.failTurn(sessionID, requestID, err, now)
@@ -238,7 +238,7 @@ func (c *Coordinator) runTurn(ctx context.Context, state chat.ChatSessionState) 
 			return
 		}
 
-		// Tool calls detected. Validate arguments before committing —
+		// Tool calls detected. Validate arguments before committing -
 		// malformed JSON in tool call arguments poisons the session history
 		// and causes downstream API 400 errors on subsequent turns.
 		toolNames := make([]string, len(result.ToolCalls))
@@ -303,7 +303,7 @@ func (c *Coordinator) runTurn(ctx context.Context, state chat.ChatSessionState) 
 const toolLoopSoftThreshold = 3
 
 // toolLoopHardBlockLimit ends the turn outright once a call has been
-// blocked this many times in a row without ever being justified — a
+// blocked this many times in a row without ever being justified - a
 // backstop for a model that never engages with the block message at all
 // (e.g. a model stuck in decoding-level token repetition, which by
 // definition can't spontaneously produce a novel justification string).
@@ -342,7 +342,7 @@ func parseToolCallKey(name, argsJSON string) (key string, justification string) 
 
 // checkToolLoop tracks consecutive identical tool calls (same name+args,
 // ignoring repeat_justification) per session, to break a decoding-level
-// repetition loop — a real incident had a model call grep with byte-
+// repetition loop - a real incident had a model call grep with byte-
 // identical arguments 103 times in a row, each getting a valid, non-empty,
 // identical result, without ever producing a final answer. Past
 // toolLoopSoftThreshold, a call must carry a non-empty top-level
@@ -384,7 +384,7 @@ func (c *Coordinator) checkToolLoop(sessionID string, tc chat.ChatToolCall) tool
 			streak:   sess.lastToolStreak,
 			blockedN: sess.lastToolBlocked,
 			message: fmt.Sprintf(
-				"tool %q was called %d times in a row with identical arguments and blocked %d times without ever being justified — stopping the turn to avoid a runaway loop",
+				"tool %q was called %d times in a row with identical arguments and blocked %d times without ever being justified - stopping the turn to avoid a runaway loop",
 				tc.Function.Name, sess.lastToolStreak, sess.lastToolBlocked,
 			),
 		}
@@ -394,7 +394,7 @@ func (c *Coordinator) checkToolLoop(sessionID string, tc chat.ChatToolCall) tool
 		streak:   sess.lastToolStreak,
 		blockedN: sess.lastToolBlocked,
 		message: fmt.Sprintf(
-			"This exact %s call has now been made %d times in a row with identical arguments. If repeating it is genuinely necessary (e.g. re-running the same test, polling for a state change), call it again with an added top-level argument %s explaining why — otherwise, try a different approach.",
+			"This exact %s call has now been made %d times in a row with identical arguments. If repeating it is genuinely necessary (e.g. re-running the same test, polling for a state change), call it again with an added top-level argument %s explaining why - otherwise, try a different approach.",
 			tc.Function.Name, sess.lastToolStreak, `"repeat_justification": "<short reason>"`,
 		),
 	}
@@ -516,8 +516,8 @@ func (c *Coordinator) executeToolsParallel(ctx context.Context, sessionID, reque
 		}
 
 		// Resolve which tool.Execute call (if any) this turn needs, without
-		// running it yet, so the started event — and the "pending" ->
-		// "running" transition it drives in the UI — fires before a
+		// running it yet, so the started event - and the "pending" ->
+		// "running" transition it drives in the UI - fires before a
 		// long-running tool actually executes rather than after it
 		// returns (previously the whole call sat in "pending" for its
 		// entire duration).
@@ -691,7 +691,7 @@ func (c *Coordinator) executeToolsParallel(ctx context.Context, sessionID, reque
 // narrows the active set below the ceiling but never widens beyond it.
 //
 // No tool is injected outside the declared intersection. "skill" is an
-// ordinary attenuated capability — to enable mode switching, include it in
+// ordinary attenuated capability - to enable mode switching, include it in
 // the spec's tools list or the spawn restriction.
 func (c *Coordinator) SetAllowedTools(toolNames []string) {
 	c.mu.Lock()
@@ -743,7 +743,7 @@ func (c *Coordinator) buildToolDefs() []chat.ChatToolDef {
 	var filtered []tools.Schema
 	for _, s := range schemas {
 		// Apply immutable ceiling first, then active mode filter.
-		// nil means "no restriction" — the tool passes that tier.
+		// nil means "no restriction" - the tool passes that tier.
 		if effective != nil && !effective[s.Name] {
 			continue
 		}
@@ -781,7 +781,7 @@ func mergeToolCallDelta(calls []chat.ChatToolCall, delta chat.ChatToolCallDelta)
 	}
 	if delta.Function.Name != "" {
 		// The function name arrives whole in a single delta for every provider
-		// observed so far (unlike Arguments, which streams token-by-token) —
+		// observed so far (unlike Arguments, which streams token-by-token) -
 		// some providers (e.g. deepseek) resend the full name on every
 		// subsequent delta for the same call rather than sending it once, so
 		// this must replace, not accumulate, or the name duplicates once per
@@ -919,7 +919,7 @@ func summarizeResultForUI(value string) string {
 // runs. Applied centrally in buildToolDefs rather than per-tool so every
 // tool gets it without each definition needing to declare it. Falls back to
 // the unmodified schema if it isn't a JSON object or already declares the
-// property — defensive, since every tool schema is expected to be a plain
+// property - defensive, since every tool schema is expected to be a plain
 // object and none currently uses this name.
 func injectSummarySchemaProperty(params json.RawMessage) json.RawMessage {
 	if len(params) == 0 {
@@ -951,9 +951,9 @@ func injectSummarySchemaProperty(params json.RawMessage) json.RawMessage {
 // extractToolCallSummary pulls the optional model-authored "summary" field
 // out of a tool call's arguments for display in the status bar. It never
 // fails the call: malformed JSON, a missing field, or a wrong type all just
-// yield "". What it does return is sanitized for direct terminal rendering —
+// yield "". What it does return is sanitized for direct terminal rendering -
 // control/escape characters stripped, collapsed to a single line, and
-// truncated — since it comes straight from the model.
+// truncated - since it comes straight from the model.
 func extractToolCallSummary(argsJSON string) string {
 	var probe struct {
 		Summary string `json:"summary"`
@@ -1352,7 +1352,7 @@ func (c *Coordinator) cancelAllSessions() {
 
 // checkLimits returns the breach status ("", "budget_exhausted", or
 // "timed_out") and whether partial output is available. An empty status
-// means no limit has been breached — continue the turn.
+// means no limit has been breached - continue the turn.
 func (c *Coordinator) checkLimits(sessionID, requestID string) (status string, partial bool) {
 	// Structural turn cap.
 	if c.maxTurns > 0 && c.turnCount > c.maxTurns {

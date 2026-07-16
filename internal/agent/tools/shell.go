@@ -26,7 +26,7 @@ type ShellParams struct {
 
 var shellSchema = Schema{
 	Name:        "shell",
-	Description: fmt.Sprintf("Execute a shell command. Uses PowerShell on Windows, bash on Linux/macOS. Returns stdout and stderr, truncated to the last %d lines or %s (whichever is hit first); when truncated, the full output is saved to a temp file whose path is included in the notice. Use for builds, tests, git, and other commands — prefer the dedicated grep, find, and read tools for searching and reading files.", DefaultMaxLines, FormatSize(DefaultMaxBytes)),
+	Description: fmt.Sprintf("Execute a shell command. Uses PowerShell on Windows, bash on Linux/macOS. Returns stdout and stderr, truncated to the last %d lines or %s (whichever is hit first); when truncated, the full output is saved to a temp file whose path is included in the notice. Use for builds, tests, git, and other commands - prefer the dedicated grep, find, and read tools for searching and reading files.", DefaultMaxLines, FormatSize(DefaultMaxBytes)),
 	Parameters: json.RawMessage(`{
 		"type": "object",
 		"properties": {
@@ -139,7 +139,7 @@ func makeShellExecutor(cwd string, mq *MutationQueue) Executor {
 		}
 
 		if err != nil {
-			// Check context cancellation first — a process may exit with
+			// Check context cancellation first - a process may exit with
 			// a non-zero code after the deadline, and we want to report
 			// timeout rather than a misleading exit code.
 			if ctx.Err() != nil {

@@ -371,7 +371,7 @@ func TestContextMenuMessageCopyUsesRawContentNotStyledLines(t *testing.T) {
 	}})
 
 	// renderedLines holds glamour-rendered (ANSI-styled) output, not the
-	// raw "**bold** markdown" — Copy must read messageRanges' stored raw
+	// raw "**bold** markdown" - Copy must read messageRanges' stored raw
 	// content instead, the same reason lastAssistantText exists.
 	var content string
 	for _, r := range m.messageRanges {
@@ -387,7 +387,7 @@ func TestContextMenuMessageCopyUsesRawContentNotStyledLines(t *testing.T) {
 // TestCompositeContextMenuPreservesBaseContentOutsideMenu is a regression
 // test for a real bug: composing bare Layers directly onto a Canvas (rather
 // than through a Compositor) ignores each Layer's X/Y and draws every layer
-// starting at (0,0) filling the whole canvas area — which blanks out
+// starting at (0,0) filling the whole canvas area - which blanks out
 // everything the menu layer's own small bounds don't cover, leaving only a
 // tiny box in the top-left corner and wiping the rest of the screen.
 func TestCompositeContextMenuPreservesBaseContentOutsideMenu(t *testing.T) {
@@ -563,7 +563,7 @@ func TestActivePromptTakesPriorityOverOpenContextMenu(t *testing.T) {
 	m.dispatchKey(key(tea.KeyEnter, 0))
 
 	// The prompt handler ran (resolved and cleared activePrompt via
-	// resolvePrompt), not the context-menu handler — the menu must still
+	// resolvePrompt), not the context-menu handler - the menu must still
 	// be open since handlePromptKey never touches it.
 	if m.contextMenu == nil {
 		t.Fatal("expected the context menu to be untouched by a key routed to the prompt handler")
@@ -596,7 +596,7 @@ func TestCompletionsDoNotConsumeKeysWhileContextMenuOpen(t *testing.T) {
 		t.Fatal("expected the context menu to stay open")
 	}
 	if m.contextMenu.selected != 1 {
-		t.Fatalf("selected = %d, want 1 — the menu, not the completions dropdown, should have consumed 'down'", m.contextMenu.selected)
+		t.Fatalf("selected = %d, want 1 - the menu, not the completions dropdown, should have consumed 'down'", m.contextMenu.selected)
 	}
 }
 
@@ -834,7 +834,7 @@ func TestOpenChildTranscriptViewerNonTerminalChild(t *testing.T) {
 }
 
 // TestOpenChildTranscriptViewerNoSessionID covers a child that errored
-// before the child process ever reported a session ID — terminal, but
+// before the child process ever reported a session ID - terminal, but
 // nothing persisted to drill into.
 func TestOpenChildTranscriptViewerNoSessionID(t *testing.T) {
 	rt := &fakeRuntime{}

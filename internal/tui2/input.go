@@ -11,7 +11,7 @@ import (
 	tauchat "github.com/samcharles93/tau/internal/chat"
 )
 
-// clearInput resets the input buffer and cursor together — every reset site
+// clearInput resets the input buffer and cursor together - every reset site
 // must clear both or the cursor can end up pointing past the end of a
 // shorter (or empty) buffer.
 func (m *model) clearInput() {
@@ -23,7 +23,7 @@ func (m *model) clearInput() {
 }
 
 // clearScreen wipes the visible scrollback (Ctrl+Shift+L) without touching the
-// underlying chat session — unlike /clear, which sends a
+// underlying chat session - unlike /clear, which sends a
 // ResetChatSessionCommand and actually starts a new session, this only
 // clears what's rendered locally. The next ChatSessionSnapshotEvent (e.g.
 // from /session, /resume) still rebuilds renderedLines from the real
@@ -42,7 +42,7 @@ func (m *model) clearScreen() {
 // moves the cursor to where the selection started, and clears it. Reports
 // whether there was a selection to consume, so insertAtCursor/backspaceAt-
 // Cursor/deleteAtCursor can fall back to their normal single-character
-// behavior when there wasn't one — this is what makes typing/backspace/
+// behavior when there wasn't one - this is what makes typing/backspace/
 // delete replace or remove a mouse-dragged selection, exactly like any
 // normal text field.
 func (m *model) deleteInputSelection() bool {
@@ -212,7 +212,7 @@ func (m *model) moveCursorVert(dir int) {
 }
 
 // renderInputArea draws the (possibly multi-line) input buffer with a
-// highlighted block at the caret position — mirrors pkg/taui/lineinput.go's
+// highlighted block at the caret position - mirrors pkg/taui/lineinput.go's
 // visual cursor (a coloured background over the character under the cursor)
 // rather than the terminal's native cursor, so it composes as plain content
 // alongside the rest of View()'s single string.
@@ -291,10 +291,10 @@ func (m *model) renderInputArea() string {
 }
 
 // inputPositionAt maps a (row, col) coordinate within the rendered input
-// box's text area — row 0 is the box's first body row (i.e. right below
+// box's text area - row 0 is the box's first body row (i.e. right below
 // its top border and hint row, see the bodyRowOffset constant below); col 0
 // is the first column after the left border and the "> "/"(steer) > "
-// prefix (or the matching blank indent on a continuation row) — to a rune
+// prefix (or the matching blank indent on a continuation row) - to a rune
 // index into m.input. This is the inverse of renderInputArea's own layout
 // math (same wrapInputLine/linePos calls), so a click positions the cursor
 // at exactly the character under the mouse.
@@ -302,7 +302,7 @@ func (m *model) renderInputArea() string {
 // It does not replicate renderInputArea's one edge case where an extra
 // trailing empty chunk is inserted when the *current* cursor sits exactly
 // at a wrap boundary (that tweak depends on where the cursor already is,
-// not on the click being mapped) — a click landing on that extra row in
+// not on the click being mapped) - a click landing on that extra row in
 // that narrow case can be off by one row. Acceptable: it only affects a
 // click's target position, never what gets copied once selected, and it's
 // a rare edge case (cursor exactly at a wrap boundary on a wrapped line).
@@ -339,12 +339,12 @@ func (m *model) inputPositionAt(row, col int) int {
 		}
 	}
 	// Past all rendered lines (e.g. the placeholder row, or below the
-	// content) — snap to the very end of the buffer.
+	// content) - snap to the very end of the buffer.
 	return utf8.RuneCountInString(m.input)
 }
 
 // inputSelectionText returns the substring of m.input between rune
-// positions lo and hi (half-open — these are cursor positions, not
+// positions lo and hi (half-open - these are cursor positions, not
 // inclusive line indices like the viewport's), for finalizeSelection.
 func (m *model) inputSelectionText(lo, hi int) string {
 	runes := []rune(m.input)
@@ -464,7 +464,7 @@ func (m *model) currentInputModeIndex(modes []inputMode) (int, string) {
 
 // inputBoxHeightFrac caps how much of the terminal height the input box may
 // grow to before its body scrolls, instead of pushing the viewport off the
-// top of the screen — mirrors help.go's helpOverlayHeightFrac, the same
+// top of the screen - mirrors help.go's helpOverlayHeightFrac, the same
 // "clip to a fraction of the terminal" idea. Unlike the /help overlay, the
 // input box has no user-driven scroll state: it's an active text buffer, not
 // a static reference panel, so the visible window just follows the cursor
@@ -473,13 +473,13 @@ const inputBoxHeightFrac = 0.6
 
 // inputBoxChromeLines is the input box's fixed border overhead that a
 // height cap must leave room for: top border, hint row, blank padding row,
-// bottom border — see renderInputBox. The body itself is whatever's left.
+// bottom border - see renderInputBox. The body itself is whatever's left.
 const inputBoxChromeLines = 4
 
 // clipInputBody windows body (already word-wrapped input rows) down to
 // whatever fits within inputBoxHeightFrac of the terminal, keeping
 // cursorIdx (body's index of the row the cursor is on) inside the visible
-// window — so a long pasted block or many wrapped lines scrolls instead of
+// window - so a long pasted block or many wrapped lines scrolls instead of
 // growing the input box past most of the screen (and shoving the viewport
 // off the top). Returns body unchanged with an empty hint when it already
 // fits, or m.height is unset (0, e.g. before the first WindowSizeMsg).
@@ -504,7 +504,7 @@ func (m *model) clipInputBody(body []string, cursorIdx int) (clipped []string, h
 
 	switch {
 	case start > 0 && end < len(body):
-		hint = inputPlaceholderStyle.Render("⋮ scrolled — more above and below")
+		hint = inputPlaceholderStyle.Render("⋮ scrolled - more above and below")
 	case start > 0:
 		hint = inputPlaceholderStyle.Render("⋮ more above")
 	case end < len(body):
@@ -536,7 +536,7 @@ func renderInputBox(width int, title string, lines []string, hint string) string
 }
 
 // titledBoxBorders builds the top/bottom rules for a box-drawn box with its
-// title embedded in the top rule (e.g. "╭ chat ─...─╮") — shared by
+// title embedded in the top rule (e.g. "╭ chat ─...─╮") - shared by
 // renderInputBox and renderBoxAround (help.go) so every bordered box in the
 // TUI draws its border the same way.
 func titledBoxBorders(width int, title string) (top, bottom string) {
@@ -548,7 +548,7 @@ func titledBoxBorders(width int, title string) (top, bottom string) {
 }
 
 // renderInputBoxLine pads/truncates a (possibly styled) line to innerWidth
-// and wraps it in the box's side borders, flush against the left edge — the
+// and wraps it in the box's side borders, flush against the left edge - the
 // input box's own prompt/cursor anchors there, so no left pad is added. For
 // content with no such anchor, see padVisible (help.go), which pads/truncates
 // the same way without the border wrapping.
@@ -558,9 +558,9 @@ func renderInputBoxLine(innerWidth int, line string) string {
 
 // renderInputChunk renders ln[chunkStart:chunkEnd], applying the block
 // cursor (if hasCursor and cursorCol falls within this chunk, or sits
-// exactly at chunkEnd — a cursor past the chunk's last rune still
+// exactly at chunkEnd - a cursor past the chunk's last rune still
 // highlights a trailing blank cell so it's never invisible) and/or a
-// reverse-video selection highlight for [selLo,selHi) — both absolute rune
+// reverse-video selection highlight for [selLo,selHi) - both absolute rune
 // indices into the full ln, matching curCol's own convention. The cursor's
 // own highlight takes visual priority over selection for the one rune it
 // lands on.
@@ -615,7 +615,7 @@ func (m *model) recallHistory(delta int) tea.Cmd {
 }
 
 // seedHistoryFromMessages seeds the input history (Up/Down recall) from a
-// loaded session's user messages — mirrors
+// loaded session's user messages - mirrors
 // internal/tui/inline_chat.go's function of the same name. Leaves the
 // current history untouched when the session had no user messages, rather
 // than clearing it.
@@ -638,7 +638,7 @@ func (m *model) submitInput() tea.Cmd {
 		return m.resolvePrompt()
 	}
 
-	// A response in-flight does NOT make Enter steer — that's the dedicated
+	// A response in-flight does NOT make Enter steer - that's the dedicated
 	// Ctrl+S hotkey's job (see handleSteer's ctrl+s binding). A plain Enter
 	// falls through to the normal submit path below, whose startOrQueueTurn
 	// call queues the message behind the running turn instead.
@@ -656,7 +656,7 @@ func (m *model) submitInput() tea.Cmd {
 		return nil
 	}
 
-	// Record in history — every submitted line is recallable via up-arrow,
+	// Record in history - every submitted line is recallable via up-arrow,
 	// slash commands and bash commands included, not just LLM prompts.
 	m.history = append(m.history, text)
 
@@ -674,7 +674,7 @@ func (m *model) submitInput() tea.Cmd {
 
 	// Debounce guard: 300ms between submits (P2 #27).
 	if elapsed := time.Since(m.lastSubmit); elapsed < 300*time.Millisecond {
-		return m.setNotification("slow down — submit debounced")
+		return m.setNotification("slow down - submit debounced")
 	}
 	m.lastSubmit = time.Now()
 
@@ -686,11 +686,11 @@ func (m *model) submitInput() tea.Cmd {
 func (m *model) startOrQueueTurn(text string) tea.Cmd {
 	if m.inResponse {
 		m.turnQueue = append(m.turnQueue, text)
-		return m.setNotification("queued — will send after current response")
+		return m.setNotification("queued - will send after current response")
 	}
 
 	// Record the user message locally for immediate display. Submitting a
-	// prompt always means "show me what happens next" — resume following.
+	// prompt always means "show me what happens next" - resume following.
 	m.autoFollow = true
 	m.appendMessage("user", text)
 	m.inResponse = true

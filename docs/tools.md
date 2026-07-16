@@ -1,6 +1,7 @@
 # Tool System
 
-Tau's tool system lets the LLM call functions during a turn — reading files, executing shell commands, searching code, and more. Tools are registered in a `Registry` and exposed to the LLM as function-calling schemas.
+Tau's tool system lets the LLM call functions during a turn - reading files, executing shell commands, searching code,
+and more. Tools are registered in a `Registry` and exposed to the LLM as function-calling schemas.
 
 ## Architecture
 
@@ -44,41 +45,45 @@ type Result struct {
 
 ### Registry Methods
 
-| Method | Description |
-| ------ | ----------- |
-| `Register(Tool) error` | Add a tool (returns error on duplicate) |
-| `Replace(Tool) error` | Add or override a tool |
-| `Unregister(name)` | Remove a tool |
-| `Get(name) (Tool, bool)` | Look up a tool by name |
-| `All() []Tool` | All tools in insertion order |
-| `Schemas() []Schema` | All tool schemas (sent to LLM) |
-| `Names() []string` | All tool names |
-| `Count() int` | Number of registered tools |
-| `RegisterPluginTool(pluginName, def) error` | Register a plugin tool with prefix |
-| `UnregisterPluginTools(pluginName)` | Remove all tools from a plugin |
-| `SetPluginToolExecutor(executor)` | Set the executor for plugin tools |
+| Method                                      | Description                             |
+| ------------------------------------------- | --------------------------------------- |
+| `Register(Tool) error`                      | Add a tool (returns error on duplicate) |
+| `Replace(Tool) error`                       | Add or override a tool                  |
+| `Unregister(name)`                          | Remove a tool                           |
+| `Get(name) (Tool, bool)`                    | Look up a tool by name                  |
+| `All() []Tool`                              | All tools in insertion order            |
+| `Schemas() []Schema`                        | All tool schemas (sent to LLM)          |
+| `Names() []string`                          | All tool names                          |
+| `Count() int`                               | Number of registered tools              |
+| `RegisterPluginTool(pluginName, def) error` | Register a plugin tool with prefix      |
+| `UnregisterPluginTools(pluginName)`         | Remove all tools from a plugin          |
+| `SetPluginToolExecutor(executor)`           | Set the executor for plugin tools       |
 
 ## Built-in Tools
 
 Registered via `RegisterBuiltins()` in `internal/agent/tools/builtin.go`:
 
-| Tool | File | Description |
-| ---- | ---- | ----------- |
-| `read` | `read.go` | Read file contents with line-range support |
-| `write` | `write.go` | Create or overwrite files (queued in MutationQueue) |
-| `edit` | `edit.go` | Precise text replacements in files (queued) |
-| `shell` | `shell.go` | Execute shell commands with timeout |
-| `grep` | `grep.go` | Search file contents with regex (regex by default; `literal: true` for plain text) |
-| `find` | `find.go` | Find files by glob pattern or list a directory |
-| `docs` | `docs.go` | Search, read, or list tau's embedded documentation |
+| Tool    | File       | Description                                                                        |
+| ------- | ---------- | ---------------------------------------------------------------------------------- |
+| `read`  | `read.go`  | Read file contents with line-range support                                         |
+| `write` | `write.go` | Create or overwrite files (queued in MutationQueue)                                |
+| `edit`  | `edit.go`  | Precise text replacements in files (queued)                                        |
+| `shell` | `shell.go` | Execute shell commands with timeout                                                |
+| `grep`  | `grep.go`  | Search file contents with regex (regex by default; `literal: true` for plain text) |
+| `find`  | `find.go`  | Find files by glob pattern or list a directory                                     |
+| `docs`  | `docs.go`  | Search, read, or list tau's embedded documentation                                 |
 
-The set is deliberately small: each tool has one clear job and no two tools overlap, so models pick the right one without deliberating. Session analysis showed that redundant tools (`patch`, `glob`, `ls`, split doc tools) went unused or pushed models to shell out instead.
+The set is deliberately small: each tool has one clear job and no two tools overlap, so models pick the right one
+without deliberating. Session analysis showed that redundant tools (`patch`, `glob`, `ls`, split doc tools) went unused
+or pushed models to shell out instead.
 
 ## MutationQueue
 
-Write and edit operations share a `MutationQueue` (`internal/agent/tools/mutation.go`). This enforces sequential execution of file mutations to prevent race conditions when tools run in parallel.
+Write and edit operations share a `MutationQueue` (`internal/agent/tools/mutation.go`). This enforces sequential
+execution of file mutations to prevent race conditions when tools run in parallel.
 
 The queue:
+
 - Serializes all write/edit operations
 - Returns results in order
 - Prevents interleaved writes to the same file
@@ -96,11 +101,14 @@ type UIBridge interface {
 }
 ```
 
-The bridge implementation (`internal/agent/ui_bridge.go`) translates these calls into `InteractivePromptRequestedEvent` on the event bus. The TUI renders the prompt inline; the Web UI shows a dialog. The user's response comes back as `RespondInteractivePromptCommand`.
+The bridge implementation (`internal/agent/ui_bridge.go`) translates these calls into `InteractivePromptRequestedEvent`
+on the event bus. The TUI renders the prompt inline; the Web UI shows a dialog. The user's response comes back as
+`RespondInteractivePromptCommand`.
 
 ## Path Utilities
 
 `internal/agent/tools/pathutil.go` provides safe path resolution:
+
 - All paths are resolved relative to the configured working directory
 - Path traversal (`../`) outside the working directory is blocked
 - Home directory expansion (`~/`) is supported
@@ -108,21 +116,31 @@ The bridge implementation (`internal/agent/ui_bridge.go`) translates these calls
 ## Content Truncation
 
 `internal/agent/tools/truncate.go` provides content size management:
+
 - Tool output is truncated to 2000 lines or 50KB, whichever is hit first
-- `read` truncation appends an actionable continuation notice ("Use offset=N to continue") so the model can page through large files
-- `shell` saves the full untruncated output to a temp file and includes the path in the notice, letting the model grep/tail it instead of re-running the command
-- `grep` additionally caps output at 100 matches (adjustable via `limit`) and truncates individual lines to 500 chars so minified/generated files cannot blow out the context window
+- `read` truncation appends an actionable continuation notice ("Use offset=N to continue") so the model can page through
+  large files
+- `shell` saves the full untruncated output to a temp file and includes the path in the notice, letting the model
+  grep/tail it instead of re-running the command
+- `grep` additionally caps output at 100 matches (adjustable via `limit`) and truncates individual lines to 500 chars so
+  minified/generated files cannot blow out the context window
 
 ## Filesystem Utilities
 
 `internal/agent/tools/fsutil.go` provides shared filesystem operations:
+
 - Safe file reading with size limits
 - Directory walking with pattern filtering
 - File existence and permission checks
 
 ## Measuring Tool Usage
 
-`task tool-stats` (or `go run ./scripts/tool-stats`) analyses saved session files and reports per-tool call counts, estimated result tokens, size percentiles, and heuristic error rates, plus a breakdown of what shell commands actually run. When `metrics.dir` is configured (or `--metrics-dir` is passed), the script joins `metrics.jsonl` in for ground-truth per-call error status and duration percentiles, restricted to the sessions being analysed. It prints a summary table and writes a self-contained HTML report. Use it to spot tools that models avoid, bypass via shell, or fail against — the current toolset shape was derived from exactly this analysis.
+`task tool-stats` (or `go run ./scripts/tool-stats`) analyses saved session files and reports per-tool call counts,
+estimated result tokens, size percentiles, and heuristic error rates, plus a breakdown of what shell commands actually
+run. When `metrics.dir` is configured (or `--metrics-dir` is passed), the script joins `metrics.jsonl` in for
+ground-truth per-call error status and duration percentiles, restricted to the sessions being analysed. It prints a
+summary table and writes a self-contained HTML report. Use it to spot tools that models avoid, bypass via shell, or fail
+against - the current toolset shape was derived from exactly this analysis.
 
 ## Adding a Custom Tool
 
@@ -132,4 +150,5 @@ Custom tools are typically added via plugins (see [Plugin SDK](plugins.md)). For
 2. Call `registry.Register(tool)` in `RegisterBuiltins()`.
 3. The tool's name is what the LLM sees and uses in function calls.
 
-Plugin tools are registered as `plugin:<name>:<tool>`. The `Registry.RegisterPluginTool()` method handles the prefixing and executor delegation.
+Plugin tools are registered as `plugin:<name>:<tool>`. The `Registry.RegisterPluginTool()` method handles the prefixing
+and executor delegation.

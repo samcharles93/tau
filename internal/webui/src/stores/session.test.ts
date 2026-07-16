@@ -187,7 +187,7 @@ describe('session store', () => {
   })
 })
 
-describe('session store — enhancements', () => {
+describe('session store - enhancements', () => {
   beforeEach(() => setActivePinia(createPinia()))
 
   it('streams reasoning into the active assistant turn', () => {

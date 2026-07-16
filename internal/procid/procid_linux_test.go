@@ -41,7 +41,7 @@ func TestCheckPIDIdentity_MismatchedIdentityIsDead(t *testing.T) {
 }
 
 func TestCheckPIDIdentity_ZeroWantIsAliveOnAnyRunningPID(t *testing.T) {
-	// wantStartNS == 0 means "no identity was ever recorded" — the sweep's
+	// wantStartNS == 0 means "no identity was ever recorded" - the sweep's
 	// documented fallback is "pid existing is the best evidence available".
 	if got := CheckPIDIdentity(os.Getpid(), 0); got != PIDCheckAlive {
 		t.Errorf("CheckPIDIdentity(self, 0) = %v, want PIDCheckAlive", got)

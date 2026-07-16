@@ -92,7 +92,7 @@ func makeFindExecutor(cwd string) Executor {
 
 		binary, err := findBinary()
 		if err != nil {
-			// No external binary available — use pure-Go fallback.
+			// No external binary available - use pure-Go fallback.
 			return runFindGoFallback(ctx, cwd, searchPath, p)
 		}
 		args := buildFindArgs(binary, p, searchPath)

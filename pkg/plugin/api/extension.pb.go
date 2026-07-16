@@ -7,11 +7,12 @@
 package api
 
 import (
-	protoreflect "google.golang.org/protobuf/reflect/protoreflect"
-	protoimpl "google.golang.org/protobuf/runtime/protoimpl"
 	reflect "reflect"
 	sync "sync"
 	unsafe "unsafe"
+
+	protoreflect "google.golang.org/protobuf/reflect/protoreflect"
+	protoimpl "google.golang.org/protobuf/runtime/protoimpl"
 )
 
 const (
@@ -2044,7 +2045,7 @@ func (x *Style) GetUnderline() bool {
 
 // Widget is one renderable element within a View. Exactly one field of
 // `kind` is set. Unrecognized/unset kinds on older hosts are simply
-// skipped at render time — the same additive-evolution guarantee as
+// skipped at render time - the same additive-evolution guarantee as
 // EventPayload's oneof.
 type Widget struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
@@ -4344,85 +4345,87 @@ func file_pkg_plugin_api_extension_proto_rawDescGZIP() []byte {
 	return file_pkg_plugin_api_extension_proto_rawDescData
 }
 
-var file_pkg_plugin_api_extension_proto_enumTypes = make([]protoimpl.EnumInfo, 3)
-var file_pkg_plugin_api_extension_proto_msgTypes = make([]protoimpl.MessageInfo, 72)
-var file_pkg_plugin_api_extension_proto_goTypes = []any{
-	(Style_Tone)(0),                    // 0: proto.Style.Tone
-	(StackWidget_Direction)(0),         // 1: proto.StackWidget.Direction
-	(StatusWidget_State)(0),            // 2: proto.StatusWidget.State
-	(*Command)(nil),                    // 3: proto.Command
-	(*Diagnostic)(nil),                 // 4: proto.Diagnostic
-	(*EventContext)(nil),               // 5: proto.EventContext
-	(*GetMetadataRequest)(nil),         // 6: proto.GetMetadataRequest
-	(*GetMetadataResponse)(nil),        // 7: proto.GetMetadataResponse
-	(*RunCommandRequest)(nil),          // 8: proto.RunCommandRequest
-	(*RunCommandResponse)(nil),         // 9: proto.RunCommandResponse
-	(*ReloadRequest)(nil),              // 10: proto.ReloadRequest
-	(*ReloadResponse)(nil),             // 11: proto.ReloadResponse
-	(*DispatchEventRequest)(nil),       // 12: proto.DispatchEventRequest
-	(*DispatchEventResponse)(nil),      // 13: proto.DispatchEventResponse
-	(*EventPayload)(nil),               // 14: proto.EventPayload
-	(*EventResponse)(nil),              // 15: proto.EventResponse
-	(*SessionEventPayload)(nil),        // 16: proto.SessionEventPayload
-	(*ContextPayload)(nil),             // 17: proto.ContextPayload
-	(*BeforeLLMCallPayload)(nil),       // 18: proto.BeforeLLMCallPayload
-	(*AfterLLMCallPayload)(nil),        // 19: proto.AfterLLMCallPayload
-	(*ToolCallPayload)(nil),            // 20: proto.ToolCallPayload
-	(*ToolResultPayload)(nil),          // 21: proto.ToolResultPayload
-	(*MessageDeltaPayload)(nil),        // 22: proto.MessageDeltaPayload
-	(*TurnPayload)(nil),                // 23: proto.TurnPayload
-	(*CompactionPayload)(nil),          // 24: proto.CompactionPayload
-	(*ToolDefinition)(nil),             // 25: proto.ToolDefinition
-	(*GetToolsRequest)(nil),            // 26: proto.GetToolsRequest
-	(*GetToolsResponse)(nil),           // 27: proto.GetToolsResponse
-	(*ExecuteToolRequest)(nil),         // 28: proto.ExecuteToolRequest
-	(*ExecuteToolResponse)(nil),        // 29: proto.ExecuteToolResponse
-	(*View)(nil),                       // 30: proto.View
-	(*Style)(nil),                      // 31: proto.Style
-	(*Widget)(nil),                     // 32: proto.Widget
-	(*TextWidget)(nil),                 // 33: proto.TextWidget
-	(*StackWidget)(nil),                // 34: proto.StackWidget
-	(*KeyValueWidget)(nil),             // 35: proto.KeyValueWidget
-	(*ListWidget)(nil),                 // 36: proto.ListWidget
-	(*TableWidget)(nil),                // 37: proto.TableWidget
-	(*ProgressWidget)(nil),             // 38: proto.ProgressWidget
-	(*DividerWidget)(nil),              // 39: proto.DividerWidget
-	(*StatusWidget)(nil),               // 40: proto.StatusWidget
-	(*RenderViewRequest)(nil),          // 41: proto.RenderViewRequest
-	(*RenderViewResponse)(nil),         // 42: proto.RenderViewResponse
-	(*CloseViewRequest)(nil),           // 43: proto.CloseViewRequest
-	(*CloseViewResponse)(nil),          // 44: proto.CloseViewResponse
-	(*LogEntry)(nil),                   // 45: proto.LogEntry
-	(*LogRequest)(nil),                 // 46: proto.LogRequest
-	(*LogResponse)(nil),                // 47: proto.LogResponse
-	(*ConfigSchema)(nil),               // 48: proto.ConfigSchema
-	(*GetCapabilitiesRequest)(nil),     // 49: proto.GetCapabilitiesRequest
-	(*GetCapabilitiesResponse)(nil),    // 50: proto.GetCapabilitiesResponse
-	(*InitRequest)(nil),                // 51: proto.InitRequest
-	(*InitResponse)(nil),               // 52: proto.InitResponse
-	(*GetConfigRequest)(nil),           // 53: proto.GetConfigRequest
-	(*GetConfigResponse)(nil),          // 54: proto.GetConfigResponse
-	(*SetConfigRequest)(nil),           // 55: proto.SetConfigRequest
-	(*SetConfigResponse)(nil),          // 56: proto.SetConfigResponse
-	(*GetSessionStateRequest)(nil),     // 57: proto.GetSessionStateRequest
-	(*GetSessionStateResponse)(nil),    // 58: proto.GetSessionStateResponse
-	(*GetAvailableModelsRequest)(nil),  // 59: proto.GetAvailableModelsRequest
-	(*GetAvailableModelsResponse)(nil), // 60: proto.GetAvailableModelsResponse
-	(*NotifyRequest)(nil),              // 61: proto.NotifyRequest
-	(*NotifyResponse)(nil),             // 62: proto.NotifyResponse
-	(*ConfirmRequest)(nil),             // 63: proto.ConfirmRequest
-	(*ConfirmResponse)(nil),            // 64: proto.ConfirmResponse
-	(*InputRequest)(nil),               // 65: proto.InputRequest
-	(*InputResponse)(nil),              // 66: proto.InputResponse
-	nil,                                // 67: proto.EventContext.FieldsEntry
-	nil,                                // 68: proto.EventResponse.AddHeadersEntry
-	nil,                                // 69: proto.BeforeLLMCallPayload.HeadersEntry
-	(*KeyValueWidget_Entry)(nil),       // 70: proto.KeyValueWidget.Entry
-	(*TableWidget_Row)(nil),            // 71: proto.TableWidget.Row
-	nil,                                // 72: proto.LogEntry.FieldsEntry
-	(*ConfigSchema_Field)(nil),         // 73: proto.ConfigSchema.Field
-	nil,                                // 74: proto.ConfigSchema.FieldsEntry
-}
+var (
+	file_pkg_plugin_api_extension_proto_enumTypes = make([]protoimpl.EnumInfo, 3)
+	file_pkg_plugin_api_extension_proto_msgTypes  = make([]protoimpl.MessageInfo, 72)
+	file_pkg_plugin_api_extension_proto_goTypes   = []any{
+		(Style_Tone)(0),                    // 0: proto.Style.Tone
+		(StackWidget_Direction)(0),         // 1: proto.StackWidget.Direction
+		(StatusWidget_State)(0),            // 2: proto.StatusWidget.State
+		(*Command)(nil),                    // 3: proto.Command
+		(*Diagnostic)(nil),                 // 4: proto.Diagnostic
+		(*EventContext)(nil),               // 5: proto.EventContext
+		(*GetMetadataRequest)(nil),         // 6: proto.GetMetadataRequest
+		(*GetMetadataResponse)(nil),        // 7: proto.GetMetadataResponse
+		(*RunCommandRequest)(nil),          // 8: proto.RunCommandRequest
+		(*RunCommandResponse)(nil),         // 9: proto.RunCommandResponse
+		(*ReloadRequest)(nil),              // 10: proto.ReloadRequest
+		(*ReloadResponse)(nil),             // 11: proto.ReloadResponse
+		(*DispatchEventRequest)(nil),       // 12: proto.DispatchEventRequest
+		(*DispatchEventResponse)(nil),      // 13: proto.DispatchEventResponse
+		(*EventPayload)(nil),               // 14: proto.EventPayload
+		(*EventResponse)(nil),              // 15: proto.EventResponse
+		(*SessionEventPayload)(nil),        // 16: proto.SessionEventPayload
+		(*ContextPayload)(nil),             // 17: proto.ContextPayload
+		(*BeforeLLMCallPayload)(nil),       // 18: proto.BeforeLLMCallPayload
+		(*AfterLLMCallPayload)(nil),        // 19: proto.AfterLLMCallPayload
+		(*ToolCallPayload)(nil),            // 20: proto.ToolCallPayload
+		(*ToolResultPayload)(nil),          // 21: proto.ToolResultPayload
+		(*MessageDeltaPayload)(nil),        // 22: proto.MessageDeltaPayload
+		(*TurnPayload)(nil),                // 23: proto.TurnPayload
+		(*CompactionPayload)(nil),          // 24: proto.CompactionPayload
+		(*ToolDefinition)(nil),             // 25: proto.ToolDefinition
+		(*GetToolsRequest)(nil),            // 26: proto.GetToolsRequest
+		(*GetToolsResponse)(nil),           // 27: proto.GetToolsResponse
+		(*ExecuteToolRequest)(nil),         // 28: proto.ExecuteToolRequest
+		(*ExecuteToolResponse)(nil),        // 29: proto.ExecuteToolResponse
+		(*View)(nil),                       // 30: proto.View
+		(*Style)(nil),                      // 31: proto.Style
+		(*Widget)(nil),                     // 32: proto.Widget
+		(*TextWidget)(nil),                 // 33: proto.TextWidget
+		(*StackWidget)(nil),                // 34: proto.StackWidget
+		(*KeyValueWidget)(nil),             // 35: proto.KeyValueWidget
+		(*ListWidget)(nil),                 // 36: proto.ListWidget
+		(*TableWidget)(nil),                // 37: proto.TableWidget
+		(*ProgressWidget)(nil),             // 38: proto.ProgressWidget
+		(*DividerWidget)(nil),              // 39: proto.DividerWidget
+		(*StatusWidget)(nil),               // 40: proto.StatusWidget
+		(*RenderViewRequest)(nil),          // 41: proto.RenderViewRequest
+		(*RenderViewResponse)(nil),         // 42: proto.RenderViewResponse
+		(*CloseViewRequest)(nil),           // 43: proto.CloseViewRequest
+		(*CloseViewResponse)(nil),          // 44: proto.CloseViewResponse
+		(*LogEntry)(nil),                   // 45: proto.LogEntry
+		(*LogRequest)(nil),                 // 46: proto.LogRequest
+		(*LogResponse)(nil),                // 47: proto.LogResponse
+		(*ConfigSchema)(nil),               // 48: proto.ConfigSchema
+		(*GetCapabilitiesRequest)(nil),     // 49: proto.GetCapabilitiesRequest
+		(*GetCapabilitiesResponse)(nil),    // 50: proto.GetCapabilitiesResponse
+		(*InitRequest)(nil),                // 51: proto.InitRequest
+		(*InitResponse)(nil),               // 52: proto.InitResponse
+		(*GetConfigRequest)(nil),           // 53: proto.GetConfigRequest
+		(*GetConfigResponse)(nil),          // 54: proto.GetConfigResponse
+		(*SetConfigRequest)(nil),           // 55: proto.SetConfigRequest
+		(*SetConfigResponse)(nil),          // 56: proto.SetConfigResponse
+		(*GetSessionStateRequest)(nil),     // 57: proto.GetSessionStateRequest
+		(*GetSessionStateResponse)(nil),    // 58: proto.GetSessionStateResponse
+		(*GetAvailableModelsRequest)(nil),  // 59: proto.GetAvailableModelsRequest
+		(*GetAvailableModelsResponse)(nil), // 60: proto.GetAvailableModelsResponse
+		(*NotifyRequest)(nil),              // 61: proto.NotifyRequest
+		(*NotifyResponse)(nil),             // 62: proto.NotifyResponse
+		(*ConfirmRequest)(nil),             // 63: proto.ConfirmRequest
+		(*ConfirmResponse)(nil),            // 64: proto.ConfirmResponse
+		(*InputRequest)(nil),               // 65: proto.InputRequest
+		(*InputResponse)(nil),              // 66: proto.InputResponse
+		nil,                                // 67: proto.EventContext.FieldsEntry
+		nil,                                // 68: proto.EventResponse.AddHeadersEntry
+		nil,                                // 69: proto.BeforeLLMCallPayload.HeadersEntry
+		(*KeyValueWidget_Entry)(nil),       // 70: proto.KeyValueWidget.Entry
+		(*TableWidget_Row)(nil),            // 71: proto.TableWidget.Row
+		nil,                                // 72: proto.LogEntry.FieldsEntry
+		(*ConfigSchema_Field)(nil),         // 73: proto.ConfigSchema.Field
+		nil,                                // 74: proto.ConfigSchema.FieldsEntry
+	}
+)
 var file_pkg_plugin_api_extension_proto_depIdxs = []int32{
 	3,  // 0: proto.Command.subcommands:type_name -> proto.Command
 	67, // 1: proto.EventContext.fields:type_name -> proto.EventContext.FieldsEntry

@@ -27,7 +27,7 @@ func (c *inlineChat) completionSet(ctx taui.CompletionContext) *taui.CompletionS
 
 	// The token under the cursor (empty when a space was just typed, meaning a
 	// fresh argument slot). replaceStart marks where a chosen completion is
-	// spliced in — the start of that token, or the cursor for an empty slot.
+	// spliced in - the start of that token, or the cursor for an empty slot.
 	//
 	// IMPORTANT: replaceEnd covers the full word under the cursor, not just the
 	// characters before it. When the cursor is mid-word (e.g. /mo|del),
@@ -91,8 +91,8 @@ func (c *inlineChat) completionSet(ctx taui.CompletionContext) *taui.CompletionS
 }
 
 // commandGroups lists slash-command name completions split into groups by
-// origin — core built-ins, built-in agents (/plan, /research, ...), and
-// extension commands — so the dropdown reads as categories instead of one
+// origin - core built-ins, built-in agents (/plan, /research, ...), and
+// extension commands - so the dropdown reads as categories instead of one
 // undifferentiated list. Registry commands mirror the core built-ins (they
 // exist for the web UI) and fold into the "Commands" group, deduped against
 // it. Built-ins are always offered so completion works even when the

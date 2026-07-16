@@ -164,7 +164,7 @@ func TestRegistry_PluginToolSanitizesName(t *testing.T) {
 		return tools.Result{Content: "ok"}, nil
 	})
 
-	// A plugin returns a natural name containing a '.' — invalid for the provider.
+	// A plugin returns a natural name containing a '.' - invalid for the provider.
 	if err := r.RegisterPluginTool("mcp-plugin", tools.PluginToolDef{Name: "spawn.list_issues"}); err != nil {
 		t.Fatal(err)
 	}

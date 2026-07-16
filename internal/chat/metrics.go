@@ -19,7 +19,7 @@ const (
 // with a Category discriminator keeps the bus API simple: one Publisher, any
 // number of Subscribers, each filtering by category.
 //
-// MetricEvent is NOT a ChatEvent — it routes on its own bus topic, separate
+// MetricEvent is NOT a ChatEvent - it routes on its own bus topic, separate
 // from ChatSessionSnapshotEvent and friends.
 type MetricEvent struct {
 	Category  MetricCategory    `json:"category"`

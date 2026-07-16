@@ -19,7 +19,7 @@ type DocsParams struct {
 
 var docsSchema = Schema{
 	Name:        "docs",
-	Description: "Access Tau's own documentation (user manual, configuration reference, developer guides). Provide 'query' to search all docs for a keyword or phrase, 'path' to read a full documentation file, or neither to list available files. Use when the user asks about Tau itself — usage, configuration, errors, skills, or capabilities.",
+	Description: "Access Tau's own documentation (user manual, configuration reference, developer guides). Provide 'query' to search all docs for a keyword or phrase, 'path' to read a full documentation file, or neither to list available files. Use when the user asks about Tau itself - usage, configuration, errors, skills, or capabilities.",
 	Parameters: json.RawMessage(`{
 		"type": "object",
 		"properties": {

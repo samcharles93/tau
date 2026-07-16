@@ -12,7 +12,7 @@ import (
 
 // HashSpecSnapshot returns the hex-encoded SHA-256 of a spec snapshot JSON string.
 // The snapshot includes all frontmatter fields (tools, model, description), so
-// a change to any of them produces a different hash — correctly detecting spec
+// a change to any of them produces a different hash - correctly detecting spec
 // drift rather than silently colliding on identical bodies.
 func HashSpecSnapshot(snapshotJSON string) string {
 	h := sha256.Sum256([]byte(snapshotJSON))
@@ -53,7 +53,7 @@ func BuildSpecSnapshot(def *Definition, provider, model string, tools []string) 
 
 // SnapshotLimits extracts max_turns/timeout from a spec snapshot JSON
 // previously built by BuildSpecSnapshot. Used on resume, where the original
-// spec.Definition is not re-resolved from disk — spec identity, including
+// spec.Definition is not re-resolved from disk - spec identity, including
 // its structural limits, comes from the historical snapshot instead (see
 // PatchSnapshotResolved). Returns zero values for unparseable input.
 func SnapshotLimits(snapshotJSON string) (maxTurns int, timeout time.Duration) {
@@ -94,7 +94,7 @@ func ToolsToJSON(tools []string) string {
 }
 
 // ToolsFromJSON parses a tool list previously serialised by ToolsToJSON.
-// Empty or unparseable input returns nil (unrestricted) — the same
+// Empty or unparseable input returns nil (unrestricted) - the same
 // nil-means-unrestricted convention used throughout attenuation.
 func ToolsFromJSON(s string) []string {
 	if s == "" {

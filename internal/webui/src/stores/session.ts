@@ -246,7 +246,7 @@ export const useSessionStore = defineStore('session', () => {
         // authoritative request_id. Adopt it (it normally matches what we
         // generated client-side, but the snapshot is the source of truth
         // for any future re-attach) and flip streaming on so the Stop button
-        // appears immediately — without waiting for the first delta, which
+        // appears immediately - without waiting for the first delta, which
         // can take several seconds for slow prompts.
         const ev = msg.payload as ChatResponseStartedEvent
         if (ev.request_id) activeRequestId.value = ev.request_id
@@ -510,8 +510,8 @@ export const useSessionStore = defineStore('session', () => {
   function cancel(): boolean {
     if (!sendEnvelope) return false
     // Prefer the locally tracked request_id (it matches what we sent on
-    // submit). If that's empty — e.g. because the user clicked Stop during
-    // a reconnect window before the new submit's snapshot arrived — still
+    // submit). If that's empty - e.g. because the user clicked Stop during
+    // a reconnect window before the new submit's snapshot arrived - still
     // send a cancel with an empty id; the backend treats that as "cancel
     // whatever is active" so the user's intent is honoured.
     return sendEnvelope(

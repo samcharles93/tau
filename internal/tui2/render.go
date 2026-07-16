@@ -13,12 +13,12 @@ import (
 // messageLineRange records the [startLine, endLine) span (half-open,
 // indices into m.renderedLines at the time of recording) that one
 // ChatMessage's rendered lines occupy. Unlike toolBoxGeometry, this indexes
-// m.renderedLines directly rather than final screen rows — logicalLineAtRow
+// m.renderedLines directly rather than final screen rows - logicalLineAtRow
 // already maps a screen row to a renderedLines index, so no separate
 // box-relative-to-absolute translation is needed in computeLayout.
 type messageLineRange struct {
 	id        string
-	content   string // raw (unstyled) message content, for Copy — renderedLines is lipgloss-styled, same reason lastAssistantText is kept separately
+	content   string // raw (unstyled) message content, for Copy - renderedLines is lipgloss-styled, same reason lastAssistantText is kept separately
 	startLine int
 	endLine   int
 }
@@ -71,7 +71,7 @@ func (m *model) appendMessage(role, content string) {
 // renderLine styles a scrollback line by role. Matches taui's convention
 // (internal/tui/inline_chat.go's submit echo, PrintAbove("%s %s",
 // c.bold("⏎"), prompt)): a user message gets a bold return-glyph prefix, an
-// assistant message gets none — neither ever gets a literal "You:"/"tau:"
+// assistant message gets none - neither ever gets a literal "You:"/"tau:"
 // name label, which is legacy behaviour from an earlier renderer.
 func renderLine(role, content string) string {
 	switch role {
@@ -150,7 +150,7 @@ func sessionSummariesText(summaries []tauchat.SessionSummary, nextCursor string)
 }
 
 // sessionInfoText renders full detail for a single session (/session info
-// <id>) — mirrors internal/tui/inline_events.go's printSessionInfo.
+// <id>) - mirrors internal/tui/inline_events.go's printSessionInfo.
 func sessionInfoText(s tauchat.SessionSummary) string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "Session %s\n", s.ID)
@@ -179,7 +179,7 @@ func sessionInfoText(s tauchat.SessionSummary) string {
 }
 
 // skillsChangedText renders the formatted skill catalog (name, description,
-// scope) shown on SkillsChangedEvent — mirrors
+// scope) shown on SkillsChangedEvent - mirrors
 // internal/tui/inline_events.go's handleSkillsChanged.
 func skillsChangedText(skills []tauchat.SkillInfo) string {
 	if len(skills) == 0 {
@@ -188,7 +188,7 @@ func skillsChangedText(skills []tauchat.SkillInfo) string {
 	var b strings.Builder
 	b.WriteString("**Available Skills**\n\n")
 	for _, skill := range skills {
-		fmt.Fprintf(&b, "- **%s** — %s", skill.Name, skill.Description)
+		fmt.Fprintf(&b, "- **%s** - %s", skill.Name, skill.Description)
 		if skill.Scope != "" {
 			fmt.Fprintf(&b, " _(%s)_", skill.Scope)
 		}
@@ -290,7 +290,7 @@ func renderCompletions(rows []compRow, selected, width int) string {
 }
 
 // completionDescColumn returns the width to pad words to so descriptions
-// line up in a column — the widest word among visible rows that carry a
+// line up in a column - the widest word among visible rows that carry a
 // description, capped so an outlier doesn't push the column off-screen.
 func completionDescColumn(rows []compRow) int {
 	const maxCol = 44

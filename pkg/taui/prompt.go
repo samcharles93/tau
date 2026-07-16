@@ -13,7 +13,7 @@ const (
 )
 
 // Prompt is a small modal-style component for interactive confirm/question
-// dialogs — e.g. those raised by plugins and tools via the host's
+// dialogs - e.g. those raised by plugins and tools via the host's
 // Confirm/Input API. The caller is responsible for giving it exclusive input
 // focus while it is visible and for removing it from the component tree once
 // resolved (via OnConfirm/OnAnswer/OnCancel).
@@ -126,7 +126,7 @@ func (p *Prompt) HandlePaste(content string) bool {
 // consumed while a Prompt is active regardless of the return value.
 func (p *Prompt) HandleInput(data string) bool {
 	switch data {
-	case "\x1b", "\x03": // Esc, Ctrl+C — cancel
+	case "\x1b", "\x03": // Esc, Ctrl+C - cancel
 		if p.onCancel != nil {
 			p.onCancel()
 		}

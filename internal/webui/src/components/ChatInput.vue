@@ -31,7 +31,7 @@
         v-model="draft"
         rows="1"
         :placeholder="placeholder"
-        class="max-h-48 min-h-[2.5rem] flex-1 resize-none rounded-md border border-input bg-card px-3 py-2 text-sm outline-none focus:ring-1 focus:ring-ring"
+        class="max-h-48 min-h-10 flex-1 resize-none rounded-md border border-input bg-card px-3 py-2 text-sm outline-none focus:ring-1 focus:ring-ring"
         @input="onInput"
         @keydown="onKeydown"
         @paste="onPaste"
@@ -373,7 +373,7 @@ function onKeydown(e: KeyboardEvent) {
     return
   }
 
-  // Esc while a response is streaming cancels the in-flight request — mirrors
+  // Esc while a response is streaming cancels the in-flight request - mirrors
   // Ctrl+C in the TUI. We only intercept when the textarea is empty-ish so
   // users can still press Esc to clear the menu / browser-default actions
   // while typing. The completion menu (above) takes precedence.
@@ -494,7 +494,7 @@ function handleSlashCommand(text: string): boolean {
         const id = subArgs.trim()
         const found = session.sessions.find((s) => s.id === id)
         if (found) {
-          session.apply({ type: 'ChatNotificationEvent', payload: { message: `${found.id} — ${found.message_count} messages, ${found.total_tokens} tokens`, level: 'info' } })
+          session.apply({ type: 'ChatNotificationEvent', payload: { message: `${found.id} - ${found.message_count} messages, ${found.total_tokens} tokens`, level: 'info' } })
         } else {
           session.apply({ type: 'ChatNotificationEvent', payload: { message: 'session not found', level: 'error' } })
         }
@@ -546,7 +546,7 @@ function handleSlashCommand(text: string): boolean {
       const lines = ['Commands:']
       for (const c of session.commands) {
         const label = c.label || '/' + c.name
-        lines.push(`  ${label} ${c.accepts_args ? '<args>' : ''} — ${c.description || ''}`)
+        lines.push(`  ${label} ${c.accepts_args ? '<args>' : ''} - ${c.description || ''}`)
       }
       session.apply({ type: 'ChatNotificationEvent', payload: { message: lines.join('\n'), level: 'info' } })
       return true

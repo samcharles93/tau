@@ -1,9 +1,8 @@
 # Tau AI SDK Integration
 
-Tau delegates LLM provider protocol handling to
-`github.com/samcharles93/ai-sdk`, a Go library modelled on the Vercel AI SDK.
-This document describes the current integration: how providers are resolved,
-how models are discovered, and how the streamer works.
+Tau delegates LLM provider protocol handling to `github.com/samcharles93/ai-sdk`, a Go library modelled on the Vercel AI
+SDK. This document describes the current integration: how providers are resolved, how models are discovered, and how the
+streamer works.
 
 ## Architecture
 
@@ -22,7 +21,7 @@ internal/providers/snapshot/
 internal/app/
     chat.go                  ← newRuntimeForProviders(), aggregateModelRefs()
     provider_runtime.go      ← live-reloadable runtime wrapper (providerRuntime)
-    streamer.go              ← Streamer / NewDynamicStreamer — agent.Streamer impl
+    streamer.go              ← Streamer / NewDynamicStreamer - agent.Streamer impl
     live_models.go           ← liveModelRefs() for dynamic providers (Ollama)
 
 github.com/samcharles93/ai-sdk (external)
@@ -32,56 +31,53 @@ github.com/samcharles93/ai-sdk (external)
     pkg/provider/anthropic   ← Native Anthropic Messages API client
 ```
 
-The coordinator, event bus, tool registry, and session store are all
-tau-internal — ai-sdk only handles the raw provider streaming protocol.
+The coordinator, event bus, tool registry, and session store are all tau-internal - ai-sdk only handles the raw provider
+streaming protocol.
 
 ## Provider Catalogue
 
-`internal/providers/catalog.go` contains the built-in list of well-known
-providers. Each `CatalogEntry` carries:
+`internal/providers/catalog.go` contains the built-in list of well-known providers. Each `CatalogEntry` carries:
 
-| Field | Purpose |
-| ----- | ------- |
-| `ID` | tau's canonical name (e.g. `"deepseek"`) |
-| `DisplayName` | Human-readable label shown in `/provider` menus |
-| `BaseURL` | Default API endpoint |
-| `EnvVars` | Environment variables to probe for the API key (first set wins) |
-| `Auth` | `AuthAPIKey`, `AuthOAuth`, or `AuthNone` |
-| `OAuthHandler` | Provider-specific managed login/refresh handler |
-| `Headers` | Static request headers merged into provider calls |
-| `Class` | ai-sdk runtime class; empty → `"openai-compatible"` |
-| `CatalogID` | models.dev key when it differs from tau's `ID` (e.g. Gemini → `"google"`) |
-| `LiveModels` | When `true`, model list is fetched from `/v1/models` at runtime |
+| Field          | Purpose                                                                   |
+| -------------- | ------------------------------------------------------------------------- |
+| `ID`           | tau's canonical name (e.g. `"deepseek"`)                                  |
+| `DisplayName`  | Human-readable label shown in `/provider` menus                           |
+| `BaseURL`      | Default API endpoint                                                      |
+| `EnvVars`      | Environment variables to probe for the API key (first set wins)           |
+| `Auth`         | `AuthAPIKey`, `AuthOAuth`, or `AuthNone`                                  |
+| `OAuthHandler` | Provider-specific managed login/refresh handler                           |
+| `Headers`      | Static request headers merged into provider calls                         |
+| `Class`        | ai-sdk runtime class; empty → `"openai-compatible"`                       |
+| `CatalogID`    | models.dev key when it differs from tau's `ID` (e.g. Gemini → `"google"`) |
+| `LiveModels`   | When `true`, model list is fetched from `/v1/models` at runtime           |
 
 ### Built-in providers
 
-| tau ID | Display name | Auth | Notes |
-| ------ | ------------ | ---- | ----- |
-| `openai` | OpenAI | API key (`OPENAI_API_KEY`) | |
-| `anthropic` | Anthropic (Claude) | API key (`ANTHROPIC_API_KEY`) | Native Messages API, class `"anthropic"` |
-| `deepseek` | DeepSeek | API key (`DEEPSEEK_API_KEY`) | |
-| `openrouter` | OpenRouter | API key (`OPENROUTER_API_KEY`) | |
-| `gemini` | Google Gemini | API key (`GEMINI_API_KEY`) | models.dev key `"google"` |
-| `groq` | Groq | API key (`GROQ_API_KEY`) | |
-| `mistral` | Mistral | API key (`MISTRAL_API_KEY`) | |
-| `together` | Together AI | API key (`TOGETHER_API_KEY`) | |
-| `xai` | xAI (Grok) | API key (`XAI_API_KEY`) | |
-| `cerebras` | Cerebras | API key (`CEREBRAS_API_KEY`) | |
-| `minimax` | MiniMax | API key (`MINIMAX_API_KEY`) | |
-| `ollama` | Ollama (local) | None | Live model discovery from localhost:11434 |
-| `ollama-cloud` | Ollama (cloud) | API key (`OLLAMA_API_KEY`) | |
-| `github-copilot` | GitHub Copilot | OAuth | Device-code login; Copilot token exchange supplies token/base URL/account model IDs |
-| `openai-codex` | OpenAI Codex | OAuth | Device-code login; ChatGPT backend Responses transport and live Codex model discovery |
+| tau ID           | Display name       | Auth                           | Notes                                                                                 |
+| ---------------- | ------------------ | ------------------------------ | ------------------------------------------------------------------------------------- |
+| `openai`         | OpenAI             | API key (`OPENAI_API_KEY`)     |                                                                                       |
+| `anthropic`      | Anthropic (Claude) | API key (`ANTHROPIC_API_KEY`)  | Native Messages API, class `"anthropic"`                                              |
+| `deepseek`       | DeepSeek           | API key (`DEEPSEEK_API_KEY`)   |                                                                                       |
+| `openrouter`     | OpenRouter         | API key (`OPENROUTER_API_KEY`) |                                                                                       |
+| `gemini`         | Google Gemini      | API key (`GEMINI_API_KEY`)     | models.dev key `"google"`                                                             |
+| `groq`           | Groq               | API key (`GROQ_API_KEY`)       |                                                                                       |
+| `mistral`        | Mistral            | API key (`MISTRAL_API_KEY`)    |                                                                                       |
+| `together`       | Together AI        | API key (`TOGETHER_API_KEY`)   |                                                                                       |
+| `xai`            | xAI (Grok)         | API key (`XAI_API_KEY`)        |                                                                                       |
+| `cerebras`       | Cerebras           | API key (`CEREBRAS_API_KEY`)   |                                                                                       |
+| `minimax`        | MiniMax            | API key (`MINIMAX_API_KEY`)    |                                                                                       |
+| `ollama`         | Ollama (local)     | None                           | Live model discovery from localhost:11434                                             |
+| `ollama-cloud`   | Ollama (cloud)     | API key (`OLLAMA_API_KEY`)     |                                                                                       |
+| `github-copilot` | GitHub Copilot     | OAuth                          | Device-code login; Copilot token exchange supplies token/base URL/account model IDs   |
+| `openai-codex`   | OpenAI Codex       | OAuth                          | Device-code login; ChatGPT backend Responses transport and live Codex model discovery |
 
-Providers are activated either by the user's hand-written `config.yaml`,
-by the managed `auth.yaml` (via `/provider`), or by auto-detecting a set API key
-in the environment.
+Providers are activated either by the user's hand-written `config.yaml`, by the managed `auth.yaml` (via `/provider`),
+or by auto-detecting a set API key in the environment.
 
 ## Model Catalogue (Embedded Snapshot)
 
-Interactive mode (`RunChat`) and the TUI's `/model` picker load models from an
-**embedded offline snapshot** (`internal/providers/snapshot/models.json`). This
-means:
+Interactive mode (`RunChat`) and the TUI's `/model` picker load models from an **embedded offline snapshot**
+(`internal/providers/snapshot/models.json`). This means:
 
 - No network request is needed at startup.
 - Only models with `tool_call: true` are included (tau requires tool calling).
@@ -96,32 +92,28 @@ go run ./internal/providers/snapshot/gen/main.go \
     -output internal/providers/snapshot/models.json
 ```
 
-The generator fetches `models.dev`, filters to tau providers and tool-capable
-models, then writes deterministic JSON. Commit the updated `models.json` after
-running the generator.
+The generator fetches `models.dev`, filters to tau providers and tool-capable models, then writes deterministic JSON.
+Commit the updated `models.json` after running the generator.
 
-**`tau models` / `tau refresh` subcommands** still use the network catalog
-(`models.dev`) and are independent of the embedded snapshot. They are useful
-for exploring what a provider offers, but interactive mode ignores them.
+**`tau models` / `tau refresh` subcommands** still use the network catalog (`models.dev`) and are independent of the
+embedded snapshot. They are useful for exploring what a provider offers, but interactive mode ignores them.
 
 ## Model Discovery Flow (Interactive Mode)
 
 1. `providers.Effective()` → merged `[]ProviderConfig` from config + auth state + env.
-2. `newRuntimeForProviders(provs)` → builds `runtime.Runtime` loaded with the
-   embedded `snapshot.Catalog()`.
+2. `newRuntimeForProviders(provs)` → builds `runtime.Runtime` loaded with the embedded `snapshot.Catalog()`.
 3. `aggregateModelRefs(ctx, rt, insecure, provs)` iterates providers:
    - `openai-codex` → `codexModelRefs()` → ChatGPT backend Codex models endpoint
    - `LiveModels: true` (Ollama local) → `liveModelRefs()` → GET `/v1/models`
    - others → `rt.Models(providerID)` from snapshot, filtered by `toolCapable()`
    - every `ChatModelRef` carries `Provider: providerID` so the UI can route correctly.
-4. `pickModel(...)` selects the model from `--model` flag or `default_model`
-   config; returns a zero ref (empty ID) if neither is set — the session starts
-   unselected and the user chooses with `/model`.
+4. `pickModel(...)` selects the model from `--model` flag or `default_model` config; returns a zero ref (empty ID) if
+   neither is set - the session starts unselected and the user chooses with `/model`.
 
 ## Dynamic Streamer
 
-A single `Streamer` serves all providers for the lifetime of a session. It
-resolves the provider **per turn** using a `providerResolver` closure:
+A single `Streamer` serves all providers for the lifetime of a session. It resolves the provider **per turn** using a
+`providerResolver` closure:
 
 ```go
 // On each turn, reads the session's current provider + model
@@ -129,12 +121,11 @@ ref := session.Provider.Name + "/" + session.Model.ID
 provider, modelID, err := providerRuntime.runtime().ChatProvider(ctx, ref)
 ```
 
-This means switching model or provider (via `/model` or `/provider`) takes effect
-on the next turn without rebuilding the coordinator.
+This means switching model or provider (via `/model` or `/provider`) takes effect on the next turn without rebuilding
+the coordinator.
 
-`providerRuntime.reload(ctx)` is called after `/provider` to rebuild
-the underlying runtime with the updated provider set, so newly enabled providers
-are immediately available.
+`providerRuntime.reload(ctx)` is called after `/provider` to rebuild the underlying runtime with the updated provider
+set, so newly enabled providers are immediately available.
 
 ## URL Normalisation Rule
 
@@ -142,32 +133,29 @@ ai-sdk's openai client applies the following rule to base URLs:
 
 - URL with a path (e.g. `https://api.deepseek.com/v1`) → used as-is.
 - Host-only URL (e.g. `https://api.anthropic.com`) → `/v1` is appended.
-- Endpoint path is `/chat/completions` (no `/v1` prefix).
-  Final URL: `baseURL + "/chat/completions"`.
+- Endpoint path is `/chat/completions` (no `/v1` prefix). Final URL: `baseURL + "/chat/completions"`.
 
-**Common mistake:** a `base_url` that already contains `/v1` must be left as-is.
-Adding `/v1` again creates double-path URLs like `/v1/v1/chat/completions` and
-causes 404 errors.
+**Common mistake:** a `base_url` that already contains `/v1` must be left as-is. Adding `/v1` again creates double-path
+URLs like `/v1/v1/chat/completions` and causes 404 errors.
 
-All built-in catalog entries already use the correct form. Only hand-written
-provider configs in `config.yaml` can hit this issue.
+All built-in catalog entries already use the correct form. Only hand-written provider configs in `config.yaml` can hit
+this issue.
 
 ## Provider Classes
 
-| Class | Used for | Protocol |
-| ----- | -------- | -------- |
-| `openai-compatible` (default) | All standard providers | OpenAI Chat Completions API over HTTPS |
-| `anthropic` | Anthropic only | Native Messages API; `x-api-key` header; base URL must be host-only |
+| Class                         | Used for               | Protocol                                                            |
+| ----------------------------- | ---------------------- | ------------------------------------------------------------------- |
+| `openai-compatible` (default) | All standard providers | OpenAI Chat Completions API over HTTPS                              |
+| `anthropic`                   | Anthropic only         | Native Messages API; `x-api-key` header; base URL must be host-only |
 
-`resolveProviderClass()` in `internal/app/chat.go` maps the provider's `Type`
-field (from `config.yaml`) to a class. Unknown types fall through to
-`"openai-compatible"`. The class for Anthropic is set in the built-in catalog
-entry; hand-written Anthropic configs must set `type: anthropic`.
+`resolveProviderClass()` in `internal/app/chat.go` maps the provider's `Type` field (from `config.yaml`) to a class.
+Unknown types fall through to `"openai-compatible"`. The class for Anthropic is set in the built-in catalog entry;
+hand-written Anthropic configs must set `type: anthropic`.
 
 ## Recommended Minimal Configuration
 
-The provider catalogue and embedded model snapshot supply defaults for every
-well-known provider. A minimal config only needs auth:
+The provider catalogue and embedded model snapshot supply defaults for every well-known provider. A minimal config only
+needs auth:
 
 ```yaml
 # ~/.config/tau/config.yaml
@@ -183,18 +171,16 @@ default_provider: deepseek
 default_model: deepseek-chat
 ```
 
-Alternatively, set `DEEPSEEK_API_KEY` in your environment and run `tau`
-without any config — the auto-detection path will pick it up.
+Alternatively, set `DEEPSEEK_API_KEY` in your environment and run `tau` without any config - the auto-detection path
+will pick it up.
 
-Model metadata (context window, pricing, reasoning capabilities) comes from the
-embedded snapshot; you do not need to repeat it in `config.yaml` unless you are
-overriding a specific value.
+Model metadata (context window, pricing, reasoning capabilities) comes from the embedded snapshot; you do not need to
+repeat it in `config.yaml` unless you are overriding a specific value.
 
 ## Enabling Providers Without config.yaml
 
-Tau auto-detects API keys from the environment. Exporting any of the env vars
-listed in the provider catalogue above is enough to enable that provider. The
-TUI's `/provider` command toggles a provider on and persists the key to
+Tau auto-detects API keys from the environment. Exporting any of the env vars listed in the provider catalogue above is
+enough to enable that provider. The TUI's `/provider` command toggles a provider on and persists the key to
 `~/.config/tau/auth.yaml`.
 
 ## Adding a New Provider
@@ -208,11 +194,10 @@ TUI's `/provider` command toggles a provider on and persists the key to
 
 ## Reasoning / Effort
 
-Models that support adjustable reasoning effort advertise `reasoning_options`
-in the models.dev catalog. The snapshot generator carries these through to
-`ModelInfo.ReasoningOptions`. At runtime:
+Models that support adjustable reasoning effort advertise `reasoning_options` in the models.dev catalog. The snapshot
+generator carries these through to `ModelInfo.ReasoningOptions`. At runtime:
 
 - `modelInfoToModelConfig()` extracts effort levels into `ModelConfig.ReasoningEfforts`.
 - The TUI's `/effort` command offers only the levels the model advertises.
-- `Streamer.buildRequest()` maps tau effort levels to OpenAI API values
-  (`low`, `medium`, `high`, `max` → `xhigh`) via `effortToOpenAI()`.
+- `Streamer.buildRequest()` maps tau effort levels to OpenAI API values (`low`, `medium`, `high`, `max` → `xhigh`) via
+  `effortToOpenAI()`.

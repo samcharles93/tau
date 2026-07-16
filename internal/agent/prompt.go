@@ -47,7 +47,7 @@ type PromptConfig struct {
 
 	// AppendPrompt contains trusted host-level system instructions appended in a
 	// clearly delimited block after the generated prompt.
-	// Deprecated: removed per P0.3 decision — trusted-host injection is not a
+	// Deprecated: removed per P0.3 decision - trusted-host injection is not a
 	// use case worth building a mechanism for. Write a custom agent spec instead.
 	AppendPrompt string
 

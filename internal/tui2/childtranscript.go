@@ -12,7 +12,7 @@ import (
 // childTranscriptViewerState is the state of an open child-agent transcript
 // overlay (drill-down into a finished child's full conversation, see
 // docs/specs/agents/05-ui.md "Drill-down"). A nil *childTranscriptViewerState
-// on model means none is open — mirrors diffViewerState's nil-sentinel idiom.
+// on model means none is open - mirrors diffViewerState's nil-sentinel idiom.
 type childTranscriptViewerState struct {
 	title     string
 	sessionID string
@@ -29,7 +29,7 @@ type childTranscriptViewerState struct {
 func (m *model) openChildTranscriptViewer(callID string) tea.Cmd {
 	child, ok := m.childAgents[callID]
 	if !ok || !isChildTerminal(child.status) {
-		return m.setNotification("agent still running — drill-down is available once it finishes")
+		return m.setNotification("agent still running - drill-down is available once it finishes")
 	}
 	if child.sessionID == "" {
 		return m.setNotification("agent " + child.instanceID + " has no recorded session to open")

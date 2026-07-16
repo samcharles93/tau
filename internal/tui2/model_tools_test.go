@@ -56,6 +56,20 @@ func TestHandleChatEventToolExecutionStarted(t *testing.T) {
 	}
 }
 
+func TestShellToolOpensOutputsUponSubmission(t *testing.T) {
+	m := newTestModel(&fakeRuntime{}, nil)
+
+	m.handleChatEvent(tauchat.ChatToolExecutionStartedEvent{
+		CallID:           "shell-1",
+		ToolName:         "shell",
+		ArgumentsSummary: `{"command":"git status"}`,
+	})
+
+	if m.expandedID != "shell-1" {
+		t.Fatalf("expandedID = %q, want shell-1", m.expandedID)
+	}
+}
+
 func TestHandleChatEventToolExecutionStartedAdoptsFinalCallID(t *testing.T) {
 	m := newTestModel(&fakeRuntime{}, nil)
 	m.handleChatEvent(tauchat.ChatToolCallDeltaEvent{
@@ -77,6 +91,43 @@ func TestHandleChatEventToolExecutionStartedAdoptsFinalCallID(t *testing.T) {
 	}
 	if m.tools[0].status != "running" {
 		t.Fatalf("tool status = %q, want running", m.tools[0].status)
+	}
+}
+
+func TestToolCallsDontDuplicateEvents(t *testing.T) {
+	m := newTestModel(&fakeRuntime{}, nil)
+	m.handleChatEvent(tauchat.ChatToolCallDeltaEvent{
+		CallID:           "tool_call_0",
+		Index:            0,
+		ToolName:         "docs",
+		ArgumentsSummary: `{"query":"tool`,
+	})
+
+	// Providers commonly stream the real call ID in a later delta without
+	// repeating the function name. Both deltas describe index 0 and must
+	// remain one row through the execution lifecycle.
+	m.handleChatEvent(tauchat.ChatToolCallDeltaEvent{
+		CallID:           "call-real",
+		Index:            0,
+		ArgumentsSummary: ` output"}`,
+	})
+	m.handleChatEvent(tauchat.ChatToolExecutionStartedEvent{
+		CallID:   "call-real",
+		ToolName: "docs",
+	})
+	m.handleChatEvent(tauchat.ChatToolExecutionCompletedEvent{
+		CallID:   "call-real",
+		ToolName: "docs",
+	})
+
+	if len(m.tools) != 1 {
+		t.Fatalf("tool count = %d, want 1: %+v", len(m.tools), m.tools)
+	}
+	if m.tools[0].id != "call-real" {
+		t.Fatalf("tool id = %q, want call-real", m.tools[0].id)
+	}
+	if m.tools[0].status != "done" {
+		t.Fatalf("tool status = %q, want done", m.tools[0].status)
 	}
 }
 
@@ -201,7 +252,7 @@ func TestHandleChatEventResponseCompletedToolOnly(t *testing.T) {
 
 	// A tool-only turn has no real assistant prose, so lastAssistantText
 	// (used by /copy) stays empty rather than holding a synthetic
-	// placeholder — but the tool call itself must still land in scrollback.
+	// placeholder - but the tool call itself must still land in scrollback.
 	if m.lastAssistantText != "" {
 		t.Fatalf("lastAssistantText = %q, want empty for a tool-only turn", m.lastAssistantText)
 	}
@@ -214,9 +265,28 @@ func TestHandleChatEventResponseCompletedToolOnly(t *testing.T) {
 	}
 }
 
+func TestPendingToolCallsFailWhenInferenceEnds(t *testing.T) {
+	m := newTestModel(&fakeRuntime{}, nil)
+	m.inResponse = true
+	m.tools = []toolState{{id: "t1", name: "docs", status: "pending"}}
+
+	m.handleChatEvent(tauchat.ChatResponseCompletedEvent{})
+
+	if len(m.committedGroups) != 1 || len(m.committedGroups[0].tools) != 1 {
+		t.Fatalf("committed tool groups = %+v, want one tool", m.committedGroups)
+	}
+	tool := m.committedGroups[0].tools[0]
+	if tool.status != "error" {
+		t.Fatalf("pending tool status after inference ended = %q, want error", tool.status)
+	}
+	if strings.TrimSpace(tool.result) == "" {
+		t.Fatal("pending tool should explain why it failed when inference ended")
+	}
+}
+
 // TestToolCallDoesNotReorderAheadOfPrecedingText guards against a real bug:
 // commentary text the model streamed BEFORE calling a tool was rendering
-// AFTER the tool's box once it committed — because renderedLines (baked
+// AFTER the tool's box once it committed - because renderedLines (baked
 // history) always rendered ahead of the live m.streaming buffer, a
 // just-committed tool box would visually "jump" above text that
 // chronologically came first. upsertToolCall now flushes pending streaming
@@ -256,7 +326,7 @@ func TestManyToolCallsCommitAsOneGroup(t *testing.T) {
 		m.handleChatEvent(tauchat.ChatToolCallDeltaEvent{CallID: id, ToolName: "read"})
 		m.handleChatEvent(tauchat.ChatToolExecutionCompletedEvent{CallID: id})
 	}
-	// Text resumes after the batch — this is the boundary that commits it.
+	// Text resumes after the batch - this is the boundary that commits it.
 	m.handleChatEvent(tauchat.ChatResponseDeltaEvent{Delta: "Done reading."})
 	m.handleChatEvent(tauchat.ChatResponseCompletedEvent{})
 
@@ -274,12 +344,38 @@ func TestManyToolCallsCommitAsOneGroup(t *testing.T) {
 	}
 }
 
+func TestToolGroupMetricsAreSameWhenToggled(t *testing.T) {
+	m := newTestModel(&fakeRuntime{}, nil)
+	m.width = 80
+	m.commitToolGroup([]toolState{
+		{id: "t0", name: "read", status: "done"},
+		{id: "t1", name: "docs", status: "pending"},
+		{id: "t2", name: "shell", status: "running"},
+		{id: "t3", name: "read", status: "error"},
+	}, nil)
+
+	assertMetrics := func(state, got string) {
+		t.Helper()
+		for _, want := range []string{"4 tool calls", "1 pending", "1 running", "1 error"} {
+			if !strings.Contains(got, want) {
+				t.Errorf("%s tool group = %q, want %q", state, got, want)
+			}
+		}
+	}
+
+	assertMetrics("collapsed", stripANSI(strings.Join(m.renderedLines, "\n")))
+	if !m.toggleCommittedToolAtLine(m.committedGroups[0].lineIdx) {
+		t.Fatal("expected tool group toggle to be handled")
+	}
+	assertMetrics("expanded", stripANSI(strings.Join(m.renderedLines, "\n")))
+}
+
 // TestCommittedToolGroupUnfoldsRefoldsAndExpandsRow covers the fix that let
 // a committed "N tool calls" group keep its accordion interaction after it
 // scrolls into history: it used to freeze forever as one flat summary line
 // the moment a group had more than one call, with no way back to the
 // per-tool detail. toggleCommittedToolAtLine now mirrors the live group's
-// two levels — click the header to unfold into per-tool rows, click a row
+// two levels - click the header to unfold into per-tool rows, click a row
 // to see its full output, click again to fold back down.
 func TestCommittedToolGroupUnfoldsRefoldsAndExpandsRow(t *testing.T) {
 	m := newTestModel(&fakeRuntime{}, nil)
@@ -313,7 +409,7 @@ func TestCommittedToolGroupUnfoldsRefoldsAndExpandsRow(t *testing.T) {
 	}
 
 	// Click the second row (relative row 3: border(0) + header(1) + t0's
-	// row(2) + t1's row(3) — see renderToolGroupBox's row accounting) to
+	// row(2) + t1's row(3) - see renderToolGroupBox's row accounting) to
 	// expand just that tool's full output.
 	if !m.toggleCommittedToolAtLine(g.lineIdx + 3) {
 		t.Fatal("expected a click on a tool row to be handled")
@@ -327,7 +423,7 @@ func TestCommittedToolGroupUnfoldsRefoldsAndExpandsRow(t *testing.T) {
 	}
 
 	// Click the header TEXT line again (relative row 1, not row 0's
-	// border) to fold the whole group back down — a real regression: the
+	// border) to fold the whole group back down - a real regression: the
 	// fold trigger only matched row 0 (the border character), so clicking
 	// the actual visible "N tool calls" text a user would click did
 	// nothing at all.
@@ -381,7 +477,7 @@ func TestCommittedSingleToolOpensAndCloses(t *testing.T) {
 }
 
 // TestStreamCursorClearsOnToolTransition checks the cursor disappears the
-// instant a tool call starts mid-stream — upsertToolCall flushes streaming
+// instant a tool call starts mid-stream - upsertToolCall flushes streaming
 // text to scrollback and clears m.streaming, which is what the cursor's
 // visibility is keyed on.
 func TestStreamCursorClearsOnToolTransition(t *testing.T) {
@@ -419,12 +515,12 @@ func TestHandleChatEventResponseCompletedNoContentNoTools(t *testing.T) {
 // TestHandleChatEventRuntimeErrorSkipsRedundantEchoForLoneTool is a
 // regression test: a single in-flight tool call failing (e.g. a provider
 // streaming a tool-call delta with no function name) previously showed the
-// exact same error text three times — the committed lone tool box's compact
+// exact same error text three times - the committed lone tool box's compact
 // summary, a duplicate "✗ <message>" scrollback line, and the notification
 // banner. The scrollback echo is now skipped whenever a lone tool box
 // already displays the reason inline (see ChatRuntimeErrorEvent's
 // hadLoneTool); the banner (m.notification) and the tool box itself are
-// unaffected — this only removes the redundant middle copy.
+// unaffected - this only removes the redundant middle copy.
 func TestHandleChatEventRuntimeErrorSkipsRedundantEchoForLoneTool(t *testing.T) {
 	m := newTestModel(&fakeRuntime{}, nil)
 	m.inResponse = true
@@ -439,7 +535,7 @@ func TestHandleChatEventRuntimeErrorSkipsRedundantEchoForLoneTool(t *testing.T) 
 	}
 	joined := stripANSI(strings.Join(m.renderedLines, "\n"))
 	if got := strings.Count(joined, "stream tool call 0 has no function name"); got != 1 {
-		t.Errorf("error text appears %d times in scrollback, want exactly 1 (the tool box) — got:\n%s", got, joined)
+		t.Errorf("error text appears %d times in scrollback, want exactly 1 (the tool box) - got:\n%s", got, joined)
 	}
 	if strings.Contains(joined, "✗ stream tool call") {
 		t.Error("expected no redundant '✗ <message>' scrollback echo when the lone tool box already shows the reason")
@@ -449,7 +545,7 @@ func TestHandleChatEventRuntimeErrorSkipsRedundantEchoForLoneTool(t *testing.T) 
 // TestApplySnapshotPreservesToolCalls guards against a real bug: a
 // ChatRoleTool message fell into applySnapshot's default/continue branch,
 // so every past tool call silently vanished from the viewport the next time
-// a snapshot rebuilt it (e.g. right after submitting the next prompt) —
+// a snapshot rebuilt it (e.g. right after submitting the next prompt) -
 // the same routine-snapshot hazard as the markdown-reverting bug above.
 func TestApplySnapshotPreservesToolCalls(t *testing.T) {
 	m := newTestModel(&fakeRuntime{}, nil)
@@ -481,7 +577,7 @@ func TestApplySnapshotPreservesToolCalls(t *testing.T) {
 
 // TestApplySnapshotGroupsConsecutiveToolCalls mirrors
 // TestManyToolCallsCommitAsOneGroup but for the session-history replay path
-// (applySnapshot) — a saved session with a burst of tool calls must replay
+// (applySnapshot) - a saved session with a burst of tool calls must replay
 // as one compact group too, not one box per call.
 func TestApplySnapshotGroupsConsecutiveToolCalls(t *testing.T) {
 	m := newTestModel(&fakeRuntime{}, nil)
@@ -568,8 +664,8 @@ func TestRenderToolWithoutResult(t *testing.T) {
 // cache-key mismatch: an expanded tool box renders its markdown result at
 // innerWidth = width-8, but mdCache is normally only populated at the full
 // terminal width (constructor preload + WindowSizeMsg). A direct lookup at
-// innerWidth used to miss every time — silently falling back to raw,
-// unrendered markdown — because nothing ever populated the cache at that
+// innerWidth used to miss every time - silently falling back to raw,
+// unrendered markdown - because nothing ever populated the cache at that
 // key. renderToolBox must ensure a renderer exists at innerWidth itself.
 func TestExpandedToolBoxPopulatesMarkdownCacheAtInnerWidth(t *testing.T) {
 	m := newTestModel(&fakeRuntime{}, nil)
@@ -683,7 +779,7 @@ func TestToolExecutionStartResetsElapsedClock(t *testing.T) {
 
 // TestAgentStateToolExecutionCompletedKeepsRunningToolWhileSiblingActive
 // guards against the status bar flickering back to "Thinking" and forward
-// to "Running <tool>" again between two concurrently running tool calls —
+// to "Running <tool>" again between two concurrently running tool calls -
 // it should stay on agentRunningTool until every call in the batch settles.
 func TestAgentStateToolExecutionCompletedKeepsRunningToolWhileSiblingActive(t *testing.T) {
 	m := newTestModel(&fakeRuntime{}, nil)
@@ -749,7 +845,7 @@ func TestToolStyleForStatus(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			s := toolStyleForStatus(tt.toolName, tt.status)
-			// Render a small string through the style — smoke test that it
+			// Render a small string through the style - smoke test that it
 			// doesn't panic and emits output.
 			out := s.Render("x")
 			if out == "" {
@@ -903,7 +999,7 @@ func TestFocusNextChildSkipsRunningChildren(t *testing.T) {
 		t.Fatalf("focusedChild = %d, want 0 (c1)", m.focusedChild)
 	}
 
-	// c2 is running — must be skipped, landing on c3.
+	// c2 is running - must be skipped, landing on c3.
 	m.focusNextChild(1)
 	if m.focusedChild != 2 {
 		t.Fatalf("focusedChild = %d, want 2 (c3, skipping running c2)", m.focusedChild)

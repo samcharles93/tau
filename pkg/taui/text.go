@@ -2,7 +2,7 @@ package taui
 
 import "github.com/samcharles93/tau/pkg/taui/termkit"
 
-// Text is the simplest component — it renders a single string with optional
+// Text is the simplest component - it renders a single string with optional
 // foreground and background colour callbacks. Ported from Pi's components/text.ts.
 type Text struct {
 	text string

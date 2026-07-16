@@ -53,7 +53,7 @@ type spawnRejected struct {
 func (e *spawnRejected) Error() string { return e.reason }
 
 // acquireSpawnSlot blocks until a concurrency slot for parentInstanceID is
-// admitted, ctx is cancelled, or deadline passes while queued — whichever
+// admitted, ctx is cancelled, or deadline passes while queued - whichever
 // comes first. deadline is the absolute time by which a queued spawn must
 // be admitted or evicted; per spec, queue time consumes the child's own
 // timeout/deadline budget, so callers pass the resolved timeout/deadline
@@ -148,7 +148,7 @@ func (s *spawnAdmission) acquire(ctx context.Context, parentInstanceID string, a
 
 // evict removes w from the queue if it hasn't already been admitted. A
 // waiter that loses the race against releaseFunc (already admitted, ready
-// closed) is left alone — its slot is real and must be released normally.
+// closed) is left alone - its slot is real and must be released normally.
 func (s *spawnAdmission) evict(w *spawnWaiter) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -210,7 +210,7 @@ func (s *spawnAdmission) releaseFunc(parentInstanceID string, maxActive, maxTota
 // timeout, an explicit budget.timeout override, and an explicit
 // budget.deadline (absolute RFC 3339), relative to now. A zero result
 // means no queue timeout beyond ctx cancellation. Malformed budget fields
-// are ignored here — they're validated and rejected properly once the
+// are ignored here - they're validated and rejected properly once the
 // spawn is admitted and reaches spawnChildProcess's budget construction.
 func computeSpawnDeadline(args agentToolArgs, specTimeout time.Duration) time.Time {
 	now := time.Now()

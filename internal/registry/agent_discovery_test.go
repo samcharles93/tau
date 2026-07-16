@@ -22,7 +22,7 @@ func writeAgentFile(t *testing.T, dir, name, description string) {
 // TestDiscoveredAgentAppearsWithProjectPrefix guards Part A of the
 // agent-authored-subagent feature: a definition dropped under
 // <cwd>/.agents/agents/ must show up in the registry with the project:
-// prefix (execution is wired separately — see agentCommands' doc comment).
+// prefix (execution is wired separately - see agentCommands' doc comment).
 func TestDiscoveredAgentAppearsWithProjectPrefix(t *testing.T) {
 	cwd := t.TempDir()
 	writeAgentFile(t, filepath.Join(cwd, ".agents", "agents"), "reviewer", "Reviews code")
@@ -49,7 +49,7 @@ func TestDiscoveredAgentAppearsWithProjectPrefix(t *testing.T) {
 
 // TestDiscoveredAgentNameCollisionBuiltinWins guards against a
 // filesystem-discovered agent shadowing (or being confused with) a built-in
-// of the same name — the built-in "plan" command must keep its own
+// of the same name - the built-in "plan" command must keep its own
 // description, and the discovered file must not silently overwrite it.
 func TestDiscoveredAgentNameCollisionBuiltinWins(t *testing.T) {
 	cwd := t.TempDir()

@@ -24,7 +24,7 @@ func TestMouseClickFocusesAndExpandsTool(t *testing.T) {
 	}
 
 	// The expand toggle is a click action (press+release with no drag in
-	// between) — see toggleToolBoxAtY — since press alone must instead arm
+	// between) - see toggleToolBoxAtY - since press alone must instead arm
 	// toolsSel in case the gesture turns into a drag-to-select.
 	m.Update(tea.MouseClickMsg{Button: tea.MouseLeft, Y: geom.toolBoxes[0].startY})
 	m.Update(tea.MouseReleaseMsg{Button: tea.MouseLeft, Y: geom.toolBoxes[0].startY})
@@ -73,7 +73,7 @@ func TestMousePressStartsSelectionInViewport(t *testing.T) {
 // through the real mouse press/release path (handleMousePress ->
 // handleMouseRelease's dragViewport case -> toggleCommittedToolAtLine),
 // rather than calling toggleCommittedToolAtLine directly, to prove the
-// wiring itself — not just the toggle logic — works end to end.
+// wiring itself - not just the toggle logic - works end to end.
 func TestMouseClickOnCommittedToolGroupUnfolds(t *testing.T) {
 	m := newTestModel(&fakeRuntime{}, nil)
 	m.Update(tea.WindowSizeMsg{Width: 80, Height: 24})
@@ -275,11 +275,11 @@ func TestHighlightSelectionWrapsSelectedRange(t *testing.T) {
 
 // TestHighlightSelectionSurvivesEmbeddedReset covers a real visual bug: a
 // styled line (e.g. glamour markdown with an inline-code span) contains its
-// own SGR reset partway through — "\x1b[38;5;252mNow \x1b[m\x1b[38;5;203mgit
+// own SGR reset partway through - "\x1b[38;5;252mNow \x1b[m\x1b[38;5;203mgit
 // status\x1b[m more text". Wrapping the whole line in a single
 // "\x1b[7m...\x1b[27m" pair only visually highlights up to that first
 // embedded reset, since a bare reset clears every attribute including
-// reverse video — everything after it silently renders unhighlighted even
+// reverse video - everything after it silently renders unhighlighted even
 // though the line is genuinely selected and copies correctly. Reverse video
 // must be re-asserted after each embedded reset so highlighting covers the
 // whole line.
@@ -326,7 +326,7 @@ func TestEscClearsActiveSelection(t *testing.T) {
 // so a stuck-armed tools selection (e.g. from a press that never saw a
 // matching release) was never reachable via Esc. copyActiveSelection
 // (selection.go) checks toolsSel among the four states, and right-click
-// prefers an active selection over opening the context menu — so a stuck
+// prefers an active selection over opening the context menu - so a stuck
 // toolsSel silently hijacked every right-click into a copy, with no menu
 // ever appearing and no visible way to escape it.
 func TestEscClearsToolsSelection(t *testing.T) {

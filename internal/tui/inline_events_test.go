@@ -37,7 +37,7 @@ func runHandleEvent(t *testing.T, c *inlineChat, ev tauchat.ChatEvent) {
 		default:
 		}
 	case <-time.After(2 * time.Second):
-		t.Fatalf("handleEvent(%T) did not return — likely deadlock", ev)
+		t.Fatalf("handleEvent(%T) did not return - likely deadlock", ev)
 	}
 }
 
@@ -328,7 +328,7 @@ func TestHandleEvent_UnrelatedCompletion_DoesNotClearBashRunning(t *testing.T) {
 	runHandleEvent(t, c, tauchat.ChatToolExecutionCompletedEvent{CallID: "other", ToolName: "shell", ResultSummary: "ok"})
 
 	if !c.bashRunning.Load() {
-		t.Fatal("expected bashRunning to remain true — the completed call wasn't the bash command")
+		t.Fatal("expected bashRunning to remain true - the completed call wasn't the bash command")
 	}
 	if c.bashCallID != "bash-1" {
 		t.Fatalf("expected bashCallID to remain %q, got %q", "bash-1", c.bashCallID)

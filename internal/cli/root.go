@@ -65,6 +65,7 @@ func NewRootCommand(version string) *urfavecli.Command {
 		Version: version,
 		Commands: []*urfavecli.Command{
 			setupCmd(),
+			providerCmd(),
 			tokenCmd(),
 			modelsCmd(),
 			refreshCmd(),
@@ -193,7 +194,7 @@ func NewRootCommand(version string) *urfavecli.Command {
 					}
 				case shouldSkipSetupContinue(err, cmd):
 					// Fall through into RunChat/RunStdIn with zero providers:
-					// its existing "No models available — use /provider to
+					// its existing "No models available - use /provider to
 					// enable a provider" startup guidance (run.go) takes over
 					// instead of hard-failing before the user ever sees the app.
 				default:
@@ -205,7 +206,7 @@ func NewRootCommand(version string) *urfavecli.Command {
 			if cmd.Bool("child") {
 				err := app.RunChild(ctx, opts)
 				app.ExitChild(err)
-				// unreachable — exitChild calls os.Exit
+				// unreachable - exitChild calls os.Exit
 				return err
 			}
 			prompt := cmd.String("prompt")
@@ -247,7 +248,7 @@ func shouldAutoSetup(err error, cmd *urfavecli.Command) bool {
 // into the interactive chat path anyway, with zero configured providers,
 // rather than failing on the "no usable providers" error. Only applies when
 // the user explicitly passed --skip-setup (opting into this on purpose) and
-// only for the genuinely interactive path — a headless --child process or
+// only for the genuinely interactive path - a headless --child process or
 // one-shot --prompt run has no coherent way to "continue with guidance" the
 // way the interactive TUI's existing startup messaging does (run.go's
 // RunChat), so those still get the plain actionable error.
@@ -266,7 +267,7 @@ func shouldSkipSetupContinue(err error, cmd *urfavecli.Command) bool {
 // configured default_provider/default_model (or an explicit --provider/
 // --model flag) is picked up immediately without a second process launch.
 func autoInvokeSetup(ctx context.Context, cmd *urfavecli.Command) (tauconfig.Config, tauconfig.ProviderConfig, error) {
-	fmt.Println(styleBold("No usable provider is configured — let's set one up."))
+	fmt.Println(styleBold("No usable provider is configured - let's set one up."))
 	if _, err := app.RunSetup(ctx, app.RunSetupOptions{
 		Prompter: cliSetupPrompter{},
 		Stdout:   os.Stdout,

@@ -1,7 +1,7 @@
 // Package tui2 implements a new Bubbletea v2-based interactive chat TUI
 // as a sibling to the legacy taui inline renderer (internal/tui). Both
 // frontends share the same eventbus.Bus, agent.Coordinator, and plugin
-// contracts — tui2 is just a different renderer.
+// contracts - tui2 is just a different renderer.
 //
 // It is the default TUI; --legacy-tui falls back to the legacy renderer.
 package tui2

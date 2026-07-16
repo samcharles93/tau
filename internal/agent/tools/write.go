@@ -31,7 +31,7 @@ var writeSchema = Schema{
 			},
 			"overwrite": {
 				"type": "boolean",
-				"description": "Allow overwriting an existing file. Defaults to false — the tool will error if the file already exists unless this is true."
+				"description": "Allow overwriting an existing file. Defaults to false - the tool will error if the file already exists unless this is true."
 			}
 		},
 		"required": ["path", "content"]
@@ -82,7 +82,7 @@ func makeWriteExecutor(cwd string, mq *MutationQueue, rt *ReadTracker) Executor 
 			if !p.Overwrite {
 				return Result{
 					Content: fmt.Sprintf(
-						"file %q already exists — set overwrite to true to replace it, or use the edit tool for partial changes",
+						"file %q already exists - set overwrite to true to replace it, or use the edit tool for partial changes",
 						path,
 					),
 					IsError: true,

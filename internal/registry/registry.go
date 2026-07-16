@@ -123,7 +123,7 @@ func (r *Registry) MergeSkills(all []*skills.Skill) {
 }
 
 // publish publishes the current command set on the bus. Does not hold
-// the lock — callers should release r.mu before calling.
+// the lock - callers should release r.mu before calling.
 func (r *Registry) publish() {
 	r.mu.RLock()
 	defer r.mu.RUnlock()

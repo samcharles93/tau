@@ -21,8 +21,8 @@ const (
 
 // formPrompt is tui2's one reusable modal-input widget: a title, message,
 // and either a Yes/No toggle (confirm) or a *textField (question). It's
-// deliberately not tied to the agent-question protocol — resolving it just
-// invokes a plain Go callback — so the same widget backs both:
+// deliberately not tied to the agent-question protocol - resolving it just
+// invokes a plain Go callback - so the same widget backs both:
 //   - agent-originated prompts (enqueuePrompt adapts an incoming
 //     InteractivePromptRequestedEvent into a formPrompt whose callbacks send
 //     a RespondInteractivePromptCommand back to the runtime), and
@@ -34,7 +34,7 @@ type formPrompt struct {
 	message string
 
 	// requestID identifies an agent-originated prompt (mirrors the
-	// InteractivePromptRequestedEvent it was built from) — empty for
+	// InteractivePromptRequestedEvent it was built from) - empty for
 	// locally-presented prompts, which have no chat round-trip to
 	// correlate. Kept for identifying/logging which prompt is active or
 	// queued; resolution itself goes through onAnswer/onConfirm/onCancel,
@@ -42,7 +42,7 @@ type formPrompt struct {
 	requestID string
 
 	field      *textField // question kind only
-	confirmYes bool       // confirm kind only — which option is highlighted
+	confirmYes bool       // confirm kind only - which option is highlighted
 
 	onAnswer  func(value string) tea.Cmd
 	onConfirm func(confirmed bool) tea.Cmd
@@ -85,7 +85,7 @@ func (m *model) enqueuePrompt(e tauchat.InteractivePromptRequestedEvent) tea.Cmd
 }
 
 // presentLocalPrompt shows a free-text question prompt driven by local UI
-// code rather than the agent — e.g. providerLogin's Enterprise-domain
+// code rather than the agent - e.g. providerLogin's Enterprise-domain
 // prompt. Resolving it never sends a chat command; it just invokes the
 // given callback, so local flows can kick off their own tea.Cmd (starting
 // an OAuth login, say) from the answer.
@@ -105,7 +105,7 @@ func (m *model) presentLocalPrompt(title, message, placeholder string, onAnswer 
 // behind the current one. Shared by enqueuePrompt and presentLocalPrompt.
 func (m *model) presentPrompt(p *formPrompt) tea.Cmd {
 	// A prompt represents a blocking round-trip and must win over a UI
-	// affordance the user can freely re-open — close any open context menu
+	// affordance the user can freely re-open - close any open context menu
 	// so it can't linger swallowing keys the prompt needs.
 	m.contextMenu = nil
 	if m.activePrompt != nil {
@@ -238,9 +238,9 @@ func (m *model) resolvePromptCancel() tea.Cmd {
 	return nil
 }
 
-// renderPrompt draws the prompt as a plain inline block — a styled title,
+// renderPrompt draws the prompt as a plain inline block - a styled title,
 // a word-wrapped message, then either a Yes/No toggle (confirm) or the live
-// text field (question) — matching the chat composer's unboxed aesthetic
+// text field (question) - matching the chat composer's unboxed aesthetic
 // rather than a bordered modal, per Sam's steer away from the earlier
 // fixed-width ASCII box.
 func renderPrompt(p *formPrompt, width int) string {

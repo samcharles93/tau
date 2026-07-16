@@ -32,7 +32,7 @@ func newTestSessionManager(t *testing.T) *sessions.Manager {
 // the StartChatSessionCommand) before calling Close(). Send() only enqueues
 // onto a buffered channel and returns immediately, so closing right after
 // Send() without this wait races Close()'s ctx.Done() against the loop still
-// having the start command queued — select picks between the two
+// having the start command queued - select picks between the two
 // pseudo-randomly, and a "session not found" outcome (nothing to persist)
 // is a real possible result, not a hang.
 func startAndCloseTestSession(t *testing.T, coordinator *Coordinator, sessionID string) {
@@ -66,7 +66,7 @@ func startAndCloseTestSession(t *testing.T, coordinator *Coordinator, sessionID 
 
 // startSubmitAndCloseTestSession starts a session, submits one prompt, waits
 // for its ChatResponseCompletedEvent (proof the message actually landed in
-// session state before Close() snapshots it — same race Send() has for the
+// session state before Close() snapshots it - same race Send() has for the
 // start command, see startAndCloseTestSession), then closes.
 func startSubmitAndCloseTestSession(t *testing.T, coordinator *Coordinator, sessionID string) {
 	t.Helper()
@@ -140,7 +140,7 @@ func TestCoordinatorNoPersistSkipsSessionStore(t *testing.T) {
 // TestCoordinatorPersistsByDefault guards the flag's default: every existing
 // caller that leaves NoPersist unset (zero value false) must keep persisting,
 // so --ephemeral is opt-in rather than a silent behaviour change. Submits a
-// prompt before closing — a session with at least one message, matching
+// prompt before closing - a session with at least one message, matching
 // persistSession's empty-session skip (see TestCoordinatorSkipsEmptySession).
 func TestCoordinatorPersistsByDefault(t *testing.T) {
 	bus := newTestBus(t)
@@ -166,7 +166,7 @@ func TestCoordinatorPersistsByDefault(t *testing.T) {
 
 // TestCoordinatorSkipsEmptySession guards against clutter in the session
 // list: a session that was started (e.g. the TUI launched) but never sent a
-// single message must not be written to the store — there's nothing to
+// single message must not be written to the store - there's nothing to
 // resume into, and an empty row previously showed a misleading "Session
 // saved" summary on exit and a dead entry in /session and --resume.
 func TestCoordinatorSkipsEmptySession(t *testing.T) {
@@ -193,12 +193,12 @@ func TestCoordinatorSkipsEmptySession(t *testing.T) {
 
 // TestCoordinatorDoesNotDropMessageSentRightBeforeClose reproduces the real
 // shutdown race: Send() only enqueues onto the buffered c.commands channel
-// and returns — it never waits for loop() to actually process the command.
+// and returns - it never waits for loop() to actually process the command.
 // A real TUI submits a prompt via a fire-and-forget tea.Cmd and, on the very
 // next user action, may call Close() without ever waiting for that command
 // to be handled. Before the drainPendingCommands fix, loop()'s
 // select{<-ctx.Done(), <-c.commands} could pick shutdown over the
-// already-enqueued SubmitChatPromptCommand, silently dropping it —
+// already-enqueued SubmitChatPromptCommand, silently dropping it -
 // BeginTurn never ran, so the message never reached session.state, and the
 // persisted session came out empty even though the user typed something.
 func TestCoordinatorDoesNotDropMessageSentRightBeforeClose(t *testing.T) {
@@ -241,7 +241,7 @@ func TestCoordinatorDoesNotDropMessageSentRightBeforeClose(t *testing.T) {
 		}
 	}
 
-	// The crux of the reproduction: submit, then close IMMEDIATELY — no
+	// The crux of the reproduction: submit, then close IMMEDIATELY - no
 	// wait for any acknowledgment that the submit was processed, matching
 	// what the real TUI does.
 	require.NoError(t, coordinator.Send(chat.SubmitChatPromptCommand{

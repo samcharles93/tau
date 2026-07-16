@@ -46,7 +46,7 @@ func TestSetupExitPlanFailure(t *testing.T) {
 func TestCliSetupPrompterSelectTranslatesCancellation(t *testing.T) {
 	// cliSetupPrompter.Select reads os.Stdin directly, so exercising its
 	// cancellation path (rather than Select's, already covered in
-	// prompt_test.go) means swapping os.Stdin for a pipe with no writer —
+	// prompt_test.go) means swapping os.Stdin for a pipe with no writer -
 	// the read would block forever if ctx cancellation didn't win the race.
 	pr, pw, err := os.Pipe()
 	require.NoError(t, err)

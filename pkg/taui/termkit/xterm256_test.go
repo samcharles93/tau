@@ -12,7 +12,7 @@ func TestXterm256(t *testing.T) {
 		{16, Color{0, 0, 0}},
 		{209, Color{255, 135, 95}}, // Shell mode accent
 		{134, Color{175, 95, 215}}, // Planning mode accent
-		{215, Color{255, 175, 95}}, // distinct from 209 — regression guard
+		{215, Color{255, 175, 95}}, // distinct from 209 - regression guard
 		{231, Color{255, 255, 255}},
 		{232, Color{8, 8, 8}},
 		{255, Color{238, 238, 238}},

@@ -31,7 +31,7 @@ func TestCopyCommandReturnsRawContentAfterResponse(t *testing.T) {
 		t.Fatalf("expected a BatchMsg containing the clipboard Cmd, got %#v", cmd())
 	}
 
-	// Only execute the clipboard sub-cmd — the notification sub-cmd is a
+	// Only execute the clipboard sub-cmd - the notification sub-cmd is a
 	// 4-second tea.Tick and isn't relevant here.
 	clip := batch[0]()
 	v := reflect.ValueOf(clip)
@@ -47,7 +47,7 @@ func TestCopyCommandNotifiesWhenNothingToCopy(t *testing.T) {
 	rt := &fakeRuntime{}
 	m := newTestModel(rt, nil)
 
-	// setNotification's returned Cmd is a bare 4s tea.Tick — don't execute
+	// setNotification's returned Cmd is a bare 4s tea.Tick - don't execute
 	// it, just check the synchronous m.notification side effect.
 	m.cmdCopy("")
 
@@ -77,7 +77,7 @@ func TestRenderLineUserGetsGlyphNotAssistant(t *testing.T) {
 }
 
 // A bash-mode echo (appendMessage("user", "!"+cmd), see handleBashCommand)
-// must render the same way as any other user line — no double-marking on
+// must render the same way as any other user line - no double-marking on
 // top of the leading "!".
 func TestRenderLineBashEchoHasNoNameLabel(t *testing.T) {
 	out := stripANSI(renderLine("user", "!git status"))
@@ -181,7 +181,7 @@ func TestFormatDurationCompact(t *testing.T) {
 // TestRenderMarkdownAtNarrowWidthStillRenders guards against a normalization
 // mismatch: ensureMDRenderer clamps widths below 20 up to 20 before storing
 // a renderer, but renderMarkdown used to look the renderer back up under the
-// raw, unclamped width — so a narrow terminal (or m.width == 0 before the
+// raw, unclamped width - so a narrow terminal (or m.width == 0 before the
 // first WindowSizeMsg) always missed the cache and fell back to raw
 // markdown.
 func TestRenderMarkdownAtNarrowWidthStillRenders(t *testing.T) {
@@ -223,7 +223,7 @@ func TestAppendMessageMultiLineUserContinuationInheritsTerminalForeground(t *tes
 		t.Fatalf("continuation line = %q, user message body should not force a foreground color", m.renderedLines[1])
 	}
 	// It should also not fall back to the generic/tool continuation's dim
-	// styling — a user message reads as plain content, not muted metadata.
+	// styling - a user message reads as plain content, not muted metadata.
 	if strings.Contains(m.renderedLines[1], "\x1b[2m") {
 		t.Fatalf("continuation line = %q, should not use faint/dim styling", m.renderedLines[1])
 	}

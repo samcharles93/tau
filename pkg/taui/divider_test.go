@@ -45,7 +45,7 @@ func TestDividerLabelWiderThanWidth(t *testing.T) {
 }
 
 // TestDividerNilModeFuncUnaffected guards against a regression where adding
-// SetModeFunc changed rendering for dividers that never call it — a Divider
+// SetModeFunc changed rendering for dividers that never call it - a Divider
 // with no mode func (or one whose func returns nil) must render identically
 // to a plain/static-label Divider, matching every other Divider in the app.
 func TestDividerNilModeFuncUnaffected(t *testing.T) {
@@ -92,9 +92,9 @@ func TestDividerModeFuncOverridesLabelAndColor(t *testing.T) {
 }
 
 // TestDividerModeFuncLabelIsLeftAligned verifies a mode's label sits near
-// the left edge (modeLabelLeftMargin dashes in), not centered — an
+// the left edge (modeLabelLeftMargin dashes in), not centered - an
 // input-mode indicator should catch the eye immediately, unlike a static
-// Divider label such as "Results" (still centered — see
+// Divider label such as "Results" (still centered - see
 // TestDividerCentersLabel), which behaves like a section heading.
 func TestDividerModeFuncLabelIsLeftAligned(t *testing.T) {
 	termkit.ForceColor()
@@ -124,7 +124,7 @@ func TestDividerModeFuncLabelIsLeftAligned(t *testing.T) {
 }
 
 // TestDividerHideModeLabel verifies HideModeLabel renders the mode's color
-// as a plain full-width rule without its name — used for the bottom
+// as a plain full-width rule without its name - used for the bottom
 // divider around an input box, so only the top one names the mode.
 func TestDividerHideModeLabel(t *testing.T) {
 	termkit.ForceColor()
@@ -151,7 +151,7 @@ func TestDividerHideModeLabel(t *testing.T) {
 // regression found via visual inspection: the label pill sets both a
 // foreground AND a background color with no trailing Reset (FgBgOnly/Wrap
 // semantics), so without an explicit Reset before the trailing dashes, the
-// pill's background bled forward — the dashes after the label rendered as a
+// pill's background bled forward - the dashes after the label rendered as a
 // solid colored block (leftover background) instead of colored dash glyphs
 // on the default background.
 func TestDividerModeFuncResetsBeforeTrailingDashes(t *testing.T) {

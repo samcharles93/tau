@@ -45,7 +45,7 @@ func TestToolRowComposesInColouredBox(t *testing.T) {
 }
 
 // TestBadgeStyleDoesEmbedReset documents the contrast: the badge style is *not*
-// box-safe — it embeds resets — which is why combined is the default and the
+// box-safe - it embeds resets - which is why combined is the default and the
 // in-box choice.
 func TestBadgeStyleDoesEmbedReset(t *testing.T) {
 	termkit.ForceColor()

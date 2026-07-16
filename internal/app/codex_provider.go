@@ -337,7 +337,7 @@ func sanitiseResponsesSchema(params json.RawMessage) json.RawMessage {
 
 	var schema map[string]json.RawMessage
 	if err := json.Unmarshal(params, &schema); err != nil {
-		// Can't parse — return as-is and let the API reject it.
+		// Can't parse - return as-is and let the API reject it.
 		return params
 	}
 
@@ -350,7 +350,7 @@ func sanitiseResponsesSchema(params json.RawMessage) json.RawMessage {
 		}
 	}
 
-	// Also strip "required" when we removed anyOf/oneOf — the
+	// Also strip "required" when we removed anyOf/oneOf - the
 	// remaining schema is intentionally looser so the API passes
 	// validation. Tool executors handle their own validation.
 	if cleaned {

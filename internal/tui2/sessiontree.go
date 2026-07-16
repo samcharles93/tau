@@ -21,7 +21,7 @@ type sessionTreeRow struct {
 	isActive bool
 }
 
-// sessionTreeState is the state of an open Ctrl+O session navigator — a nil
+// sessionTreeState is the state of an open Ctrl+O session navigator - a nil
 // *sessionTreeState on model means none is open, same nil-sentinel idiom as
 // contextMenu.
 type sessionTreeState struct {
@@ -30,7 +30,7 @@ type sessionTreeState struct {
 
 // openSessionTree opens the Ctrl+O session navigator. If the session cache
 // is empty, fires the same silent background fetch maybePrefetchSessions
-// uses for the /session and /resume argument completers (completions.go) —
+// uses for the /session and /resume argument completers (completions.go) -
 // the existing SessionsListedEvent handler (events.go) already populates
 // m.sessionSummaries and clears sessionsFetchInFlight regardless of Silent,
 // so the overlay picks up the fresh list on its next render with no
@@ -89,7 +89,7 @@ func (m *model) sessionTreeRows() []sessionTreeRow {
 }
 
 // handleSessionTreeKey handles keyboard input while the session navigator
-// is open. Enter loads the selected session — the same LoadSessionCommand
+// is open. Enter loads the selected session - the same LoadSessionCommand
 // cmdSession's bare-arg case and cmdResume already send (commands.go).
 func (m *model) handleSessionTreeKey(msg tea.KeyPressMsg) tea.Cmd {
 	st := m.sessionTreeOverlay
@@ -149,7 +149,7 @@ func renderSessionTreeRow(r sessionTreeRow, selected bool, width int) string {
 }
 
 // renderSessionTreeOverlay renders the open session navigator: a scrolling
-// window over sessionTreeRows (scrollWindow, shared with renderCompletions —
+// window over sessionTreeRows (scrollWindow, shared with renderCompletions -
 // render.go) wrapped in the same titled box convention as /help and the
 // palette (renderBoxAround, input.go).
 func (m *model) renderSessionTreeOverlay() string {

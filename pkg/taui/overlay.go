@@ -3,7 +3,7 @@ package taui
 import "sync"
 
 // Overlay is a component that can be pushed onto an OverlayStack to take
-// priority over a base component while it is active — a Prompt-style dialog,
+// priority over a base component while it is active - a Prompt-style dialog,
 // a Completions-style dropdown, or any future modal/picker.
 type Overlay interface {
 	Component
@@ -26,12 +26,12 @@ type overlayEntry struct {
 // Two overlay flavors are supported, matching what already exists in
 // practice:
 //
-//   - Exclusive overlays (pushed with exclusive=true — e.g. a confirm/
+//   - Exclusive overlays (pushed with exclusive=true - e.g. a confirm/
 //     question dialog) swallow all input unconditionally once active,
 //     regardless of their own HandleInput's return value. This matches the
 //     "treat input as consumed while a Prompt is active regardless of the
 //     return value" contract Prompt already documents.
-//   - Soft overlays (pushed with exclusive=false — e.g. a completions
+//   - Soft overlays (pushed with exclusive=false - e.g. a completions
 //     dropdown) self-report activity: their HandleInput return value decides
 //     whether input falls through to the next overlay down, or ultimately to
 //     the caller's own fallback (e.g. a base text input).
@@ -46,8 +46,8 @@ type OverlayStack struct {
 
 // NewOverlayStack creates an empty stack. base, if non-nil, has SetFocused
 // kept in sync with whether an exclusive overlay is active (focused unless
-// an exclusive overlay, e.g. a Prompt, is pushed — soft overlays like a
-// completions dropdown don't take focus away from base) — this is what makes
+// an exclusive overlay, e.g. a Prompt, is pushed - soft overlays like a
+// completions dropdown don't take focus away from base) - this is what makes
 // the Focusable/SetFocused mechanism meaningful for a component (like
 // LineInput) that never otherwise passes through TUI.SetFocus.
 func NewOverlayStack(base Focusable) *OverlayStack {
@@ -67,7 +67,7 @@ func (s *OverlayStack) Push(o Overlay, exclusive bool) {
 	s.syncBaseFocusLocked()
 }
 
-// Pop removes o from the stack, wherever it sits — overlays don't always
+// Pop removes o from the stack, wherever it sits - overlays don't always
 // resolve in strict LIFO order (e.g. a queued prompt can replace a resolved
 // one without anything else ever being pushed above it).
 func (s *OverlayStack) Pop(o Overlay) {
@@ -82,7 +82,7 @@ func (s *OverlayStack) Pop(o Overlay) {
 	s.syncBaseFocusLocked()
 }
 
-// HasExclusive reports whether an exclusive overlay is currently active —
+// HasExclusive reports whether an exclusive overlay is currently active -
 // useful for callers that need to queue further exclusive overlays (e.g.
 // interactive prompts) rather than presenting them concurrently.
 func (s *OverlayStack) HasExclusive() bool {
@@ -109,7 +109,7 @@ func (s *OverlayStack) syncBaseFocusLocked() {
 // HandleInput walks the stack from topmost down. Exclusive overlays swallow
 // unconditionally; soft overlays are tried in order and only consume when
 // their own HandleInput returns true. Returns false if nothing on the stack
-// consumed the input — including when the stack is empty — leaving the
+// consumed the input - including when the stack is empty - leaving the
 // caller to apply its own fallback.
 func (s *OverlayStack) HandleInput(data string) bool {
 	entries := s.snapshot()

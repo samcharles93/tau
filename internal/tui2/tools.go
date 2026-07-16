@@ -52,7 +52,7 @@ type toolState struct {
 // own two-level accordion (group -> per-tool rows -> one row's full output)
 // instead of freezing forever into a single flat summary line the moment it
 // scrolls into history. A lone committed tool call doesn't need one of
-// these — it's already a full, permanently-detailed box (see
+// these - it's already a full, permanently-detailed box (see
 // commitToolGroup) with nothing left to toggle.
 type committedToolGroup struct {
 	tools      []toolState
@@ -71,7 +71,7 @@ type committedToolGroup struct {
 // tool-call IDs. Real tool calls keep their persisted call ID across an
 // applySnapshot rebuild; bash-history-reconstructed entries key off the
 // message's index instead (see applySnapshot) since they have no real call
-// ID — either way the key is stable across rebuilds, which is what lets
+// ID - either way the key is stable across rebuilds, which is what lets
 // fold/expand state survive a snapshot instead of resetting to folded every
 // time the user submits another prompt.
 func committedGroupKey(tools []toolState) string {
@@ -94,7 +94,7 @@ type childAgentResult struct {
 	tokens     int // total tokens
 	durationMs int64
 	errorMsg   string
-	sessionID  string // child's own session ID, set once known — empty until then
+	sessionID  string // child's own session ID, set once known - empty until then
 }
 
 // isChildTerminal reports whether status is one of childAgentResult's
@@ -203,7 +203,7 @@ func (m *model) upsertToolCall(callID, toolName, argumentsSummary, summary strin
 			}
 		}
 	}
-	// This tool call is new — any streaming/reasoning text accumulated so
+	// This tool call is new - any streaming/reasoning text accumulated so
 	// far was authored before it started, so commit it now (see
 	// flushStreamingText) rather than let it render after the tool group
 	// that chronologically follows it.
@@ -259,6 +259,35 @@ func (m *model) adoptToolCallID(callID, toolName string) bool {
 	return true
 }
 
+// adoptStreamedToolCallID reconciles a synthetic ID with the real ID that a
+// provider may reveal in a later delta without repeating the function name.
+// The stream index identifies the synthetic row; lifecycle events then keep
+// updating that same row by its final ID.
+func (m *model) adoptStreamedToolCallID(callID string, index int) bool {
+	if callID == "" || strings.HasPrefix(callID, "tool_call_") {
+		return false
+	}
+	for i := range m.tools {
+		if m.tools[i].id == callID {
+			return true
+		}
+	}
+
+	syntheticID := fmt.Sprintf("tool_call_%d", index)
+	for i := range m.tools {
+		t := &m.tools[i]
+		if t.id != syntheticID || (t.status != "pending" && t.status != "running") {
+			continue
+		}
+		t.id = callID
+		if m.expandedID == syntheticID {
+			m.expandedID = callID
+		}
+		return true
+	}
+	return false
+}
+
 func (m *model) setToolStatus(id, status string) {
 	for i := range m.tools {
 		if m.tools[i].id == id {
@@ -281,7 +310,7 @@ func (m *model) setToolStatus(id, status string) {
 }
 
 // anyToolRunning reports whether any tool in the current batch is still
-// executing — used by handleChatEvent to decide whether completing one tool
+// executing - used by handleChatEvent to decide whether completing one tool
 // call should drop the status bar back to agentThinking or leave it on
 // agentRunningTool for a still-running sibling.
 func (m *model) anyToolRunning() bool {
@@ -294,7 +323,7 @@ func (m *model) anyToolRunning() bool {
 }
 
 // runningTool returns the first tool currently executing, for the status
-// bar's "Running <tool>" segment — and its elapsed time. ok is false when
+// bar's "Running <tool>" segment - and its elapsed time. ok is false when
 // nothing is running (agentRunningTool should never be the current state in
 // that case, but computeStatusBar stays defensive rather than assuming it).
 func (m *model) runningTool() (t toolState, ok bool) {
@@ -318,7 +347,7 @@ func (m *model) setToolResult(id, result string) {
 }
 
 // finalizeToolResult replaces a tool's result with its final summary
-// (ChatToolExecutionCompletedEvent.ResultSummary) rather than appending —
+// (ChatToolExecutionCompletedEvent.ResultSummary) rather than appending -
 // the summary is the authoritative final output, not an increment on top of
 // whatever ChatToolOutputEvent chunks streamed in beforehand. Mirrors
 // internal/tui/inline_events.go discarding the streamed tail before setting
@@ -361,7 +390,7 @@ func (m *model) appendToolTail(id, chunk string) {
 // flushToolGroup commits the current live tool-call batch to scrollback as
 // one group (see commitToolGroup) and clears it from the live/chrome list.
 // Called when new streaming text resumes after a batch of tool calls, and
-// at turn end for a trailing batch with no following text — both mean the
+// at turn end for a trailing batch with no following text - both mean the
 // batch is chronologically over.
 func (m *model) flushToolGroup() {
 	if len(m.tools) == 0 {
@@ -375,27 +404,19 @@ func (m *model) flushToolGroup() {
 }
 
 // renderCommittedToolsSummary renders a multi-tool-call group's folded
-// (collapsed) one-line form for permanent scrollback — otherwise a turn
+// (collapsed) one-line form for permanent scrollback - otherwise a turn
 // with many tool calls would bury the assistant text around it (real bug: a
 // 100+ tool-call turn made the preceding/following message unreachable in
-// the scrollback). Tool names are deliberately omitted — with the group now
+// the scrollback). Tool names are deliberately omitted - with the group now
 // re-openable (see committedToolGroup), the count plus a click is enough,
 // and a long, deduped name list just added noise.
 func renderCommittedToolsSummary(tools []toolState) string {
-	errored := 0
-	for _, t := range tools {
-		if t.status == "error" {
-			errored++
-		}
-	}
+	metrics := collectToolMetrics(tools)
 	glyph := "✓"
-	if errored > 0 {
+	if metrics.errored > 0 {
 		glyph = "✗"
 	}
-	summary := fmt.Sprintf("%s %d tool calls", glyph, len(tools))
-	if errored > 0 {
-		summary += fmt.Sprintf(" (%d error)", errored)
-	}
+	summary := glyph + " " + metrics.String()
 	return toolMetaStyle.Render(summary)
 }
 
@@ -527,7 +548,7 @@ func (m *model) focusNextChild(delta int) {
 }
 
 // toggleToolBoxAtY toggles expand/collapse for whichever live tool box (from
-// a fresh layout computation) contains absolute view row y — the
+// a fresh layout computation) contains absolute view row y - the
 // click-to-expand behavior for a plain click (no drag) on the tool group.
 // When the live group is collapsed, any click inside the tools area expands
 // it. When expanded, a click on a tool row toggles per-tool expansion
@@ -558,7 +579,7 @@ func (m *model) toggleToolBoxAtY(y int) {
 		return
 	}
 
-	// Click landed inside the tools area but on the header/border/padding —
+	// Click landed inside the tools area but on the header/border/padding -
 	// collapse the whole live group to its one-line summary.
 	if y >= geom.toolsStartY && y <= geom.toolsEndY {
 		m.toolGroupCollapsed = true
@@ -567,9 +588,9 @@ func (m *model) toggleToolBoxAtY(y int) {
 
 // toggleCommittedToolAtLine handles a plain click (no drag) landing on a
 // committed tool-call group in scrollback (idx is the absolute logical line
-// index from m.viewportSel's anchor — see logicalLineAtRow): folds/unfolds
+// index from m.viewportSel's anchor - see logicalLineAtRow): folds/unfolds
 // the group, or, if it's already unfolded, expands/collapses whichever tool
-// row the click landed on — restoring the same accordion interaction the
+// row the click landed on - restoring the same accordion interaction the
 // group had live, which would otherwise be lost for good the moment it
 // scrolls into history (see committedToolGroup). Returns whether a group
 // actually handled the click, so the caller can tell that apart from an
@@ -591,13 +612,13 @@ func (m *model) toggleCommittedToolAtLine(idx int) bool {
 		}
 
 		// Unfolded: a click on a specific tool row toggles just that row's
-		// full-detail expansion. Anything else — the header text, the
-		// group's top/bottom border, the padding around a row — folds the
+		// full-detail expansion. Anything else - the header text, the
+		// group's top/bottom border, the padding around a row - folds the
 		// whole group back down. rows only covers the per-tool lines (see
 		// renderToolGroupBox: row 0 is the border, row 1 is the header
 		// text), so a click landing outside every row's range is exactly
 		// "not on a tool row", which is deliberately the fold trigger
-		// rather than a dead click — a header/border click is the obvious
+		// rather than a dead click - a header/border click is the obvious
 		// place a user would click to close what they just opened.
 		rel := idx - g.lineIdx
 		toggledRow := false
@@ -627,12 +648,12 @@ func (m *model) toggleCommittedToolAtLine(idx int) bool {
 
 // spliceCommittedGroup re-renders g after toggleCommittedToolAtLine folded,
 // unfolded, or expanded/collapsed one of its rows, and splices the result
-// into m.renderedLines in place of its previous lines — shifting every
+// into m.renderedLines in place of its previous lines - shifting every
 // other committed group AND every recorded messageRange that comes after it
 // by the resulting line-count delta so their recorded positions stay
 // accurate for the next click. This is the only place that mutates
 // renderedLines in place after initial construction (every other write is a
-// pure trailing append) — anything else added to renderedLines' bookkeeping
+// pure trailing append) - anything else added to renderedLines' bookkeeping
 // in the future needs the same shift treatment here.
 func (m *model) spliceCommittedGroup(g *committedToolGroup) {
 	rendered := m.renderCommittedGroup(g)
@@ -694,7 +715,7 @@ func renderTool(t toolState, frame int) string {
 		label = skillLabelFromArgs(t.args)
 	}
 
-	// Lead with a lifecycle glyph — use per-tool spinnerIdx (Phase 1) when
+	// Lead with a lifecycle glyph - use per-tool spinnerIdx (Phase 1) when
 	// available, falling back to the shared frame for backward compatibility.
 	spIdx := t.spinnerIdx
 	if spIdx == 0 {
@@ -717,7 +738,7 @@ func renderTool(t toolState, frame int) string {
 			if len(summary) > resultLimit {
 				summary = summary[:resultLimit] + "…"
 			}
-			line += " — " + summary
+			line += " - " + summary
 		}
 		if t.elapsed > 0 {
 			line += toolMetaStyle.Render("  (" + formatElapsed(t.elapsed) + ")")
@@ -726,7 +747,7 @@ func renderTool(t toolState, frame int) string {
 	return style.Render(line)
 }
 
-// renderToolGroup renders the current live (uncommitted) tool-call batch —
+// renderToolGroup renders the current live (uncommitted) tool-call batch -
 // see flushToolGroup for when it moves to permanent scrollback.
 func (m *model) renderToolGroup() (string, []toolBoxGeometry) {
 	if len(m.tools) == 0 {
@@ -739,53 +760,67 @@ func (m *model) renderToolGroup() (string, []toolBoxGeometry) {
 }
 
 // renderLiveToolsSummary renders a collapsed one-line summary for the live
-// tool-call group — mirrors renderCommittedToolsSummary but keeps the live
+// tool-call group - mirrors renderCommittedToolsSummary but keeps the live
 // spinner and running/pending/error counts up-to-date.
 func renderLiveToolsSummary(tools []toolState, frame int) string {
-	running, pending, errored := 0, 0, 0
-	for _, t := range tools {
-		switch t.status {
-		case "running":
-			running++
-		case "pending":
-			pending++
-		case "error":
-			errored++
-		}
-	}
+	metrics := collectToolMetrics(tools)
 	glyph := toolGlyph("running", frame)
-	if running+pending == 0 {
-		if errored > 0 {
+	if metrics.running+metrics.pending == 0 {
+		if metrics.errored > 0 {
 			glyph = "✗"
 		} else {
 			glyph = "✓"
 		}
 	}
-	summary := fmt.Sprintf("%s %d tool calls", glyph, len(tools))
-	total := running + pending
-	if total > 0 {
-		if pending > 0 {
-			summary += fmt.Sprintf(" · %d pending", pending)
-		}
-		if running > 0 {
-			summary += fmt.Sprintf(" · %d running", running)
-		}
-	}
-	if errored > 0 {
-		summary += fmt.Sprintf(" · %d error", errored)
-	}
+	summary := glyph + " " + metrics.String()
 	return toolGroupSummaryStyle.Render(summary)
 }
 
+type toolMetrics struct {
+	total   int
+	pending int
+	running int
+	errored int
+}
+
+func collectToolMetrics(tools []toolState) toolMetrics {
+	metrics := toolMetrics{total: len(tools)}
+	for _, t := range tools {
+		switch t.status {
+		case "pending":
+			metrics.pending++
+		case "running":
+			metrics.running++
+		case "error":
+			metrics.errored++
+		}
+	}
+	return metrics
+}
+
+func (m toolMetrics) String() string {
+	summary := fmt.Sprintf("%d tool calls", m.total)
+	if m.pending > 0 {
+		summary += fmt.Sprintf(" · %d pending", m.pending)
+	}
+	if m.running > 0 {
+		summary += fmt.Sprintf(" · %d running", m.running)
+	}
+	if m.errored > 0 {
+		summary += fmt.Sprintf(" · %d error", m.errored)
+	}
+	return summary
+}
+
 // maxToolRowsVisible is the most per-tool rows renderToolGroupBox will show
-// inside a group before windowing — prevents a turn with 40+ tool calls from
+// inside a group before windowing - prevents a turn with 40+ tool calls from
 // pushing everything off-screen. Overflowed rows get an "↑ N more" indicator.
 const maxToolRowsVisible = 8
 
-// renderToolGroupBox renders any batch of tool calls — live or a committed
-// group reopened from scrollback (see committedToolGroup) — as one unit. A
+// renderToolGroupBox renders any batch of tool calls - live or a committed
+// group reopened from scrollback (see committedToolGroup) - as one unit. A
 // lone tool keeps its full interactive box (matches the pre-grouping look);
-// multiple tools render as one bordered group — a header summary line, then
+// multiple tools render as one bordered group - a header summary line, then
 // each tool as a compact one-line row, except the tool whose id matches
 // expandedID, which renders its full box in place of its row. focusedIdx
 // draws the keyboard-focus marker on that row (pass -1 for a committed
@@ -807,29 +842,7 @@ func (m *model) renderToolGroupBox(tools []toolState, expandedID string, focused
 		return box, []toolBoxGeometry{{id: t.id, startY: 0, endY: visualLineCount(box) - 1}}
 	}
 
-	running, errored, pending := 0, 0, 0
-	for _, t := range tools {
-		switch t.status {
-		case "pending":
-			pending++
-		case "running":
-			running++
-		case "error":
-			errored++
-		}
-	}
-	header := fmt.Sprintf("%d tool calls", len(tools))
-	if running > 0 || pending > 0 {
-		if pending > 0 {
-			header += fmt.Sprintf(" · %d pending", pending)
-		}
-		if running > 0 {
-			header += fmt.Sprintf(" · %d running", running)
-		}
-	}
-	if errored > 0 {
-		header += fmt.Sprintf(" · %d error", errored)
-	}
+	header := collectToolMetrics(tools).String()
 
 	n := len(tools)
 	visibleCount := n
@@ -901,7 +914,7 @@ func (m *model) renderToolBox(t toolState, expanded bool, _ int, width int) stri
 	// Title line content: glyph + name + elapsed. For pending/running, the
 	// status word ("pending" vs "running") is real information the shared
 	// spinner glyph alone doesn't distinguish. For done/error, the glyph
-	// and box color (green/red) already say everything — repeating "done"
+	// and box color (green/red) already say everything - repeating "done"
 	// or "error" as text is redundant log-speak, not state.
 	statusWord := ""
 	if t.status == "pending" || t.status == "running" {
@@ -1018,7 +1031,7 @@ func (m *model) renderToolBox(t toolState, expanded bool, _ int, width int) stri
 }
 
 // looksLikeMarkdown reports whether content contains markdown syntax markers
-// that glamour would meaningfully render. A lightweight heuristic — false
+// that glamour would meaningfully render. A lightweight heuristic - false
 // positives are harmless (empty glamour render), false negatives leave
 // plain text which is already the default.
 func looksLikeMarkdown(content string) bool {
@@ -1036,7 +1049,7 @@ func looksLikeMarkdown(content string) bool {
 }
 
 // toolStyleForStatus returns the lipgloss style for a tool's current lifecycle
-// state — warm peach for pending/running, green for done, red for error —
+// state - warm peach for pending/running, green for done, red for error -
 // with lilac variants for the Skill tool to keep it visually distinct.
 func toolStyleForStatus(toolName, status string) lipgloss.Style {
 	skill := toolName == "skill"
@@ -1113,8 +1126,8 @@ func (m *model) findLiveTool(id string) int {
 
 // findCommittedGroupWithTool returns the committed group containing a tool
 // with the given id, or nil. A tool id is never simultaneously live and
-// committed — flushToolGroup/commitToolGroup always clear m.tools at the
-// same time a batch is committed — so live and committed lookups never
+// committed - flushToolGroup/commitToolGroup always clear m.tools at the
+// same time a batch is committed - so live and committed lookups never
 // collide.
 func (m *model) findCommittedGroupWithTool(id string) *committedToolGroup {
 	for _, g := range m.committedGroups {

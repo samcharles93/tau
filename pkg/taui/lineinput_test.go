@@ -234,7 +234,7 @@ func TestLineInputCursorOnTrailingSpaces(t *testing.T) {
 		li.HandleInput(string(r))
 	}
 	line := li.Render(40)[0]
-	// Cursor sits on a trailing space — it must render a visible block, not
+	// Cursor sits on a trailing space - it must render a visible block, not
 	// vanish (the bug was dropping trailing spaces from the rendered chunks).
 	if !strings.Contains(line, "█") {
 		t.Errorf("cursor block missing on trailing space: %q", line)
@@ -258,7 +258,7 @@ func TestLineInputCursorOnEmptyNewline(t *testing.T) {
 	if len(lines) < 2 {
 		t.Fatalf("expected >=2 display lines, got %d", len(lines))
 	}
-	// The cursor is on the empty second line — it must render a block there.
+	// The cursor is on the empty second line - it must render a block there.
 	if !strings.Contains(lines[1], "█") {
 		t.Errorf("cursor block missing on empty newline: %q", lines[1])
 	}

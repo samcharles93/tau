@@ -80,7 +80,7 @@ func TestCoordinatorCancelDuringInFlightTurn(t *testing.T) {
 		t.Fatal("streamer never invoked")
 	}
 
-	// Cancel with a *stale* id — the client lost track of which request is
+	// Cancel with a *stale* id - the client lost track of which request is
 	// active (e.g. Web UI re-submit race, reconnect, or a missed
 	// ChatResponseStartedEvent). The coordinator must still cancel the
 	// in-flight turn rather than refuse with a "not active" error.
@@ -100,7 +100,7 @@ func TestCoordinatorCancelDuringInFlightTurn(t *testing.T) {
 
 // TestCoordinatorCancelWithNoActiveRequest verifies that a cancel arriving
 // after a turn has finished (or before one has started) is a no-op rather
-// than an error — the user's intent (stop waiting) is already satisfied.
+// than an error - the user's intent (stop waiting) is already satisfied.
 func TestCoordinatorCancelWithNoActiveRequest(t *testing.T) {
 	bus := newTestBus(t)
 	sub := eventbus.Subscribe[chat.ChatEvent](bus.Client("test"))

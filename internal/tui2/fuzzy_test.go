@@ -101,7 +101,7 @@ func TestFuzzyMatchRunesConsecutiveBonus(t *testing.T) {
 }
 
 func TestFuzzyMatchRunesGapPenalty(t *testing.T) {
-	// "hl" has gaps (h at 0, l at 2 in "hello") — should have a gap penalty
+	// "hl" has gaps (h at 0, l at 2 in "hello") - should have a gap penalty
 	// for the 1 character between them.
 	r := FuzzyMatch("hl", "hello")
 	if !r.Match {

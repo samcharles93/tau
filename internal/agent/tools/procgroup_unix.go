@@ -19,7 +19,7 @@ func setProcessGroup(cmd *exec.Cmd) {
 }
 
 // signalProcessGroup sends sig to cmd's entire process group (shells,
-// tools, provider subprocesses, grandchild agents — everything that
+// tools, provider subprocesses, grandchild agents - everything that
 // inherited the group from setProcessGroup). Must be called after
 // cmd.Start(). ESRCH (group already gone) is not an error worth surfacing.
 func signalProcessGroup(cmd *exec.Cmd, sig syscall.Signal) error {

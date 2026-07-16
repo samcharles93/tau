@@ -14,7 +14,7 @@ const stillActive = 259
 
 // CaptureProcessStartNS has no implementation on this platform (see
 // docs/specs/agents/04-storage-and-sessions.md, Orphan sweep: the Windows
-// GetProcessTimes path is documented but not implemented here — it can't
+// GetProcessTimes path is documented but not implemented here - it can't
 // be verified without a Windows build/test target, and a wrong syscall
 // implementation is worse than an honest PID-only fallback). Returns 0
 // (unavailable); the sweep falls back to PID-only + the stale-age bound.

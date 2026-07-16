@@ -22,8 +22,8 @@ const (
 type ToolStyle int
 
 const (
-	// ToolStyleCombined renders fg-only — a spinner / ✓ / ✗ glyph plus grey
-	// text, with no embedded reset — so the row composes inside a coloured Box
+	// ToolStyleCombined renders fg-only - a spinner / ✓ / ✗ glyph plus grey
+	// text, with no embedded reset - so the row composes inside a coloured Box
 	// (the look from examples/combined). This is the default.
 	ToolStyleCombined ToolStyle = iota
 	// ToolStyleBadge renders bg-chip SUCCESS / FAILED badges on the default
@@ -36,8 +36,8 @@ const (
 // RUNNING line that resolves to SUCCESS or FAILED, with a status badge, the
 // tool name, its arguments, and a timing/detail suffix.
 //
-// Unlike termkit.ToolLifecycle — which writes escape sequences straight to a
-// writer and overwrites its own line — ToolRow is a taui Component: Render
+// Unlike termkit.ToolLifecycle - which writes escape sequences straight to a
+// writer and overwrites its own line - ToolRow is a taui Component: Render
 // returns the current line and the engine's differential renderer handles
 // positioning. That lets tool calls live *inside* a Box alongside other
 // components. Advance the spinner with Tick (e.g. from a shared ticker) while
@@ -155,7 +155,7 @@ func (r *ToolRow) glyph() string {
 // the box background convey state. This composes cleanly because the row adds
 // no fg override and no reset to fight the box.
 func (r *ToolRow) renderCombined(width int) string {
-	line := fmt.Sprintf("%s %s (%s) — %s", r.glyph(), r.name, r.args, r.detailText())
+	line := fmt.Sprintf("%s %s (%s) - %s", r.glyph(), r.name, r.args, r.detailText())
 	if width > 0 {
 		line = TruncateToWidth(line, width, "…")
 	}
@@ -179,7 +179,7 @@ func (r *ToolRow) renderBadge(width int) string {
 		default:
 			label = "RUNNING"
 		}
-		line := fmt.Sprintf("%s %s %s — %s", label, name, args, detail)
+		line := fmt.Sprintf("%s %s %s - %s", label, name, args, detail)
 		if width > 0 {
 			line = TruncateToWidth(line, width, "…")
 		}
@@ -192,13 +192,13 @@ func (r *ToolRow) renderBadge(width int) string {
 			termkit.Style(" SUCCESS ", termkit.ColorGreen.Bg(), termkit.ColorObsidian.Fg(), termkit.Bold),
 			termkit.Style(name, termkit.Bold),
 			termkit.Style(args, termkit.ColorGrey.Fg()),
-			termkit.Style("— "+detail, termkit.ColorGrey.Fg()))
+			termkit.Style("- "+detail, termkit.ColorGrey.Fg()))
 	case ToolFailed:
 		return fmt.Sprintf("%s %s %s %s",
 			termkit.Style(" FAILED  ", termkit.ColorRed.Bg(), termkit.ColorWhite.Fg(), termkit.Bold),
 			termkit.Style(name, termkit.Bold),
 			termkit.Style(args, termkit.ColorGrey.Fg()),
-			termkit.Style("— "+detail, termkit.ColorGrey.Fg()))
+			termkit.Style("- "+detail, termkit.ColorGrey.Fg()))
 	default:
 		return fmt.Sprintf("%s %s %s %s %s",
 			termkit.SpinnerFrame(r.frame),

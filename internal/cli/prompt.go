@@ -37,7 +37,7 @@ type SelectOption struct {
 // follow it with ReadSecret, which needs raw, unbuffered access to the same
 // fd for term.ReadPassword). A buffered reader created fresh per call reads
 // ahead greedily on piped/non-TTY input and silently discards whatever it
-// buffered past the first newline when that call returns — the next
+// buffered past the first newline when that call returns - the next
 // Select/ReadSecret call then never sees it. Reading exactly up to the
 // newline and no further means nothing is ever left stranded in a
 // throwaway buffer.
@@ -112,7 +112,7 @@ func readLine(r io.Reader) (string, error) {
 var readPassword = term.ReadPassword
 
 // ReadSecret prompts on w and reads a line of hidden (non-echoed) input from
-// the terminal referenced by fd — typically int(os.Stdin.Fd()). It returns
+// the terminal referenced by fd - typically int(os.Stdin.Fd()). It returns
 // ErrPromptCanceled if ctx is canceled first. fd must refer to a real
 // terminal; there is no echo-free fallback for piped input, so
 // non-interactive callers should use a separate flag or env-var path

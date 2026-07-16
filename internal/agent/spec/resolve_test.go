@@ -51,7 +51,7 @@ func TestResolveBareNameNeverMatchesDiscovered(t *testing.T) {
 	projectDir := t.TempDir()
 	writeDef(t, filepath.Join(projectDir, ".agents", "agents"), "reviewer", "Reviews code")
 
-	// A discovered definition must only be reachable by its prefixed name —
+	// A discovered definition must only be reachable by its prefixed name -
 	// the bare name must never match it, even though nothing built-in is
 	// named "reviewer". This mirrors internal/registry never listing a
 	// discovered agent's bare name.

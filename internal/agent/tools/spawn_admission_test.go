@@ -51,11 +51,11 @@ func TestSpawnAdmission_FifthQueuesWhenActiveAtMax(t *testing.T) {
 
 	select {
 	case <-fifthDone:
-		t.Fatal("5th acquire admitted immediately — expected it to queue behind the 4 active")
+		t.Fatal("5th acquire admitted immediately - expected it to queue behind the 4 active")
 	case <-time.After(50 * time.Millisecond):
 	}
 
-	// Free one active slot — the queued 5th should now be admitted.
+	// Free one active slot - the queued 5th should now be admitted.
 	releases[0]()
 
 	select {
@@ -115,7 +115,7 @@ func TestSpawnAdmission_QueueFullRejectsThirteenth(t *testing.T) {
 			t.Fatalf("13th acquire error = %v, want code=queue_full", err)
 		}
 	case <-time.After(2 * time.Second):
-		t.Fatal("13th acquire did not return promptly — should reject immediately, not queue")
+		t.Fatal("13th acquire did not return promptly - should reject immediately, not queue")
 	}
 
 	// Drain: release the 4 active so the 8 queued can all complete.
@@ -240,7 +240,7 @@ func TestSpawnAdmission_PerParentLimitsAreIndependent(t *testing.T) {
 
 // TestSpawnAdmission_TotalLimitRejectsImmediately: "17 agent calls when
 // max_total=16 -> 16th admitted, 17th rejected immediately". Rejection must
-// not queue — queueing does not help when the process itself is at
+// not queue - queueing does not help when the process itself is at
 // capacity.
 func TestSpawnAdmission_TotalLimitRejectsImmediately(t *testing.T) {
 	s := newSpawnAdmission()

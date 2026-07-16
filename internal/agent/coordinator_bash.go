@@ -13,8 +13,8 @@ import (
 // handleRunBashCommand runs a "!" (or "!!") bash-mode command entered
 // directly at the chat input. It executes the same registered "shell" tool
 // the LLM itself uses, outside the normal turn loop, and emits the same
-// started/output/completed event trio a real LLM-invoked tool call would —
-// so it renders identically in the TUI — before appending the result to
+// started/output/completed event trio a real LLM-invoked tool call would -
+// so it renders identically in the TUI - before appending the result to
 // session history (unless Exclude, the "!!" variant, is set).
 func (c *Coordinator) handleRunBashCommand(cmd chat.RunBashCommand) {
 	now := normalizedTime(cmd.RequestedAt)
@@ -36,7 +36,7 @@ func (c *Coordinator) handleRunBashCommand(cmd chat.RunBashCommand) {
 	c.mu.Unlock()
 
 	// Executing the tool blocks on the subprocess for the command's whole
-	// duration, so it must run off the command-dispatch goroutine — handleCommand
+	// duration, so it must run off the command-dispatch goroutine - handleCommand
 	// is called synchronously from the coordinator's single-threaded command
 	// loop (run()), and blocking there would stall every other command
 	// (including a CancelBashCommand for this very command) until it finished.

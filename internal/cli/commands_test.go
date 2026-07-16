@@ -56,7 +56,7 @@ func TestUnavailableProviderErrorEmptyWhenAvailable(t *testing.T) {
 		{Config: config.ProviderConfig{Name: "openai"}, Available: true},
 	}
 
-	// An available provider should never produce an "unavailable" message —
+	// An available provider should never produce an "unavailable" message -
 	// if ResolveProvider still failed for it, that's a genuine bug elsewhere,
 	// not a missing-credential story.
 	got := unavailableProviderError(resolved, "openai", "")

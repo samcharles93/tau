@@ -351,7 +351,7 @@ func TestSQLiteStore_EmptyMessages(t *testing.T) {
 }
 
 func TestSQLiteStore_MigrationIdempotent(t *testing.T) {
-	// Open the store twice — migration should be idempotent.
+	// Open the store twice - migration should be idempotent.
 	tmpDir := t.TempDir()
 	dbPath := filepath.Join(tmpDir, "test.db")
 

@@ -46,7 +46,7 @@ func (rt *ReadTracker) CheckRead(cwd, path string) error {
 			rel = abs
 		}
 		return fmt.Errorf(
-			"file %q has not been read in this session — use the read tool first to read the file before writing or editing it",
+			"file %q has not been read in this session - use the read tool first to read the file before writing or editing it",
 			rel,
 		)
 	}

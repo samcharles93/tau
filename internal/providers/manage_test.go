@@ -2,6 +2,7 @@ package providers
 
 import (
 	"context"
+	"errors"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -97,6 +98,29 @@ func TestManageLoginCompleteStoresCredsAndEnables(t *testing.T) {
 	creds, ok := state.OAuthFor("github-copilot")
 	require.True(t, ok)
 	assert.Equal(t, "ghu_tok", creds.Access)
+}
+
+func TestManageLoginCompletePropagatesLoadAndSaveErrors(t *testing.T) {
+	loadErr := errors.New("load failed")
+	m := newManage(nil, func() (State, error) {
+		return State{}, loadErr
+	}, func(*State) error {
+		t.Fatal("save should not run after a load failure")
+		return nil
+	})
+	err := m.LoginComplete("github-copilot", OAuthCredentials{Access: "token"})
+	require.ErrorIs(t, err, loadErr)
+	assert.Contains(t, err.Error(), "load provider state")
+
+	saveErr := errors.New("save failed")
+	m = newManage(nil, func() (State, error) {
+		return State{Version: stateVersion}, nil
+	}, func(*State) error {
+		return saveErr
+	})
+	err = m.LoginComplete("github-copilot", OAuthCredentials{Access: "token"})
+	require.ErrorIs(t, err, saveErr)
+	assert.Contains(t, err.Error(), "save provider state")
 }
 
 func TestManageLogoutClearsBothCredentialKindsAndDisables(t *testing.T) {

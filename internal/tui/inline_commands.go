@@ -17,7 +17,7 @@ import (
 
 // slashCommand is one entry in the inline chat's command table. The table is the
 // single source of truth for dispatch (run), completion (name + complete), and
-// the /help listing — they previously drifted as three separate lists.
+// the /help listing - they previously drifted as three separate lists.
 type slashCommand struct {
 	name        string
 	aliases     []string
@@ -31,7 +31,7 @@ type slashCommand struct {
 	isAgent bool
 	// mode is the input-mode indicator (name + color) shown on the
 	// surrounding dividers and the leading "/" while this command is being
-	// typed — see currentInputMode in inline_chat.go. Only isAgent commands
+	// typed - see currentInputMode in inline_chat.go. Only isAgent commands
 	// get one (populated in agentSlashCommands); nil for plain commands,
 	// which are one-shot actions rather than an operating-mode change.
 	mode *taui.InputMode
@@ -168,19 +168,19 @@ func (c *inlineChat) handleSlashCommand(text string) {
 		return
 	}
 
-	// /skills-reload — hot-reload skills from disk
+	// /skills-reload - hot-reload skills from disk
 	if name == "skills-reload" {
 		c.send(tauchat.ReloadSkillsCommand{RequestedAt: time.Now().UTC()})
 		return
 	}
 
-	// /skills — list available skills
+	// /skills - list available skills
 	if name == "skills" {
 		c.send(tauchat.ListSkillsCommand{RequestedAt: time.Now().UTC()})
 		return
 	}
 
-	// /skill:<name> — user-invoked skill activation. The coordinator activates
+	// /skill:<name> - user-invoked skill activation. The coordinator activates
 	// the skill, injects its instructions, and emits the lilac "loaded" box.
 	if after, ok0 := strings.CutPrefix(name, "skill:"); ok0 {
 		skillName := strings.TrimSpace(after)
@@ -224,7 +224,7 @@ func (c *inlineChat) printHelp() {
 // agent definitions (internal/agent/spec), skipping any marked
 // user-invocable: false. Each dispatches through runAgentCommand so the
 // definitions in spec/templates/*.agent.md are the single source of truth
-// for name, description, and argument hint — this table just wires them up.
+// for name, description, and argument hint - this table just wires them up.
 func agentSlashCommands() []slashCommand {
 	defs, err := agentspec.Builtins()
 	if err != nil {
@@ -242,7 +242,7 @@ func agentSlashCommands() []slashCommand {
 
 	// Filesystem-discovered agent definitions (.agents/agents/*.agent.md),
 	// listed under a user:/project: prefix exactly like internal/registry
-	// does — a name colliding with a built-in is skipped so a discovered
+	// does - a name colliding with a built-in is skipped so a discovered
 	// definition can never shadow one.
 	cwd, _ := os.Getwd()
 	discovered, _ := agentspec.DiscoverFromDisk(agentspec.DefaultSources(cwd))
@@ -276,7 +276,7 @@ func buildAgentSlashCommand(invokeName string, def *agentspec.Definition) slashC
 	}
 }
 
-// agentInputMode builds the input-mode indicator for an agent command —
+// agentInputMode builds the input-mode indicator for an agent command -
 // every agent command gets one, defaulting to the shared agent accent
 // (theme.CommandFG) so all of them read as "you're about to enter a mode"
 // consistently, even before a template author bothers to pick a specific
@@ -297,7 +297,7 @@ func agentInputMode(def *agentspec.Definition) *taui.InputMode {
 
 // runAgentCommand activates a built-in agent (e.g. /plan) by name and, when
 // args are non-empty, submits them as the turn's prompt via the same
-// queueing path as a normal submit — so it interleaves correctly with an
+// queueing path as a normal submit - so it interleaves correctly with an
 // already-running turn instead of racing the coordinator's own turn loop.
 func (c *inlineChat) runAgentCommand(name, args string) {
 	c.send(tauchat.RunAgentCommand{
@@ -339,7 +339,7 @@ func (c *inlineChat) handleReasoningCommand(args string) {
 }
 
 // effortLabel returns a display label for a reasoning effort level.
-// Generic — no hardcoded map, no stale token estimates.
+// Generic - no hardcoded map, no stale token estimates.
 func effortLabel(level string) string {
 	return "effort: " + level
 }
@@ -445,7 +445,7 @@ func (c *inlineChat) handleModelCommand(modelID string) {
 		n := len(c.availableModels)
 		c.mu.Unlock()
 		if n == 0 {
-			c.pushNotice("no models available — try /refresh")
+			c.pushNotice("no models available - try /refresh")
 			return
 		}
 		c.input.SetValueAndCursor("/model ", len([]rune("/model ")))
@@ -575,7 +575,7 @@ func (c *inlineChat) handleCostCommand(_ string) {
 // handleCopyCommand copies the assistant's last completed response to the
 // system clipboard via OSC 52 (termkit.OSC52Copy) rather than shelling out to
 // a clipboard utility, so it works over SSH and inside tmux where no local
-// clipboard binary is reachable. Also bound to Ctrl+Shift+G — see
+// clipboard binary is reachable. Also bound to Ctrl+Shift+G - see
 // inline_chat.go's inlineCtrl.HandleInput.
 func (c *inlineChat) handleCopyCommand(_ string) {
 	c.mu.Lock()
@@ -629,7 +629,7 @@ func (c *inlineChat) handleResumeCommand(rest string) {
 		n := len(c.sessionSummaries)
 		c.mu.Unlock()
 		if n == 0 {
-			c.pushNotice("no saved sessions — try /session list first")
+			c.pushNotice("no saved sessions - try /session list first")
 			return
 		}
 		c.input.SetValueAndCursor("/resume ", len([]rune("/resume ")))

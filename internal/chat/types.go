@@ -67,7 +67,7 @@ const (
 // ChatMessage is the canonical conversation item used for request history.
 type ChatMessage struct {
 	// ID identifies this message across the TUI, WebUI, and persisted
-	// storage — e.g. so a client can address a specific message (a
+	// storage - e.g. so a client can address a specific message (a
 	// right-click context menu action, a future edit/delete). It is empty
 	// for the transient system message synthesised in RequestMessages
 	// (never persisted or rendered) and for messages persisted before
@@ -103,7 +103,7 @@ type ToolResultMetadata struct {
 }
 
 // NewMessageID generates a UUIDv7 message ID, falling back to a
-// nanosecond-timestamp string if the random source fails — mirrors
+// nanosecond-timestamp string if the random source fails - mirrors
 // internal/app's newID and internal/tui2's newRequestID.
 func NewMessageID() string {
 	if id, err := uuid.NewV7(); err == nil {
@@ -272,8 +272,8 @@ func (c ChatSessionConfig) withDefaults() ChatSessionConfig {
 func (c ChatSessionConfig) Validate() error {
 	// An empty provider is permitted, the same way an empty model already is:
 	// the session launches unconfigured and the user picks a provider with
-	// /provider (and then a model with /model). A partially-set provider —
-	// one field present, the other missing — is still rejected, since that
+	// /provider (and then a model with /model). A partially-set provider -
+	// one field present, the other missing - is still rejected, since that
 	// can only be a real mistake, not a deliberate "nothing configured yet".
 	name := strings.TrimSpace(c.Provider.Name)
 	baseURL := strings.TrimSpace(c.Provider.BaseURL)
@@ -596,7 +596,7 @@ type ChatToolExecutionStartedEvent struct {
 	// Summary is a short, model-authored one-liner describing what this
 	// call is doing (e.g. "Checking installed packages"), sourced from an
 	// optional "summary" argument injected into every tool's schema. Empty
-	// when the model didn't supply one — never populated with anything
+	// when the model didn't supply one - never populated with anything
 	// that failed sanitization, so consumers can render it as-is.
 	Summary   string    `json:"summary,omitempty"`
 	StartedAt time.Time `json:"started_at"`
@@ -976,7 +976,7 @@ type SessionSummary struct {
 }
 
 // SessionsListedEvent carries paginated session summaries back to the TUI.
-// Silent mirrors the triggering ListSessionsCommand.Silent — see its doc
+// Silent mirrors the triggering ListSessionsCommand.Silent - see its doc
 // comment.
 type SessionsListedEvent struct {
 	Sessions   []SessionSummary `json:"sessions"`
@@ -1028,7 +1028,7 @@ type ScheduleTickEvent struct {
 }
 
 // PluginLifecycleEvent is published on the event bus for fire-and-forget
-// plugin lifecycle notifications. It is not a ChatEvent — it routes as a
+// plugin lifecycle notifications. It is not a ChatEvent - it routes as a
 // separate bus topic consumed by the plugin manager.
 type PluginLifecycleEvent struct {
 	Event     string
@@ -1163,7 +1163,7 @@ func (s *ChatSessionState) ApplyPatch(patch ChatSessionPatch, at time.Time) erro
 		} else if s.Model.ID != prevModelID {
 			// The new model's output-token ceiling is unknown (e.g. a
 			// live-fetched provider like Ollama, which carries no per-model
-			// metadata) — ClampMaxTokensForModel can't validate against it,
+			// metadata) - ClampMaxTokensForModel can't validate against it,
 			// so a MaxTokens value tuned for the PREVIOUS model would
 			// otherwise be forwarded as-is and get rejected once it exceeds
 			// the new model's real limit. Reset to 0 (omitted from the wire
@@ -1290,7 +1290,7 @@ func (s *ChatSessionState) AppendToolResultMessageWithMetadata(callID, content s
 }
 
 // AppendStandaloneMessage appends a message outside the normal turn
-// lifecycle — unlike AppendAssistantToolCallMessage/AppendToolResultMessage,
+// lifecycle - unlike AppendAssistantToolCallMessage/AppendToolResultMessage,
 // it does not require an active request. Used for bash-mode ("!") results,
 // which run independently of the LLM turn loop but still need to land in
 // history for a later turn to see.

@@ -549,8 +549,8 @@ func TestComputeStatusBarNarrowWidthPrioritizesActiveState(t *testing.T) {
 // than the trailing "Ready" label (right, lowest priority) under pressure.
 // TestComputeStatusBarNarrowWidthReadyPrioritizesStateLabel checks Ready's
 // own degradation order under extreme width pressure: the right-hand group
-// (here, just the "Ready" state label) is never truncated away — only the
-// left identity blob (τ tau/model/provider) yields, via tail-truncation —
+// (here, just the "Ready" state label) is never truncated away - only the
+// left identity blob (τ tau/model/provider) yields, via tail-truncation -
 // matching renderStatusBar's existing invariant and this feature's
 // "prioritize active state over secondary metadata" requirement, treating
 // "Ready" itself as Ready's active-state label.
@@ -573,7 +573,7 @@ func TestComputeStatusBarNarrowWidthReadyPrioritizesStateLabel(t *testing.T) {
 // TestComputeStatusBarExtremeNarrowWidthDoesNotPanic checks the true
 // rock-bottom case: even "τ tau · Ready" alone doesn't fit. There's nothing
 // left to drop at that point (both are prioTransient), so the
-// character-truncation fallback is the documented last resort — this just
+// character-truncation fallback is the documented last resort - this just
 // guards it stays non-empty and never panics, not any particular content.
 func TestComputeStatusBarExtremeNarrowWidthDoesNotPanic(t *testing.T) {
 	m := newTestModel(&fakeRuntime{}, nil)

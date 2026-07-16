@@ -20,7 +20,7 @@ type compMatch struct {
 	Word        string
 	Description string
 	// RequiresArg is true for slash commands whose usage is a required
-	// argument (e.g. "<id>", "<prompt>") — accepting one of these must not
+	// argument (e.g. "<id>", "<prompt>") - accepting one of these must not
 	// auto-submit, since the command is invalid without more typing. Left
 	// false for optional-argument/no-argument commands and for every
 	// argument-value completion (a model ID, session ID, etc.), which are
@@ -35,7 +35,7 @@ type compGroup struct {
 }
 
 // compRow is one fuzzy-scored, highlight-annotated completion candidate,
-// flattened out of compGroups and ranked — this is what's actually shown and
+// flattened out of compGroups and ranked - this is what's actually shown and
 // navigated in the dropdown. Mirrors pkg/taui/completions.go's filteredRow so
 // the two frontends' dropdowns behave identically (same live narrowing, same
 // scoring, same bold match highlighting) rather than tui2 reinventing a
@@ -88,7 +88,7 @@ func (m *model) rawCandidateGroups() []compGroup {
 	}
 
 	// Built-in command argument completers. Each takes exactly one argument,
-	// so completions only apply at argsBefore == 0 (the argument itself) —
+	// so completions only apply at argsBefore == 0 (the argument itself) -
 	// without this gate, accepting a value leaves a trailing space, argsBefore
 	// becomes 1, and the SAME completer fires again for what is now a
 	// nonexistent second argument slot. A repeated Tab there would then just
@@ -109,7 +109,7 @@ func (m *model) rawCandidateGroups() []compGroup {
 	return nil
 }
 
-// hasArgCompleter names the commands handled by the switch above — i.e.
+// hasArgCompleter names the commands handled by the switch above - i.e.
 // every command whose (possibly optional) argument has its own completer.
 // Used by commandGroups to mark these RequiresArg even when their usage
 // string uses "[...]" (optional) rather than "<...>" (required), so
@@ -137,10 +137,10 @@ func (m *model) completionToken() string {
 	token := fields[len(fields)-1]
 	if token == "/" {
 		// A bare "/" with nothing typed after it is the command-prefix
-		// marker, not a real query — treat it as no token at all. Otherwise
+		// marker, not a real query - treat it as no token at all. Otherwise
 		// every candidate "matches" it trivially (every Word contains "/")
 		// and ties at an identical fuzzy score, which forces the sort
-		// below to fall back to its alphabetical tie-break — exactly the
+		// below to fall back to its alphabetical tie-break - exactly the
 		// bug that fragmented the just-opened dropdown into repeating
 		// "Commands"/"Agents"/"Commands" headers instead of one contiguous
 		// group per category.
@@ -151,7 +151,7 @@ func (m *model) completionToken() string {
 
 // completionRows returns the fuzzy-filtered, score-ranked completion rows for
 // the current input, and the token being completed. Returns (nil, "") when
-// completions don't apply (not a slash command, a response in flight, etc) —
+// completions don't apply (not a slash command, a response in flight, etc) -
 // this is the single source of truth both View() (rendering) and
 // handleCompletionKey (navigation/accept) use, so what's shown is always
 // exactly what's selectable.
@@ -168,7 +168,7 @@ func (m *model) completionRows() ([]compRow, string) {
 }
 
 // filterAndRankRows fuzzy-filters groups against token and returns them
-// score-ranked — shared by completionRows (against m.input's current token)
+// score-ranked - shared by completionRows (against m.input's current token)
 // and paletteState's independent query (palette.go), so both the inline "/"
 // dropdown and the Ctrl+P/Ctrl+L floating overlays narrow and order
 // candidates identically.
@@ -190,8 +190,8 @@ func filterAndRankRows(groups []compGroup, token string) []compRow {
 		}
 	}
 	// Sort by group order first, then fuzzy score, then alphabetically.
-	// Group-first matters whenever rows tie on score — e.g. with nothing
-	// typed yet every row ties at 0 (FuzzyMatch's empty-query case) — since
+	// Group-first matters whenever rows tie on score - e.g. with nothing
+	// typed yet every row ties at 0 (FuzzyMatch's empty-query case) - since
 	// sorting by score/word alone would interleave Commands/Agents/
 	// Extensions into a fragmented, repeating sequence of one- or two-line
 	// group headers instead of one contiguous block per category.
@@ -215,7 +215,7 @@ func filterAndRankRows(groups []compGroup, token string) []compRow {
 // --- command name completions ----------------------------------------------
 
 // commandGroups returns the full, unfiltered command/agent/extension
-// candidate pool — completionRows applies fuzzy filtering against whatever
+// candidate pool - completionRows applies fuzzy filtering against whatever
 // has actually been typed, so this doesn't need to filter by token itself.
 func (m *model) commandGroups(token string) []compGroup {
 	seen := make(map[string]struct{})
@@ -258,7 +258,7 @@ func (m *model) commandGroups(token string) []compGroup {
 		}
 
 		// token is the raw field including its leading "/" (e.g. "/quit"),
-		// but aliases are bare ("quit") — strip it before comparing, or the
+		// but aliases are bare ("quit") - strip it before comparing, or the
 		// prefix check below never matches anything once a command name is
 		// typed. Mirrors internal/tui/inline_completions.go:107,139-143.
 		cmdToken := strings.TrimPrefix(strings.ToLower(token), "/")
@@ -335,7 +335,7 @@ func (m *model) modelCompletions(argsBefore int) []compGroup {
 // maybePrefetchSessions silently refreshes m.sessionSummaries the first
 // time the /session or /resume argument completer needs it and finds it
 // empty. Without this, the very first time a user tab-completes a session
-// ID in a fresh TUI process the dropdown has nothing to show — the cache is
+// ID in a fresh TUI process the dropdown has nothing to show - the cache is
 // otherwise only ever populated as a side effect of an explicit "/session"
 // or "/resume" submission. Silent so the SessionsListedEvent handler
 // doesn't also print a "Sessions: ..." dump to scrollback the way an
@@ -423,11 +423,11 @@ func (m *model) providerCompletions(fields []string, argsBefore int) []compGroup
 // --- dropdown navigation / accept --------------------------------------------
 
 // completionsVisible reports whether the completions dropdown is currently
-// shown, and its rows/token if so — the single source of truth for both
+// shown, and its rows/token if so - the single source of truth for both
 // View()'s compositing (compositeCompletionsOverlay) and handleCompletionKey's
 // routing, so the two can never disagree about whether it's up. Before this
 // was extracted, rendering only ever checked completionRows() while
-// handleCompletionKey separately checked compDismissed — a first Esc could
+// handleCompletionKey separately checked compDismissed - a first Esc could
 // silently stop the dropdown from consuming Up/Down (falling through to
 // history recall / tool-focus nav instead) while it kept right on rendering,
 // since nothing told the view side it had been dismissed.
@@ -443,9 +443,9 @@ func (m *model) completionsVisible() (rows []compRow, token string, ok bool) {
 }
 
 // handleCompletionKey gives the completions dropdown first refusal on a
-// keystroke while it's visible — matches taui's OverlayStack precedence
+// keystroke while it's visible - matches taui's OverlayStack precedence
 // (pkg/taui's Completions is a "soft" overlay: it consumes the keys it
-// recognizes — arrows, tab, enter, esc — and anything else falls through to
+// recognizes - arrows, tab, enter, esc - and anything else falls through to
 // normal input handling unchanged). Returns (cmd, true) when consumed.
 func (m *model) handleCompletionKey(msg tea.KeyPressMsg) (tea.Cmd, bool) {
 	rows, token, ok := m.completionsVisible()
@@ -479,7 +479,7 @@ func (m *model) handleCompletionKey(msg tea.KeyPressMsg) (tea.Cmd, bool) {
 		//
 		// When the LCP is already present at the end of the input
 		// (e.g. token is "" for a bare "/" and LCP is "/"), extending
-		// is a no-op that would just reset compSelected to 0 — fall
+		// is a no-op that would just reset compSelected to 0 - fall
 		// through to accepting the highlighted row instead so the
 		// viewport doesn't jump away from the item the user targeted.
 		lcp := longestCommonWordPrefix(rows)
@@ -491,7 +491,7 @@ func (m *model) handleCompletionKey(msg tea.KeyPressMsg) (tea.Cmd, bool) {
 		return nil, true
 
 	case "shift+tab":
-		// Navigation only (like up/down), not an accept — jumps the highlight
+		// Navigation only (like up/down), not an accept - jumps the highlight
 		// straight to the last row instead of stepping one row at a time.
 		m.compSelected = len(rows) - 1
 		return nil, true
@@ -500,7 +500,7 @@ func (m *model) handleCompletionKey(msg tea.KeyPressMsg) (tea.Cmd, bool) {
 		// Enter always accepts the highlighted row. Unlike Tab, it also
 		// submits immediately when the accepted row doesn't require further
 		// typing (RequiresArg false: a no/optional-argument command, or any
-		// argument-value completion, which is always a leaf value) — so
+		// argument-value completion, which is always a leaf value) - so
 		// completing an unambiguous command like /help or /clear takes one
 		// Enter, not two. A required-argument command (RequiresArg true,
 		// e.g. /model, /system) instead leaves the line open for its

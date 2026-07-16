@@ -10,7 +10,7 @@ import (
 
 // paletteWidthFrac/paletteMinWidth/paletteMaxWidth size the floating
 // completions overlay (Ctrl+P command palette, Ctrl+L model picker, and
-// every "/"-triggered completion) — narrower than /help's (helpOverlayWidthFrac
+// every "/"-triggered completion) - narrower than /help's (helpOverlayWidthFrac
 // etc, help.go), since a short ranked list needs far less room than a
 // two-column keybinding reference.
 const (
@@ -19,9 +19,9 @@ const (
 	paletteMaxWidth  = 70
 )
 
-// openCommandPalette handles Ctrl+P. There is no separate "palette" state —
+// openCommandPalette handles Ctrl+P. There is no separate "palette" state -
 // Ctrl+P just ensures m.input starts with "/" (so the existing completions
-// system — completionRows/handleCompletionKey/completionsVisible — has
+// system - completionRows/handleCompletionKey/completionsVisible - has
 // something to show) and un-dismisses it. Rendering that dropdown as a
 // floating overlay instead of flow-laid chrome (compositeCompletionsOverlay)
 // is a pure presentation change: navigation, fuzzy matching, and every input-
@@ -46,7 +46,7 @@ func (m *model) openCommandPalette() tea.Cmd {
 // does exactly what typing "/model <id>" does.
 func (m *model) openModelPalette() tea.Cmd {
 	if len(m.availableModels) == 0 {
-		return m.setNotification("no models available — try /refresh")
+		return m.setNotification("no models available - try /refresh")
 	}
 	m.input = "/model "
 	m.inputCursor = utf8.RuneCountInString(m.input)
@@ -56,7 +56,7 @@ func (m *model) openModelPalette() tea.Cmd {
 }
 
 // paletteOverlayWidth returns the box width for the floating completions
-// overlay, given the terminal width — mirrors helpOverlayWidth's clamp shape
+// overlay, given the terminal width - mirrors helpOverlayWidth's clamp shape
 // (help.go).
 func paletteOverlayWidth(termWidth int) int {
 	w := int(float64(termWidth) * paletteWidthFrac)
@@ -65,7 +65,7 @@ func paletteOverlayWidth(termWidth int) int {
 
 // completionsOverlayTitle titles the floating box from what's actually being
 // browsed: the single shared group name when every visible row belongs to
-// one (e.g. "Models" mid /model, "Sessions" mid /session) — otherwise (the
+// one (e.g. "Models" mid /model, "Sessions" mid /session) - otherwise (the
 // top-level Commands/Agents/Extensions mix) "Commands".
 func completionsOverlayTitle(rows []compRow) string {
 	if len(rows) == 0 {
@@ -81,7 +81,7 @@ func completionsOverlayTitle(rows []compRow) string {
 }
 
 // renderCompletionsOverlay renders the completions dropdown's rows (the same
-// renderCompletions body the old inline chrome used) inside a titled box —
+// renderCompletions body the old inline chrome used) inside a titled box -
 // the floating presentation Ctrl+P/Ctrl+L/typing "/" all share.
 func (m *model) renderCompletionsOverlay(rows []compRow) string {
 	width := paletteOverlayWidth(m.width)

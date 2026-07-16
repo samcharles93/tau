@@ -24,7 +24,7 @@ type EditAction struct {
 
 var editSchema = Schema{
 	Name:        "edit",
-	Description: "Edit an existing file using exact text replacement. Each edit specifies old_text (must match exactly including whitespace) and new_text. Every old_text is matched against the original file and must be unique in it; set replace_all to true to replace every occurrence instead. Edits must not overlap — merge nearby changes into one edit. All edits are validated first and applied atomically: on any failure the file is left unchanged.",
+	Description: "Edit an existing file using exact text replacement. Each edit specifies old_text (must match exactly including whitespace) and new_text. Every old_text is matched against the original file and must be unique in it; set replace_all to true to replace every occurrence instead. Edits must not overlap - merge nearby changes into one edit. All edits are validated first and applied atomically: on any failure the file is left unchanged.",
 	Parameters: json.RawMessage(`{
 		"type": "object",
 		"properties": {
@@ -154,7 +154,7 @@ func makeEditExecutor(cwd string, mq *MutationQueue, rt *ReadTracker) Executor {
 			return Result{Content: fmt.Sprintf("error reading file: %v", err), IsError: true}, nil
 		}
 
-		// Strip a UTF-8 BOM and normalise CRLF to LF before matching — the
+		// Strip a UTF-8 BOM and normalise CRLF to LF before matching - the
 		// model never includes an invisible BOM or carriage returns in
 		// old_text. Both are restored on write.
 		raw := string(data)

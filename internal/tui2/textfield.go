@@ -5,7 +5,7 @@ import "unicode/utf8"
 // textField is a standalone, single-line text-input widget. It owns its own
 // rune buffer and cursor position rather than sharing model.input, so it can
 // be reused anywhere a small piece of UI needs to collect free text from the
-// user — both the agent-question flow (formPrompt, see prompt.go) and local
+// user - both the agent-question flow (formPrompt, see prompt.go) and local
 // flows like the GitHub Copilot Enterprise-domain prompt hold their own
 // *textField instance.
 type textField struct {
@@ -68,8 +68,8 @@ func (f *textField) End() { f.cursor = utf8.RuneCountInString(f.value) }
 
 // Render draws the field as a single line, horizontally scrolling so the
 // cursor stays in view when the value is wider than width. It reuses
-// renderInputChunk/inputCursorStyle/inputPlaceholderStyle — the same
-// primitives the main chat composer uses — so a prompt's text field looks
+// renderInputChunk/inputCursorStyle/inputPlaceholderStyle - the same
+// primitives the main chat composer uses - so a prompt's text field looks
 // identical to normal input text.
 func (f *textField) Render(width int) string {
 	width = max(width, 1)

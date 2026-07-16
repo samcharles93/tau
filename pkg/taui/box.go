@@ -161,7 +161,7 @@ func (b *Box) Render(width int) []string {
 
 func (b *Box) applyBg(line string, width int) string {
 	if !b.expandW {
-		// Natural width — no padding.
+		// Natural width - no padding.
 		if b.bgFn != nil && termkit.ColorEnabled() {
 			return b.bgFn(line)
 		}

@@ -50,7 +50,7 @@ func TestDispatchCtrlCQuits(t *testing.T) {
 	m := newTestModel(&fakeRuntime{}, nil)
 
 	// A single idle Ctrl+C arms the quit guard rather than quitting outright
-	// (see TestHandleCtrlCIdleArmsQuitWithoutQuitting) — the returned Cmd here
+	// (see TestHandleCtrlCIdleArmsQuitWithoutQuitting) - the returned Cmd here
 	// is deliberately not invoked, since it's a 4-second notification-clear
 	// tea.Tick that would both slow this test down and eat into the 800ms
 	// double-tap window checked below.
@@ -104,7 +104,7 @@ func TestDispatchCtrlSWithActiveResponse(t *testing.T) {
 	m.inResponse = true
 
 	m.dispatchKey(key('s', tea.ModCtrl))
-	// Should toggle steering mode — no Cmd needed, since the status bar
+	// Should toggle steering mode - no Cmd needed, since the status bar
 	// already renders a "steering…" segment whenever m.steering is true.
 	if !m.steering {
 		t.Fatal("expected steering to be toggled on by Ctrl+S with active response")

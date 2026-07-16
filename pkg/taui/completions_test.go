@@ -30,7 +30,7 @@ func TestCompletionsShowsWhenProviderReturns(t *testing.T) {
 			Groups: []MatchGroup{{
 				Title: "Actions",
 				Matches: []Match{
-					{Word: "fix", Description: "— fix the build"},
+					{Word: "fix", Description: "- fix the build"},
 					{Word: "build"},
 				},
 			}},
@@ -57,7 +57,7 @@ func TestCompletionsFuzzyFilters(t *testing.T) {
 			ReplaceEnd:   len([]rune(ctx.Text)),
 			Groups: []MatchGroup{{
 				Matches: []Match{
-					{Word: "fix", Description: "— fix the build"},
+					{Word: "fix", Description: "- fix the build"},
 					{Word: "fox"},
 					{Word: "build"},
 				},
@@ -81,7 +81,7 @@ func TestCompletionsFuzzyFilters(t *testing.T) {
 
 func TestCompletionsNavigateAndSelect(t *testing.T) {
 	input := NewLineInput("")
-	// "a" matches "alpha" and "gamma" but NOT "beta" — fuzzy filter drops beta.
+	// "a" matches "alpha" and "gamma" but NOT "beta" - fuzzy filter drops beta.
 	for _, r := range "a" {
 		input.HandleInput(string(r))
 	}
@@ -271,7 +271,7 @@ func TestCompletionsEnterUsesOnAccept(t *testing.T) {
 // (HandleInput unlocks only after the switch). A host's onAccept commonly
 // triggers a synchronous re-render (e.g. submitting a command prints to
 // scrollback and immediately redraws the frame, which renders this same
-// Completions widget) — calling Render from inside that locked callback
+// Completions widget) - calling Render from inside that locked callback
 // deadlocks on the non-reentrant mutex. Runs HandleInput on a goroutine and
 // fails the test if it doesn't return within a short deadline.
 func TestCompletionsEnterOnAcceptCanRenderWithoutDeadlock(t *testing.T) {

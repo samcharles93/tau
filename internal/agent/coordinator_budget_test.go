@@ -24,11 +24,11 @@ func (f *fakeStreamer) StreamChatCompletionFull(_ context.Context, _ chat.ChatSe
 }
 
 // newBudgetCoordinator subscribes to the bus BEFORE constructing the
-// coordinator — fakeStreamer completes synchronously with no real I/O, so
+// coordinator - fakeStreamer completes synchronously with no real I/O, so
 // the coordinator's own goroutine can process a submitted turn and publish
 // ChatResponseCompletedEvent fast enough to race ahead of a subscription
-// created afterward (the bus has no replay buffer — see
-// internal/eventbus — so a late subscriber simply never sees an event
+// created afterward (the bus has no replay buffer - see
+// internal/eventbus - so a late subscriber simply never sees an event
 // published before it existed). That race, not genuine slowness, was the
 // actual cause of this file's intermittent CI timeouts; every other
 // coordinator test in this package already subscribes before sending any

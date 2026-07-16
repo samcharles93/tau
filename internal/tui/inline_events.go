@@ -82,7 +82,7 @@ func (c *inlineChat) handleEvent(ev tauchat.ChatEvent) {
 	case tauchat.ChatToolExecutionStartedEvent:
 		c.mu.Unlock()
 		c.engine.UpdateThenPrint(func() []string {
-			// A tool call ends the text segment (if any) that preceded it —
+			// A tool call ends the text segment (if any) that preceded it -
 			// the backend commits it as its own message and starts a fresh
 			// one after the tool runs. Flush it to scrollback and reset so
 			// the next ChatResponseDeltaEvent starts a new Paragraph instead
@@ -162,7 +162,7 @@ func (c *inlineChat) handleEvent(ev tauchat.ChatEvent) {
 				}
 			}
 			// The streamed tail was a live peek, not part of the permanent
-			// record — drop it now so neither the resolved hold-state nor the
+			// record - drop it now so neither the resolved hold-state nor the
 			// scrollback commit below include it, only the resolved row.
 			if tb.tail != nil {
 				tb.box.RemoveChild(tb.tail)
@@ -174,7 +174,7 @@ func (c *inlineChat) handleEvent(ev tauchat.ChatEvent) {
 		c.mu.Lock()
 
 		// Render the resolved tool box, remove it from the live frame, and commit
-		// it to scrollback — all ordered safely by UpdateThenPrint.
+		// it to scrollback - all ordered safely by UpdateThenPrint.
 		c.mu.Unlock()
 		c.engine.UpdateThenPrint(func() []string {
 			tb, ok := c.activeTools[e.CallID]
@@ -202,7 +202,7 @@ func (c *inlineChat) handleEvent(ev tauchat.ChatEvent) {
 	case tauchat.ChatResponseCompletedEvent:
 		// Flush the turn's reasoning, body, and any in-flight tool boxes to
 		// scrollback. UpdateThenPrint mutates the frame under the lock and
-		// commits the returned lines after it releases — no PrintAbove-in-Update
+		// commits the returned lines after it releases - no PrintAbove-in-Update
 		// deadlock.
 		c.steering.Store(false)
 		c.generating.Store(false)
@@ -237,7 +237,7 @@ func (c *inlineChat) handleEvent(ev tauchat.ChatEvent) {
 			c.lastResponseText = finalText
 			c.mu.Unlock()
 			// Only nudge the user via desktop notification when they've
-			// actually looked away — while focused, the response already
+			// actually looked away - while focused, the response already
 			// streamed onto their screen.
 			if !c.engine.Focused() {
 				c.engine.Terminal.Write(termkit.Notify("tau", finalText))

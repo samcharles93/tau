@@ -1,16 +1,13 @@
 # Example: Building a Custom Tool Plugin
 
-The [hello plugin](https://github.com/samcharles93/tau/blob/main/examples/plugins/hello/main.go)
-covered in [Quick Start](/plugins#quick-start) shows the minimum shape of a
-tool. This page builds a more realistic one — a `weather` plugin that wraps a
-third-party HTTP API, reads an API key from tau's config, and caches results
-via `HostService.SetConfig` — the pattern you'd actually use for "call some
-external API" plugins.
+The [hello plugin](https://github.com/samcharles93/tau/blob/main/examples/plugins/hello/main.go) covered in
+[Quick Start](/plugins#quick-start) shows the minimum shape of a tool. This page builds a more realistic one - a
+`weather` plugin that wraps a third-party HTTP API, reads an API key from tau's config, and caches results via
+`HostService.SetConfig` - the pattern you'd actually use for "call some external API" plugins.
 
 ## What it adds over the hello plugin
 
-- Reading a secret (API key) from `config.yaml` via `host.GetConfig`, instead
-  of hardcoding it.
+- Reading a secret (API key) from `config.yaml` via `host.GetConfig`, instead of hardcoding it.
 - Making a real outbound HTTP call from `ExecuteTool`.
 - Persisting a small cache across calls with `host.SetConfig`/`GetConfig`.
 - A tighter `InputSchema` following the best-practice checklist from the
@@ -30,9 +27,8 @@ plugins:
 export WEATHER_API_KEY=your-key-here
 ```
 
-Following the convention used elsewhere in tau's own config (providers'
-`auth.api_key_env`), the plugin stores the *name* of an environment variable
-in config rather than the key itself — the key never touches disk.
+Following the convention used elsewhere in tau's own config (providers' `auth.api_key_env`), the plugin stores the
+_name_ of an environment variable in config rather than the key itself - the key never touches disk.
 
 ## Reading config in SetHost / on demand
 
@@ -63,12 +59,10 @@ func (p *WeatherPlugin) apiKey(ctx context.Context) (string, error) {
 }
 ```
 
-`host.GetConfig(ctx, "api_key_env")` reads a single key out of the plugin's
-`plugins.weather` block. Passing `""` instead would return the whole block as
-a JSON string — useful when a plugin has several related settings to parse at
-once (see [`cmdReconnect`'s config
-read](https://github.com/samcharles93/tau/blob/main/plugins/mcp/main.go) in
-the MCP plugin for that pattern).
+`host.GetConfig(ctx, "api_key_env")` reads a single key out of the plugin's `plugins.weather` block. Passing `""`
+instead would return the whole block as a JSON string - useful when a plugin has several related settings to parse at
+once (see [`cmdReconnect`'s config read](https://github.com/samcharles93/tau/blob/main/plugins/mcp/main.go) in the MCP
+plugin for that pattern).
 
 ## Declaring a tight tool schema
 
@@ -99,11 +93,9 @@ func (p *WeatherPlugin) Tools(ctx context.Context) ([]*pluginapi.ToolDefinition,
 }
 ```
 
-Two things worth calling out against the [best-practices
-checklist](/plugins#tool-inputschema-best-practices): `units` uses `"enum"`
-to stop the model from inventing invalid values, and the description states
-the exact return shape so the model doesn't have to guess how to parse the
-result.
+Two things worth calling out against the [best-practices checklist](/plugins#tool-inputschema-best-practices): `units`
+uses `"enum"` to stop the model from inventing invalid values, and the description states the exact return shape so the
+model doesn't have to guess how to parse the result.
 
 ## Calling the API and caching the result
 
@@ -156,12 +148,10 @@ type cacheEntry struct {
 }
 ```
 
-`fetchWeather` is an ordinary `net/http` call — nothing plugin-specific about
-it. The interesting part is that the cache lives in
-`~/.config/tau/plugin-state.json` via `host.SetConfig`, keyed by
-`weather.cache.<city>.<units>` (state keys are namespaced by plugin name
-automatically), so it survives `/reload` and tau restarts without the plugin
-managing its own file on disk.
+`fetchWeather` is an ordinary `net/http` call - nothing plugin-specific about it. The interesting part is that the cache
+lives in `~/.config/tau/plugin-state.json` via `host.SetConfig`, keyed by `weather.cache.<city>.<units>` (state keys are
+namespaced by plugin name automatically), so it survives `/reload` and tau restarts without the plugin managing its own
+file on disk.
 
 ## Build and install
 
@@ -175,11 +165,9 @@ mkdir -p ~/.config/tau/plugins
 cp tau-plugin-weather ~/.config/tau/plugins/
 ```
 
-This is the **standalone plugin** layout (own `go.mod`, no `replace`
-directive needed since it only imports the public `pkg/plugin/api` package) —
-see [Standalone Plugin (External
-Repo)](/plugins#standalone-plugin-external-repo) for when to prefer this over
-building inside the tau repo.
+This is the **standalone plugin** layout (own `go.mod`, no `replace` directive needed since it only imports the public
+`pkg/plugin/api` package) - see [Standalone Plugin (External Repo)](/plugins#standalone-plugin-external-repo) for when
+to prefer this over building inside the tau repo.
 
 ## Try it
 
@@ -191,7 +179,6 @@ tau
 What's the weather in Melbourne?
 ```
 
-The agent calls `weather_lookup`, gets back the JSON result described in the
-tool's `Description`, and reports it back in natural language. A second
-identical question within 5 minutes is served from the cache — no repeat API
-call, no extra latency.
+The agent calls `weather_lookup`, gets back the JSON result described in the tool's `Description`, and reports it back
+in natural language. A second identical question within 5 minutes is served from the cache - no repeat API call, no
+extra latency.

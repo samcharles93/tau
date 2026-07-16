@@ -89,11 +89,11 @@ func RunSetup(ctx context.Context, opts RunSetupOptions) (SetupResult, error) {
 	manage := providers.NewManage(nil)
 	switch entry.Auth {
 	case providers.AuthOAuth:
-		if err := setupAuthenticateOAuth(ctx, stdout, manage, entry); err != nil {
+		if err := authenticateProviderOAuth(ctx, stdout, manage, entry, "", providers.LoginOAuth); err != nil {
 			return SetupResult{}, err
 		}
 	case providers.AuthAPIKey:
-		if err := setupAuthenticateAPIKey(ctx, opts, manage, entry); err != nil {
+		if err := authenticateProviderAPIKey(ctx, opts, manage, entry); err != nil {
 			return SetupResult{}, err
 		}
 	default: // providers.AuthNone: keyless, e.g. a local Ollama server.
@@ -149,9 +149,10 @@ func setupSelectProvider(ctx context.Context, opts RunSetupOptions) (providers.C
 	return entry, nil
 }
 
-func setupAuthenticateOAuth(ctx context.Context, stdout io.Writer, manage *providers.Manage, entry providers.CatalogEntry) error {
+func authenticateProviderOAuth(ctx context.Context, stdout io.Writer, manage *providers.Manage, entry providers.CatalogEntry, enterpriseDomain string, loginOAuth oauthLoginFunc) error {
 	_, _ = fmt.Fprintln(stdout, providerui.StartMessage(entry.DisplayName))
-	creds, err := providers.LoginOAuth(ctx, entry.ID, providers.LoginOptions{
+	creds, err := loginOAuth(ctx, entry.ID, providers.LoginOptions{
+		EnterpriseDomain: strings.TrimSpace(enterpriseDomain),
 		OnDeviceCode: func(code providers.DeviceCode) {
 			opened := providerui.TryOpenBrowser(ctx, code.VerificationURI)
 			_, _ = fmt.Fprintln(stdout, providerui.DeviceCodeMessage(entry.DisplayName, code, opened, false))
@@ -169,7 +170,7 @@ func setupAuthenticateOAuth(ctx context.Context, stdout io.Writer, manage *provi
 	return nil
 }
 
-func setupAuthenticateAPIKey(ctx context.Context, opts RunSetupOptions, manage *providers.Manage, entry providers.CatalogEntry) error {
+func authenticateProviderAPIKey(ctx context.Context, opts RunSetupOptions, manage *providers.Manage, entry providers.CatalogEntry) error {
 	for {
 		key, err := opts.Prompter.ReadSecret(ctx, fmt.Sprintf("Paste your API key for %s (input hidden): ", entry.DisplayName))
 		if err != nil {

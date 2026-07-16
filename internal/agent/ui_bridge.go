@@ -20,7 +20,7 @@ type coordinatorUIBridge struct {
 	coordinator *Coordinator
 }
 
-// SessionID returns "" — this bridge is shared across every session the
+// SessionID returns "" - this bridge is shared across every session the
 // coordinator manages, not scoped to one. Per-call session correlation is
 // provided by loggingUIBridge, which wraps this bridge with the active
 // call's sessionID.

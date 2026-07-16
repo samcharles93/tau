@@ -73,7 +73,7 @@ func TestFileSubscriber_WritesJSONL(t *testing.T) {
 	require.Equal(t, "tool.read.duration", e2.Name)
 }
 
-func TestFileSubscriber_CreatesDirectory(t *testing.T) {
+func TestFileSubscriberCreatesDirectory(t *testing.T) {
 	dir := filepath.Join(t.TempDir(), "new", "nested", "metrics")
 	bus := eventbus.New()
 	t.Cleanup(bus.Close)
@@ -86,7 +86,7 @@ func TestFileSubscriber_CreatesDirectory(t *testing.T) {
 	require.FileExists(t, filepath.Join(dir, "metrics.jsonl"))
 }
 
-func TestFileSubscriber_CloseIsIdempotent(t *testing.T) {
+func TestFileSubscriberCloseIsIdempotent(t *testing.T) {
 	dir := t.TempDir()
 	bus := eventbus.New()
 	t.Cleanup(bus.Close)
@@ -100,7 +100,7 @@ func TestFileSubscriber_CloseIsIdempotent(t *testing.T) {
 	require.NoError(t, fs.Close())
 }
 
-func TestFileSubscriber_HandlesEmptyEventGracefully(t *testing.T) {
+func TestFileSubscriberHandlesEmptyEventGracefully(t *testing.T) {
 	dir := t.TempDir()
 	bus := eventbus.New()
 	t.Cleanup(bus.Close)
@@ -130,7 +130,7 @@ func TestFileSubscriber_HandlesEmptyEventGracefully(t *testing.T) {
 	require.Empty(t, e.Name)
 }
 
-func TestFileSubscriber_ConcurrentWrites(t *testing.T) {
+func TestFileSubscriberConcurrentWrites(t *testing.T) {
 	dir := t.TempDir()
 	bus := eventbus.New()
 	t.Cleanup(bus.Close)
@@ -141,7 +141,7 @@ func TestFileSubscriber_ConcurrentWrites(t *testing.T) {
 
 	pub := eventbus.Publish[chat.MetricEvent](bus.Client("pub"))
 
-	// Publish 50 events — the bus serialises delivery so no data races
+	// Publish 50 events - the bus serialises delivery so no data races
 	// on the file write, but this validates the mutex path.
 	for i := range 50 {
 		pub.Publish(chat.MetricEvent{

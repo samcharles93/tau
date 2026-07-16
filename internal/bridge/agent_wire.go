@@ -34,7 +34,7 @@ type AgentAssign struct {
 }
 
 // AgentModelPair is the resolved provider/model pair sent in an AgentAssign.
-// It is always concrete — never a tier.
+// It is always concrete - never a tier.
 type AgentModelPair struct {
 	Provider string `json:"provider"`
 	Model    string `json:"model"`
@@ -51,7 +51,7 @@ type AgentLimits struct {
 // timeout and deadline). Timeout is a relative duration ("5m") that
 // overrides the spec/config structural timeout (AgentLimits.Timeout) for
 // this call only; Deadline is an absolute RFC 3339 timestamp. The two are
-// independent — either, both, or neither may be set.
+// independent - either, both, or neither may be set.
 type AgentBudget struct {
 	MaxTokens int    `json:"max_tokens,omitempty"`
 	Timeout   string `json:"timeout,omitempty"`
@@ -121,7 +121,7 @@ func unmarshalEventFromEnvelope(data []byte) (tauchat.ChatEvent, error) {
 	}
 	t, ok := eventTypeByName[env.Type]
 	if !ok {
-		return nil, nil // unknown event type — not an error, just unsupported
+		return nil, nil // unknown event type - not an error, just unsupported
 	}
 	ptr := reflect.New(t)
 	if err := json.Unmarshal(env.Payload, ptr.Interface()); err != nil {

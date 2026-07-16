@@ -41,7 +41,7 @@ func NewQueue() *Queue {
 }
 
 // Push adds a notification to the back of the queue. A non-positive Duration
-// means the notification never expires on its own — it stays current until
+// means the notification never expires on its own - it stays current until
 // Dismiss is called or it's overtaken by earlier entries expiring.
 func (q *Queue) Push(n Notification) {
 	var expiresAt time.Time

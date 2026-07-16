@@ -30,7 +30,7 @@ func TestChatSessionConfigValidateAllowsUnconfiguredProvider(t *testing.T) {
 
 // TestChatSessionConfigValidateRejectsPartialProvider guards against a
 // config with only one of Name/BaseURL set slipping through as if it were
-// deliberately "unconfigured" — that combination can only be a real mistake
+// deliberately "unconfigured" - that combination can only be a real mistake
 // (e.g. a bug upstream partially populating the struct), not a user
 // choosing to configure a provider later.
 func TestChatSessionConfigValidateRejectsPartialProvider(t *testing.T) {
@@ -317,7 +317,7 @@ func TestApplyPatchClampsMaxTokensToModelLimit(t *testing.T) {
 // TestApplyPatchResetsMaxTokensWhenNewModelHasUnknownLimit guards against a
 // regression where switching to a model with no declared MaxTokens ceiling
 // (e.g. a live-fetched Ollama model, whose Config carries no per-model
-// metadata) forwarded the PREVIOUS model's MaxTokens value unclamped —
+// metadata) forwarded the PREVIOUS model's MaxTokens value unclamped -
 // ClampMaxTokensForModel has no ceiling to clamp against, so a value tuned
 // for a large-output model got sent as-is to a model with a much smaller
 // real limit and the provider rejected the request with a 400.
@@ -339,7 +339,7 @@ func TestApplyPatchResetsMaxTokensWhenNewModelHasUnknownLimit(t *testing.T) {
 	liveModel := ChatModelRef{
 		ID:  "ollama-live-model",
 		URL: "http://localhost:11434/v1",
-		// No Config.MaxTokens — matches internal/app.liveModelRefs, which
+		// No Config.MaxTokens - matches internal/app.liveModelRefs, which
 		// has no metadata source for a live-fetched provider's output limit.
 	}
 	if err := session.ApplyPatch(ChatSessionPatch{Model: &liveModel}, now.Add(time.Second)); err != nil {
@@ -353,7 +353,7 @@ func TestApplyPatchResetsMaxTokensWhenNewModelHasUnknownLimit(t *testing.T) {
 // TestAppendStandaloneMessageRequiresNoActiveRequest guards against a
 // regression where bash-mode ("!") results couldn't be appended to history
 // because, unlike AppendStandaloneMessage, the other Append* helpers require
-// HasActiveRequest() — but a bash command runs outside the turn loop and has
+// HasActiveRequest() - but a bash command runs outside the turn loop and has
 // no active request.
 func TestAppendStandaloneMessageRequiresNoActiveRequest(t *testing.T) {
 	now := time.Date(2026, 5, 21, 10, 0, 0, 0, time.UTC)

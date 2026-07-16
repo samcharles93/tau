@@ -14,7 +14,7 @@ import (
 )
 
 // childPromptData mirrors internal/agent.promptData's field names exactly
-// (a subset — WorkspaceTree/Tools/ContextFiles/Guidelines/SkillsIndex/
+// (a subset - WorkspaceTree/Tools/ContextFiles/Guidelines/SkillsIndex/
 // AgentBody are root-system-prompt composition slots, not used by a plain
 // spec body), so the same {{.WorkingDir}}-style template vars in spec
 // bodies render identically whether the spec is the root's own identity or
@@ -32,7 +32,7 @@ type childPromptData struct {
 }
 
 // renderChildSystemPrompt renders a spawned child's own spec body into its
-// system prompt — the child's identity, not the parent's. Mirrors
+// system prompt - the child's identity, not the parent's. Mirrors
 // internal/agent.RenderAgentPrompt's template semantics (same xml funcmap,
 // same field names) so spec bodies behave identically regardless of
 // whether they're resolved as the root or as a spawned child.

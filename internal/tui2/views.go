@@ -13,7 +13,7 @@ import (
 )
 
 // renderPluginView renders a plugin-provided ExtensionView's widgets into a
-// plain string block — the lipgloss/v2 equivalent of
+// plain string block - the lipgloss/v2 equivalent of
 // internal/tui/inline_views.go's buildViewComponent. The view's own Title is
 // rendered separately by the caller (tui2 shows it in the panel border), so
 // only the widget bodies are joined here.
@@ -27,7 +27,7 @@ func renderPluginView(view tauchat.ExtensionView) string {
 
 // renderWidget converts one domain Widget into its rendered string. An
 // unrecognized/zero-value Widget (e.g. a newer kind sent by a plugin this
-// host doesn't understand yet) renders empty — the same additive-evolution
+// host doesn't understand yet) renders empty - the same additive-evolution
 // guarantee as the proto oneof it was decoded from.
 func renderWidget(w tauchat.Widget) string {
 	switch w.Kind {

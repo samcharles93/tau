@@ -2,7 +2,6 @@ package app
 
 import (
 	"context"
-	"fmt"
 	"sync"
 
 	"github.com/samcharles93/ai-sdk/runtime"
@@ -28,13 +27,6 @@ func newProviderRuntime(rt *runtime.Runtime, provs []tauconfig.ProviderConfig, i
 	return &providerRuntime{rt: rt, providers: provs, insecure: insecure}
 }
 
-// runtime returns the current runtime for per-turn provider resolution.
-func (p *providerRuntime) runtime() *runtime.Runtime {
-	p.mu.RLock()
-	defer p.mu.RUnlock()
-	return p.rt
-}
-
 // snapshot returns the current runtime and provider set together, taken under
 // a single lock so they are consistent with each other.
 func (p *providerRuntime) snapshot() (*runtime.Runtime, []tauconfig.ProviderConfig) {
@@ -54,9 +46,6 @@ func (p *providerRuntime) reload(ctx context.Context) error {
 	cfg, _, err := providers.Effective(ctx)
 	if err != nil {
 		return err
-	}
-	if len(cfg.Providers) == 0 {
-		return fmt.Errorf("providerRuntime.reload: no providers configured, refusing to swap")
 	}
 	// newRuntimeForProviders loads the embedded model snapshot, so the rebuilt
 	// runtime sees every provider just enabled without any network access.

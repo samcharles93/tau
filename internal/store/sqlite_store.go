@@ -112,7 +112,7 @@ func (s *SQLiteStore) Save(ctx context.Context, state chat.ChatSessionState, dur
 		state.LastUsage.TotalTokens,
 		cost,
 		duration.Milliseconds(),
-		0, // tool_calls — populated from tracker snapshot on close
+		0, // tool_calls - populated from tracker snapshot on close
 		0, // tool_errors
 		state.SystemPrompt,
 		nullString(state.ParentSessionID),
@@ -431,7 +431,7 @@ func (s *SQLiteStore) Close() error {
 // sqliteConstraintPrimaryKey and sqliteConstraintUnique are SQLite result
 // codes (modernc.org/sqlite/lib.SQLITE_CONSTRAINT_PRIMARYKEY/_UNIQUE).
 // Hardcoded rather than importing the lib subpackage, which isn't meant for
-// public consumption — these codes are part of SQLite's stable C ABI.
+// public consumption - these codes are part of SQLite's stable C ABI.
 const (
 	sqliteConstraintPrimaryKey = 1555
 	sqliteConstraintUnique     = 2067
@@ -505,7 +505,7 @@ func (s *SQLiteStore) CloseAgentInstance(ctx context.Context, id, exitStatus, us
 // See docs/specs/agents/04-storage-and-sessions.md (Active session ownership):
 // the session's current owning instance (if any) must have ended_at set
 // before a new owner is admitted. Started as a regular (deferred) SQLite
-// transaction rather than BEGIN IMMEDIATE — database/sql doesn't expose that
+// transaction rather than BEGIN IMMEDIATE - database/sql doesn't expose that
 // directly, and the existing busy_timeout (5s) absorbs the write-upgrade
 // contention this would otherwise need IMMEDIATE to avoid.
 func (s *SQLiteStore) ResumeSession(ctx context.Context, sessionID string, newInstance AgentInstance) error {
@@ -643,7 +643,7 @@ func (s *SQLiteStore) ListAgentInstances(ctx context.Context, parentID string) (
 }
 
 // ListOpenAgentInstances returns every instance row (at any depth) with
-// ended_at IS NULL, ordered by started_at ascending (oldest first — the
+// ended_at IS NULL, ordered by started_at ascending (oldest first - the
 // orphan sweep has no reason to prefer either order, but ascending keeps
 // long-stale rows first in logs). See docs/specs/agents/
 // 04-storage-and-sessions.md (Orphan sweep: sweep algorithm).

@@ -17,7 +17,7 @@ import (
 //
 // When styledOverride is non-empty it replaces style(text) in the styled output
 // (text is still used for width measurement). This allows embedding raw ANSI
-// sequences — e.g. OSC 8 hyperlinks — that can't be produced by applying style
+// sequences - e.g. OSC 8 hyperlinks - that can't be produced by applying style
 // to text alone.
 type statusSeg struct {
 	text           string

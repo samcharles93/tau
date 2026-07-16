@@ -87,7 +87,7 @@ type filteredRow struct {
 	// origIdx is this entry's position in the unfiltered, freshly rebuilt
 	// candidate list (stable across refreshes as long as the provider's
 	// output order doesn't change). Used instead of match.Word to track the
-	// selection across re-filtering, since Word alone isn't unique — e.g. the
+	// selection across re-filtering, since Word alone isn't unique - e.g. the
 	// same model name offered by two different providers.
 	origIdx int
 }
@@ -149,7 +149,7 @@ func (c *Completions) HandleInput(data string) bool {
 		}
 		query := c.currentQuery()
 		// If LCP extends further than the current query, extend to it.
-		// Otherwise insert the best match (index 0) — this is what the user
+		// Otherwise insert the best match (index 0) - this is what the user
 		// expects from the first Tab press. Arrow keys handle cycling.
 		if lcp != query && len([]rune(lcp)) > len([]rune(query)) {
 			c.extendQueryLocked(lcp)
@@ -158,7 +158,7 @@ func (c *Completions) HandleInput(data string) bool {
 		}
 		chosen = c.fullReplace(c.filtered[c.selected])
 		choose = true
-	case "\x1b[Z": // Shift+Tab — insert the last match (bottom of list)
+	case "\x1b[Z": // Shift+Tab - insert the last match (bottom of list)
 		if n > 0 {
 			c.selected = n - 1
 			chosen = c.fullReplace(c.filtered[c.selected])
@@ -218,7 +218,7 @@ func (c *Completions) fullReplace(row filteredRow) string {
 	}
 	text := c.input.Value()
 	// Keep everything before the replacement span. Guard only on ReplaceStart
-	// being positive — an empty token slot (ReplaceStart == ReplaceEnd, e.g.
+	// being positive - an empty token slot (ReplaceStart == ReplaceEnd, e.g.
 	// just after "/model ") must still preserve the text up to the cursor.
 	prefix := ""
 	if c.rawSet.ReplaceStart > 0 {
@@ -290,7 +290,7 @@ func (c *Completions) Render(width int) []string {
 	colour := termkit.ColorEnabled()
 
 	// Scroll a fixed-size window over the matches so the selected row stays
-	// visible — without this, selections past the 10th item are invisible and
+	// visible - without this, selections past the 10th item are invisible and
 	// unreachable. Centre the window on the selection, clamped to the ends.
 	const window = 10
 	n := len(c.filtered)
@@ -396,7 +396,7 @@ func (c *Completions) renderRow(selected bool, word, desc string, hl [][2]int, c
 	if desc != "" {
 		// Pad outside the highlight so the selection bar stays tight to the
 		// word while descriptions still line up in a column. The description
-		// stays grey regardless of selection — only the word/chevron carry
+		// stays grey regardless of selection - only the word/chevron carry
 		// the cursor accent, so a model's provider name doesn't compete with
 		// its name for attention.
 		body += padTo(word, descCol)

@@ -24,12 +24,12 @@ const (
 )
 
 // selectionState is a press→drag→release text-selection gesture over some
-// region's content, addressed by a single ordered integer position — a
+// region's content, addressed by a single ordered integer position - a
 // line index, a rune index, a column, whatever that region's own
 // coordinate space is. Any UI region gets full drag-to-select behavior (via
 // finalizeSelection) just by driving one of these plus a small
 // position-mapping function and a text-extraction function, instead of
-// hand-rolling its own anchor/cursor/dragging fields and copy logic —
+// hand-rolling its own anchor/cursor/dragging fields and copy logic -
 // see viewportSel/inputSel/statusSel for the three current regions.
 type selectionState struct {
 	anchor   int // -1 = no selection
@@ -65,9 +65,9 @@ func (s *selectionState) drag(pos int) {
 }
 
 // bounds returns the ordered [lo,hi] range, and false if there's no
-// selection at all. Callers interpret lo/hi in their own domain — the
+// selection at all. Callers interpret lo/hi in their own domain - the
 // viewport treats them as inclusive line indices, input/status as a
-// half-open position range — selectionState itself is domain-agnostic.
+// half-open position range - selectionState itself is domain-agnostic.
 func (s *selectionState) bounds() (lo, hi int, ok bool) {
 	if s.anchor < 0 || s.cursor < 0 {
 		return 0, 0, false
@@ -81,26 +81,26 @@ func (s *selectionState) bounds() (lo, hi int, ok bool) {
 
 // handleMousePress maps a left-button-down terminal position to a UI
 // action: pressing on the live tool-call box arms its text selection anchor
-// (and focuses whichever box, if any, sits under the cursor) — the actual
+// (and focuses whichever box, if any, sits under the cursor) - the actual
 // focus/expand-toggle click action fires on release, once handleMouseRelease
 // knows whether the gesture turned into a drag (see toggleToolBoxAtY);
 // pressing in the viewport, input box, or status bar arms that region's
 // text selection anchor the same way, in case the press turns into a drag
 // (see dragRegion). Recomputing the layout here (rather than caching
 // View()'s geometry) keeps hit-testing correct even if the event arrives
-// before the next render — cheap enough since it only runs per mouse event,
+// before the next render - cheap enough since it only runs per mouse event,
 // not per frame.
 func (m *model) handleMousePress(x, y int) tea.Cmd {
-	// A left-click while the /help overlay is open resolves against it —
-	// see handleHelpOverlayClick — before anything underneath (context
+	// A left-click while the /help overlay is open resolves against it -
+	// see handleHelpOverlayClick - before anything underneath (context
 	// menu, tool boxes) ever sees the click.
 	if m.helpOverlay != nil {
 		return m.handleHelpOverlayClick(x, y)
 	}
 
 	// A left-click while a context menu is open resolves against the menu
-	// itself — inside its bounds activates whatever's under the click,
-	// outside closes it — and never also fires the region's own press
+	// itself - inside its bounds activates whatever's under the click,
+	// outside closes it - and never also fires the region's own press
 	// action underneath (e.g. re-focusing a different tool box).
 	if m.contextMenu != nil {
 		return m.handleContextMenuClick(x, y)
@@ -148,21 +148,21 @@ func (m *model) handleMousePress(x, y int) tea.Cmd {
 		m.clearAllSelections()
 	}
 	// The region's selectionState.dragging stays false until
-	// handleMouseDrag actually sees motion — a plain click (press+release,
+	// handleMouseDrag actually sees motion - a plain click (press+release,
 	// no movement) must not leave a stray highlight or copy anything.
 	return nil
 }
 
 // handleMouseDrag extends whichever selection dragRegion says is active to
 // the position under the mouse. For the viewport, it also auto-scrolls when
-// the drag reaches the top/bottom edge — the whole point of building
+// the drag reaches the top/bottom edge - the whole point of building
 // selection ourselves rather than relying on the terminal's native
 // (single-screen, can't-scroll) selection: a selection can now extend
 // across content beyond one screen. For the input box, the drag is clamped
 // to its own rows even if the mouse leaves them, matching ordinary GUI
 // text-field behavior (you can't drag-select out of the field you're in).
 func (m *model) handleMouseDrag(x, y int) {
-	// A context menu is never a drag target — defensive guard, since a
+	// A context menu is never a drag target - defensive guard, since a
 	// menu never sets m.dragRegion itself.
 	if m.contextMenu != nil {
 		return
@@ -224,7 +224,7 @@ func (m *model) handleMouseRelease() tea.Cmd {
 	case dragViewport:
 		// A plain click (no drag) landing on a committed tool-call group is
 		// the fold/unfold/row-expand action (see toggleCommittedToolAtLine),
-		// not a selection — finalizeSelection's generic "no-op on click"
+		// not a selection - finalizeSelection's generic "no-op on click"
 		// doesn't know about that, so it's checked here first. A click on
 		// ordinary text still just clears the selection, same as before.
 		if !m.viewportSel.dragging {
@@ -239,7 +239,7 @@ func (m *model) handleMouseRelease() tea.Cmd {
 		return m.finalizeSelection(&m.statusSel, m.statusSelectionText, "")
 	case dragTools:
 		// A plain click (no drag) is the pre-existing focus/expand-toggle
-		// action, not a selection — finalizeSelection's generic "no-op on
+		// action, not a selection - finalizeSelection's generic "no-op on
 		// click" doesn't know about that domain-specific behavior, so it's
 		// handled here before falling back to the shared copy path for an
 		// actual drag.
@@ -253,7 +253,7 @@ func (m *model) handleMouseRelease() tea.Cmd {
 	return nil
 }
 
-// clearAllSelections drops every region's selection — used whenever an
+// clearAllSelections drops every region's selection - used whenever an
 // interaction (a new press, a tool-box click) makes all of them stale.
 func (m *model) clearAllSelections() {
 	m.viewportSel.clear()
@@ -310,7 +310,7 @@ func (m *model) statusSelectionText(lo, hi int) string {
 	return string(runes[lo:hi])
 }
 
-// The OSC 52 size guard mirrors legacy taui's /copy — tea.SetClipboard
+// The OSC 52 size guard mirrors legacy taui's /copy - tea.SetClipboard
 // itself has no such guard, and many terminals silently drop or corrupt
 // oversized payloads rather than truncating. unit names what was selected
 // for the notification ("line" -> "copied 3 lines"); pass "" for a region
@@ -346,9 +346,9 @@ func (m *model) copySelection(s *selectionState, extract func(lo, hi int) string
 // place. Reverse video composes with whatever foreground/background colors
 // are already set in the styled line rather than requiring us to parse and
 // re-inject them, so the line's normal styling still shows through,
-// visually inverted. This only affects rendering — viewportSelectionText
+// visually inverted. This only affects rendering - viewportSelectionText
 // reads the unmodified m.renderedLines, so highlight quirks on complex
-// multi-segment lines (rare — see comment there) never affect what gets
+// multi-segment lines (rare - see comment there) never affect what gets
 // copied.
 func (m *model) highlightSelection(lines []string) {
 	lo, hi, ok := m.viewportSel.bounds()
@@ -361,12 +361,12 @@ func (m *model) highlightSelection(lines []string) {
 }
 
 // reverseVideoReset re-asserts reverse video after any SGR reset the line
-// already contains internally — glamour ends each styled span (e.g. an
+// already contains internally - glamour ends each styled span (e.g. an
 // inline-code span's colors) with a bare reset ("\x1b[m", equivalent to
 // "\x1b[0m"), and a reset clears every active attribute, not just the one
 // that span set. Without re-asserting, wrapping the whole line in
 // "\x1b[7m...\x1b[27m" only highlights up to the line's first embedded
-// reset — everything after it silently loses the reverse attribute, even
+// reset - everything after it silently loses the reverse attribute, even
 // though the whole line is genuinely selected and copies correctly (copy
 // reads the unmodified, un-highlighted line via stripANSI).
 var reverseVideoReset = strings.NewReplacer(
@@ -393,7 +393,7 @@ func (m *model) viewportSelectionText(lo, hi int) string {
 
 // toolsSelectionText returns the plain (ANSI-stripped) text of the live
 // tool-call box's own lines between absolute view rows lo and hi inclusive
-// (toolsSel presses/drags in that same coordinate space — see
+// (toolsSel presses/drags in that same coordinate space - see
 // handleMousePress). The box isn't cached between frames like
 // m.renderedLines, so this recomputes it fresh; cheap enough at
 // mouse-release frequency.
@@ -428,7 +428,7 @@ func (m *model) toolsSelectionText(lo, hi int) string {
 // wraps near a word boundary. That only affects which whole line a
 // click/drag lands on (logicalLineAtRow), never what gets copied once a
 // line is selected, and most renderedLines entries are already pre-wrapped
-// to width (glamour output, tool boxes) — the risk is concentrated in a
+// to width (glamour output, tool boxes) - the risk is concentrated in a
 // long single-line, unwrapped user/system message.
 func wrappedRowCount(line string, width int) int {
 	if width < 1 {
@@ -442,7 +442,7 @@ func wrappedRowCount(line string, width int) int {
 }
 
 // logicalLineAtRow maps an absolute wrapped-row offset (0 = the viewport's
-// first content row — the same coordinate space as m.viewport.YOffset()) to
+// first content row - the same coordinate space as m.viewport.YOffset()) to
 // an index into m.renderedLines, accounting for lines that soft-wrap across
 // more than one visual row (see wrappedRowCount's caveat).
 func (m *model) logicalLineAtRow(targetRow int) (int, bool) {

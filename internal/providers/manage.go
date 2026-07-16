@@ -13,7 +13,7 @@ import (
 // TUIs, and the setup wizard: toggling an env-var/keyless provider on or off,
 // completing an OAuth login, logging out, and re-resolving the effective
 // provider set. Each method loads state fresh and saves it before returning,
-// so a Manage instance carries no session state of its own — the caller
+// so a Manage instance carries no session state of its own - the caller
 // doesn't need to sequence calls or worry about staleness.
 //
 // The OAuth device-code flow itself (LoginOAuth, BeginOAuthLogin,
@@ -22,20 +22,26 @@ import (
 // async patterns are TUI-specific. LoginComplete only covers the part both
 // patterns converge on afterwards: persisting the resulting credentials.
 type Manage struct {
-	getenv func(string) string
+	getenv    func(string) string
+	loadState func() (State, error)
+	saveState func(*State) error
 }
 
 // NewManage builds a Manage service. getenv may be nil to use the process
 // environment.
 func NewManage(getenv func(string) string) *Manage {
+	return newManage(getenv, LoadState, func(state *State) error { return state.Save() })
+}
+
+func newManage(getenv func(string) string, loadState func() (State, error), saveState func(*State) error) *Manage {
 	if getenv == nil {
 		getenv = osGetenv
 	}
-	return &Manage{getenv: getenv}
+	return &Manage{getenv: getenv, loadState: loadState, saveState: saveState}
 }
 
 // Toggle enables an API-key/no-auth provider if it's currently off, or
-// disables it if it's currently on — the effective on/off state as resolved
+// disables it if it's currently on - the effective on/off state as resolved
 // by env-detection and Enabled/Disabled, not just the raw explicit-enable
 // list, so toggling an auto-detected (env-key-present) provider off actually
 // takes effect. OAuth providers and providers with a stored managed key
@@ -48,15 +54,15 @@ func (m *Manage) Toggle(name string) (enabled bool, warning string, err error) {
 		return false, "", fmt.Errorf("unknown provider %q", name)
 	}
 	if entry.Auth == AuthOAuth {
-		return false, "", fmt.Errorf("%s uses OAuth login, not toggle — use LoginComplete/Logout", entry.DisplayName)
+		return false, "", fmt.Errorf("%s uses OAuth login, not toggle - use LoginComplete/Logout", entry.DisplayName)
 	}
 
-	state, err := LoadState()
+	state, err := m.loadState()
 	if err != nil {
 		return false, "", fmt.Errorf("load provider state: %w", err)
 	}
 	if key, ok := state.APIKeyFor(entry.ID); ok && strings.TrimSpace(key) != "" {
-		return false, "", fmt.Errorf("%s has a stored API key — use Logout to remove it, not Toggle", entry.DisplayName)
+		return false, "", fmt.Errorf("%s has a stored API key - use Logout to remove it, not Toggle", entry.DisplayName)
 	}
 
 	envVar, present := entry.DetectEnvVar(m.getenv)
@@ -73,7 +79,7 @@ func (m *Manage) Toggle(name string) (enabled bool, warning string, err error) {
 			warning = envVar + " is not set"
 		}
 	}
-	if err := state.Save(); err != nil {
+	if err := m.saveState(&state); err != nil {
 		return false, "", fmt.Errorf("save provider state: %w", err)
 	}
 	return enabled, warning, nil
@@ -91,13 +97,13 @@ func (m *Manage) LoginComplete(name string, creds OAuthCredentials) error {
 		return fmt.Errorf("%s doesn't use OAuth login", entry.DisplayName)
 	}
 
-	state, err := LoadState()
+	state, err := m.loadState()
 	if err != nil {
 		return fmt.Errorf("load provider state: %w", err)
 	}
 	state.Enable(entry.ID)
 	state.SetOAuth(entry.ID, creds)
-	if err := state.Save(); err != nil {
+	if err := m.saveState(&state); err != nil {
 		return fmt.Errorf("save provider state: %w", err)
 	}
 	return nil
@@ -106,7 +112,7 @@ func (m *Manage) LoginComplete(name string, creds OAuthCredentials) error {
 // Logout disables a provider and clears all its stored credentials, OAuth
 // and managed API key alike, regardless of which kind the provider uses.
 // Disabling matters for env-var-backed providers, where there's no
-// credential to remove — suppressing auto-detection is the only way to turn
+// credential to remove - suppressing auto-detection is the only way to turn
 // them off. Removing both credential kinds matters for OAuth and managed-key
 // providers, where a stored credential (not Disabled) is what makes them
 // active in the first place.
@@ -117,14 +123,14 @@ func (m *Manage) Logout(name string) error {
 		return fmt.Errorf("unknown provider %q", name)
 	}
 
-	state, err := LoadState()
+	state, err := m.loadState()
 	if err != nil {
 		return fmt.Errorf("load provider state: %w", err)
 	}
 	state.Disable(entry.ID)
 	state.RemoveOAuth(entry.ID)
 	state.RemoveAPIKey(entry.ID)
-	if err := state.Save(); err != nil {
+	if err := m.saveState(&state); err != nil {
 		return fmt.Errorf("save provider state: %w", err)
 	}
 	return nil
@@ -132,7 +138,7 @@ func (m *Manage) Logout(name string) error {
 
 // StoreAPIKey persists a managed API key for a provider and enables it.
 // Unlike Toggle, this always ends with the provider enabled regardless of
-// its current state — appropriate for a setup flow where the user has just
+// its current state - appropriate for a setup flow where the user has just
 // explicitly chosen and authenticated this provider, not a flip-flop toggle.
 func (m *Manage) StoreAPIKey(name, key string) error {
 	name = strings.ToLower(strings.TrimSpace(name))
@@ -148,19 +154,19 @@ func (m *Manage) StoreAPIKey(name, key string) error {
 		return errors.New("API key must not be empty")
 	}
 
-	state, err := LoadState()
+	state, err := m.loadState()
 	if err != nil {
 		return fmt.Errorf("load provider state: %w", err)
 	}
 	state.Enable(entry.ID)
 	state.SetAPIKey(entry.ID, key)
-	if err := state.Save(); err != nil {
+	if err := m.saveState(&state); err != nil {
 		return fmt.Errorf("save provider state: %w", err)
 	}
 	return nil
 }
 
-// Enable turns on a non-OAuth provider unconditionally — unlike Toggle, it
+// Enable turns on a non-OAuth provider unconditionally - unlike Toggle, it
 // never flips an already-active provider off, so it's safe to call
 // idempotently from a setup flow when the user (re-)selects a keyless or
 // env-var-backed provider they may already have enabled.
@@ -171,15 +177,15 @@ func (m *Manage) Enable(name string) error {
 		return fmt.Errorf("unknown provider %q", name)
 	}
 	if entry.Auth == AuthOAuth {
-		return fmt.Errorf("%s uses OAuth login — use LoginComplete", entry.DisplayName)
+		return fmt.Errorf("%s uses OAuth login - use LoginComplete", entry.DisplayName)
 	}
 
-	state, err := LoadState()
+	state, err := m.loadState()
 	if err != nil {
 		return fmt.Errorf("load provider state: %w", err)
 	}
 	state.Enable(entry.ID)
-	if err := state.Save(); err != nil {
+	if err := m.saveState(&state); err != nil {
 		return fmt.Errorf("save provider state: %w", err)
 	}
 	return nil

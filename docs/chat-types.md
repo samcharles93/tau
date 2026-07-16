@@ -1,27 +1,28 @@
 # Chat Types Reference
 
-All chat types live in `internal/chat/types.go`. This package defines the command/event contract and is imported by every other subsystem — it has no behavior, only types.
+All chat types live in `internal/chat/types.go`. This package defines the command/event contract and is imported by
+every other subsystem - it has no behavior, only types.
 
 ## ChatCommand (TUI/Web → Coordinator)
 
 All commands implement the `ChatCommand` interface (marker: `IsChatCommand()`).
 
-| Command | Fields | Purpose |
-| ------- | ------ | ------- |
-| `StartChatSessionCommand` | `SessionID`, `Config` | Initialize a new session |
-| `SubmitChatPromptCommand` | `SessionID`, `RequestID`, `Prompt`, `SubmittedAt` | Submit user input |
-| `SteerChatPromptCommand` | `SessionID`, `RequestID`, `Text` | Inject text during in-flight response |
-| `UpdateChatSessionCommand` | `SessionID`, `Patch` | Change model, temperature, system prompt, etc. |
-| `CancelChatRequestCommand` | `SessionID`, `RequestID` | Cancel in-flight LLM request |
-| `ResetChatSessionCommand` | `SessionID` | Reset to initial session state |
-| `CloseChatSessionCommand` | `SessionID` | Close and persist session |
-| `ReloadExtensionsCommand` | `SessionID` | Reload all plugin extensions |
-| `RunExtensionCommandCommand` | `SessionID`, `Name`, `Args` | Execute a plugin slash command |
-| `RespondInteractivePromptCommand` | `RequestID`, `Confirmed`, `Canceled`, `Response` | Answer a tool confirmation/question |
-| `ListSessionsCommand` | `Limit`, `Cursor` | List saved sessions |
-| `LoadSessionCommand` | `SessionID` | Load a saved session's messages |
-| `DeleteSessionCommand` | `SessionID` | Delete a saved session |
-| `ExportSessionCommand` | `SessionID`, `Format` | Export session as JSONL |
+| Command                           | Fields                                            | Purpose                                        |
+| --------------------------------- | ------------------------------------------------- | ---------------------------------------------- |
+| `StartChatSessionCommand`         | `SessionID`, `Config`                             | Initialize a new session                       |
+| `SubmitChatPromptCommand`         | `SessionID`, `RequestID`, `Prompt`, `SubmittedAt` | Submit user input                              |
+| `SteerChatPromptCommand`          | `SessionID`, `RequestID`, `Text`                  | Inject text during in-flight response          |
+| `UpdateChatSessionCommand`        | `SessionID`, `Patch`                              | Change model, temperature, system prompt, etc. |
+| `CancelChatRequestCommand`        | `SessionID`, `RequestID`                          | Cancel in-flight LLM request                   |
+| `ResetChatSessionCommand`         | `SessionID`                                       | Reset to initial session state                 |
+| `CloseChatSessionCommand`         | `SessionID`                                       | Close and persist session                      |
+| `ReloadExtensionsCommand`         | `SessionID`                                       | Reload all plugin extensions                   |
+| `RunExtensionCommandCommand`      | `SessionID`, `Name`, `Args`                       | Execute a plugin slash command                 |
+| `RespondInteractivePromptCommand` | `RequestID`, `Confirmed`, `Canceled`, `Response`  | Answer a tool confirmation/question            |
+| `ListSessionsCommand`             | `Limit`, `Cursor`                                 | List saved sessions                            |
+| `LoadSessionCommand`              | `SessionID`                                       | Load a saved session's messages                |
+| `DeleteSessionCommand`            | `SessionID`                                       | Delete a saved session                         |
+| `ExportSessionCommand`            | `SessionID`, `Format`                             | Export session as JSONL                        |
 
 ## ChatEvent (Coordinator → TUI/Web)
 
@@ -29,59 +30,59 @@ All events implement the `ChatEvent` interface (marker: `IsChatEvent()`).
 
 ### Session Lifecycle Events
 
-| Event | Fields | When |
-| ----- | ------ | ---- |
+| Event                      | Fields  | When                                               |
+| -------------------------- | ------- | -------------------------------------------------- |
 | `ChatSessionSnapshotEvent` | `State` | Full state sync (on start, after turns, on update) |
-| `SessionLoadedEvent` | `State` | After a saved session is loaded |
+| `SessionLoadedEvent`       | `State` | After a saved session is loaded                    |
 
 ### Streaming Events
 
-| Event | Fields | When |
-| ----- | ------ | ---- |
-| `ChatResponseStartedEvent` | `SessionID`, `RequestID`, `StartedAt` | LLM begins generating |
-| `ChatResponseDeltaEvent` | `SessionID`, `RequestID`, `Delta`, `Snapshot`, `ReceivedAt` | Each text token |
-| `ChatReasoningDeltaEvent` | `SessionID`, `RequestID`, `Delta`, `Snapshot`, `ReceivedAt` | Each reasoning token |
-| `ChatResponseCompletedEvent` | `State`, `RequestID`, `FinishReason`, `CompletedAt` | LLM finishes generating |
-| `ChatResponseCancelledEvent` | `SessionID`, `RequestID` | User cancels generation |
+| Event                        | Fields                                                      | When                    |
+| ---------------------------- | ----------------------------------------------------------- | ----------------------- |
+| `ChatResponseStartedEvent`   | `SessionID`, `RequestID`, `StartedAt`                       | LLM begins generating   |
+| `ChatResponseDeltaEvent`     | `SessionID`, `RequestID`, `Delta`, `Snapshot`, `ReceivedAt` | Each text token         |
+| `ChatReasoningDeltaEvent`    | `SessionID`, `RequestID`, `Delta`, `Snapshot`, `ReceivedAt` | Each reasoning token    |
+| `ChatResponseCompletedEvent` | `State`, `RequestID`, `FinishReason`, `CompletedAt`         | LLM finishes generating |
+| `ChatResponseCancelledEvent` | `SessionID`, `RequestID`                                    | User cancels generation |
 
 ### Tool Events
 
-| Event | Fields | When |
-| ----- | ------ | ---- |
-| `ChatToolCallDeltaEvent` | `SessionID`, `RequestID`, `CallID`, `Index`, `ToolName`, `ArgumentsSummary` | Tool call being streamed |
-| `ChatToolExecutionStartedEvent` | `SessionID`, `RequestID`, `CallID`, `ToolName`, `ArgumentsSummary`, `StartedAt` | Tool execution begins |
-| `ChatToolOutputEvent` | `SessionID`, `RequestID`, `CallID`, `Chunk` | Live stdout chunk from tool |
-| `ChatToolExecutionCompletedEvent` | `SessionID`, `RequestID`, `CallID`, `ToolName`, `Status`, `ResultSummary`, `IsError`, `CompletedAt` | Tool execution ends |
+| Event                             | Fields                                                                                              | When                        |
+| --------------------------------- | --------------------------------------------------------------------------------------------------- | --------------------------- |
+| `ChatToolCallDeltaEvent`          | `SessionID`, `RequestID`, `CallID`, `Index`, `ToolName`, `ArgumentsSummary`                         | Tool call being streamed    |
+| `ChatToolExecutionStartedEvent`   | `SessionID`, `RequestID`, `CallID`, `ToolName`, `ArgumentsSummary`, `StartedAt`                     | Tool execution begins       |
+| `ChatToolOutputEvent`             | `SessionID`, `RequestID`, `CallID`, `Chunk`                                                         | Live stdout chunk from tool |
+| `ChatToolExecutionCompletedEvent` | `SessionID`, `RequestID`, `CallID`, `ToolName`, `Status`, `ResultSummary`, `IsError`, `CompletedAt` | Tool execution ends         |
 
 ### Notification & Error Events
 
-| Event | Fields | When |
-| ----- | ------ | ---- |
-| `ChatRuntimeErrorEvent` | `SessionID`, `RequestID`, `Message`, `Fatal`, `OccurredAt` | Runtime error |
-| `ChatNotificationEvent` | `Message`, `Level` ("info"/"warn"/"error"), `OccurredAt` | Informational notice |
+| Event                   | Fields                                                     | When                 |
+| ----------------------- | ---------------------------------------------------------- | -------------------- |
+| `ChatRuntimeErrorEvent` | `SessionID`, `RequestID`, `Message`, `Fatal`, `OccurredAt` | Runtime error        |
+| `ChatNotificationEvent` | `Message`, `Level` ("info"/"warn"/"error"), `OccurredAt`   | Informational notice |
 
 ### Interactive Prompt Events
 
-| Event | Fields | When |
-| ----- | ------ | ---- |
+| Event                             | Fields                                                                        | When                  |
+| --------------------------------- | ----------------------------------------------------------------------------- | --------------------- |
 | `InteractivePromptRequestedEvent` | `RequestID`, `Kind` ("confirm"/"question"), `Title`, `Message`, `RequestedAt` | Tool needs user input |
 
 ### Session Management Events
 
-| Event | Fields | When |
-| ----- | ------ | ---- |
-| `SessionsListedEvent` | `Sessions`, `NextCursor` | Response to ListSessionsCommand |
-| `SessionDeletedEvent` | `SessionID` | Response to DeleteSessionCommand |
+| Event                  | Fields                        | When                             |
+| ---------------------- | ----------------------------- | -------------------------------- |
+| `SessionsListedEvent`  | `Sessions`, `NextCursor`      | Response to ListSessionsCommand  |
+| `SessionDeletedEvent`  | `SessionID`                   | Response to DeleteSessionCommand |
 | `SessionExportedEvent` | `SessionID`, `Format`, `Path` | Response to ExportSessionCommand |
 
 ### Extension Events
 
-| Event | Fields | When |
-| ----- | ------ | ---- |
-| `ExtensionsReloadedEvent` | `Plugins` | After plugin reload |
-| `ExtensionCommandsChangedEvent` | `Commands` | Plugin command registry changes |
-| `ExtensionCommandResultEvent` | `Name`, `Result` | Result of a plugin command |
-| `CommandsChangedEvent` | `Commands` | Full command registry changes |
+| Event                           | Fields           | When                            |
+| ------------------------------- | ---------------- | ------------------------------- |
+| `ExtensionsReloadedEvent`       | `Plugins`        | After plugin reload             |
+| `ExtensionCommandsChangedEvent` | `Commands`       | Plugin command registry changes |
+| `ExtensionCommandResultEvent`   | `Name`, `Result` | Result of a plugin command      |
+| `CommandsChangedEvent`          | `Commands`       | Full command registry changes   |
 
 ## Core Types
 
@@ -310,4 +311,5 @@ type Envelope struct {
 }
 ```
 
-The TypeScript protocol types are mirrored in `internal/webui/src/lib/protocol.ts`. See [Server & Bridge](server.md) for the wire format details.
+The TypeScript protocol types are mirrored in `internal/webui/src/lib/protocol.ts`. See [Server & Bridge](server.md) for
+the wire format details.

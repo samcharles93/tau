@@ -58,7 +58,7 @@ func TestParseToolCallKeyExtractsJustification(t *testing.T) {
 // --- end-to-end coordinator tests -------------------------------------------
 
 // repeatedToolCallStreamer always returns the same tool call (name+args)
-// until it has been called max times, then finishes the turn normally —
+// until it has been called max times, then finishes the turn normally -
 // a safety net in case the loop breaker fails to stop it.
 type repeatedToolCallStreamer struct {
 	calls int
@@ -188,7 +188,7 @@ drain:
 	require.Equal(t, toolLoopSoftThreshold, execCount)
 
 	// Observability: the block(s) leading up to the hard stop, and the hard
-	// stop itself, must both be visible as metrics — not just as a single
+	// stop itself, must both be visible as metrics - not just as a single
 	// generic "turn failed" log line.
 	require.Equal(t, toolLoopHardBlockLimit-1, metricCounts["tool.loop.blocked"])
 	require.Equal(t, 1, metricCounts["tool.loop.hard_stop"])
@@ -197,7 +197,7 @@ drain:
 // TestToolLoopBreakerAllowsJustifiedOverride verifies the override path:
 // once blocked, a repeat carrying a non-empty top-level
 // "repeat_justification" argument must be allowed through and actually
-// executed — legitimate repeated actions (re-running the same test, polling
+// executed - legitimate repeated actions (re-running the same test, polling
 // for a state change) must not be permanently blocked.
 func TestToolLoopBreakerAllowsJustifiedOverride(t *testing.T) {
 	var executedArgs []string

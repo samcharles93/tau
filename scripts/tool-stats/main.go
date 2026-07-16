@@ -366,7 +366,7 @@ func sessionIDFromFilename(name string) string {
 // ground-truth error status and durations into the per-tool stats. Events
 // from sessions not present in the sessions dir are skipped so the metrics
 // columns describe the same population as the session-derived columns.
-// Missing or unreadable files are fine — the join is best-effort.
+// Missing or unreadable files are fine - the join is best-effort.
 func joinMetrics(path string, sessionIDs map[string]bool, tools map[string]*toolStat, data *reportData) {
 	f, err := os.Open(path)
 	if err != nil {
@@ -851,7 +851,7 @@ func histogram(samples []int) []int {
 }
 
 func printSummary(data *reportData) {
-	fmt.Printf("tau tool stats — %d unique sessions (%d files), %d tool calls, ~%s result tokens\n",
+	fmt.Printf("tau tool stats - %d unique sessions (%d files), %d tool calls, ~%s result tokens\n",
 		data.UniqueSessions, data.Files, data.TotalCalls, formatCount(data.TotalTokens))
 	if data.UnmatchedCalls > 0 || data.UnmatchedResults > 0 {
 		fmt.Printf("join gaps: %d calls without results, %d results without calls\n", data.UnmatchedCalls, data.UnmatchedResults)

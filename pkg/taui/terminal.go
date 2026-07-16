@@ -80,13 +80,13 @@ func (t *ProcessTerminal) Start(onInput func(data string), onResize func()) {
 
 	// Enable focus reporting (CSI I on focus-in, CSI O on focus-out), so the
 	// engine's Focused() reflects whether the terminal window is actually
-	// active — used to gate desktop notifications. Terminals without support
+	// active - used to gate desktop notifications. Terminals without support
 	// just never send the reports, which leaves Focused() at its default of
 	// true. Popped in Stop.
 	_, _ = os.Stdout.WriteString("\x1b[?1004h")
 
 	// Push the Kitty keyboard protocol (flag 1 = disambiguate escape codes) so
-	// modified keys — Shift+Enter, Ctrl+Enter, etc. — arrive as unambiguous
+	// modified keys - Shift+Enter, Ctrl+Enter, etc. - arrive as unambiguous
 	// CSI-u sequences instead of colliding with legacy encodings. Terminals
 	// without support silently ignore this. Popped in Stop.
 	_, _ = os.Stdout.WriteString(kittyKeyboardPush)
@@ -203,7 +203,7 @@ func (t *ProcessTerminal) Size() (cols, rows int) {
 	if size, err := GetWinsize(os.Stdout.Fd()); err == nil {
 		return int(size.Col), int(size.Row)
 	}
-	// Fallback via escape sequence query (simplified — just env vars).
+	// Fallback via escape sequence query (simplified - just env vars).
 	cols = 80
 	rows = 24
 	if c := os.Getenv("COLUMNS"); c != "" {

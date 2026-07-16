@@ -129,7 +129,7 @@ func ResolveWithRefresh(ctx context.Context, cfg config.Config, state State, get
 
 	// 3. Managed API-key providers: a stored key used as a fallback when no
 	//    env var is active for that provider. Env always wins over a managed
-	//    key — it's the session-scoped, easily-rotated override, while a
+	//    key - it's the session-scoped, easily-rotated override, while a
 	//    managed key is a persisted default that could go stale.
 	for _, entry := range managedCandidates {
 		key, ok := state.APIKeyFor(entry.ID)
@@ -161,7 +161,7 @@ func ResolveWithRefresh(ctx context.Context, cfg config.Config, state State, get
 		msg := ""
 		available := strings.TrimSpace(creds.Access) != "" && !creds.Expired()
 		if !available {
-			msg = "login expired — run /provider login " + id
+			msg = "login expired - run /provider login " + id
 		}
 		out = append(out, ResolvedProvider{
 			Config:    oauthProviderConfig(entry, creds),
@@ -211,7 +211,7 @@ func Menu(cfg config.Config, state State, getenv func(string) string) []MenuEntr
 			entry.Available = available
 			// Active = auto-on (key present, not disabled) or explicitly enabled.
 			entry.Enabled = (available && !state.IsDisabled(e.ID)) || state.IsEnabled(e.ID)
-			// A stored managed key is a fallback when no env var is active —
+			// A stored managed key is a fallback when no env var is active -
 			// env always wins, matching Resolve's precedence.
 			if !entry.Enabled && e.Auth == AuthAPIKey {
 				if _, ok := state.APIKeyFor(e.ID); ok {

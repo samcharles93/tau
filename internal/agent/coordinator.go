@@ -1,4 +1,4 @@
-// Package agent implements the agent coordinator — the single runtime that
+// Package agent implements the agent coordinator - the single runtime that
 // mediates between the TUI and the LLM. It owns the agentic turn loop:
 // stream a completion, detect tool_calls, execute tools in parallel,
 // feed results back, and loop until the model produces a final text response.
@@ -122,7 +122,7 @@ type coordinatorSession struct {
 	// concurrently with a turn.
 	bashCancel context.CancelFunc
 
-	// Tool-call loop breaker state — see checkToolLoop. Guarded by its own
+	// Tool-call loop breaker state - see checkToolLoop. Guarded by its own
 	// mutex (not c.mu) since it's touched from executeTool, which may run
 	// concurrently across goroutines when parallelToolCalls is true.
 	toolLoopMu      sync.Mutex
@@ -188,10 +188,10 @@ type CoordinatorConfig struct {
 	// AllowedTools is the initial tool allowlist for this coordinator.
 	// When non-empty, the LLM can only see tools in this list (plus the
 	// "skill" tool, which participates in normal attenuation). An empty
-	// or nil slice means no restriction — the full registry is available.
+	// or nil slice means no restriction - the full registry is available.
 	// This is the process-wide base; individual modes may further narrow
 	// the set via SetAllowedTools, which always intersects with this base.
-	// No tool is injected outside the declared intersection — "skill" is an
+	// No tool is injected outside the declared intersection - "skill" is an
 	// ordinary attenuated capability, not a mandatory ambient one.
 	AllowedTools []string
 
@@ -257,7 +257,7 @@ func NewCoordinator(ctx context.Context, cfg CoordinatorConfig) (*Coordinator, e
 	logger = logger.With("component", "coordinator")
 
 	// Initialise the tool allowlist from config. Empty/nil means unrestricted.
-	// "skill" is an ordinary attenuated tool — it is only present when the
+	// "skill" is an ordinary attenuated tool - it is only present when the
 	// spec or spawn restriction explicitly includes it. No tool is injected
 	// outside the declared intersection.
 	var initEffectiveTools map[string]bool
@@ -374,7 +374,7 @@ func (c *Coordinator) loop() {
 		select {
 		case <-c.ctx.Done():
 			// Send() only enqueues onto the buffered c.commands channel and
-			// returns — it never waits for the loop to actually process the
+			// returns - it never waits for the loop to actually process the
 			// command. So a command sent right before shutdown (e.g. the TUI
 			// submitting a prompt, then the user immediately quitting) can
 			// already be sitting in the channel when ctx.Done() fires, and
@@ -382,7 +382,7 @@ func (c *Coordinator) loop() {
 			// shutdown wins, that command is silently dropped: BeginTurn
 			// never runs, the message never lands in session.state, and
 			// cancelAllSessions persists a stale snapshot that's missing it
-			// — the user sees their message in the TUI (which echoes it
+			// - the user sees their message in the TUI (which echoes it
 			// locally, optimistically) but it's gone from the saved session.
 			// Draining first processes anything already enqueued before
 			// treating shutdown as final.
@@ -397,7 +397,7 @@ func (c *Coordinator) loop() {
 }
 
 // drainPendingCommands processes every command already sitting in
-// c.commands without blocking — see loop's ctx.Done() case for why this
+// c.commands without blocking - see loop's ctx.Done() case for why this
 // must run before a shutdown snapshot is taken.
 func (c *Coordinator) drainPendingCommands() {
 	for {
@@ -533,7 +533,7 @@ func (c *Coordinator) handleSubmit(cmd chat.SubmitChatPromptCommand) {
 	if err := session.state.BeginTurn(cmd.RequestID, cmd.Prompt, now); err != nil {
 		c.mu.Unlock()
 		if strings.Contains(err.Error(), "already in flight") {
-			// Silently drop duplicate submits — the real turn is already running.
+			// Silently drop duplicate submits - the real turn is already running.
 			return
 		}
 		c.emit(chat.ChatRuntimeErrorEvent{
@@ -669,7 +669,7 @@ func (c *Coordinator) handleCancel(cmd chat.CancelChatRequestCommand) {
 	//     in-flight one. This handles reconnect/double-submit races on the
 	//     web transport where the client and server request_id can briefly
 	//     diverge.
-	//   * If no request is in flight at all, succeed silently — the user's
+	//   * If no request is in flight at all, succeed silently - the user's
 	//     intent (stop waiting) is already satisfied.
 	if !session.state.HasActiveRequest() {
 		c.mu.Unlock()

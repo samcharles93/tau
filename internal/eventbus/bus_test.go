@@ -7,7 +7,7 @@ import (
 
 type testEvent struct{ Msg string }
 
-func TestBusPublishSubscribe(t *testing.T) {
+func TestBusPublishAndSubscribe(t *testing.T) {
 	bus := New()
 	defer bus.Close()
 
@@ -29,7 +29,7 @@ func TestBusPublishSubscribe(t *testing.T) {
 	}
 }
 
-func TestBusSameClientPublishSubscribe(t *testing.T) {
+func TestBusWithSameClientPublishAndSubscribe(t *testing.T) {
 	bus := New()
 	defer bus.Close()
 
@@ -49,7 +49,7 @@ func TestBusSameClientPublishSubscribe(t *testing.T) {
 	}
 }
 
-func TestBusMultipleSubscribers(t *testing.T) {
+func TestBusWithMultipleSubscribers(t *testing.T) {
 	bus := New()
 	defer bus.Close()
 
@@ -119,12 +119,12 @@ func TestBusCloseStopsDelivery(t *testing.T) {
 	case <-sub.Events():
 		t.Error("received event after bus close")
 	case <-time.After(100 * time.Millisecond):
-		// expected — no event delivered
+		// expected - no event delivered
 	}
 
 	// Events channel should eventually close... actually it won't
 	// because bus.Close() closes clients which closes subscribers
 	// which stops the dispatch goroutines. But the channel itself
-	// is not closed (by design — reading from a closed channel
+	// is not closed (by design - reading from a closed channel
 	// panics, and the typed send would panic too).
 }

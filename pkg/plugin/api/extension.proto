@@ -212,7 +212,7 @@ message Style {
 
 // Widget is one renderable element within a View. Exactly one field of
 // `kind` is set. Unrecognized/unset kinds on older hosts are simply
-// skipped at render time — the same additive-evolution guarantee as
+// skipped at render time - the same additive-evolution guarantee as
 // EventPayload's oneof.
 message Widget {
   oneof kind {

@@ -1,6 +1,6 @@
 // Command keydump prints the raw bytes a terminal sends for each keypress, with
 // the Kitty keyboard protocol enabled exactly as tau enables it (flag 1). It is
-// a debugging aid for terminal key-handling issues — e.g. discovering that a
+// a debugging aid for terminal key-handling issues - e.g. discovering that a
 // terminal folds NumLock/CapsLock into the modifier field.
 //
 // Run it, press the keys you want to inspect, then press 'q' to quit:
@@ -34,7 +34,7 @@ func main() {
 	os.Stdout.WriteString("\x1b[>1u")
 	defer os.Stdout.WriteString("\x1b[<u")
 
-	os.Stdout.WriteString("keydump — Kitty keyboard protocol (flag 1) enabled.\r\n")
+	os.Stdout.WriteString("keydump - Kitty keyboard protocol (flag 1) enabled.\r\n")
 	os.Stdout.WriteString("Press keys to inspect (Ctrl+C, Ctrl+J, Shift+Enter, ...). Press 'q' to quit.\r\n\r\n")
 
 	buf := make([]byte, 64)

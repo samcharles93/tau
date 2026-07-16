@@ -10,12 +10,12 @@ func TestCanonicalKeyNormalizesDisambiguated(t *testing.T) {
 		"\x1b[127u":   "\x7f", // Backspace
 		"\x1b[99;5u":  "\x03", // Ctrl+C (Kitty CSI-u, codepoint form)
 		"\x1b[3;5u":   "\x03", // Ctrl+C (Kitty CSI-u, control-char form)
-		"\x1b[106;5u": "\x0a", // Ctrl+J — newline
+		"\x1b[106;5u": "\x0a", // Ctrl+J - newline
 		"\x1b[10;5u":  "\x0a", // Ctrl+J (control-char form)
-		"\x1b[115;5u": "\x13", // Ctrl+S — steer
-		"\x1b[97;5u":  "\x01", // Ctrl+A — home
-		"\x1b[101;5u": "\x05", // Ctrl+E — end
-		"\x1b[119;5u": "\x17", // Ctrl+W — delete word
+		"\x1b[115;5u": "\x13", // Ctrl+S - steer
+		"\x1b[97;5u":  "\x01", // Ctrl+A - home
+		"\x1b[101;5u": "\x05", // Ctrl+E - end
+		"\x1b[119;5u": "\x17", // Ctrl+W - delete word
 
 		// Real ghostty sequences with NumLock active (modifier 133 = 1+Ctrl+NumLock):
 		// the lock bit must be ignored so these still resolve to control bytes.

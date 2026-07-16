@@ -372,7 +372,7 @@ func TestHandleBashCommand_RejectsWhileRunning(t *testing.T) {
 // TestHandleBashCommand_TripleBangStripsAllBangs guards against a regression
 // (found via real interactive testing) where three or more leading "!"
 // characters only had two stripped, leaving a literal "!" glued onto the
-// front of the command — bash then choked on it as a history-expansion
+// front of the command - bash then choked on it as a history-expansion
 // token and the command failed instead of running.
 func TestHandleBashCommand_TripleBangStripsAllBangs(t *testing.T) {
 	c, rt := newTestChat(t)
@@ -429,7 +429,7 @@ func TestHandleBashCommand_EmptyCommandIsNoop(t *testing.T) {
 
 // TestCurrentInputMode covers every case the resolver must handle: bash
 // mode ("!"/"!!"), an agent command with a configured color ("/plan"), a
-// plain non-agent slash command (no mode — one-shot action, not an
+// plain non-agent slash command (no mode - one-shot action, not an
 // operating mode), and plain text (no mode).
 func TestCurrentInputMode(t *testing.T) {
 	cases := []struct {

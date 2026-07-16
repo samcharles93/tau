@@ -125,7 +125,7 @@ func Install(ctx context.Context, client *registry.Client, id, version string) (
 
 	// Signal running tau to reload.
 	if err := signalReload(); err != nil {
-		// Non-fatal — user can restart tau.
+		// Non-fatal - user can restart tau.
 		fmt.Printf("  ⚠ could not signal reload: %v\n", err)
 	} else {
 		fmt.Println("  ✓ plugins reloaded")
@@ -151,7 +151,7 @@ func Uninstall(id string) error {
 
 	// Signal running tau to reload.
 	if err := signalReload(); err != nil {
-		// Non-fatal — user can restart tau.
+		// Non-fatal - user can restart tau.
 		fmt.Printf("  ⚠ could not signal reload: %v\n", err)
 	}
 	return nil
@@ -369,7 +369,7 @@ func extractBinary(archivePath, pluginName string) (string, error) {
 	case strings.HasSuffix(lower, ".zip"):
 		return extractZip(archivePath, pluginName)
 	default:
-		// Raw binary — rename to plugin name.
+		// Raw binary - rename to plugin name.
 		return archivePath, nil
 	}
 }

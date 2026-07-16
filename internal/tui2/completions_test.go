@@ -14,7 +14,7 @@ import (
 )
 
 // modelsFor builds a test model with a fixed, deterministic set of available
-// models — argument completion (/model <partial>) is used throughout these
+// models - argument completion (/model <partial>) is used throughout these
 // tests instead of command-name completion because the command table
 // (slashTable) is real global state populated by commands.go's init(), so
 // asserting exact fuzzy-match sets against it would be fragile.
@@ -52,7 +52,7 @@ func TestCompletionRowsFuzzyFiltersLiveAsYouType(t *testing.T) {
 
 func TestCompletionRowsEmptyTokenShowsAllUnfiltered(t *testing.T) {
 	m := modelsFor("aaa", "bbb", "ccc")
-	m.input = "/model " // trailing space — nothing typed for the argument yet
+	m.input = "/model " // trailing space - nothing typed for the argument yet
 
 	rows, token := m.completionRows()
 	if token != "" {
@@ -67,7 +67,7 @@ func TestCompletionRowsEmptyTokenShowsAllUnfiltered(t *testing.T) {
 // compared the alias-prefix token (which retains its leading "/", e.g.
 // "/quit") directly against bare alias strings ("quit"), so
 // strings.HasPrefix(alias, token) could never match once anything had been
-// typed — typing an alias fully (e.g. "/quit", an alias of "/exit") matched
+// typed - typing an alias fully (e.g. "/quit", an alias of "/exit") matched
 // nothing at all and the dropdown went empty, instead of surfacing the
 // alias the same way internal/tui's legacy completions already do (which
 // strips the leading "/" from the token before comparing).
@@ -92,7 +92,7 @@ func TestCompletionRowsMatchTypedOutAlias(t *testing.T) {
 
 // TestCompletionRowsDoNotSurfaceAliasWhileBrowsingByCanonicalName guards the
 // other half of the same fix: typing towards the canonical command name
-// ("/ex") must not also surface every one of its aliases as separate rows —
+// ("/ex") must not also surface every one of its aliases as separate rows -
 // only "/exit" itself should match; "/quit" and "/q" have nothing in common
 // with "ex" and must stay hidden until the user actually types towards them.
 func TestCompletionRowsDoNotSurfaceAliasWhileBrowsingByCanonicalName(t *testing.T) {
@@ -141,7 +141,7 @@ func TestCompletionSelectionResetsWhenTokenChanges(t *testing.T) {
 		t.Fatalf("setup: compSelected = %d, want 2", m.compSelected)
 	}
 
-	// Typing another character changes the token — selection must reset
+	// Typing another character changes the token - selection must reset
 	// rather than keep pointing at whatever now sits at index 2.
 	m.handleKey(charKey('a'))
 	if m.compSelected != 0 {
@@ -154,7 +154,7 @@ func TestCompletionTabExtendsLCPThenAcceptsOnSecondPress(t *testing.T) {
 	m.input = "/model gpt"
 	m.inputCursor = utf8.RuneCountInString(m.input)
 
-	// Only one candidate matches "gpt" — its full word becomes the LCP,
+	// Only one candidate matches "gpt" - its full word becomes the LCP,
 	// which is longer than the typed token, so the first Tab extends
 	// in-place without submitting or adding a trailing space yet.
 	m.handleKey(key(tea.KeyTab, 0))
@@ -163,7 +163,7 @@ func TestCompletionTabExtendsLCPThenAcceptsOnSecondPress(t *testing.T) {
 	}
 
 	// Second Tab: no further LCP extension possible (query already equals
-	// the only match) — this press accepts it, adding the trailing space.
+	// the only match) - this press accepts it, adding the trailing space.
 	m.handleKey(key(tea.KeyTab, 0))
 	if m.input != "/model gpt-4 " {
 		t.Fatalf("second tab: input = %q, want %q (accept with trailing space)", m.input, "/model gpt-4 ")
@@ -173,10 +173,10 @@ func TestCompletionTabExtendsLCPThenAcceptsOnSecondPress(t *testing.T) {
 // TestCompletionEnterOnArgumentValueSubmitsImmediately covers the bug report
 // directly: previously Enter ALWAYS just accepted (filled text + trailing
 // space) and never submitted, no matter what was accepted, so running any
-// command reached via the dropdown took two Enters — one to accept, one
+// command reached via the dropdown took two Enters - one to accept, one
 // (once the now-empty argument slot had no completions left) to actually
-// submit. An argument value like a model ID is a leaf — nothing more is
-// needed — so accepting it must submit in the same keystroke.
+// submit. An argument value like a model ID is a leaf - nothing more is
+// needed - so accepting it must submit in the same keystroke.
 func TestCompletionEnterOnArgumentValueSubmitsImmediately(t *testing.T) {
 	rt := &fakeRuntime{}
 	m := newTestModel(rt, nil)
@@ -188,7 +188,7 @@ func TestCompletionEnterOnArgumentValueSubmitsImmediately(t *testing.T) {
 	if cmd == nil {
 		t.Fatal("expected a Cmd from submitting /model gpt-4")
 	}
-	// cmdModel returns tea.Batch(setNotification(...), sendCommand(...)) —
+	// cmdModel returns tea.Batch(setNotification(...), sendCommand(...)) -
 	// only execute the sendCommand half. setNotification's Cmd is a bare
 	// multi-second tea.Tick (the notification-clear timer); calling it would
 	// really block for its full duration, which drainCmd's blanket recursion
@@ -200,7 +200,7 @@ func TestCompletionEnterOnArgumentValueSubmitsImmediately(t *testing.T) {
 	batch[1]()
 
 	if m.input != "" {
-		t.Fatalf("input = %q, want empty — a single Enter must accept AND submit a leaf argument value", m.input)
+		t.Fatalf("input = %q, want empty - a single Enter must accept AND submit a leaf argument value", m.input)
 	}
 	if len(rt.sent) == 0 {
 		t.Error("expected the completed /model command to reach the runtime")
@@ -227,7 +227,7 @@ func TestCompletionEnterOnNoArgCommandSubmitsImmediately(t *testing.T) {
 	drainCmd(cmd)
 
 	if m.input != "" {
-		t.Fatalf("input = %q, want empty — a single Enter must submit /reload immediately", m.input)
+		t.Fatalf("input = %q, want empty - a single Enter must submit /reload immediately", m.input)
 	}
 	sentReload := false
 	for _, c := range rt.sent {
@@ -242,7 +242,7 @@ func TestCompletionEnterOnNoArgCommandSubmitsImmediately(t *testing.T) {
 
 // TestCompletionEnterOnRequiredArgCommandDoesNotSubmit is the flip side:
 // /model requires an argument (usage "<id>"), so accepting the bare command
-// name must NOT submit — the command would just be rejected — it should
+// name must NOT submit - the command would just be rejected - it should
 // leave the line open for the argument's own completion to follow.
 func TestCompletionEnterOnRequiredArgCommandDoesNotSubmit(t *testing.T) {
 	rt := &fakeRuntime{}
@@ -257,7 +257,7 @@ func TestCompletionEnterOnRequiredArgCommandDoesNotSubmit(t *testing.T) {
 	m.handleKey(key(tea.KeyEnter, 0))
 
 	if m.input != "/model " {
-		t.Fatalf("input = %q, want %q — a required-argument command must not submit bare", m.input, "/model ")
+		t.Fatalf("input = %q, want %q - a required-argument command must not submit bare", m.input, "/model ")
 	}
 	if len(rt.sent) != 0 {
 		t.Errorf("expected nothing sent yet, got %#v", rt.sent)
@@ -265,7 +265,7 @@ func TestCompletionEnterOnRequiredArgCommandDoesNotSubmit(t *testing.T) {
 }
 
 // completionRowIndex finds word's index in m's current completion rows,
-// failing the test if it isn't present — used so command-name tests don't
+// failing the test if it isn't present - used so command-name tests don't
 // depend on fuzzy-ranking order among the real (and growing) slashTable.
 func completionRowIndex(t *testing.T, m *model, word string) int {
 	t.Helper()
@@ -287,7 +287,7 @@ func TestCompletionEscIsSwallowedWithoutClearingInput(t *testing.T) {
 	m.handleKey(key(tea.KeyEscape, 0))
 
 	if m.input != "/model gpt" {
-		t.Fatalf("input = %q, want unchanged %q — first Esc must not clear input while the dropdown is open", m.input, "/model gpt")
+		t.Fatalf("input = %q, want unchanged %q - first Esc must not clear input while the dropdown is open", m.input, "/model gpt")
 	}
 	if _, handled := m.handleCompletionKey(key(tea.KeyUp, 0)); handled {
 		t.Error("expected the dropdown to stay dismissed for the same token after Esc")
@@ -303,7 +303,7 @@ func TestCompletionSecondEscClearsInput(t *testing.T) {
 	m.handleKey(key(tea.KeyEscape, 0)) // second Esc: dropdown already hidden, clears input
 
 	if m.input != "" {
-		t.Fatalf("input = %q, want empty — second Esc must clear input once the dropdown is hidden", m.input)
+		t.Fatalf("input = %q, want empty - second Esc must clear input once the dropdown is hidden", m.input)
 	}
 }
 
@@ -313,7 +313,7 @@ func TestCompletionDismissalResetsWhenTokenChanges(t *testing.T) {
 	m.inputCursor = utf8.RuneCountInString(m.input)
 
 	m.handleKey(key(tea.KeyEscape, 0)) // hides dropdown for token "gpt"
-	m.input = "/model gpt-"            // simulate further typing — token changes
+	m.input = "/model gpt-"            // simulate further typing - token changes
 	m.inputCursor = utf8.RuneCountInString(m.input)
 
 	if _, handled := m.handleCompletionKey(key(tea.KeyUp, 0)); !handled {
@@ -323,7 +323,7 @@ func TestCompletionDismissalResetsWhenTokenChanges(t *testing.T) {
 
 func TestCompletionDropdownDoesNotInterceptWhenNotApplicable(t *testing.T) {
 	m := newTestModel(&fakeRuntime{}, nil)
-	m.input = "hello world" // not a slash command — no completions apply
+	m.input = "hello world" // not a slash command - no completions apply
 
 	if _, handled := m.handleCompletionKey(key(tea.KeyUp, 0)); handled {
 		t.Error("expected the completions dropdown to decline when input isn't a slash command")
@@ -359,7 +359,7 @@ func TestRenderCompletionsShowsChevronOnSelectedRowOnly(t *testing.T) {
 //
 // Reported bug: accepting a model via Tab left the dropdown open for the
 // (nonexistent) second argument, so pressing Tab again just re-accepted the
-// top-ranked model onto the end again — "/model gpt-4 gpt-4 gpt-4 ...".
+// top-ranked model onto the end again - "/model gpt-4 gpt-4 gpt-4 ...".
 // modelCompletions (and effortCompletions/providerCompletions) now gate on
 // argsBefore, matching sessionCompletions' existing pattern.
 
@@ -392,7 +392,7 @@ func TestRepeatedTabDoesNotDuplicateAcceptedModel(t *testing.T) {
 		t.Fatalf("after second tab: input = %q, want %q", m.input, "/model gpt-4 ")
 	}
 
-	// Third Tab: trailing space means no token to complete — no-op.
+	// Third Tab: trailing space means no token to complete - no-op.
 	m.handleKey(key(tea.KeyTab, 0))
 	if m.input != "/model gpt-4 " {
 		t.Fatalf("after third tab: input = %q, want unchanged %q (must not duplicate)", m.input, "/model gpt-4 ")
@@ -425,7 +425,7 @@ func TestEmptyTokenPreservesGroupOrderWithoutFragmenting(t *testing.T) {
 	m.input = "/"
 
 	rows, token := m.completionRows()
-	// A bare "/" is the command-prefix marker, not a real query — it must
+	// A bare "/" is the command-prefix marker, not a real query - it must
 	// resolve to an empty token, same as no input at all. Getting this
 	// wrong is exactly what caused the fragmentation this test guards
 	// against: a non-empty "/" token ties every candidate at the same
@@ -441,14 +441,14 @@ func TestEmptyTokenPreservesGroupOrderWithoutFragmenting(t *testing.T) {
 	// Walk the rows and count how many times the group changes. Since real
 	// candidates are grouped as Commands, then Agents, then Extensions (see
 	// commandGroups), a properly-preserved order changes group at most
-	// twice — Commands→Agents and Agents→Extensions — never back again.
+	// twice - Commands→Agents and Agents→Extensions - never back again.
 	transitions := 0
 	seen := map[string]bool{}
 	last := ""
 	for _, r := range rows {
 		if r.group != last {
 			if seen[r.group] {
-				t.Fatalf("group %q reappeared non-contiguously — groups are fragmented:\n%+v", r.group, rows)
+				t.Fatalf("group %q reappeared non-contiguously - groups are fragmented:\n%+v", r.group, rows)
 			}
 			seen[r.group] = true
 			transitions++
@@ -598,7 +598,7 @@ func TestRawCandidateGroupsSessionArgCompletions(t *testing.T) {
 //
 // Reported bug: in a fresh TUI process, m.sessionSummaries starts empty and
 // was only ever populated as a side effect of an explicit "/session" or
-// "/resume" submission — so the very first time a user typed "/session "
+// "/resume" submission - so the very first time a user typed "/session "
 // and tab-completed, the dropdown had nothing to show. maybePrefetchSessions
 // now fires a silent background fetch the first time the completer finds
 // the cache empty.
@@ -772,7 +772,7 @@ func TestRawCandidateGroupsProviderNoArg(t *testing.T) {
 	m.input = "/provider"
 
 	groups := m.rawCandidateGroups()
-	// Still typing the command name — should show command groups.
+	// Still typing the command name - should show command groups.
 	if groups == nil {
 		t.Fatalf("expected command groups while typing /provider")
 	}
@@ -908,7 +908,7 @@ func TestRenderCompletionsScrollingWindow(t *testing.T) {
 		}
 	}
 
-	// Selected at index 15 — the window should scroll to show it.
+	// Selected at index 15 - the window should scroll to show it.
 	out := renderCompletions(rows, 15, 80)
 	plain := stripANSI(out)
 	if !strings.Contains(plain, "model-15") {
@@ -918,7 +918,7 @@ func TestRenderCompletionsScrollingWindow(t *testing.T) {
 		t.Logf("no 'up more' indicator, but that's OK if window starts near top")
 	}
 	if !strings.Contains(plain, "↓") {
-		t.Logf("no 'down more' indicator — possible if window covers everything")
+		t.Logf("no 'down more' indicator - possible if window covers everything")
 	}
 }
 
@@ -1086,7 +1086,7 @@ func TestRenderCompletionsSelectionOutOfBounds(t *testing.T) {
 		{compMatch: compMatch{Word: "aaa"}, group: "G"},
 		{compMatch: compMatch{Word: "bbb"}, group: "G"},
 	}
-	// Selected index 10 is out of bounds — should clamp to last row.
+	// Selected index 10 is out of bounds - should clamp to last row.
 	out := stripANSI(renderCompletions(rows, 10, 80))
 	if !strings.Contains(out, "bbb") {
 		t.Fatalf("expected to render last row when selection out of bounds:\n%s", out)
@@ -1112,7 +1112,7 @@ func TestCompletionTabAcceptsWhenTokenEqualsLCP(t *testing.T) {
 	m.input = "/model gpt-4"
 	m.inputCursor = utf8.RuneCountInString(m.input)
 
-	// LCP = "gpt-4", same as token — Tab should accept (add trailing space).
+	// LCP = "gpt-4", same as token - Tab should accept (add trailing space).
 	m.handleKey(key(tea.KeyTab, 0))
 	if m.input != "/model gpt-4 " {
 		t.Fatalf("after tab: input = %q, want %q (trailing space after acceptance)", m.input, "/model gpt-4 ")
@@ -1124,7 +1124,7 @@ func TestCompletionTabExtendsLCPWithMultipleCandidates(t *testing.T) {
 	m.input = "/model gpt"
 	m.inputCursor = utf8.RuneCountInString(m.input)
 
-	// LCP should be "gpt-4" — common prefix doesn't reach past the dash variant.
+	// LCP should be "gpt-4" - common prefix doesn't reach past the dash variant.
 	m.handleKey(key(tea.KeyTab, 0))
 	if !strings.HasPrefix(m.input, "/model gpt-4") {
 		t.Fatalf("expected tab to extend to common prefix 'gpt-4', got %q", m.input)
@@ -1175,7 +1175,7 @@ func TestHandleCompletionKeyEnterOnProviderDoesNotAutoSubmit(t *testing.T) {
 		t.Fatal("expected Enter to be consumed by the completions dropdown")
 	}
 	if cmd != nil {
-		t.Fatal("expected no Cmd — accepting the bare '/provider' name must not auto-submit")
+		t.Fatal("expected no Cmd - accepting the bare '/provider' name must not auto-submit")
 	}
 	if m.input != "/provider " {
 		t.Fatalf("input = %q, want %q (accepted, not submitted)", m.input, "/provider ")
@@ -1207,6 +1207,6 @@ func TestHandleCompletionKeyEnterOnNoArgCommandAutoSubmits(t *testing.T) {
 		t.Fatal("expected Enter to be consumed by the completions dropdown")
 	}
 	if cmd == nil {
-		t.Fatal("expected a Cmd — a genuinely argument-less command should still auto-submit")
+		t.Fatal("expected a Cmd - a genuinely argument-less command should still auto-submit")
 	}
 }

@@ -13,7 +13,7 @@ import (
 )
 
 // diffViewerWidthFrac and diffViewerHeightFrac size the overlay relative to
-// the terminal — big enough to actually read a diff, small enough to keep
+// the terminal - big enough to actually read a diff, small enough to keep
 // the surrounding chrome visible as context that something is layered on
 // top of it.
 const (
@@ -53,7 +53,7 @@ func (m *model) openDiffViewer(t toolState) tea.Cmd {
 
 // renderUnifiedDiff builds a unified diff between old and new, wraps it in a
 // fenced "diff" code block, and renders it through a glamour renderer
-// memoized for width in m.mdCache — the same cache used for tool-result
+// memoized for width in m.mdCache - the same cache used for tool-result
 // markdown elsewhere (see renderToolBox), lazily created via ensureMDRenderer
 // if this exact width hasn't been requested before.
 func (m *model) renderUnifiedDiff(path, oldContent, newContent string, width int) string {

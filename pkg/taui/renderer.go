@@ -9,7 +9,7 @@ import (
 )
 
 // Config holds user-facing knobs for the TUI engine. It follows tau's
-// configuration pattern — a plain struct with defaults for the zero value.
+// configuration pattern - a plain struct with defaults for the zero value.
 type Config struct {
 	// DefaultToolStyle is the ToolStyle applied to ToolRow components created
 	// via NewToolRow. ToolStyleCombined (the zero value) composes on coloured
@@ -21,7 +21,7 @@ type Config struct {
 	CursorColor [3]uint8
 }
 
-// TUI is the main engine — it owns the component tree, the terminal, and the
+// TUI is the main engine - it owns the component tree, the terminal, and the
 // differential render loop. Ported from Pi's tui.ts TUI class.
 type TUI struct {
 	Container
@@ -33,18 +33,18 @@ type TUI struct {
 
 	// mu guards all render state below. Renders fire from a timer goroutine,
 	// input arrives on the stdin goroutine, and application code (PrintAbove,
-	// RequestRender, Stop) runs on its own goroutines — mu serializes them so
+	// RequestRender, Stop) runs on its own goroutines - mu serializes them so
 	// the frame bookkeeping and terminal writes never interleave.
 	mu sync.Mutex
 
 	// Render state.
 	//
-	// The renderer draws the frame inline — wherever the cursor happens to be,
+	// The renderer draws the frame inline - wherever the cursor happens to be,
 	// never on the alternate screen. After every render the cursor is parked at
 	// the frame's top line (cursorRow=0). This is the resize-safe anchor: from
 	// a known position, \x1b[0J clears the old frame (and any wrapping debris)
 	// to the end of the screen before redrawing. All movement is relative
-	// (CUU/CUD); absolute positioning (\x1b[H) is forbidden — it would jump
+	// (CUU/CUD); absolute positioning (\x1b[H) is forbidden - it would jump
 	// the frame to the top of the viewport.
 	//
 	// Frame lines are truncated to width so one logical line = one physical
@@ -117,7 +117,7 @@ func (t *TUI) SetFocus(c Component) {
 }
 
 // Start begins the render loop and input handling. It is not safe to call
-// multiple times — subsequent calls after the first are no-ops.
+// multiple times - subsequent calls after the first are no-ops.
 func (t *TUI) Start() {
 	t.mu.Lock()
 	if t.started {
@@ -144,7 +144,7 @@ func (t *TUI) Stop() {
 	// Signal the terminal's read loop to exit before we do anything else.
 	// This is safe to call multiple times (idempotent via sync.Once).
 	// For the /exit path (and other programmatic stops) this runs in a
-	// spawned goroutine, but it's the first thing it does — so the window
+	// spawned goroutine, but it's the first thing it does - so the window
 	// between dispatchKey returning and the read loop checking stopCh is
 	// as small as possible. For the Ctrl+C path, dispatchKey calls
 	// SignalStop synchronously before spawning us, so the channel is
@@ -164,7 +164,7 @@ func (t *TUI) Stop() {
 
 	// Move the cursor below the frame so the shell prompt lands after our
 	// content. The cursor is parked at the frame top, so step down to the last
-	// line first, then onto a fresh line — all relative, never absolute.
+	// line first, then onto a fresh line - all relative, never absolute.
 	if n := len(t.prevLines); n > 0 {
 		if n > 1 {
 			t.Terminal.Write(fmt.Sprintf("\x1b[%dB", n-1))
@@ -216,7 +216,7 @@ func (t *TUI) dispatchKey(seq string) {
 	seq = canonicalKey(seq)
 
 	// Focus-in/out reports (CSI ?1004, enabled in ProcessTerminal.Start) aren't
-	// keystrokes — update termFocused and stop rather than forwarding to the
+	// keystrokes - update termFocused and stop rather than forwarding to the
 	// focused component.
 	switch seq {
 	case "\x1b[I":
@@ -284,7 +284,7 @@ func (t *TUI) renderLocked() {
 	// First render, resize, or the frame shrank (component removed lines):
 	// rewrite the whole frame from a known anchor, \x1b[0J clearing debris.
 	// A shrink happens when the input backspaces over a newline and the
-	// wrapped-line count drops — without a full rewrite the orphaned rows
+	// wrapped-line count drops - without a full rewrite the orphaned rows
 	// would linger as ghosted text.
 	if len(t.prevLines) == 0 ||
 		t.prevWidth != width || t.prevHeight != height ||
@@ -293,11 +293,11 @@ func (t *TUI) renderLocked() {
 		return
 	}
 
-	// Differential render — only redraw the changed band of lines.
+	// Differential render - only redraw the changed band of lines.
 	t.diffRender(newLines, width, height)
 }
 
-// fullRewrite redraws every line of the frame from a known anchor — the
+// fullRewrite redraws every line of the frame from a known anchor - the
 // cursor is parked at the frame's top line on entry (and parked back there on
 // exit). On resize, \x1b[0J from the top clears the entire old frame including
 // any reflow/wrapping debris; on first paint it is harmless. Because the
@@ -371,7 +371,7 @@ func (t *TUI) diffRender(newLines []string, width, height int) {
 	buf.WriteString("\x1b[?2026h") // Begin synchronized output
 
 	// Cursor is at the frame top (cursorRow=0). Step down to the first line we
-	// need to touch — all relative, so the frame stays anchored.
+	// need to touch - all relative, so the frame stays anchored.
 	moveTarget := firstChange
 	if appendStart {
 		moveTarget = firstChange - 1
@@ -425,13 +425,13 @@ func (t *TUI) diffRender(newLines []string, width, height int) {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// StreamAbove — write persistent output above the pinned inline frame
+// StreamAbove - write persistent output above the pinned inline frame
 // ─────────────────────────────────────────────────────────────────────────────
 
 // PrintAbove writes a line into the scrollback *above* the inline frame, then
 // redraws the frame beneath it. This is the "stream above a fixed frame"
-// pattern (go-tui's StreamAbove): persistent output — assistant tokens,
-// completed tool summaries — accumulates in history while the live frame stays
+// pattern (go-tui's StreamAbove): persistent output - assistant tokens,
+// completed tool summaries - accumulates in history while the live frame stays
 // pinned at the bottom.
 //
 // It lifts the frame (stepping up relative to the cursor, then clearing from
@@ -490,7 +490,7 @@ func (t *TUI) PrintAboveStyled(format string, args ...any) { t.PrintAboveStyledf
 // mutate the component tree (add/remove children) or any component that is not
 // internally synchronized, so structural changes never race the renderer. fn
 // must not call other TUI methods that take the lock (PrintAbove,
-// RequestRender, Update, Stop) — that would deadlock.
+// RequestRender, Update, Stop) - that would deadlock.
 func (t *TUI) Update(fn func()) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
@@ -507,7 +507,7 @@ func (t *TUI) Update(fn func()) {
 //
 // It exists to make a deadlock unrepresentable: calling PrintAbove (or any
 // lock-taking method) inside an Update closure deadlocks because both take the
-// render lock. Returning the lines instead lets the renderer own the ordering —
+// render lock. Returning the lines instead lets the renderer own the ordering -
 // mutate + repaint under the lock, then commit to scrollback once it's free.
 // Each returned line is printed verbatim, so callers bake in their own styling
 // and trailing newlines.

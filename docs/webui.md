@@ -1,6 +1,7 @@
 # Web UI
 
-The Tau Web UI is a Vue 3 single-page application (SPA) embedded in the Go binary. It provides a browser-based chat interface that mirrors the TUI's functionality using the same command/event contract over a WebSocket.
+The Tau Web UI is a Vue 3 single-page application (SPA) embedded in the Go binary. It provides a browser-based chat
+interface that mirrors the TUI's functionality using the same command/event contract over a WebSocket.
 
 ## Stack
 
@@ -34,7 +35,7 @@ internal/webui/
     │   ├── markdown.ts           # Markdown rendering with sanitization
     │   └── utils.ts              # Utility functions (cn() classnames)
     ├── stores/
-    │   └── session.ts            # Pinia store — session state + event handling
+    │   └── session.ts            # Pinia store - session state + event handling
     ├── composables/
     │   ├── useWebSocket.ts       # WebSocket connection with auto-reconnect
     │   ├── useConnection.ts      # Connection status wrapper
@@ -74,41 +75,41 @@ The `useSessionStore` (`stores/session.ts`) is the single source of truth for al
 
 ### State Fields
 
-| Field | Type | Purpose |
-| ----- | ---- | ------- |
-| `sessionId` | `string` | Current session UUID |
-| `model` | `string` | Active model ID |
-| `provider` | `string` | Active provider name |
-| `providers` | `string[]` | Available provider names |
-| `commands` | `CommandRef[]` | Registry commands for autocomplete |
-| `availableModels` | `ChatModelRef[]` | Models for model selector |
-| `messages` | `DisplayMessage[]` | Rendered message timeline |
-| `notices` | `Notice[]` | Toast notifications |
-| `streaming` | `boolean` | Whether a response is in flight |
-| `activeRequestId` | `string` | Current request ID for cancellation |
-| `status` | `string` | Session status |
-| `parameters` | `ChatParameters` | Current session parameters |
-| `activePrompt` | `InteractivePrompt \| null` | Active confirmation/input dialog |
-| `sessions` | `SessionSummary[]` | Saved session list |
-| `usage` | `ChatUsage` | Token usage for input bar display |
-| `contextWindow` | `number` | Model context window size |
-| `cost` | `ChatCost` | Per-1M-token pricing |
+| Field             | Type                        | Purpose                             |
+| ----------------- | --------------------------- | ----------------------------------- |
+| `sessionId`       | `string`                    | Current session UUID                |
+| `model`           | `string`                    | Active model ID                     |
+| `provider`        | `string`                    | Active provider name                |
+| `providers`       | `string[]`                  | Available provider names            |
+| `commands`        | `CommandRef[]`              | Registry commands for autocomplete  |
+| `availableModels` | `ChatModelRef[]`            | Models for model selector           |
+| `messages`        | `DisplayMessage[]`          | Rendered message timeline           |
+| `notices`         | `Notice[]`                  | Toast notifications                 |
+| `streaming`       | `boolean`                   | Whether a response is in flight     |
+| `activeRequestId` | `string`                    | Current request ID for cancellation |
+| `status`          | `string`                    | Session status                      |
+| `parameters`      | `ChatParameters`            | Current session parameters          |
+| `activePrompt`    | `InteractivePrompt \| null` | Active confirmation/input dialog    |
+| `sessions`        | `SessionSummary[]`          | Saved session list                  |
+| `usage`           | `ChatUsage`                 | Token usage for input bar display   |
+| `contextWindow`   | `number`                    | Model context window size           |
+| `cost`            | `ChatCost`                  | Per-1M-token pricing                |
 
 ### Store Actions
 
-| Action | Purpose |
-| ------ | ------- |
-| `bindSender(fn)` | Bind the WebSocket send function |
-| `apply(msg)` | Reduce a single wire message into store state |
-| `submitPrompt(text)` | Submit user prompt (optimistic render + send) |
-| `cancel()` | Cancel in-flight request |
-| `updateSettings(patch)` | Emit session settings update |
-| `respondPrompt(opts)` | Answer interactive prompt |
-| `listSessions(limit)` | Request session list |
-| `loadSession(id)` | Load a saved session |
-| `deleteSession(id)` | Delete a saved session (optimistic removal) |
-| `exportSession(id, format)` | Export session as JSONL |
-| `dismissNotice(id)` | Remove a toast notification |
+| Action                      | Purpose                                       |
+| --------------------------- | --------------------------------------------- |
+| `bindSender(fn)`            | Bind the WebSocket send function              |
+| `apply(msg)`                | Reduce a single wire message into store state |
+| `submitPrompt(text)`        | Submit user prompt (optimistic render + send) |
+| `cancel()`                  | Cancel in-flight request                      |
+| `updateSettings(patch)`     | Emit session settings update                  |
+| `respondPrompt(opts)`       | Answer interactive prompt                     |
+| `listSessions(limit)`       | Request session list                          |
+| `loadSession(id)`           | Load a saved session                          |
+| `deleteSession(id)`         | Delete a saved session (optimistic removal)   |
+| `exportSession(id, format)` | Export session as JSONL                       |
+| `dismissNotice(id)`         | Remove a toast notification                   |
 
 ### Message Timeline Model
 
@@ -116,27 +117,31 @@ Messages use an ordered `parts[]` array for accurate timeline rendering:
 
 ```typescript
 type MessagePart =
-  | { kind: 'text'; id: string; text: string }
-  | { kind: 'reasoning'; id: string; text: string }
-  | { kind: 'tool'; id: string; tool: ToolCall }
+  | { kind: "text"; id: string; text: string }
+  | { kind: "reasoning"; id: string; text: string }
+  | { kind: "tool"; id: string; tool: ToolCall };
 
 interface DisplayMessage {
-  id: string
-  role: 'user' | 'assistant'
-  parts: MessagePart[]
-  streaming: boolean
+  id: string;
+  role: "user" | "assistant";
+  parts: MessagePart[];
+  streaming: boolean;
 }
 ```
 
-This preserves the model's actual order (reason → call tools → read results → answer) rather than collapsing everything into fixed buckets.
+This preserves the model's actual order (reason → call tools → read results → answer) rather than collapsing everything
+into fixed buckets.
 
 ### Session Hydration
 
-When a browser connects mid-session, the bridge replays the most recent `ChatSessionSnapshotEvent`. The store's `absorbState()` function checks if `messages` is empty (fresh connect) or if `pendingResync` is set (reconnect) and rebuilds the message timeline from the snapshot's `state.messages` history.
+When a browser connects mid-session, the bridge replays the most recent `ChatSessionSnapshotEvent`. The store's
+`absorbState()` function checks if `messages` is empty (fresh connect) or if `pendingResync` is set (reconnect) and
+rebuilds the message timeline from the snapshot's `state.messages` history.
 
 ### Reconnect Recovery
 
 On WebSocket reconnection:
+
 1. A second `init` message sets `pendingResync = true`.
 2. The next `ChatSessionSnapshotEvent` triggers a full state rebuild via `absorbState()`.
 3. This recovers any events missed while disconnected.
@@ -167,6 +172,7 @@ Auto-scrolls the chat container to the bottom when new messages arrive. Pauses a
 ### ChatMessage
 
 Renders a single message in the timeline:
+
 - **User messages:** Right-aligned with a user avatar, plain text content.
 - **Assistant messages:** Left-aligned with an assistant avatar. Renders `parts[]` in order:
   - `reasoning` parts → `ReasoningPanel` (collapsible, dimmed)
@@ -177,6 +183,7 @@ Renders a single message in the timeline:
 ### ChatInput
 
 Auto-growing textarea:
+
 - Enter submits; Shift+Enter inserts newline.
 - Model selector dropdown and usage indicator above the input.
 - Stop button visible while streaming.
@@ -185,6 +192,7 @@ Auto-growing textarea:
 ### ToolCard
 
 Expandable card showing a single tool call:
+
 - **Header:** Tool name + status badge (running/spinning, ok/check, error/x).
 - **Collapsed:** Truncated arguments summary.
 - **Expanded:** Full arguments, live output stream, result summary.
@@ -193,12 +201,14 @@ Expandable card showing a single tool call:
 ### ToolGroup
 
 Collapsible group wrapping all tool calls from a single turn:
+
 - Header: "N tools" with expand/collapse toggle.
 - Children: `ToolCard` instances.
 
 ### ReasoningPanel
 
 Collapsible panel for reasoning content:
+
 - Header: "Reasoning" with expand/collapse toggle.
 - Body: Rendered markdown in dimmed text.
 - Auto-expands while streaming; collapsible once complete.
@@ -206,6 +216,7 @@ Collapsible panel for reasoning content:
 ### SettingsDrawer
 
 Slide-out drawer with session settings:
+
 - Model selector (dropdown with all available models, grouped by provider).
 - Temperature slider (0.0–2.0).
 - Max tokens input.
@@ -215,6 +226,7 @@ Slide-out drawer with session settings:
 ### InteractivePromptDialog
 
 Modal dialog for tool confirmations and input:
+
 - `confirm` kind: Title + message + Confirm/Cancel buttons.
 - `question` kind: Title + message + text input + Submit/Cancel buttons.
 - Response sent as `RespondInteractivePromptCommand`.
@@ -222,6 +234,7 @@ Modal dialog for tool confirmations and input:
 ### SessionSwitcher
 
 Sidebar for session management:
+
 - Lists saved sessions with model, message count, date.
 - Load, delete, and export actions per session.
 - Refresh button to reload the list.
@@ -229,6 +242,7 @@ Sidebar for session management:
 ### StatusBar
 
 Bottom bar showing:
+
 - Connected provider and model name.
 - WebSocket connection status indicator (green/yellow/red dot).
 - Copyable localhost URL.
@@ -237,6 +251,7 @@ Bottom bar showing:
 ### ToastContainer
 
 Fixed-position toast container for transient notifications:
+
 - Info/warn/error severity levels with icons.
 - Auto-dismiss after configurable duration.
 - Manual dismiss on click.
@@ -244,6 +259,7 @@ Fixed-position toast container for transient notifications:
 ### UsageIndicator
 
 Compact token usage display:
+
 - Current turn tokens / context window capacity (progress bar).
 - Estimated cost based on model pricing.
 
@@ -312,4 +328,5 @@ cd internal/webui && pnpm dev
 go run ./cmd/tau --web --port 9343
 ```
 
-The Vite config proxies `/ws` to the Go server, so hot module replacement works for the Vue app while the WebSocket connects to the real backend.
+The Vite config proxies `/ws` to the Go server, so hot module replacement works for the Vue app while the WebSocket
+connects to the real backend.

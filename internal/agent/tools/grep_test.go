@@ -216,7 +216,7 @@ func TestGrepFallback_ContextDedup(t *testing.T) {
 	// Expected:
 	// line1 (context for first Hello)
 	// Hello (match 1)
-	// line3 (context after first Hello + context before second Hello — dedup)
+	// line3 (context after first Hello + context before second Hello - dedup)
 	// Hello (match 2)
 	// line5 (context after second Hello)
 	// Total unique lines: 5

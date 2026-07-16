@@ -196,7 +196,7 @@ func TestCoordinatorSteeringInjection(t *testing.T) {
 	close(steerSent)
 
 	// Poll until the steering message shows up in the streamer's last-seen
-	// messages instead of sleeping a fixed guess — a fixed sleep is a race
+	// messages instead of sleeping a fixed guess - a fixed sleep is a race
 	// against however long the turn loop actually takes on the machine
 	// running the test, and was observed flaking under CI's slower/more
 	// contended scheduler even though it reliably passed locally.

@@ -52,7 +52,7 @@ const groupedModels = computed(() => {
 // Display label for the current model
 const displayLabel = computed(() => props.modelValue || props.placeholder || 'Select model')
 
-// Bypass reka-ui built-in filtering — we filter in groupedModels computed above
+// Bypass reka-ui built-in filtering - we filter in groupedModels computed above
 function noFilter(items: string[]) {
   return items
 }
@@ -82,7 +82,7 @@ function noFilter(items: string[]) {
     <ComboboxPortal>
       <ComboboxContent
         position="popper"
-        class="bg-popover text-popover-foreground ring-foreground/5 z-50 mt-1 max-h-72 min-w-[var(--reka-combobox-trigger-width)] w-[var(--reka-combobox-trigger-width)] overflow-y-auto rounded-2xl shadow-2xl ring-1 animate-in fade-in-0 zoom-in-95"
+        class="bg-popover text-popover-foreground ring-foreground/5 z-50 mt-1 max-h-72 min-w-(--reka-combobox-trigger-width) w-(--reka-combobox-trigger-width) overflow-y-auto rounded-2xl shadow-2xl ring-1 animate-in fade-in-0 zoom-in-95"
       >
         <ComboboxViewport class="p-1">
           <ComboboxEmpty class="py-6 text-center text-sm text-muted-foreground">
@@ -98,7 +98,7 @@ function noFilter(items: string[]) {
                 v-for="m in items"
                 :key="m.id"
                 :value="m.id"
-                class="focus:bg-accent focus:text-accent-foreground relative flex w-full cursor-default select-none items-center rounded-xl py-2 pl-3 pr-8 text-sm outline-hidden data-[disabled]:pointer-events-none data-[disabled]:opacity-50"
+                class="focus:bg-accent focus:text-accent-foreground relative flex w-full cursor-default select-none items-center rounded-xl py-2 pl-3 pr-8 text-sm outline-hidden data-disabled:pointer-events-none data-disabled:opacity-50"
               >
                 <ComboboxItemIndicator class="absolute right-2 flex size-4 items-center justify-center">
                   <CheckIcon class="size-3.5" />

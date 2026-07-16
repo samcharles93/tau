@@ -91,7 +91,7 @@ func TestKeysAroundPaste(t *testing.T) {
 
 func TestPasteContainingControlBytes(t *testing.T) {
 	// Newlines and other control bytes inside a paste must not be re-segmented
-	// into keys — they belong to the paste payload.
+	// into keys - they belong to the paste payload.
 	keys, pastes := collect("\x1b[200~line1\nline2\tx\x1b[201~")
 	if len(keys) != 0 {
 		t.Errorf("paste content leaked as keys: %q", keys)

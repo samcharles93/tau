@@ -1,16 +1,17 @@
 # Server & Bridge (Web UI Backend)
 
-The Web UI backend consists of two packages: `internal/server` (HTTP server) and `internal/bridge` (WebSocket fan-out bridge). Together they serve the embedded SPA and relay commands/events between the browser and the coordinator.
+The Web UI backend consists of two packages: `internal/server` (HTTP server) and `internal/bridge` (WebSocket fan-out
+bridge). Together they serve the embedded SPA and relay commands/events between the browser and the coordinator.
 
 ## Package: `internal/server`
 
 The HTTP server binds to `127.0.0.1` and serves three routes:
 
-| Route | Method | Purpose |
-| ----- | ------ | ------- |
-| `/` | GET | Serves the embedded SPA with SPA fallback (all non-`/ws`/`/health` routes serve `index.html`) |
-| `/ws` | GET | Upgrades to WebSocket, hands connection to the bridge |
-| `/health` | GET | Returns `{ "ok": true, "clients": 0 }` JSON |
+| Route     | Method | Purpose                                                                                       |
+| --------- | ------ | --------------------------------------------------------------------------------------------- |
+| `/`       | GET    | Serves the embedded SPA with SPA fallback (all non-`/ws`/`/health` routes serve `index.html`) |
+| `/ws`     | GET    | Upgrades to WebSocket, hands connection to the bridge                                         |
+| `/health` | GET    | Returns `{ "ok": true, "clients": 0 }` JSON                                                   |
 
 ### Server Struct
 
@@ -26,12 +27,14 @@ type Server struct {
 
 ### Server Lifecycle
 
-1. **`New(addr, bridge, spa, logger)`** — Creates the server.
-2. **`Start(ctx)`** — Binds the listener, starts serving in a background goroutine, returns the bound address. Listens for `ctx.Done()` to trigger graceful shutdown.
-3. **`Wait()`** — Blocks until the server has fully shut down.
-4. **`URL()`** — Returns the reachable HTTP URL (e.g., `http://127.0.0.1:9343`).
+1. **`New(addr, bridge, spa, logger)`** - Creates the server.
+2. **`Start(ctx)`** - Binds the listener, starts serving in a background goroutine, returns the bound address. Listens
+   for `ctx.Done()` to trigger graceful shutdown.
+3. **`Wait()`** - Blocks until the server has fully shut down.
+4. **`URL()`** - Returns the reachable HTTP URL (e.g., `http://127.0.0.1:9343`).
 
 Graceful shutdown sequence:
+
 1. `ctx` is cancelled (via `webCancel` from the app layer).
 2. `httpSrv.Shutdown(5s timeout)` stops accepting new connections and drains existing ones.
 3. `bridge.Close()` disconnects all WebSocket clients and unsubscribes from the event bus.
@@ -54,7 +57,9 @@ type Bridge interface {
 
 ## Package: `internal/bridge`
 
-The bridge is the WebSocket ↔ event bus adapter. It subscribes to `ChatEvent` on the event bus and fans out every event to all connected WebSocket clients. It also accepts WebSocket messages, unmarshals them into `ChatCommand` values, and forwards them to the coordinator.
+The bridge is the WebSocket ↔ event bus adapter. It subscribes to `ChatEvent` on the event bus and fans out every event
+to all connected WebSocket clients. It also accepts WebSocket messages, unmarshals them into `ChatCommand` values, and
+forwards them to the coordinator.
 
 ### Bridge Struct
 
@@ -100,15 +105,16 @@ The `Models` and `Providers` fields enable rich model selection and cross-provid
 
 ### Connection Lifecycle
 
-1. **`NewBridge(runtime, bus, init, logger)`** — Creates the bridge, subscribes to `ChatEvent` on the bus, starts the `broadcastLoop()` goroutine.
-2. **`UpgradeHTTP(w, r)`** — Handles a WebSocket upgrade request:
+1. **`NewBridge(runtime, bus, init, logger)`** - Creates the bridge, subscribes to `ChatEvent` on the bus, starts the
+   `broadcastLoop()` goroutine.
+2. **`UpgradeHTTP(w, r)`** - Handles a WebSocket upgrade request:
    - Upgrades HTTP to WebSocket via `gorilla/websocket`.
    - Creates a `client` with a buffered send channel (64 messages).
    - Sends the `init` message immediately.
    - Replays the cached `lastSnapshot` so the client sees existing history.
    - Enters `readLoop()` to process incoming messages.
    - On return (connection closed), removes the client.
-3. **`Close()`** — Closes all client connections, unsubscribes from the bus, waits for goroutines.
+3. **`Close()`** - Closes all client connections, unsubscribes from the bus, waits for goroutines.
 
 ### Client Model
 
@@ -123,9 +129,12 @@ type client struct {
 }
 ```
 
-- **`readLoop()`** — Reads text messages from the WebSocket, unmarshals them as `ChatCommand`, and calls `runtime.Send(cmd)`. Handles pong frames for keepalive (60s read deadline). On error, returns and the client is removed.
-- **`writeLoop()`** — Reads from the `send` channel and writes to the WebSocket. Sends ping frames every 30 seconds for keepalive. Closes the WebSocket when the channel is closed or the bridge is done.
-- **`close()`** — Closes the send channel once (via `sync.Once`).
+- **`readLoop()`** - Reads text messages from the WebSocket, unmarshals them as `ChatCommand`, and calls
+  `runtime.Send(cmd)`. Handles pong frames for keepalive (60s read deadline). On error, returns and the client is
+  removed.
+- **`writeLoop()`** - Reads from the `send` channel and writes to the WebSocket. Sends ping frames every 30 seconds for
+  keepalive. Closes the WebSocket when the channel is closed or the bridge is done.
+- **`close()`** - Closes the send channel once (via `sync.Once`).
 
 ### Event Broadcast
 
@@ -134,7 +143,8 @@ The `broadcastLoop()` goroutine:
 1. Receives `ChatEvent` from the bus subscriber.
 2. Marshals the event to a JSON envelope via `MarshalEvent()`.
 3. If the event is a `ChatSessionSnapshotEvent`, caches it in `lastSnapshot` for replay to new clients.
-4. Fans out the marshalled data to all connected clients' send channels (non-blocking — slow clients are warned and dropped).
+4. Fans out the marshalled data to all connected clients' send channels (non-blocking - slow clients are warned and
+   dropped).
 
 ### Wire Format
 
@@ -148,10 +158,12 @@ type Envelope struct {
 ```
 
 **Event serialization** (`MarshalEvent`):
+
 - The event value is first marshalled to JSON as the payload.
 - The payload is wrapped in an envelope with the event's concrete type name (e.g., `"ChatResponseDeltaEvent"`).
 
 **Command deserialization** (`UnmarshalCommand`):
+
 - The envelope is parsed to extract the `type` field.
 - A switch on the type name unmarshals the payload into the corresponding concrete command struct.
 
@@ -159,11 +171,19 @@ type Envelope struct {
 
 The `eventTypeName()` function maps concrete event types to wire names via a type switch. Supported event types:
 
-`ChatSessionSnapshotEvent`, `ChatResponseStartedEvent`, `ChatResponseDeltaEvent`, `ChatReasoningDeltaEvent`, `ChatToolCallDeltaEvent`, `ChatToolExecutionStartedEvent`, `ChatToolOutputEvent`, `ChatToolExecutionCompletedEvent`, `ChatResponseCompletedEvent`, `ChatResponseCancelledEvent`, `ChatRuntimeErrorEvent`, `ChatNotificationEvent`, `ExtensionsReloadedEvent`, `ExtensionCommandsChangedEvent`, `ExtensionCommandResultEvent`, `InteractivePromptRequestedEvent`, `SessionsListedEvent`, `SessionLoadedEvent`, `SessionDeletedEvent`, `SessionExportedEvent`, `CommandsChangedEvent`.
+`ChatSessionSnapshotEvent`, `ChatResponseStartedEvent`, `ChatResponseDeltaEvent`, `ChatReasoningDeltaEvent`,
+`ChatToolCallDeltaEvent`, `ChatToolExecutionStartedEvent`, `ChatToolOutputEvent`, `ChatToolExecutionCompletedEvent`,
+`ChatResponseCompletedEvent`, `ChatResponseCancelledEvent`, `ChatRuntimeErrorEvent`, `ChatNotificationEvent`,
+`ExtensionsReloadedEvent`, `ExtensionCommandsChangedEvent`, `ExtensionCommandResultEvent`,
+`InteractivePromptRequestedEvent`, `SessionsListedEvent`, `SessionLoadedEvent`, `SessionDeletedEvent`,
+`SessionExportedEvent`, `CommandsChangedEvent`.
 
 ### Command Type Names
 
-`unmarshalCommandPayload()` handles: `StartChatSessionCommand`, `SubmitChatPromptCommand`, `SteerChatPromptCommand`, `UpdateChatSessionCommand`, `CancelChatRequestCommand`, `ResetChatSessionCommand`, `CloseChatSessionCommand`, `ReloadExtensionsCommand`, `RunExtensionCommandCommand`, `RespondInteractivePromptCommand`, `ListSessionsCommand`, `LoadSessionCommand`, `DeleteSessionCommand`, `ExportSessionCommand`.
+`unmarshalCommandPayload()` handles: `StartChatSessionCommand`, `SubmitChatPromptCommand`, `SteerChatPromptCommand`,
+`UpdateChatSessionCommand`, `CancelChatRequestCommand`, `ResetChatSessionCommand`, `CloseChatSessionCommand`,
+`ReloadExtensionsCommand`, `RunExtensionCommandCommand`, `RespondInteractivePromptCommand`, `ListSessionsCommand`,
+`LoadSessionCommand`, `DeleteSessionCommand`, `ExportSessionCommand`.
 
 ## App Integration
 
@@ -183,6 +203,7 @@ func startWebUI(
 ```
 
 The function:
+
 1. Creates the bridge with `InitInfo` including available models, providers, and commands.
 2. Picks the bind address (`127.0.0.1:<port>`).
 3. Creates and starts the server with the embedded SPA handler.

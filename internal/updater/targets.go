@@ -10,7 +10,7 @@ import (
 //
 // This is the single source of truth for the platform matrix. install.sh
 // and install.ps1 can't import it directly (they run before Go is on the
-// machine), so they mirror it inline — keep those in sync by hand whenever
+// machine), so they mirror it inline - keep those in sync by hand whenever
 // this list changes.
 type Target struct {
 	OS   string

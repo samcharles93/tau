@@ -21,7 +21,7 @@ func setProcessGroup(cmd *exec.Cmd) {
 // Windows. Windows has no POSIX-style negative-pid group signal; the spec's
 // documented fallback is TerminateProcess (GenerateConsoleCtrlEvent would
 // require additional job-object/console plumbing this doesn't set up), so
-// descendants spawned by the child are not guaranteed to receive this —
+// descendants spawned by the child are not guaranteed to receive this -
 // a known platform limitation, not an oversight.
 func signalProcessGroup(cmd *exec.Cmd, _ syscall.Signal) error {
 	if cmd.Process == nil {

@@ -56,9 +56,9 @@ func TestPaletteTypingNarrowsRowsAndSupportsWordDelete(t *testing.T) {
 
 	// Ctrl+Backspace (delete word before cursor) falls through to the exact
 	// same input-editing path the main input box uses (deleteWordBeforeCursor,
-	// input.go) — the whole point of driving the palette off m.input
+	// input.go) - the whole point of driving the palette off m.input
 	// directly. "/" isn't its own word boundary there (only space/newline
-	// are, see wordLeft), so this deletes the whole "/clear" in one go —
+	// are, see wordLeft), so this deletes the whole "/clear" in one go -
 	// same as it always has for the main input box.
 	m.dispatchKey(key(tea.KeyBackspace, tea.ModCtrl))
 	if m.input != "" {
@@ -177,7 +177,7 @@ func TestCtrlLWhileCommandPaletteOpenSwitchesToModels(t *testing.T) {
 	}
 
 	// Regression: Ctrl+L must switch straight to the model picker even
-	// though the command palette is already open — it must not get
+	// though the command palette is already open - it must not get
 	// swallowed as a keystroke by whatever's currently showing.
 	m.dispatchKey(key('l', tea.ModCtrl))
 	if m.input != "/model " {

@@ -21,7 +21,7 @@ import (
 )
 
 // headerIdle is the header text when no turn is running. It is intentionally
-// blank — the bottom status line carries the τ tau · model · provider context,
+// blank - the bottom status line carries the τ tau · model · provider context,
 // and the header slot is reused to show the working indicator during a turn.
 const headerIdle = ""
 
@@ -38,7 +38,7 @@ type activeToolBox struct {
 
 // toolTailLines is how many trailing lines of streamed tool output stay
 // visible in a running tool's box. It collapses away (RemoveChild) once the
-// tool resolves — it's a live peek, not part of the permanent scrollback
+// tool resolves - it's a live peek, not part of the permanent scrollback
 // record the resolved ToolRow line becomes.
 const toolTailLines = 6
 
@@ -55,8 +55,8 @@ type inlineChat struct {
 	status      *taui.Text
 
 	// topDivider/bottomDivider surround the input box. Their mode func (set
-	// once at construction) re-resolves the current input mode — e.g. "!"
-	// bash mode or an active agent command — on every render, so they always
+	// once at construction) re-resolves the current input mode - e.g. "!"
+	// bash mode or an active agent command - on every render, so they always
 	// agree with the leading-trigger coloring in inputEchoStyle without any
 	// push-based update wiring.
 	topDivider, bottomDivider *taui.Divider
@@ -121,7 +121,7 @@ type inlineChat struct {
 	pendingQuit time.Time
 	cancelSent  bool
 
-	// Bash-mode ("!cmd") state. Independent of generating/running — a bash
+	// Bash-mode ("!cmd") state. Independent of generating/running - a bash
 	// command executes outside the LLM turn loop and can run concurrently
 	// with one. bashCallID identifies which activeTools entry (if any)
 	// corresponds to the in-flight bash command, so its completion event can
@@ -234,7 +234,7 @@ func newInlineChat(
 	box.AddChild(c.topDivider)
 	box.AddChild(c.input)
 	box.AddChild(c.completions)
-	// Panels render between the input area and the status bar — same region
+	// Panels render between the input area and the status bar - same region
 	// the completions dropdown occupies, so they push the status line down
 	// when present and let it snap back up when closed, exactly like
 	// completions do. When empty, Container.Render returns nil, so there's
@@ -296,7 +296,7 @@ func (c *inlineChat) spinnerLoop() {
 					}
 				}
 				// Async panel StatusRows tick whenever there are panels
-				// mounted — they persist across turns, even while idle.
+				// mounted - they persist across turns, even while idle.
 				for _, comp := range c.panelsByID {
 					tickPanel(comp)
 				}
@@ -305,7 +305,7 @@ func (c *inlineChat) spinnerLoop() {
 	}
 }
 
-// ticker is the subset of taui.Component that can animate — both ToolRow
+// ticker is the subset of taui.Component that can animate - both ToolRow
 // and StatusRow implement it, and Tick is a no-op once resolved.
 type ticker interface{ Tick() }
 
@@ -359,7 +359,7 @@ func (c *inlineChat) statusLoop() {
 // left (brand · model · provider · effort) and a live-metrics group right-
 // justified to the box's inner width. c.mu is taken once to snapshot fields, then
 // released before touching the usage tracker or currentModelRef (both take their
-// own locks — never nest).
+// own locks - never nest).
 func (c *inlineChat) computeStatus() string {
 	c.mu.Lock()
 	sid := c.sessionID
@@ -564,18 +564,18 @@ func (c *inlineChat) onSubmit(prompt string) {
 // inputEchoStyle paints just the leading trigger character(s) of a slash
 // command ("/") or bash-mode command ("!" / "!!") in an accent colour; the
 // rest of the line (command name and arguments) is left in default styling.
-// Used both for the live input (as each chunk of typed text is painted —
+// Used both for the live input (as each chunk of typed text is painted -
 // only the chunk starting at the very beginning of the line will ever start
 // with a trigger character) and the submitted echo into scrollback.
-// currentInputMode resolves the input's current "mode" — bash ("!"/"!!") or
-// an active agent command (e.g. "/plan") — if any. It is the single source
+// currentInputMode resolves the input's current "mode" - bash ("!"/"!!") or
+// an active agent command (e.g. "/plan") - if any. It is the single source
 // of truth consulted by both inputEchoStyle (leading-trigger coloring) and
 // the dividers surrounding the input box (see topDivider/bottomDivider), so
-// all three always agree without any push-based update wiring — every
+// all three always agree without any push-based update wiring - every
 // render, each just asks "what mode is active right now?"
 //
 // Plain, non-agent slash commands (/model, /help, /session, ...) are
-// intentionally NOT a "mode" — they're one-shot actions, not an operating
+// intentionally NOT a "mode" - they're one-shot actions, not an operating
 // mode change, so they resolve to nil here and keep the default accent.
 func currentInputMode(s string) *taui.InputMode {
 	trimmed := strings.TrimSpace(s)
@@ -597,8 +597,8 @@ func currentInputMode(s string) *taui.InputMode {
 // inputEchoStyle paints the leading trigger character(s) of a slash command
 // ("/") or bash-mode command ("!"/"!!") in an accent colour; the rest of the
 // line is left in default styling. A "/" command that resolves to a
-// configured input mode (see currentInputMode) — an agent command like
-// "/plan" — uses that mode's colour instead of the default accent, so the
+// configured input mode (see currentInputMode) - an agent command like
+// "/plan" - uses that mode's colour instead of the default accent, so the
 // trigger character always matches the surrounding dividers. Used both for
 // live input (SetCommandStyle) and the submitted echo into scrollback.
 func inputEchoStyle(s string) string {
@@ -647,7 +647,7 @@ func (c *inlineChat) startOrQueueTurn(prompt string) {
 }
 
 // onSteer handles Ctrl+S. When idle it's a normal submit. When busy it sends a
-// SteerChatPromptCommand — the coordinator injects it after the next tool call
+// SteerChatPromptCommand - the coordinator injects it after the next tool call
 // completes (still within the same turn), so the agent course-corrects without
 // losing progress.
 func (c *inlineChat) onSteer(prompt string) {
@@ -671,20 +671,20 @@ func (c *inlineChat) onSteer(prompt string) {
 }
 
 // handleBashCommand runs a "!" (or "!!") bash-mode command. Unlike slash
-// commands, this executes outside the LLM turn loop — it can run
-// concurrently with an in-flight chat turn — so it's guarded by its own
+// commands, this executes outside the LLM turn loop - it can run
+// concurrently with an in-flight chat turn - so it's guarded by its own
 // bashRunning flag rather than working/generating. The CallID is generated
 // here (not by the coordinator) so bashCallID can be recorded before the
 // command is even sent, leaving no window where a ChatToolExecutionStartedEvent
 // could arrive before the TUI knows which CallID is "ours."
 func (c *inlineChat) handleBashCommand(trimmed string) {
 	if c.bashRunning.Load() {
-		c.engine.PrintAbove("%s", c.grey("bash command already running — press Esc to cancel"))
+		c.engine.PrintAbove("%s", c.grey("bash command already running - press Esc to cancel"))
 		return
 	}
 
 	exclude := strings.HasPrefix(trimmed, "!!")
-	// Strip every leading "!", not just one or two — e.g. "!!!ls" (three
+	// Strip every leading "!", not just one or two - e.g. "!!!ls" (three
 	// bangs) must not leave a literal "!" glued onto the front of the
 	// command, which bash would otherwise choke on as a history-expansion
 	// token.
@@ -901,9 +901,9 @@ func skillStatusLabel(rawArgs string) string {
 type inlineCtrl struct{ chat *inlineChat }
 
 func (c *inlineCtrl) HandleInput(data string) bool {
-	// The overlay stack tries the active prompt (if any — exclusive, so it
+	// The overlay stack tries the active prompt (if any - exclusive, so it
 	// consumes everything so normal chat input and the quit guard can't leak
-	// through) and then the completions dropdown (soft — only consumes when
+	// through) and then the completions dropdown (soft - only consumes when
 	// it has something to show).
 	if c.chat.overlays.HandleInput(data) {
 		c.chat.engine.RequestRender()
@@ -942,7 +942,7 @@ func (c *inlineCtrl) HandleInput(data string) bool {
 		c.chat.mu.Unlock()
 		return true
 
-	case "\x1b": // Escape — cancel generation if running
+	case "\x1b": // Escape - cancel generation if running
 		if c.chat.generating.Load() {
 			c.chat.cancelTurn()
 			return true
@@ -963,8 +963,8 @@ func (c *inlineCtrl) HandleInput(data string) bool {
 // HandlePaste delivers a bracketed-paste payload following the same
 // precedence as HandleInput: the overlay stack gets first refusal (an active
 // prompt claims it exclusively; completions doesn't implement PasteHandler
-// at all, since it has no text buffer of its own — it reads from
-// c.chat.input — so the stack skips it automatically), otherwise the payload
+// at all, since it has no text buffer of its own - it reads from
+// c.chat.input - so the stack skips it automatically), otherwise the payload
 // lands in the main chat input.
 func (c *inlineCtrl) HandlePaste(content string) bool {
 	if c.chat.overlays.HandlePaste(content) {

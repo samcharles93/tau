@@ -9,8 +9,8 @@ import (
 // feeling robotic while a turn is in flight: a calm dot animation for the
 // working indicator, a compact elapsed-time formatter for tool rows, and
 // the per-state glyphs for tool rows. All of it is driven off the existing
-// 80ms spinner tick (see model.spinnerFrame) — no goroutines, no extra
-// timers — so it composes through Bubbletea's normal Update/View flow.
+// 80ms spinner tick (see model.spinnerFrame) - no goroutines, no extra
+// timers - so it composes through Bubbletea's normal Update/View flow.
 
 // thinkingDotFrames are the three animation frames for the working indicator:
 // a single dot, two dots, three dots, then repeat.
@@ -27,7 +27,7 @@ const thinkingDotFrameTicks = 6
 
 // thinkingDots returns the dot frame for a given spinnerFrame index, advancing
 // every thinkingDotFrameTicks ticks and wrapping through the three frames.
-// Pure and total — safe for any int input, including negative values.
+// Pure and total - safe for any int input, including negative values.
 func thinkingDots(frame int) string {
 	index := frame / thinkingDotFrameTicks
 	n := len(thinkingDotFrames)

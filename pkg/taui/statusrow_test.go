@@ -30,7 +30,7 @@ func TestStatusRowStates(t *testing.T) {
 func TestStatusRowNoDetailOmitsSeparator(t *testing.T) {
 	r := NewStatusRow("label", "", StatusRowNeutral)
 	line := r.Render(80)[0]
-	if strings.Contains(line, "—") {
+	if strings.Contains(line, "-") {
 		t.Errorf("line with no detail should not contain the separator: %q", line)
 	}
 }

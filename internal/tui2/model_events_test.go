@@ -78,7 +78,7 @@ func TestHandleChatEventResponseCompleted(t *testing.T) {
 	m.streaming = "final answer"
 	m.tools = []toolState{{id: "t1", name: "read", status: "done"}}
 	m.inResponse = true
-	m.focused = false // looked away — expect a desktop-notify Cmd
+	m.focused = false // looked away - expect a desktop-notify Cmd
 
 	cmd := m.handleChatEvent(tauchat.ChatResponseCompletedEvent{})
 	if cmd == nil {
@@ -130,7 +130,7 @@ func TestApplySnapshotPreservesCommittedGroupExpandState(t *testing.T) {
 	}
 
 	// A second snapshot (e.g. after the user sends another message) rebuilds
-	// everything from scratch — the group must come back already unfolded.
+	// everything from scratch - the group must come back already unfolded.
 	m.applySnapshot(tauchat.ChatSessionSnapshotEvent{State: tauchat.ChatSessionState{Messages: messages}})
 	if len(m.committedGroups) != 1 {
 		t.Fatalf("expected 1 committed group after second snapshot, got %d", len(m.committedGroups))
@@ -170,7 +170,7 @@ func TestMessageRangesRecordedOnApplySnapshot(t *testing.T) {
 
 // TestMessageRangesRebuiltOnApplySnapshotRerun verifies a second snapshot
 // fully replaces messageRanges rather than appending to stale entries from
-// the first rebuild — mirrors renderedLines' own m.renderedLines[:0] reset.
+// the first rebuild - mirrors renderedLines' own m.renderedLines[:0] reset.
 func TestMessageRangesRebuiltOnApplySnapshotRerun(t *testing.T) {
 	m := newTestModel(&fakeRuntime{}, nil)
 	m.width = 80
@@ -495,7 +495,7 @@ func TestApplySnapshotRebuildsViewport(t *testing.T) {
 
 // TestApplySnapshotUpdatesStaleSessionID guards against a real bug: without
 // updating m.sessionID here, every command sent after /clear, /session <id>,
-// or /resume kept targeting the OLD session — the UI would show the new
+// or /resume kept targeting the OLD session - the UI would show the new
 // session's messages while silently writing into the wrong one server-side.
 func TestApplySnapshotUpdatesStaleSessionID(t *testing.T) {
 	m := newTestModel(&fakeRuntime{}, nil)
@@ -609,11 +609,11 @@ func TestApplySnapshotEmptySessionIDKeepsCurrent(t *testing.T) {
 // TestNotificationWrapsInsteadOfTruncating guards against a real bug: chat
 // runtime errors/notifications were previously squeezed into a single-line
 // status-bar segment that hard-truncated with "…" once the message didn't
-// fit — the notification banner (rendered above the input area) must instead
+// fit - the notification banner (rendered above the input area) must instead
 // wrap across as many lines as it needs.
 // TestNotificationWrapsWithinReservedLines verifies a notification that
 // fits within notifyReservedLines wraps in full (no mid-word ellipsis
-// truncation — the original bug this banner replaced, where a long
+// truncation - the original bug this banner replaced, where a long
 // chat-runtime error got squeezed into a single-line status-bar segment
 // and hard-truncated there).
 func TestNotificationWrapsWithinReservedLines(t *testing.T) {
@@ -641,7 +641,7 @@ func TestNotificationWrapsWithinReservedLines(t *testing.T) {
 // non-empty, so the viewport visibly grew and shrank by that height every
 // time a notification appeared or cleared ("pushing text up and dropping
 // it back down"). The reserved area must now be exactly notifyReservedLines
-// tall regardless of whether there's currently a message — verified here
+// tall regardless of whether there's currently a message - verified here
 // by checking the viewport gets the same height either way.
 func TestNotificationAreaHasFixedHeight(t *testing.T) {
 	m := newTestModel(&fakeRuntime{}, nil)
@@ -756,7 +756,7 @@ func TestClearNotificationGenerationMismatch(t *testing.T) {
 func TestHandleChatEventCommandsChanged(t *testing.T) {
 	m := newTestModel(&fakeRuntime{}, nil)
 
-	// Should be a no-op — not panic, not crash.
+	// Should be a no-op - not panic, not crash.
 	cmd := m.handleChatEvent(tauchat.CommandsChangedEvent{})
 	if cmd != nil {
 		t.Fatal("expected nil Cmd from CommandsChangedEvent")
@@ -823,7 +823,7 @@ func TestAgentStateResponseDeltaTransitionsToStreaming(t *testing.T) {
 
 // TestAgentStateResponseDeltaStreamStartedAtStableAcrossDeltas checks
 // streamStartedAt is set once per turn (on the transition into Streaming),
-// not reset on every subsequent delta — otherwise a live tok/s estimate
+// not reset on every subsequent delta - otherwise a live tok/s estimate
 // would never accumulate enough elapsed time to ever become available.
 func TestAgentStateResponseDeltaStreamStartedAtStableAcrossDeltas(t *testing.T) {
 	m := newTestModel(&fakeRuntime{}, nil)
@@ -878,14 +878,14 @@ func TestAgentStateRuntimeErrorTransitionsToError(t *testing.T) {
 		t.Fatalf("status bar = %q, want 'Error'", plain)
 	}
 	// The message itself belongs to the notification banner/scrollback, not
-	// the status bar — see TestAgentStateRuntimeErrorStatusBarIsJustTheState.
+	// the status bar - see TestAgentStateRuntimeErrorStatusBarIsJustTheState.
 	if strings.Contains(plain, "connection reset by peer") {
 		t.Fatalf("status bar = %q, should not restate the error message", plain)
 	}
 }
 
 // TestAgentStateRuntimeErrorStatusBarIsJustTheState checks the status bar
-// shows only the "Error" state label, not the message itself — the full
+// shows only the "Error" state label, not the message itself - the full
 // message already has a home in the notification banner (persists until
 // dismissed) and scrollback, both on screen at the same time as this bar,
 // so restating it here would just be a third copy of the same text.
@@ -934,7 +934,7 @@ func TestChildTranscriptLoadedEventPopulatesOverlay(t *testing.T) {
 
 // TestChildTranscriptLoadedEventStaleResponseIgnored guards against a race:
 // the user closed the overlay (or reopened it on a different child) before
-// an in-flight load returned — the stale result must not clobber current
+// an in-flight load returned - the stale result must not clobber current
 // state.
 func TestChildTranscriptLoadedEventStaleResponseIgnored(t *testing.T) {
 	m := newTestModel(&fakeRuntime{}, nil)
@@ -957,7 +957,7 @@ func TestChildTranscriptLoadedEventStaleResponseIgnored(t *testing.T) {
 	})
 
 	if !m.childTranscriptViewer.loading {
-		t.Error("expected loading to remain true — the stale event must not have been applied")
+		t.Error("expected loading to remain true - the stale event must not have been applied")
 	}
 	if strings.Contains(m.childTranscriptViewer.viewport.View(), "stale content") {
 		t.Fatal("stale load result must not populate the overlay for a different session")

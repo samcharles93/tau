@@ -91,7 +91,7 @@ func TestDrainChildStderr_CapsTotalCapture(t *testing.T) {
 	// Each line is 100 bytes; write enough lines to exceed the 64KiB cap.
 	// Uses a fake clock that jumps a full rate-limit window forward per
 	// line, so the rate limiter never engages and only the capture cap is
-	// under test — isolating it from TestDrainChildStderr_RateLimitsBurstInOneWindow.
+	// under test - isolating it from TestDrainChildStderr_RateLimitsBurstInOneWindow.
 	line := strings.Repeat("x", 99)
 	var sb strings.Builder
 	lineCount := (stderrMaxCaptureBytes / 100) + 50

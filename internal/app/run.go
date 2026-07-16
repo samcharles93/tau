@@ -112,7 +112,7 @@ func RunChat(ctx context.Context, opts ChatOptions) error {
 	defer bus.Close()
 	logStartupPhase("after-bus", t0)
 
-	// Skills manager — centralises discovery and publishes events on the bus
+	// Skills manager - centralises discovery and publishes events on the bus
 	// so subscribers (TUI, bridge) stay in sync when the catalog changes.
 	skillsMgr := skills.NewManager(bus)
 	defer skillsMgr.Close()
@@ -134,7 +134,7 @@ func RunChat(ctx context.Context, opts ChatOptions) error {
 	}
 	logStartupPhase("after-skills", t0)
 
-	// Build the full system prompt — project context (AGENTS.md) + skill catalog.
+	// Build the full system prompt - project context (AGENTS.md) + skill catalog.
 	// Register built-in tools early to be able to extract their schemas for the prompt;
 	// the real registry in buildCoordinator does this again (idempotent).
 	tmpReg := tools.NewRegistry()
@@ -168,9 +168,9 @@ func RunChat(ctx context.Context, opts ChatOptions) error {
 	// session starts unselected. Point the user at /model (or /provider if
 	// there is nothing to choose from yet).
 	if strings.TrimSpace(model.ID) == "" {
-		hint := "No model selected — use /model to choose one."
+		hint := "No model selected - use /model to choose one."
 		if len(available) == 0 {
-			hint = "No models available — use /provider to enable a provider."
+			hint = "No models available - use /provider to enable a provider."
 		}
 		startupEvents = append(startupEvents, tauchat.ChatNotificationEvent{
 			Message:    hint,
@@ -205,7 +205,7 @@ func RunChat(ctx context.Context, opts ChatOptions) error {
 		}
 
 		// Root-spec override trust gate (G14): only the default bare "tau"
-		// resolution path is subject to implicit project/user discovery —
+		// resolution path is subject to implicit project/user discovery -
 		// an explicit --agent <other-name> is a deliberate user choice, not
 		// a silent override, and is out of scope for this gate. See
 		// docs/specs/agents/01-agent-spec-format.md (Root-spec override
@@ -272,7 +272,7 @@ func RunChat(ctx context.Context, opts ChatOptions) error {
 
 	// OnReady: after the TUI subscribes to bus events, load plugins so the
 	// initial ExtensionCommandsChangedEvent reaches every client (TUI, web).
-	// This is a bus publish so subscribers receive it — the coordinator's Send
+	// This is a bus publish so subscribers receive it - the coordinator's Send
 	// expects ChatCommand, not ChatEvent.
 	eventPub := eventbus.Publish[tauchat.ChatEvent](bus.Client("plugin-onready"))
 	var pluginOnReady func()
@@ -312,7 +312,7 @@ func RunChat(ctx context.Context, opts ChatOptions) error {
 	}
 
 	// StartChatSessionCommand/LoadSessionCommand are sent from chatSessionOnReady
-	// (below, run via TUIConfig.OnReady) rather than eagerly here — Coordinator.Send
+	// (below, run via TUIConfig.OnReady) rather than eagerly here - Coordinator.Send
 	// just enqueues onto an internal channel processed by a background goroutine, so
 	// sending immediately races the TUI's own bus subscription (which happens inside
 	// tui.Run, called well after this point). On --resume this race is real and
@@ -322,7 +322,7 @@ func RunChat(ctx context.Context, opts ChatOptions) error {
 	// to OnReady mirrors pluginOnReady's identical fix for the identical race.
 	//
 	// Because OnReady has no error return, a failed Send() here can no longer abort
-	// startup the way an eager Send() could — surfaced as a notification instead,
+	// startup the way an eager Send() could - surfaced as a notification instead,
 	// same as pluginOnReady's own failure handling below.
 	resumeSummary := "" // printed on exit
 	var chatSessionOnReady func()
@@ -335,7 +335,7 @@ func RunChat(ctx context.Context, opts ChatOptions) error {
 			}
 			resumeID = summaries[0].ID
 		}
-		// No RuntimeSessionConfig — there is no live template session
+		// No RuntimeSessionConfig - there is no live template session
 		// to merge runtime config from before the coordinator starts.
 		loaded, lErr := sessionManager.Load(ctx, resumeID, nil)
 		if lErr != nil {
@@ -422,7 +422,7 @@ func RunChat(ctx context.Context, opts ChatOptions) error {
 	}
 
 	// Start the chat session (and load its history, on --resume) before
-	// loading plugins — both run only once the TUI has subscribed to bus
+	// loading plugins - both run only once the TUI has subscribed to bus
 	// events (see chatSessionOnReady's own comment for why).
 	onReady := func() {
 		chatSessionOnReady()

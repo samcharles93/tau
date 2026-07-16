@@ -78,7 +78,7 @@ func sendCommand(runtime tauchat.ChatRuntime, cmd tauchat.ChatCommand) tea.Cmd {
 }
 
 // sendBashCommand sends a RunBashCommand and delivers the result as a
-// bashSendResultMsg — kept distinct from sendResultMsg so a failed send can
+// bashSendResultMsg - kept distinct from sendResultMsg so a failed send can
 // clear bashRunning/bashCallID specifically, without misreading an unrelated
 // in-flight chat turn as failed (or vice versa).
 func sendBashCommand(runtime tauchat.ChatRuntime, cmd tauchat.RunBashCommand) tea.Cmd {

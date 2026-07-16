@@ -37,7 +37,7 @@ func TestSQLiteStore_SaveAndGetAgentInstance(t *testing.T) {
 
 // TestSQLiteStore_SaveAgentInstance_DuplicateIDIsUniqueConstraintError
 // verifies that an instance-ID collision on SaveAgentInstance is classified
-// by IsUniqueConstraintError — this is what callers (saveInstanceWithIDRetry
+// by IsUniqueConstraintError - this is what callers (saveInstanceWithIDRetry
 // in internal/agent/tools, Instantiate in internal/agent) rely on to decide
 // "retry with a fresh ID" vs. "genuine failure" (G3/G10: instance ID
 // collision retry).
@@ -58,7 +58,7 @@ func TestSQLiteStore_SaveAgentInstance_DuplicateIDIsUniqueConstraintError(t *tes
 }
 
 // TestSQLiteStore_ResumeSession_SucceedsWhenPriorInstanceEnded verifies the
-// happy path: a session whose owning instance has ended can be resumed —
+// happy path: a session whose owning instance has ended can be resumed -
 // the new instance is inserted and the session's agent_instance_id is
 // repointed, atomically.
 func TestSQLiteStore_ResumeSession_SucceedsWhenPriorInstanceEnded(t *testing.T) {
@@ -107,7 +107,7 @@ func TestSQLiteStore_ResumeSession_SucceedsWhenPriorInstanceEnded(t *testing.T) 
 }
 
 // TestSQLiteStore_ResumeSession_RejectsActiveOwner verifies that a session
-// whose current owning instance has NOT ended cannot be resumed — this is
+// whose current owning instance has NOT ended cannot be resumed - this is
 // the ownership-exclusivity half of G2 (docs/specs/agents/
 // 04-storage-and-sessions.md, Active session ownership).
 func TestSQLiteStore_ResumeSession_RejectsActiveOwner(t *testing.T) {
@@ -121,7 +121,7 @@ func TestSQLiteStore_ResumeSession_RejectsActiveOwner(t *testing.T) {
 		StartedAt: time.Now().UTC(),
 	}
 	require.NoError(t, s.SaveAgentInstance(ctx, orig))
-	// Deliberately not closed — the instance is still "active" (ended_at IS NULL).
+	// Deliberately not closed - the instance is still "active" (ended_at IS NULL).
 
 	require.NoError(t, s.Save(ctx, chat.ChatSessionState{
 		SessionID:       "sess-1",
@@ -163,7 +163,7 @@ func TestSQLiteStore_ResumeSession_RejectsMissingSession(t *testing.T) {
 
 // TestSQLiteStore_ResumeSession_ConcurrentRaceYieldsOneOwner verifies that
 // two goroutines racing to resume the same ended session produce exactly
-// one winner — the SQLite transaction serialises the second attempt onto a
+// one winner - the SQLite transaction serialises the second attempt onto a
 // session whose agent_instance_id already points to a non-ended instance.
 func TestSQLiteStore_ResumeSession_ConcurrentRaceYieldsOneOwner(t *testing.T) {
 	s := newTestStore(t)

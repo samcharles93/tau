@@ -16,7 +16,7 @@ import (
 // --- agent state -------------------------------------------------------------
 
 // agentState is an explicit, closed set of what the agent is currently
-// doing — the status bar's single source of truth for which content to
+// doing - the status bar's single source of truth for which content to
 // show, instead of inferring "what's happening" by sniffing
 // m.notification text or combining inResponse/streaming/tools ad hoc at
 // render time. events.go's handleChatEvent sets this at each transition;
@@ -24,7 +24,7 @@ import (
 type agentState int
 
 const (
-	// agentReady is the zero value — correct for a freshly constructed
+	// agentReady is the zero value - correct for a freshly constructed
 	// model with no turn yet in flight, and restored once a turn completes.
 	agentReady agentState = iota
 	agentThinking
@@ -43,7 +43,7 @@ const (
 //
 // When styledOverride is non-empty it replaces style(text) in the styled
 // output (text is still used for width measurement). This lets a segment
-// embed raw escape sequences the width math can't see through — e.g. an
+// embed raw escape sequences the width math can't see through - e.g. an
 // OSC 8 hyperlink, whose terminator isn't the SGR 'm' stripANSI/lipgloss
 // expect. Mirrors internal/tui/statusbar.go's statusSeg (see webSeg below).
 type statusSeg struct {
@@ -54,7 +54,7 @@ type statusSeg struct {
 }
 
 const (
-	// Left-side identity segments (see identitySegs) — reasoning effort is
+	// Left-side identity segments (see identitySegs) - reasoning effort is
 	// the least essential (dropped first), the model name the most (kept
 	// longest), so a narrow terminal loses "high"/"ollama" before it ever
 	// mangles "deepseek-v4-pro:cloud" into a meaningless character-level
@@ -64,7 +64,7 @@ const (
 	prioModel    = 3
 
 	// Right-side metric segments. prioDuration (the session's cumulative
-	// turn time) is the most disposable of the usage segments — nice
+	// turn time) is the most disposable of the usage segments - nice
 	// context, but cost/tokens/context% matter more under width pressure.
 	prioDuration = 1
 	prioWeb      = 2
@@ -72,12 +72,12 @@ const (
 	prioTokens   = 4
 	prioContext  = 5
 	// prioMetric is a busy state's supporting numeric segment (elapsed time
-	// for Running tool, tok/s for Streaming) — more disposable than the
+	// for Running tool, tok/s for Streaming) - more disposable than the
 	// session-token/context segments above.
 	prioMetric = 6
 	// prioTransient marks a segment as effectively undroppable by
 	// renderStatusBar's width-pressure loop (see its "prio >= prioTransient"
-	// skip) — used for "τ tau", the active-state label (Thinking/Running
+	// skip) - used for "τ tau", the active-state label (Thinking/Running
 	// <tool>/generating/Cancelled/Error), the "Ctrl+C Stop" hint, and the
 	// steering indicator, so a narrow terminal degrades by shedding
 	// secondary metadata first and keeps showing what the agent is
@@ -88,7 +88,7 @@ const (
 const statusSep = " · "
 
 // statusGrey renders secondary status-bar text (separators, unstyled
-// segments) using terminal-native dim rather than a fixed grey — it dims
+// segments) using terminal-native dim rather than a fixed grey - it dims
 // whatever foreground the user's terminal actually has instead of
 // overriding it.
 func statusGrey(s string) string { return lipgloss.NewStyle().Faint(true).Render(s) }
@@ -98,7 +98,7 @@ func statusGrey(s string) string { return lipgloss.NewStyle().Faint(true).Render
 // renderStatusBar assembles left and right segment groups into a single line
 // that never exceeds width. Both sides are priority-dropped whole-segment-at-
 // a-time under pressure before either resorts to character-level truncation
-// — dropping whole segments first avoids chopping one mid-word (e.g. a
+// - dropping whole segments first avoids chopping one mid-word (e.g. a
 // provider name truncated to a meaningless "o…"). Width is measured on
 // plain text so ANSI never inflates the budget.
 func renderStatusBar(width int, left, right []statusSeg) string {
@@ -154,10 +154,10 @@ func renderStatusBar(width int, left, right []statusSeg) string {
 	}
 
 	// floorWidth is the width of segs once every droppable (prio <
-	// prioTransient) segment is gone — the minimum space this side is
+	// prioTransient) segment is gone - the minimum space this side is
 	// guaranteed to need no matter how much gets dropped from it. The
 	// right-drop loop below must reserve this much room for the left side
-	// (and vice versa) rather than just checking whether it fits alone —
+	// (and vice versa) rather than just checking whether it fits alone -
 	// otherwise an undroppable left ("τ tau · Ready") could still lose
 	// content to the character-truncation fallback while purely
 	// decorative right segments (e.g. a low-priority model name) survive
@@ -179,7 +179,7 @@ func renderStatusBar(width int, left, right []statusSeg) string {
 	// crowds out the left side's guaranteed floor. This loop alone
 	// establishes leftFloorW+gap+rightW <= width whenever right has
 	// anything droppable left to give, and dropping left below (in the
-	// next loop) never grows rightW back — so a second right-side pass
+	// next loop) never grows rightW back - so a second right-side pass
 	// afterward would be redundant.
 	for leftFloorW+gap(rightW)+rightW > width {
 		next, styled, _, w, ok := dropLowestPrio(rights)
@@ -191,7 +191,7 @@ func renderStatusBar(width int, left, right []statusSeg) string {
 
 	// Then drop lowest-priority left segments (whole segments, not
 	// characters) until the combined line fits, or only left's own floor
-	// remains — symmetric with the right-side loop above.
+	// remains - symmetric with the right-side loop above.
 	for leftW+gap(rightW)+rightW > width && leftW > leftFloorW {
 		next, styled, _, w, ok := dropLowestPrio(lefts)
 		if !ok {
@@ -216,7 +216,7 @@ func renderStatusBar(width int, left, right []statusSeg) string {
 	}
 
 	// Whole-segment dropping above couldn't make it fit (e.g. every
-	// remaining segment is at or above prioTransient) — fall back to
+	// remaining segment is at or above prioTransient) - fall back to
 	// character-level truncation as a last resort.
 	avail := width - gap(rightW) - rightW
 	if avail < 1 {
@@ -254,7 +254,7 @@ func joinSegs(segs []statusSeg) (styled, plain string) {
 }
 
 // identitySegs returns the model/provider/reasoning-effort segments shared
-// by every state that shows identity — Ready and Cancelled want the full
+// by every state that shows identity - Ready and Cancelled want the full
 // picture, Thinking wants just the model name (see the Suggested content
 // templates this mirrors).
 func (m *model) identitySegs(full bool) []statusSeg {
@@ -276,7 +276,7 @@ func (m *model) identitySegs(full bool) []statusSeg {
 
 // sessionTokenSegs returns the token/cost/duration/context-% right-side
 // segments shared by every state that shows usage metrics (Ready,
-// Cancelled, Streaming) — the same content computeStatusBar always showed,
+// Cancelled, Streaming) - the same content computeStatusBar always showed,
 // just factored out so each state doesn't repeat the m.usage plumbing.
 func (m *model) sessionTokenSegs() []statusSeg {
 	if m.usage == nil {
@@ -287,7 +287,7 @@ func (m *model) sessionTokenSegs() []statusSeg {
 		return nil
 	}
 	// "↑in ↓out" (input/output split) is more informative at a glance than
-	// a single combined total — it's the split that actually drives cost
+	// a single combined total - it's the split that actually drives cost
 	// and context usage differently, not just a bigger/smaller number.
 	segs := []statusSeg{{
 		text: fmt.Sprintf("↑%s ↓%s", humanizeTokens(totals.PromptTokens), humanizeTokens(totals.CompletionTokens)),
@@ -309,7 +309,7 @@ func (m *model) sessionTokenSegs() []statusSeg {
 	return segs
 }
 
-// webSeg is the local web UI's status segment — a short "web" label as an
+// webSeg is the local web UI's status segment - a short "web" label as an
 // OSC 8 terminal hyperlink to the actual URL (clickable in supporting
 // terminals: iTerm2, kitty, WezTerm, modern VTE; falls back to plain "web"
 // text everywhere else, see termkit.Hyperlink) rather than spelling out the
@@ -324,7 +324,7 @@ func webSeg(url string) statusSeg {
 }
 
 // ctrlCStopSeg is the interrupt hint shown across every busy state
-// (Thinking/Running tool/Streaming) — the sole place this hint appears
+// (Thinking/Running tool/Streaming) - the sole place this hint appears
 // (the chat area used to duplicate it via steerHint; removed since Ctrl+C
 // stop belongs in the status bar, not scrollback, and "[Enter] steer" was
 // actively wrong once Enter started queueing by default instead). Marked
@@ -340,7 +340,7 @@ func ctrlCStopSeg() statusSeg {
 // approxTokensPerSecond estimates a live generation rate from the actively
 // streaming response text using a coarse ~4-characters-per-token heuristic
 // (a common rule of thumb for English text) rather than a real
-// provider-specific tokenizer — reaching into a provider's own tokenizer
+// provider-specific tokenizer - reaching into a provider's own tokenizer
 // here would couple the status bar to provider internals, which the
 // heuristic avoids while still being labeled "tok/s" rather than claiming
 // exactness. ok is false before there's been enough elapsed time to produce
@@ -363,12 +363,12 @@ func approxTokensPerSecond(streamed string, elapsed time.Duration) (rate int, ok
 // model state, branching on the explicit m.agentState (see "agent state"
 // above) rather than re-deriving "what's happening" from inResponse/
 // streaming/tools combinations at render time. Called synchronously in
-// View() — no goroutine, no Tick needed.
+// View() - no goroutine, no Tick needed.
 //
 // Layout is deliberately consistent across all 7 states: the left side is
 // always "τ tau" plus the current activity (Ready/Thinking/Processing/
 // Running <tool>/generating/Cancelled/Error), never anything else; the right side always
-// carries model/provider/effort/token/cost/context/web — i.e. model sits on
+// carries model/provider/effort/token/cost/context/web - i.e. model sits on
 // the opposite side of the bar from whatever the agent is currently doing,
 // so the two never compete for the same reading position. Busy states
 // (Thinking/Processing/RunningTool/Streaming) trim the right side down to just what's
@@ -378,7 +378,7 @@ func approxTokensPerSecond(streamed string, elapsed time.Duration) (rate int, ok
 // top of whichever state is active, so it never needs duplicating per
 // branch.
 func (m *model) computeStatusBar() string {
-	// "τ tau" is prioTransient (undroppable) — it's the app's own identity,
+	// "τ tau" is prioTransient (undroppable) - it's the app's own identity,
 	// the last thing that should ever disappear.
 	left := []statusSeg{{text: "τ", prio: prioTransient}}
 	var right []statusSeg
@@ -410,7 +410,7 @@ func (m *model) computeStatusBar() string {
 				toolText = "Running " + t.name
 			}
 			if t.summary != "" {
-				toolText += " — " + t.summary
+				toolText += " - " + t.summary
 			}
 			elapsed = time.Since(t.startedAt)
 		}
@@ -447,7 +447,7 @@ func (m *model) computeStatusBar() string {
 		}
 
 	case agentError:
-		// Just the state, at a glance — the full message already has a home
+		// Just the state, at a glance - the full message already has a home
 		// in the notification banner (persists until dismissed) and
 		// scrollback (see ChatRuntimeErrorEvent), both on screen at the same
 		// time as this bar. Restating it here too was pure duplication.
@@ -466,7 +466,7 @@ func (m *model) computeStatusBar() string {
 		}
 	}
 
-	// Steering overlays whichever state is active — it's an orthogonal
+	// Steering overlays whichever state is active - it's an orthogonal
 	// mid-turn condition (the user interrupted to redirect the agent), not
 	// one of the 6 primary states, so every branch above can stay unaware
 	// of it and this stays the single place it's appended. Undroppable
@@ -513,7 +513,7 @@ func contextPct(promptTok, ctxWindow int) int {
 }
 
 // formatContextPct renders "ctx N%", or "" when unavailable. Mirrors
-// internal/tui/statusbar.go's function of the same name — used by /cost's
+// internal/tui/statusbar.go's function of the same name - used by /cost's
 // full breakdown (unlike contextStyle, which is status-bar-only).
 func formatContextPct(promptTok, ctxWindow int) string {
 	p := contextPct(promptTok, ctxWindow)
@@ -559,8 +559,8 @@ func truncateANSIToWidth(s string, maxWidth int, ellipsis string) string {
 // stripANSI removes both CSI sequences (ESC '[' ... final byte in 0x40-0x7E,
 // e.g. SGR colour codes ending in 'm') and OSC sequences (ESC ']' ... BEL or
 // ST, e.g. OSC 8 hyperlinks). An earlier version only recognised the SGR
-// 'm' terminator, so an OSC 8 hyperlink — whose payload (a URL) rarely
-// contains 'm' — would swallow everything up to the next unrelated 'm' it
+// 'm' terminator, so an OSC 8 hyperlink - whose payload (a URL) rarely
+// contains 'm' - would swallow everything up to the next unrelated 'm' it
 // found, corrupting width measurements for any segment built from it.
 func stripANSI(s string) string {
 	var b strings.Builder
@@ -595,7 +595,7 @@ func stripANSI(s string) string {
 				i = len(s)
 			}
 		default:
-			i++ // unrecognised escape — skip just the ESC byte
+			i++ // unrecognised escape - skip just the ESC byte
 		}
 	}
 	return b.String()

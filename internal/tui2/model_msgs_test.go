@@ -91,7 +91,7 @@ func TestReadNextEventChannelClosed(t *testing.T) {
 	defer bus.Close()
 
 	sub := eventbus.Subscribe[tauchat.ChatEvent](bus.Client("test"))
-	sub.Close() // close before reading — should get chatEventsClosedMsg
+	sub.Close() // close before reading - should get chatEventsClosedMsg
 
 	cmd := readNextEvent(sub)
 	msg := cmd()

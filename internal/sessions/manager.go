@@ -18,7 +18,7 @@ import (
 
 // RuntimeSessionConfig carries the runtime-only fields that must be spliced
 // into a loaded session state after a store.Load(). These fields are not
-// persisted by the store — they are live runtime configuration only.
+// persisted by the store - they are live runtime configuration only.
 type RuntimeSessionConfig struct {
 	Provider    config.ProviderConfig
 	ModelID     string
@@ -48,7 +48,7 @@ func (m *Manager) Store() store.SessionStore {
 
 // OpenStore creates the default SQLite session store using the standard
 // config paths. It creates the sessions directory if needed.
-// Returns an error when the store cannot be opened — callers should warn
+// Returns an error when the store cannot be opened - callers should warn
 // and proceed without persistence.
 func OpenStore() (store.SessionStore, error) {
 	sessionsDir := config.SessionsDir()
@@ -100,7 +100,7 @@ func (m *Manager) Load(ctx context.Context, id string, runtimeCfg *RuntimeSessio
 		return loaded, err
 	}
 
-	// A loaded session is idle by definition — reset in-flight fields.
+	// A loaded session is idle by definition - reset in-flight fields.
 	loaded.Status = chat.ChatSessionIdle
 	loaded.ActiveRequestID = ""
 	loaded.PendingAssistant = ""

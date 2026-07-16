@@ -63,7 +63,7 @@ func (li *LineInput) SetStyles(promptFn, textFn, hintFn func(string) string) {
 }
 
 // SetCommandStyle sets a colour callback applied to the whole line, in place
-// of textFn, whenever the current input begins with "/" — so a slash command
+// of textFn, whenever the current input begins with "/" - so a slash command
 // reads visually distinct from a plain prompt while it's being typed, not
 // just once submitted. Pass nil to disable.
 func (li *LineInput) SetCommandStyle(fn func(string) string) {
@@ -175,7 +175,7 @@ func (li *LineInput) Invalidate() {}
 //
 // The submit callback runs after the lock is released so it can safely call
 // TUI methods without deadlocking. The submitted value is captured to a local
-// before clearing state and unlocking — the render goroutine sees the cleared
+// before clearing state and unlocking - the render goroutine sees the cleared
 // input for one frame, which is correct (the prompt was just submitted).
 func (li *LineInput) HandleInput(data string) bool {
 	li.mu.Lock()
@@ -185,7 +185,7 @@ func (li *LineInput) HandleInput(data string) bool {
 
 	switch data {
 	case "\r":
-		// Enter — submit.
+		// Enter - submit.
 		submit = string(li.runes)
 		li.runes = li.runes[:0]
 		li.cursor = 0
@@ -197,10 +197,10 @@ func (li *LineInput) HandleInput(data string) bool {
 		"\x1b[13;2u",    // Kitty CSI-u: Shift+Enter (codepoint 13, modifier 2)
 		"\x1b[27;2;13~", // xterm modifyOtherKeys: CSI 27 ; modifier ; keycode ~
 		"\x1b[27;13;2~": // (defensive: some terminals swap the two fields)
-		// Ctrl+J / Shift+Enter — insert a newline.
+		// Ctrl+J / Shift+Enter - insert a newline.
 		li.insertLocked([]rune{'\n'})
 
-	case "\x7f": // Backspace (DEL) — single character
+	case "\x7f": // Backspace (DEL) - single character
 		if li.cursor > 0 {
 			li.runes = append(li.runes[:li.cursor-1], li.runes[li.cursor:]...)
 			li.cursor--
@@ -219,18 +219,18 @@ func (li *LineInput) HandleInput(data string) bool {
 			li.cursor++
 		}
 
-	case "\x1b[1;5D", "\x1b[1;3D": // Ctrl+Left / Alt+Left — jump word left
+	case "\x1b[1;5D", "\x1b[1;3D": // Ctrl+Left / Alt+Left - jump word left
 		li.cursor = li.wordLeftLocked()
-	case "\x1b[1;5C", "\x1b[1;3C": // Ctrl+Right / Alt+Right — jump word right
+	case "\x1b[1;5C", "\x1b[1;3C": // Ctrl+Right / Alt+Right - jump word right
 		li.cursor = li.wordRightLocked()
 
-	case "\x1b[A", "\x1bOA": // Up — history or previous logical line
+	case "\x1b[A", "\x1bOA": // Up - history or previous logical line
 		if li.atFirstLineStart() {
 			li.navigateHistory(-1)
 		} else {
 			li.moveVertLocked(-1)
 		}
-	case "\x1b[B", "\x1bOB": // Down — history or next logical line
+	case "\x1b[B", "\x1bOB": // Down - history or next logical line
 		if li.atLastLineEnd() {
 			li.navigateHistory(1)
 		} else {
@@ -454,7 +454,7 @@ func (li *LineInput) cursorOn(isCommand bool) string {
 
 // Render draws the prompt, the multi-line text, and a block cursor at the
 // caret position. Wrapping and cursor injection happen in a single pass per
-// logical line — no separate wrapping paths that can diverge.
+// logical line - no separate wrapping paths that can diverge.
 func (li *LineInput) Render(width int) []string {
 	li.mu.Lock()
 	defer li.mu.Unlock()
@@ -475,7 +475,7 @@ func (li *LineInput) Render(width int) []string {
 	}
 
 	// A line beginning with "/" (slash command) or "!" (bash mode) is a
-	// command in progress — colour the whole thing with cmdFn instead of
+	// command in progress - colour the whole thing with cmdFn instead of
 	// textFn, mirroring the accent used to echo it into scrollback once
 	// submitted. cmdFn itself decides the exact colour per trigger/mode; this
 	// gate only decides whether cmdFn applies at all, and also drives the
@@ -524,11 +524,11 @@ type renderChunk struct {
 
 // renderOneLine wraps a single logical line to maxW columns and injects the
 // block cursor at cursorCol (when hasCursor is true). Wrapping and cursor
-// tracking use the same word-scanning loop — no duplicated logic.
+// tracking use the same word-scanning loop - no duplicated logic.
 func (li *LineInput) renderOneLine(ln []rune, hasCursor bool, cursorCol int, prefix string, maxW int, paint func(string) string, isCommand bool) []string {
 	if len(ln) == 0 {
 		// Empty logical line (e.g. just after a newline). Still show the cursor
-		// here when it falls on this line — otherwise it vanishes on blank lines.
+		// here when it falls on this line - otherwise it vanishes on blank lines.
 		if hasCursor {
 			return []string{prefix + li.cursorAtEnd("", paint, isCommand)}
 		}
@@ -616,7 +616,7 @@ func (li *LineInput) renderOneLine(ln []rune, hasCursor bool, cursorCol int, pre
 			out = append(out, prefix+li.joinRenderChunks(chunks, paint))
 			continue
 		}
-		// Cursor is on this display line — inject it into the right chunk.
+		// Cursor is on this display line - inject it into the right chunk.
 		var sb strings.Builder
 		sb.WriteString(prefix)
 		placed := false

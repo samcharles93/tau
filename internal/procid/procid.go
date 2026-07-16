@@ -2,8 +2,8 @@
 // distinguish a live spawned process from an unrelated process that
 // recycled the same pid, per docs/specs/agents/04-storage-and-sessions.md
 // (Orphan sweep: PID check with process-start identity). It has no
-// dependency on internal/agent or internal/agent/tools so both — the
-// root's own orphan sweep and the agent tool's child-spawn path — can
+// dependency on internal/agent or internal/agent/tools so both - the
+// root's own orphan sweep and the agent tool's child-spawn path - can
 // share one implementation.
 package procid
 
@@ -21,7 +21,7 @@ const (
 	PIDCheckDead
 	// PIDCheckIndeterminate means the check could not be completed
 	// (permission denied, a TOCTOU race, or a transient read failure).
-	// Callers must not treat this as either alive or dead — the
+	// Callers must not treat this as either alive or dead - the
 	// stale-age bound is the backstop for rows that stay indeterminate
 	// forever.
 	PIDCheckIndeterminate

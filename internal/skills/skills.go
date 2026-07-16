@@ -331,7 +331,7 @@ func HasErrors(diagnostics []Diagnostic) bool {
 
 // bundledResourcesHint returns a compact hint about bundled resources
 // (scripts/, references/, assets/) found in the skill directory. Per the
-// Agent Skills spec, this is Tier 1 metadata — it surfaces resource
+// Agent Skills spec, this is Tier 1 metadata - it surfaces resource
 // existence without eagerly loading any of them.
 func bundledResourcesHint(skill *Skill) string {
 	if skill == nil || skill.Path == "" {

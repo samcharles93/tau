@@ -1,16 +1,18 @@
 # Provider System
 
-Tau's provider system (`internal/providers/`) manages the lifecycle of LLM providers — a built-in catalog of well-known OpenAI-compatible providers, user-managed state (which providers are enabled, OAuth credentials), and resolution that merges hand-written config, managed state, and environment variables into the effective set of providers tau uses.
+Tau's provider system (`internal/providers/`) manages the lifecycle of LLM providers - a built-in catalog of well-known
+OpenAI-compatible providers, user-managed state (which providers are enabled, OAuth credentials), and resolution that
+merges hand-written config, managed state, and environment variables into the effective set of providers tau uses.
 
 ## Architecture
 
-```
+```tree
 internal/providers/
-├── catalog.go    — Built-in catalog of known OpenAI-compatible providers
-├── oauth.go      — OAuth device-code login and refresh handlers
-├── state.go      — Writable provider/auth state file (~/.config/tau/auth.yaml)
-├── resolve.go    — Resolves effective provider set from config + state + env
-└── effective.go  — Merges resolved providers into tau config
+├── catalog.go    - Built-in catalog of known OpenAI-compatible providers
+├── oauth.go      - OAuth device-code login and refresh handlers
+├── state.go      - Writable provider/auth state file (~/.config/tau/auth.yaml)
+├── resolve.go    - Resolves effective provider set from config + state + env
+└── effective.go  - Merges resolved providers into tau config
 ```
 
 ## Built-in Catalog
@@ -24,7 +26,7 @@ internal/providers/
 - Static request headers required by the provider runtime
 - Environment variable hints for API keys
 
-This catalog means users don't need to specify `base_url` for well-known providers — tau fills in the defaults.
+This catalog means users don't need to specify `base_url` for well-known providers - tau fills in the defaults.
 
 ## Provider State
 
@@ -34,7 +36,8 @@ This catalog means users don't need to specify `base_url` for well-known provide
 - OAuth credentials (access tokens, refresh tokens, expiry)
 - Provider-specific OAuth extras, such as Copilot `base_url` and `available_model_ids`, or Codex `account_id`
 
-The state file is managed by `/provider` commands and the provider runtime in `internal/app/`. Tau does not write OAuth secrets to `config.yaml`.
+The state file is managed by `/provider` commands and the provider runtime in `internal/app/`. Tau does not write OAuth
+secrets to `config.yaml`.
 
 ### State Operations
 
@@ -53,14 +56,16 @@ func (s *State) RemoveOAuth(providerID string)
 
 `resolve.go` merges three sources to determine the effective providers:
 
-1. **Hand-written config** (`config.yaml` / `.tau.yaml`) — Provider names, base URLs, API key env vars.
-2. **Managed state** (`auth.yaml`) — OAuth tokens, enabled/disabled flags.
-3. **Environment variables** — API keys from configured env vars.
+1. **Hand-written config** (`config.yaml` / `.tau.yaml`) - Provider names, base URLs, API key env vars.
+2. **Managed state** (`auth.yaml`) - OAuth tokens, enabled/disabled flags.
+3. **Environment variables** - API keys from configured env vars.
 
 Resolution order:
+
 1. Hand-written config providers are used first and are never rewritten by Tau.
 2. Catalog API-key providers are enabled from environment variables or `/provider <name>`.
-3. OAuth providers with stored credentials are refreshed before use; failed refresh makes the provider unavailable and asks for re-login instead of using stale credentials.
+3. OAuth providers with stored credentials are refreshed before use; failed refresh makes the provider unavailable and
+   asks for re-login instead of using stale credentials.
 
 ## Effective Provider Set
 
@@ -71,6 +76,7 @@ func ResolveEffectiveProviders(config *Config, state *State) ([]EffectiveProvide
 ```
 
 Each `EffectiveProvider` has:
+
 - Fully resolved auth (token or API key)
 - Base URL (from config or catalog default)
 - Available models (from models.dev catalog or manual config)
@@ -80,22 +86,22 @@ Each `EffectiveProvider` has:
 
 The dynamic streamer (`internal/app/streamer.go`) maps provider names to ai-sdk Go provider constructors:
 
-| Provider | ai-sdk Package |
-| -------- | -------------- |
-| `openai` | `pkg/provider/openai` |
-| `anthropic` | `pkg/provider/anthropic` |
-| `deepseek` | `pkg/provider/deepseek` |
-| `groq` | `pkg/provider/groq` |
-| `mistral` | `pkg/provider/mistral` |
-| `gemini` | `pkg/provider/gemini` |
-| `ollama` | `pkg/provider/ollama` |
-| `xai` | `pkg/provider/xai` |
-| `perplexity` | `pkg/provider/perplexity` |
-| `cohere` | `pkg/provider/cohere` |
-| `azure` | `pkg/provider/azure` |
-| `openrouter` | `pkg/provider/openai` (OpenAI-compatible) |
+| Provider         | ai-sdk Package                                              |
+| ---------------- | ----------------------------------------------------------- |
+| `openai`         | `pkg/provider/openai`                                       |
+| `anthropic`      | `pkg/provider/anthropic`                                    |
+| `deepseek`       | `pkg/provider/deepseek`                                     |
+| `groq`           | `pkg/provider/groq`                                         |
+| `mistral`        | `pkg/provider/mistral`                                      |
+| `gemini`         | `pkg/provider/gemini`                                       |
+| `ollama`         | `pkg/provider/ollama`                                       |
+| `xai`            | `pkg/provider/xai`                                          |
+| `perplexity`     | `pkg/provider/perplexity`                                   |
+| `cohere`         | `pkg/provider/cohere`                                       |
+| `azure`          | `pkg/provider/azure`                                        |
+| `openrouter`     | `pkg/provider/openai` (OpenAI-compatible)                   |
 | `github-copilot` | `pkg/provider/openai` (OpenAI-compatible + Copilot headers) |
-| `openai-codex` | Tau `openai-codex` class (ChatGPT backend Responses SSE) |
+| `openai-codex`   | Tau `openai-codex` class (ChatGPT backend Responses SSE)    |
 
 If a provider has no matching ai-sdk constructor, tau falls back to its built-in OpenAI-compatible streamer.
 
@@ -105,7 +111,8 @@ Most hosted providers use Tau's embedded models.dev snapshot. Dynamic providers 
 
 1. `ollama` calls the local `/models` endpoint.
 2. `github-copilot` uses account-available model IDs from the Copilot token exchange.
-3. `openai-codex` calls the ChatGPT backend Codex model endpoint at refresh/startup time, so current slugs such as `gpt-5.5` are not hard-coded in Tau.
+3. `openai-codex` calls the ChatGPT backend Codex model endpoint at refresh/startup time, so current slugs such as
+   `gpt-5.5` are not hard-coded in Tau.
 
 The `/refresh` command rebuilds the runtime from current provider state and re-runs model discovery.
 
@@ -127,8 +134,8 @@ The catalog is JSON with a `providers` map:
           "name": "GPT-5.5",
           "context": 128000,
           "output": 16384,
-          "input": 2.50,
-          "output_cost": 10.00,
+          "input": 2.5,
+          "output_cost": 10.0,
           "tool_call": true,
           "reasoning": false
         }
@@ -140,7 +147,8 @@ The catalog is JSON with a `providers` map:
 
 ## Dynamic Provider Switching
 
-The provider runtime (`internal/app/provider_runtime.go`) wraps multiple providers and allows cross-provider model switching within a single session:
+The provider runtime (`internal/app/provider_runtime.go`) wraps multiple providers and allows cross-provider model
+switching within a single session:
 
 ```go
 type ProviderRuntime struct {
@@ -150,7 +158,9 @@ type ProviderRuntime struct {
 }
 ```
 
-When the user switches models (via `/model` or the Web UI), the dynamic streamer picks the correct ai-sdk provider per turn from the session state's `Provider` and `Model.ID` fields. This means a single session can use OpenAI, then switch to Anthropic, then to DeepSeek — all without restarting.
+When the user switches models (via `/model` or the Web UI), the dynamic streamer picks the correct ai-sdk provider per
+turn from the session state's `Provider` and `Model.ID` fields. This means a single session can use OpenAI, then switch
+to Anthropic, then to DeepSeek - all without restarting.
 
 ## OAuth Login
 
@@ -159,7 +169,8 @@ The `/provider login <name>` command starts an OAuth device-code flow:
 1. Requests a device code from the provider.
 2. Attempts to open the verification URL in the default browser.
 3. Attempts to copy the user code to the clipboard.
-4. Prints a spaced URL/code fallback in the TUI, then polls until browser authorization completes or the context is cancelled.
+4. Prints a spaced URL/code fallback in the TUI, then polls until browser authorization completes or the context is
+   cancelled.
 5. Exchanges/stores tokens in `~/.config/tau/auth.yaml` with mode `0600`.
 6. Refreshes the model list and enables the provider.
 
@@ -183,4 +194,5 @@ providers:
       api_key_env: MY_API_KEY
 ```
 
-If the provider speaks an OpenAI-compatible API, tau's fallback streamer handles it. For non-OpenAI APIs, a new ai-sdk provider may be needed.
+If the provider speaks an OpenAI-compatible API, tau's fallback streamer handles it. For non-OpenAI APIs, a new ai-sdk
+provider may be needed.

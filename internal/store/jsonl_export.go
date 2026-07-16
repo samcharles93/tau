@@ -7,7 +7,7 @@ import (
 )
 
 // ExportSessionAsJSONL writes a session's messages to a JSONL file at
-// outputPath. The write is atomic — data is written to a temp file first,
+// outputPath. The write is atomic - data is written to a temp file first,
 // then renamed. The app never reads JSONL files; this is a pure export.
 func ExportSessionAsJSONL(ctx context.Context, store SessionStore, id, outputPath string) error {
 	ch, errCh := store.ExportMessages(ctx, id)

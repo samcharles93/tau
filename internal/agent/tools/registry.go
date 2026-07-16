@@ -232,8 +232,8 @@ func sanitizePluginToolName(s string) string {
 // RegisterPluginTool registers a tool from a plugin in the registry.
 //
 // The public, LLM-facing name is the plugin name and tool name, sanitised to the
-// provider-safe character set and joined with pluginToolSep. Sanitising here —
-// once, for every plugin — means plugin authors can return whatever names their
+// provider-safe character set and joined with pluginToolSep. Sanitising here -
+// once, for every plugin - means plugin authors can return whatever names their
 // upstream uses. Execution routes back to the plugin with its ORIGINAL, unmodified
 // tool name (captured in the closure below), so the plugin never sees the
 // sanitised form and needs no name translation of its own.

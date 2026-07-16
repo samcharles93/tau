@@ -24,7 +24,7 @@ func TestHandleChatEventReasoningDelta(t *testing.T) {
 // TestHandleChatEventResponseCompletedReasoningOnly guards against a
 // regression where a reasoning-only turn (no trailing answer text) was
 // rendered as a literal "[reasoning only]" placeholder instead of the real
-// reasoning text — and more generally, where reasoning was never committed
+// reasoning text - and more generally, where reasoning was never committed
 // to scrollback at all and only ever existed in the live view, vanishing
 // the instant the turn completed (see finalizeResponse).
 func TestHandleChatEventResponseCompletedReasoningOnly(t *testing.T) {
@@ -54,7 +54,7 @@ func TestHandleChatEventResponseCompletedReasoningOnly(t *testing.T) {
 // contract: reasoning must render with a style distinct from (and dimmer
 // than) the final answer, the answer must remain unstyled/full-brightness
 // so it stays the strongest element on screen, and the Warm Ochre accent
-// must appear only on the "│ " bar prefixed to every reasoning line — never
+// must appear only on the "│ " bar prefixed to every reasoning line - never
 // painted across the reasoning text itself, and never on the answer.
 func TestReasoningStyleDistinctFromFinalAnswer(t *testing.T) {
 	m := newTestModel(&fakeRuntime{}, nil)
@@ -66,7 +66,7 @@ func TestReasoningStyleDistinctFromFinalAnswer(t *testing.T) {
 	m.finalizeResponse("")
 
 	// The turn produced a trailing answer, so the block auto-collapses (see
-	// commitReasoningBlock) — expand it to inspect the expanded styling this
+	// commitReasoningBlock) - expand it to inspect the expanded styling this
 	// test is actually about.
 	if !m.toggleReasoningBlock(m.lastReasoningKey) {
 		t.Fatal("expected toggleReasoningBlock to find the just-committed block")
@@ -123,7 +123,7 @@ func TestReasoningStyleDistinctFromFinalAnswer(t *testing.T) {
 
 // TestReasoningBlockCollapsedAndExpandedRendering checks the two render
 // states directly: collapsed shows a single subtle line (no raw reasoning
-// text, no keybinding hint baked in — that's /help's job), expanded shows
+// text, no keybinding hint baked in - that's /help's job), expanded shows
 // the full multi-line body with the raw text intact.
 func TestReasoningBlockCollapsedAndExpandedRendering(t *testing.T) {
 	m := newTestModel(&fakeRuntime{}, nil)
@@ -154,7 +154,7 @@ func TestReasoningBlockCollapsedAndExpandedRendering(t *testing.T) {
 // TestReasoningBlockContentPreservedAcrossCollapse guards the "presentation
 // state only" requirement: toggling collapse must never mutate the block's
 // underlying text, and the persisted ChatMessage.ReasoningContent (re-read
-// on every applySnapshot rebuild) is what's authoritative — collapsing is
+// on every applySnapshot rebuild) is what's authoritative - collapsing is
 // purely a rendering decision layered on top.
 func TestReasoningBlockContentPreservedAcrossCollapse(t *testing.T) {
 	m := newTestModel(&fakeRuntime{}, nil)
@@ -184,7 +184,7 @@ func TestReasoningBlockContentPreservedAcrossCollapse(t *testing.T) {
 
 	// A snapshot rebuild re-reads ReasoningContent from the persisted
 	// message, independent of whatever presentation state the toggles left
-	// behind — collapsing never alters the message that would be sent back
+	// behind - collapsing never alters the message that would be sent back
 	// to the model or saved to disk.
 	m.applySnapshot(tauchat.ChatSessionSnapshotEvent{
 		State: tauchat.ChatSessionState{
@@ -243,7 +243,7 @@ func TestCtrlRTogglesLastReasoningBlock(t *testing.T) {
 }
 
 // TestStreamingReasoningRemainsVisibleWhileActive checks the split this
-// feature relies on: only *completed* reasoning is collapsible — the
+// feature relies on: only *completed* reasoning is collapsible - the
 // in-progress turn's reasoning is rendered fresh from m.reasoning every
 // frame and is never folded, even after a sibling turn's block has already
 // been committed and auto-collapsed.
@@ -260,7 +260,7 @@ func TestStreamingReasoningRemainsVisibleWhileActive(t *testing.T) {
 		t.Fatal("expected the prior turn's reasoning to auto-collapse")
 	}
 
-	// A new turn starts streaming reasoning — must render in full, live,
+	// A new turn starts streaming reasoning - must render in full, live,
 	// regardless of the previous block's collapsed state.
 	m.inResponse = true
 	m.reasoning = "currently streaming reasoning"
@@ -277,13 +277,13 @@ func TestStreamingReasoningRemainsVisibleWhileActive(t *testing.T) {
 // twinned with finalizeResponse's live-reasoning commit: reasoning is
 // persisted per-message (ChatMessage.ReasoningContent) specifically so it
 // survives a snapshot rebuild, but applySnapshot ignored that field
-// entirely — a reasoning block that finalizeResponse had just committed to
+// entirely - a reasoning block that finalizeResponse had just committed to
 // scrollback would render correctly for one turn, then vanish the moment
 // the next prompt triggered a rebuild here, since this function is the sole
 // source of truth for renderedLines.
 //
 // Since this message has a trailing answer, the block auto-collapses (see
-// commitReasoningBlock) — the raw text must still survive uncollapsed in
+// commitReasoningBlock) - the raw text must still survive uncollapsed in
 // m.committedReasoning (collapsing is presentation-only, never touches the
 // persisted/source content), and expanding it must reveal the exact text.
 func TestApplySnapshotRendersPersistedReasoning(t *testing.T) {

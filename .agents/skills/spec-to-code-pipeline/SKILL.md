@@ -1,6 +1,6 @@
 ---
 name: spec-to-code-pipeline
-description: End-to-end pipeline for turning spec documents into actionable, sequenced implementation tickets — Spec Review → Gap Analysis → Story Creation → Dependency Analysis → Execution Process Design → Implementation Coordination. Use when working through a new spec, landing a multi-ticket project, doing architecture-to-backlog conversion, or when the user asks to "analyze dependencies", "sequence these tickets", "map the critical path", or "turn this spec into stories".
+description: End-to-end pipeline for turning spec documents into actionable, sequenced implementation tickets - Spec Review → Gap Analysis → Story Creation → Dependency Analysis → Execution Process Design → Implementation Coordination. Use when working through a new spec, landing a multi-ticket project, doing architecture-to-backlog conversion, or when the user asks to "analyze dependencies", "sequence these tickets", "map the critical path", or "turn this spec into stories".
 user-invocable: true
 ---
 
@@ -10,13 +10,13 @@ A six-phase pipeline for converting spec documents into sequenced, parallelizabl
 
 ## Phase 1: Spec Review
 
-Read every document in the spec directory. Don't skim — note every decision, invariant, interface contract, and open question.
+Read every document in the spec directory. Don't skim - note every decision, invariant, interface contract, and open question.
 
 **Required actions:**
 
 1. List all spec files in the target directory (e.g., `ls docs/specs/<domain>/`).
 2. Read each file end-to-end. Do not trust earlier summaries.
-3. Note which documents are authoritative vs. design-decision records (ADRs) vs. implementation plans — they carry different weight.
+3. Note which documents are authoritative vs. design-decision records (ADRs) vs. implementation plans - they carry different weight.
 4. Flag any document that says "undecided," "TBD," or contradicts another document.
 
 **Concrete output:** A list of every document read, its role (authoritative/ADR/plan), and the key decisions it contains.
@@ -32,22 +32,22 @@ Produce a gap-review document that categorizes every missing contract, inconsist
 - **Header:** Date, scope (which documents were reviewed), a statement that this is a review artifact, not an amendment.
 - **Overall assessment:** One-paragraph verdict on coherence and the largest category of gap.
 - **Tiered gaps:**
-  - **Critical** — correctness/integrity/security hazards. Must resolve before any implementation.
-  - **High-priority operational** — completeness gaps that would break real usage but not the happy path.
-  - **Consistency/completeness** — hardening items that can be resolved during or after initial implementation.
+  - **Critical** - correctness/integrity/security hazards. Must resolve before any implementation.
+  - **High-priority operational** - completeness gaps that would break real usage but not the happy path.
+  - **Consistency/completeness** - hardening items that can be resolved during or after initial implementation.
 
 **Each gap entry must contain:**
 
 - **Gap number** (G1, G2, …) for cross-referencing.
 - **Title** summarizing the gap.
-- **What's missing** — cite the specific doc and line(s) where the underspecification lives.
-- **What's at stake** — the concrete harm if left unresolved.
-- **Required contract/decision** — what must be specified.
-- **Acceptance criteria** — what "resolved" looks like.
+- **What's missing** - cite the specific doc and line(s) where the underspecification lives.
+- **What's at stake** - the concrete harm if left unresolved.
+- **Required contract/decision** - what must be specified.
+- **Acceptance criteria** - what "resolved" looks like.
 
 **Concrete output:** A file like `docs/specs/<domain>/review-gaps-<date>.md` with 15-20 gaps, prioritized and cross-referenced to source documents.
 
-**Key principle:** Every gap must be traceable back to a specific line in the source spec. Never handwave "we should also think about X" — if X isn't in the spec, it's either a scope gap (note it separately) or a new feature (different pipeline).
+**Key principle:** Every gap must be traceable back to a specific line in the source spec. Never handwave "we should also think about X" - if X isn't in the spec, it's either a scope gap (note it separately) or a new feature (different pipeline).
 
 ---
 
@@ -71,17 +71,17 @@ Convert each gap into an issue-tracker ticket with structured metadata. One gap 
 
 ## Phase 4: Dependency Analysis
 
-Map every ticket onto a layered dependency graph. This is the core analytical phase — getting this wrong means blocked work later.
+Map every ticket onto a layered dependency graph. This is the core analytical phase - getting this wrong means blocked work later.
 
 ### Method
 
-**Step 1 — Layer identification.** Group tickets by architectural layer. Every gap review naturally clusters into layers (e.g., spec → storage → wire → process → UI). Read each ticket's scope to confirm which layer it touches.
+**Step 1 - Layer identification.** Group tickets by architectural layer. Every gap review naturally clusters into layers (e.g., spec → storage → wire → process → UI). Read each ticket's scope to confirm which layer it touches.
 
-**Step 2 — Edge enumeration.** For each pair of tickets (A, B), ask: "Can B be implemented without A existing?" If no, A → B. Write a one-sentence rationale for every edge.
+**Step 2 - Edge enumeration.** For each pair of tickets (A, B), ask: "Can B be implemented without A existing?" If no, A → B. Write a one-sentence rationale for every edge.
 
-**Step 3 — Graph construction.** Draw the graph. Use `└→`, `├→`, and `∥` (parallel) symbols so it renders in monospace. Include the edge rationale as a table.
+**Step 3 - Graph construction.** Draw the graph. Use `└→`, `├→`, and `∥` (parallel) symbols so it renders in monospace. Include the edge rationale as a table.
 
-**Step 4 — Independence check.** Identify tickets with **zero incoming edges** — these are parallel candidates. Identify tickets with **4+ incoming edges** — these are bottlenecks.
+**Step 4 - Independence check.** Identify tickets with **zero incoming edges** - these are parallel candidates. Identify tickets with **4+ incoming edges** - these are bottlenecks.
 
 ### Cross-cutting tickets
 
@@ -89,7 +89,7 @@ Some tickets are not layers but **cross-cutting concerns** (testing, observabili
 
 - **Test-gate tickets**: Start alongside the first implementation phase and run in parallel with every ticket, not after everything else.
 - **Observability tickets**: Depend only on the layers they instrument.
-- **Documentation-audit tickets**: Usually have zero or minimal code dependencies — can run anytime.
+- **Documentation-audit tickets**: Usually have zero or minimal code dependencies - can run anytime.
 
 ### Output format
 
@@ -117,7 +117,7 @@ P1: Storage (build the persistence layer)
 P2: Wire/Protocol (define communication)
 P3: Process/Runtime (wire behavior)
 P4: Security/Trust (cross-cutting invariants)
-P5: UI (presentation — depends on everything)
+P5: UI (presentation - depends on everything)
 Cross-cut: Testing + Observability (run alongside)
 ```
 
@@ -140,15 +140,15 @@ Start with the independent tickets in each phase, then move to the sequential on
 
 ### Before starting a phase
 
-1. **Verify prerequisites.** For each ticket in the phase, check that all upstream tickets are done (not just started). A dependency that's "mostly done" is not done — the contract may still shift.
+1. **Verify prerequisites.** For each ticket in the phase, check that all upstream tickets are done (not just started). A dependency that's "mostly done" is not done - the contract may still shift.
 2. **Check for drift.** If any upstream ticket's implementation diverged from its original spec, re-read the merged code and update downstream tickets if the contract changed.
 3. **Claim the work.** Set each ticket to In Progress as you begin.
 
 ### During implementation
 
 - **Cross-cut tests alongside code.** Each implementation story should have its acceptance criteria exercised in the same phase, not in a later testing phase.
-- **One writer per layer.** Don't implement two tickets simultaneously if they touch the same schema or module — the second writer will rebase on the first's changes. Within a phase, parallelize across *different files/packages*, not the same one.
-- **Address contract changes.** If implementing a ticket reveals a new field or contract that a downstream ticket's scope depends on, open a note on the downstream ticket immediately — don't let it assume a stale contract.
+- **One writer per layer.** Don't implement two tickets simultaneously if they touch the same schema or module - the second writer will rebase on the first's changes. Within a phase, parallelize across *different files/packages*, not the same one.
+- **Address contract changes.** If implementing a ticket reveals a new field or contract that a downstream ticket's scope depends on, open a note on the downstream ticket immediately - don't let it assume a stale contract.
 
 ### After completing a phase
 
@@ -198,8 +198,8 @@ After completing Phase 4 (dependency analysis), validate before committing:
 3. **Layers are real.** Storage doesn't depend on UI. Wire doesn't depend on Process. The graph is a DAG; if it has cycles, the spec has a circular definition.
 4. **Cross-cutting tickets run alongside, not after.**
 5. **Contract changes propagate.** If an upstream ticket's implementation changes a contract, downstream tickets must be re-examined before they start.
-6. **The gap document is a review artifact, not an amendment.** It captures findings at a point in time. The authoritative spec is the spec documents — the gap review points to them, not replaces them.
-7. **Verify, don't assume.** Before making any claim about repository state — "this doesn't exist", "this isn't implemented", "nothing has been built" — check `git log`, `ls`, and actual file contents. Spec work and implementation work can happen in parallel on the same branch. A session spent editing spec documents doesn't mean the code is absent; it means you haven't looked at the code. Fabricating a status report from assumptions rather than evidence is the single most expensive mistake in this pipeline.
+6. **The gap document is a review artifact, not an amendment.** It captures findings at a point in time. The authoritative spec is the spec documents - the gap review points to them, not replaces them.
+7. **Verify, don't assume.** Before making any claim about repository state - "this doesn't exist", "this isn't implemented", "nothing has been built" - check `git log`, `ls`, and actual file contents. Spec work and implementation work can happen in parallel on the same branch. A session spent editing spec documents doesn't mean the code is absent; it means you haven't looked at the code. Fabricating a status report from assumptions rather than evidence is the single most expensive mistake in this pipeline.
 8. **Read code before writing code.** When implementing a spec gap, read the existing implementation first. Compare against the spec. Fix only what's missing. Do not re-implement what already works.
 
 ## Gotchas
@@ -222,7 +222,7 @@ The gap review → story creation → dependency analysis pipeline produces spec
 ### Parallelism markers
 
 Use these ASCII-art conventions consistently:
-- `A ∥ B` — A and B are parallel (no dependency between them)
-- `A → B` — B depends on A (sequential)
-- `├→` and `└→` — branching in the graph
-- `▶` — points to a dependency target
+- `A ∥ B` - A and B are parallel (no dependency between them)
+- `A → B` - B depends on A (sequential)
+- `├→` and `└→` - branching in the graph
+- `▶` - points to a dependency target

@@ -17,7 +17,7 @@ func (t *TUI) doRender() {
 }
 
 // absPosRe matches absolute cursor positioning: CSI ... H (home / CUP).
-// An inline renderer must never emit these — they anchor the frame to the top
+// An inline renderer must never emit these - they anchor the frame to the top
 // of the viewport instead of where it was first drawn.
 var absPosRe = regexp.MustCompile("\x1b\\[[0-9;]*H")
 
@@ -46,7 +46,7 @@ func (f *fakeTerm) ClearToEnd()                                      {}
 func (f *fakeTerm) ClearScreen()                                     {}
 func (f *fakeTerm) SetTitle(string)                                  {}
 
-// assertNoScreenWipe fails if the output clears the screen or scrollback —
+// assertNoScreenWipe fails if the output clears the screen or scrollback -
 // destructive for an inline frame that shares the screen with shell history.
 func assertNoScreenWipe(t *testing.T, label, out string) {
 	t.Helper()
@@ -95,7 +95,7 @@ func TestUpdateUsesRelativePositioning(t *testing.T) {
 	term.reset()
 
 	// Change the *top* line. The renderer is at the frame top already, so it
-	// needs no vertical move to reach the changed line — it emits \r directly,
+	// needs no vertical move to reach the changed line - it emits \r directly,
 	// rewrites the line in place, and parks back at the top.
 	line0.SetText("line ZERO")
 	engine.doRender()
@@ -128,7 +128,7 @@ func TestUnchangedRenderEmitsNothing(t *testing.T) {
 
 // TestPrintAboveStreamsAndRedraws verifies the StreamAbove pattern: PrintAbove
 // commits a line into scrollback above the frame (clearing the old frame from
-// the cursor down) and then redraws the frame — all without absolute
+// the cursor down) and then redraws the frame - all without absolute
 // positioning, so the frame keeps its inline anchor.
 func TestPrintAboveStreamsAndRedraws(t *testing.T) {
 	term := newFakeTerm(40, 12)
@@ -173,7 +173,7 @@ func TestUpdateThenPrintMutatesThenCommits(t *testing.T) {
 	term.reset()
 
 	// The closure mutates the tree (clears the stage) and returns a line to
-	// commit. Crucially, calling this must not deadlock — it would if the
+	// commit. Crucially, calling this must not deadlock - it would if the
 	// renderer let us PrintAbove while holding the lock.
 	done := make(chan struct{})
 	go func() {
@@ -257,7 +257,7 @@ func TestShrinkClearsOrphanLinesRelatively(t *testing.T) {
 	}
 	assertNoScreenWipe(t, "shrink", out)
 	// Shrink triggers a fullRewrite which uses \x1b[0J to clear from the frame
-	// top to the end of the screen — this is not a screen wipe (2J/3J).
+	// top to the end of the screen - this is not a screen wipe (2J/3J).
 	if !strings.Contains(out, "\x1b[0J") {
 		t.Errorf("shrink did not use \\x1b[0J to clear the old frame: %q", out)
 	}

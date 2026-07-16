@@ -20,7 +20,7 @@ const linuxClockTicksPerSec = 100
 // CaptureProcessStartNS reads pid's process-start time from
 // /proc/<pid>/stat and converts it to nanoseconds since boot, to be
 // persisted as agent_instances.process_start_ns. Returns 0 (unavailable)
-// on any read/parse failure — callers treat 0 as "no identity recorded".
+// on any read/parse failure - callers treat 0 as "no identity recorded".
 func CaptureProcessStartNS(pid int) int64 {
 	ticks, err := readProcStartTicks(pid)
 	if err != nil {
@@ -31,7 +31,7 @@ func CaptureProcessStartNS(pid int) int64 {
 
 // CheckPIDIdentity reports whether pid is currently running and, when
 // wantStartNS is non-zero, whether its process-start identity still
-// matches — distinguishing "the process we spawned is still running" from
+// matches - distinguishing "the process we spawned is still running" from
 // "the OS recycled this pid for an unrelated process" (see
 // docs/specs/agents/04-storage-and-sessions.md, Orphan sweep).
 func CheckPIDIdentity(pid int, wantStartNS int64) PIDCheck {
@@ -44,7 +44,7 @@ func CheckPIDIdentity(pid int, wantStartNS int64) PIDCheck {
 	}
 	if wantStartNS == 0 {
 		// No identity was recorded at spawn time (capture failed, or the
-		// row predates this field) — pid existing is the best evidence
+		// row predates this field) - pid existing is the best evidence
 		// available.
 		return PIDCheckAlive
 	}

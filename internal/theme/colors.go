@@ -58,13 +58,13 @@ var (
 	// prompt.
 	CommandFG = termkit.Color{120, 170, 255}
 
-	// BashFG is the accent colour for "!" bash mode — both the leading
-	// trigger character and the "Shell" input-mode divider — xterm 256
+	// BashFG is the accent colour for "!" bash mode - both the leading
+	// trigger character and the "Shell" input-mode divider - xterm 256
 	// color 209.
 	BashFG = termkit.Xterm256(209)
 
 	// BashExcludedFG is the muted variant used for "!!" bash commands, which
-	// run the same way but are excluded from the LLM's context — the dimmer
+	// run the same way but are excluded from the LLM's context - the dimmer
 	// tone signals "local only." Hand-tuned as a desaturated variant of
 	// BashFG rather than another palette index, since there's no single
 	// xterm-256 entry that reads as "dim 209."
@@ -91,7 +91,7 @@ var (
 		FG: termkit.Color{255, 190, 210},
 	}
 
-	// Tool box border colors — lighter companion colors for tool/skill
+	// Tool box border colors - lighter companion colors for tool/skill
 	// container borders, chosen so borders read clearly against the
 	// background without overwhelming the foreground text.
 	ToolRunningBorder  = termkit.Color{230, 170, 130}
@@ -104,8 +104,8 @@ var (
 
 	// ShimmerBase and ShimmerHighlight are the two stops of the "current"
 	// gradient swept across the live working indicator (see
-	// internal/tui2/animation.go). ShimmerBase is tau's brand violet — the
-	// resting colour of the text — and ShimmerHighlight is the electric cyan
+	// internal/tui2/animation.go). ShimmerBase is tau's brand violet - the
+	// resting colour of the text - and ShimmerHighlight is the electric cyan
 	// band of light that travels through it, tying the motion to the same cyan
 	// accent used for the input caret. The pair reads as "computation flowing
 	// through the τ mark" rather than a decorative rainbow.
@@ -140,18 +140,18 @@ func ToolBox(ts ToolStatus, borderColor termkit.Color) ToolBoxStyle {
 //
 // A small, named palette for tui2's UI chrome, kept separate from the tone/
 // status colors above so existing consumers (the legacy taui-based
-// internal/tui) are unaffected — those packages reference the constants
+// internal/tui) are unaffected - those packages reference the constants
 // above directly and keep their current look.
 //
 // The palette is deliberately narrow: five roles, not a general-purpose
-// color system. Chat/message content itself should not use any of these —
+// color system. Chat/message content itself should not use any of these -
 // it should inherit the terminal's own default foreground, per Tau's rule
 // of never fighting the user's configured theme. Reach for PrimaryColor only
 // when text sits on an explicit non-default background where the terminal's
 // own foreground can't be trusted to contrast (e.g. text inside a filled
 // badge).
 var (
-	// AccentColor (Warm Ochre #D19A66) is Tau's signature accent — used for
+	// AccentColor (Warm Ochre #D19A66) is Tau's signature accent - used for
 	// interactive/selection state: focus markers, selected menu/completion
 	// items, the input prompt glyph, and command echo.
 	AccentColor = termkit.Color{0xD1, 0x9A, 0x66}
@@ -170,7 +170,7 @@ var (
 	// foreground at all so it inherits the user's terminal default.
 	PrimaryColor = termkit.Color{0xAB, 0xB2, 0xBF}
 
-	// SecondaryColor (Slate Blue-Grey #283347) tints secondary UI chrome —
+	// SecondaryColor (Slate Blue-Grey #283347) tints secondary UI chrome -
 	// muted borders and dividers. For muted/secondary *text* prefer
 	// terminal-native dim (faint) styling instead, since dimming the user's
 	// actual foreground adapts to their theme rather than overriding it.

@@ -9,7 +9,7 @@ import (
 
 // TailLog is a bounded, live-updating view of streamed text: it keeps only
 // the last MaxLines lines, dropping older ones as new output arrives. Use it
-// for tool stdout/stderr while a tool is running — unlike printing every
+// for tool stdout/stderr while a tool is running - unlike printing every
 // chunk straight to scrollback, the tail stays a fixed size and is meant to
 // be discarded (RemoveChild it from its parent) once the producer finishes,
 // rather than committed to permanent output.
@@ -33,8 +33,8 @@ func NewTailLog(maxLines int, styleFn FgFn) *TailLog {
 	return &TailLog{maxLines: maxLines, styleFn: styleFn}
 }
 
-// Append feeds a raw output chunk. Chunks need not be line-aligned — a chunk
-// may split a line, contain several lines, or contain none — partial lines
+// Append feeds a raw output chunk. Chunks need not be line-aligned - a chunk
+// may split a line, contain several lines, or contain none - partial lines
 // are buffered until a newline completes them.
 func (t *TailLog) Append(chunk string) {
 	if chunk == "" {

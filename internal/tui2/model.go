@@ -13,6 +13,7 @@ import (
 	tauchat "github.com/samcharles93/tau/internal/chat"
 	"github.com/samcharles93/tau/internal/eventbus"
 	"github.com/samcharles93/tau/internal/metrics"
+	"github.com/samcharles93/tau/internal/providers"
 	"github.com/samcharles93/tau/internal/providerui"
 	"github.com/samcharles93/tau/internal/tui/notify"
 	"github.com/samcharles93/tau/pkg/taui/termkit"
@@ -38,14 +39,14 @@ type model struct {
 	// reserving fixed UI chrome.
 	maxViewportHeight int
 
-	// Conversation state — stored as raw content string fed to the viewport.
+	// Conversation state - stored as raw content string fed to the viewport.
 	viewport   viewport.Model
 	streaming  string // current streaming text delta
 	reasoning  string // current reasoning delta
 	inResponse bool   // true while a response is in progress
 
 	// agentState is the explicit, typed state driving the status bar (see
-	// statusbar.go) — set at each transition point in handleChatEvent rather
+	// statusbar.go) - set at each transition point in handleChatEvent rather
 	// than re-derived by sniffing m.notification text or combining
 	// inResponse/streaming/tools ad hoc at render time. Zero value
 	// (agentReady) is correct for a freshly constructed model with no turn
@@ -57,20 +58,20 @@ type model struct {
 
 	// Tool state.
 	tools           []toolState           // active tool calls in display order
-	committedGroups []*committedToolGroup // multi-call batches already in scrollback, still foldable — see committedToolGroup
+	committedGroups []*committedToolGroup // multi-call batches already in scrollback, still foldable - see committedToolGroup
 
 	// Reasoning state. committedReasoning holds completed reasoning blocks
-	// already in scrollback, still collapsible/expandable — see
+	// already in scrollback, still collapsible/expandable - see
 	// committedReasoningBlock. lastReasoningKey is the most recently
 	// committed block's key, the target of the ctrl+r toggle (see
-	// dispatchKey) — reasoning has no per-block focus-navigation the way
+	// dispatchKey) - reasoning has no per-block focus-navigation the way
 	// tools do, so ctrl+r always reaches the block from the turn that just
 	// finished. reasoningKeySeq generates a fallback key (see
 	// committedReasoningKey) for the rare turn that commits reasoning
 	// before the owning message has a real ID.
 	committedReasoning []*committedReasoningBlock
 
-	// Child agent state — terminal summaries for each spawned child agent
+	// Child agent state - terminal summaries for each spawned child agent
 	// tool call. Keyed by tool call id. Rendered as a compact status line
 	// above the tool result per docs/specs/agents/05-ui.md (The state block).
 	childAgents      map[string]childAgentResult
@@ -79,17 +80,17 @@ type model struct {
 
 	// childAgentOrder records each spawned child's tool-call ID in the
 	// order it was first seen, since childAgents (a map) has no stable
-	// iteration order — Tab-cycling (focusNextChild) needs one.
+	// iteration order - Tab-cycling (focusNextChild) needs one.
 	childAgentOrder []string
 
-	// helpOverlay is the currently open /help overlay, or nil if none — see
+	// helpOverlay is the currently open /help overlay, or nil if none - see
 	// help.go. Unlike a committed scrollback message, it's redrawn fresh
 	// every frame and never touches renderedLines, so it doesn't clutter
 	// history the way a permanently-appended box would.
 	helpOverlay *helpOverlayState
 
 	// Input state. input may contain embedded '\n' (Shift+Enter/Ctrl+J
-	// inserts a newline rather than submitting) — inputCursor is a rune
+	// inserts a newline rather than submitting) - inputCursor is a rune
 	// index into it, 0..len([]rune(input)). Editing/navigation mirror
 	// pkg/taui/lineinput.go so both frontends behave identically.
 	input       string
@@ -105,7 +106,7 @@ type model struct {
 	focused bool
 
 	// Completion dropdown state. compToken is the last token the dropdown was
-	// computed against — when it changes (the user typed/deleted a
+	// computed against - when it changes (the user typed/deleted a
 	// character), compSelected resets to the top-ranked match rather than
 	// pointing at whatever now sits at that index. compDismissed and
 	// compDismissedToken together record that Esc last hid the dropdown for
@@ -118,12 +119,12 @@ type model struct {
 	compDismissed      bool
 	compDismissedToken string
 
-	// Viewport content — rendered lines, built incrementally.
+	// Viewport content - rendered lines, built incrementally.
 	renderedLines []string
 
 	// messageRanges records which span of renderedLines each ChatMessage's
 	// rendered lines occupy, so a click can be resolved to "which message"
-	// (see messageAtRow) rather than just "which line" — mirrors
+	// (see messageAtRow) rather than just "which line" - mirrors
 	// committedToolGroup's lineIdx/lineCount, for whole messages instead of
 	// tool boxes. Only messages with a real ID (see chat.ChatMessage.ID)
 	// get an entry; entries must be kept in sync by anything that mutates
@@ -132,7 +133,7 @@ type model struct {
 
 	// lastAssistantText is the raw (unstyled) content of the most recent
 	// assistant message, kept separately from renderedLines because those
-	// are lipgloss-styled — the ANSI escape codes wrapping the content mean
+	// are lipgloss-styled - the ANSI escape codes wrapping the content mean
 	// a literal substring/prefix match against renderedLines can never
 	// reliably succeed (this is what /copy needs; scanning styled output
 	// doesn't work).
@@ -145,11 +146,12 @@ type model struct {
 	notificationGen   int          // bumped every time notification is set; guards clear race
 
 	// Model / provider state (populated by run.go).
-	availableModels []tauchat.ChatModelRef
-	refresh         func(context.Context) ([]tauchat.ChatModelRef, error)
-	showReasoning   bool
-	reasoningEffort string
-	ctxWindow       int // context window size for % display
+	availableModels       []tauchat.ChatModelRef
+	refresh               func(context.Context) ([]tauchat.ChatModelRef, error)
+	completeProviderLogin func(string, providers.OAuthCredentials) error
+	showReasoning         bool
+	reasoningEffort       string
+	ctxWindow             int // context window size for % display
 
 	// Extension commands (populated from ExtensionCommandsChangedEvent).
 	extensionCommands map[string]tauchat.ExtensionCommand
@@ -165,7 +167,7 @@ type model struct {
 	sessionSummaries []tauchat.SessionSummary
 
 	// sessionsFetchInFlight guards maybePrefetchSessions against firing a
-	// second silent ListSessionsCommand while one is already outstanding —
+	// second silent ListSessionsCommand while one is already outstanding -
 	// without it, every keystroke while typing "/session " with an empty
 	// cache would fire a fresh request.
 	sessionsFetchInFlight bool
@@ -175,23 +177,23 @@ type model struct {
 	lastSubmit   time.Time
 	spinnerFrame int // frame index for working indicator animation
 
-	// Markdown rendering (P3 enhancement) — reusable glamour term renderers
+	// Markdown rendering (P3 enhancement) - reusable glamour term renderers
 	// keyed by terminal width so resize doesn't allocate a new renderer for
 	// the same width. Each converts assistant messages from markdown to
 	// ANSI-styled output with syntax-highlighted code blocks. Only applied
 	// on finalized messages (ChatResponseCompletedEvent), never during
-	// streaming — mid-token markdown re-parsing is unsafe.
+	// streaming - mid-token markdown re-parsing is unsafe.
 	mdCache map[int]*glamour.TermRenderer
 
 	// pendingQuit is the time of the last unanswered Ctrl+C (idle, nothing to
-	// cancel) — a second Ctrl+C within quitConfirmWindow confirms the quit,
+	// cancel) - a second Ctrl+C within quitConfirmWindow confirms the quit,
 	// mirroring internal/tui/inline_chat.go's double-tap guard.
 	pendingQuit time.Time
 
 	// Steering.
 	steering bool
 
-	// Interactive prompts — see formPrompt in prompt.go for the shared
+	// Interactive prompts - see formPrompt in prompt.go for the shared
 	// widget both the agent-question flow and local UI flows (e.g.
 	// providerLogin's Enterprise-domain prompt) build and present through
 	// presentPrompt/presentLocalPrompt.
@@ -199,20 +201,20 @@ type model struct {
 	promptQueue  []*formPrompt
 
 	// contextMenu is the currently open right-click menu, or nil if none is
-	// open — mirrors activePrompt's nil-sentinel idiom.
+	// open - mirrors activePrompt's nil-sentinel idiom.
 	contextMenu *contextMenu
 
 	// diffViewer is the currently open "View diff" overlay, or nil if none
-	// is open — same nil-sentinel idiom as contextMenu.
+	// is open - same nil-sentinel idiom as contextMenu.
 	diffViewer *diffViewerState
 
 	// childTranscriptViewer is the currently open child-agent transcript
-	// overlay, or nil if none is open — same nil-sentinel idiom as
+	// overlay, or nil if none is open - same nil-sentinel idiom as
 	// diffViewer (see childtranscript.go).
 	childTranscriptViewer *childTranscriptViewerState
 
 	// sessionTreeOverlay is the currently open Ctrl+O session navigator, or
-	// nil if none is open — same nil-sentinel idiom as contextMenu (see
+	// nil if none is open - same nil-sentinel idiom as contextMenu (see
 	// sessiontree.go).
 	sessionTreeOverlay *sessionTreeState
 
@@ -229,7 +231,7 @@ type model struct {
 
 	// focusedChild indexes m.childAgentOrder for keyboard nav across
 	// finished child-agent state blocks (-1 = none). Tab reaches this ring
-	// only once focusNextTool has nothing eligible left — the two rings
+	// only once focusNextTool has nothing eligible left - the two rings
 	// are mutually exclusive, each clearing the other when set.
 	focusedChild int
 
@@ -250,11 +252,11 @@ type model struct {
 	autoFollow bool
 
 	// Mouse drag text selection (see selection.go). Built from scratch on raw press/motion/release
-	// events — bubbletea v2 and bubbles have no selection primitive to
+	// events - bubbletea v2 and bubbles have no selection primitive to
 	// reuse (verified against clipboard.go/mouse.go). Four regions each
-	// get their own selectionState — viewport (whole logical lines), input
+	// get their own selectionState - viewport (whole logical lines), input
 	// box (rune-precise), status bar (column-precise), and the live tool-call
-	// box (whole lines) — but share one state machine and one finalize path
+	// box (whole lines) - but share one state machine and one finalize path
 	// (finalizeSelection) rather than four hand-rolled ones. Copying is an
 	// explicit right-click action after selection.
 	viewportSel selectionState
@@ -265,7 +267,7 @@ type model struct {
 	// dragRegion records which UI region a mouse gesture started in, so a
 	// drag/release that moves outside that region (or outside the terminal
 	// entirely, on emulators that clamp coordinates) still routes to the
-	// right selection — press decides the region once; drag/release just
+	// right selection - press decides the region once; drag/release just
 	// follow it.
 	dragRegion dragRegion
 }
@@ -332,6 +334,7 @@ func newModel(
 		toolsSel:                  newSelectionState(),
 		availableModels:           availableModels,
 		refresh:                   refresh,
+		completeProviderLogin:     providers.NewManage(nil).LoginComplete,
 		showReasoning:             showReasoning,
 		reasoningEffort:           reasoningEffort,
 		toolCallsDefaultCollapsed: toolCallsDefaultCollapsed,
@@ -346,7 +349,7 @@ func newModel(
 	}
 }
 
-// spinnerFrames are the Unicode braille dots cycled through at 80ms —
+// spinnerFrames are the Unicode braille dots cycled through at 80ms -
 // mirrors the legacy TUI's spinnerLoop (internal/tui/inline_chat.go).
 var spinnerFrames = []string{"⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"}
 
@@ -386,7 +389,7 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// Rebuild the glamour renderer with the new terminal width so
 		// subsequent finalized messages don't wrap at a stale column.
 		ensureMDRenderer(m.mdCache, msg.Width)
-		// Resize the child transcript overlay's viewport too, if open — the
+		// Resize the child transcript overlay's viewport too, if open - the
 		// diff viewer has this gap (its viewport is fixed at open-time), but
 		// it's cheap to avoid here so a resize while drilled in doesn't leave
 		// a stale-sized box.
@@ -466,7 +469,7 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, tea.Batch(cmds...)
 
 	case chatEventsClosedMsg:
-		m.notification = "event stream closed — exiting"
+		m.notification = "event stream closed - exiting"
 		return m, tea.Quit
 
 	case clearNotificationMsg:
@@ -545,7 +548,7 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case tickMsg:
 		m.spinnerFrame++
-		// Phase 1: per-tool spinner animation — bump spinnerIdx for every
+		// Phase 1: per-tool spinner animation - bump spinnerIdx for every
 		// running tool so each tool row animates independently.
 		for i := range m.tools {
 			if m.tools[i].status == "running" {
@@ -608,12 +611,12 @@ func (m *model) View() tea.View {
 	v.AltScreen = true
 	// Requests terminal focus reporting so we only fire a desktop
 	// notification (see handleChatEvent's ChatResponseCompletedEvent case)
-	// when the user has actually looked away — matches the legacy
+	// when the user has actually looked away - matches the legacy
 	// engine.Focused() gate in internal/tui/inline_events.go.
 	v.ReportFocus = true
 	// CellMotion enables click, release, and wheel events (plus drag) without
 	// the constant hover-motion stream AllMotion would add, and is better
-	// supported across terminals — all we need for scroll + click-to-expand.
+	// supported across terminals - all we need for scroll + click-to-expand.
 	v.MouseMode = tea.MouseModeCellMotion
 	return v
 }
@@ -621,7 +624,7 @@ func (m *model) View() tea.View {
 // computeLayout renders every non-viewport UI region, decides how much
 // vertical space the viewport gets, and records the on-screen row range of
 // each tool box. It is called once by View() (for rendering) and again by
-// handleMousePress/handleMouseDrag (for hit-testing) — keeping both derived
+// handleMousePress/handleMouseDrag (for hit-testing) - keeping both derived
 // from the same function is what guarantees they never disagree.
 func (m *model) computeLayout() layoutGeometry {
 	var g layoutGeometry
@@ -644,7 +647,7 @@ func (m *model) computeLayout() layoutGeometry {
 	viewportLines := m.viewportLinesForView(visibleReasoning)
 	m.viewport.SetContentLines(viewportLines)
 
-	// 3. Live tool-call group (uncommitted — see flushToolGroup). Rendered as
+	// 3. Live tool-call group (uncommitted - see flushToolGroup). Rendered as
 	// one box: a lone tool keeps its full box, multiple concurrent/sequential
 	// calls render as a single group so a long tool-calling burst doesn't
 	// grow unbounded on screen while it's still running.
@@ -656,11 +659,11 @@ func (m *model) computeLayout() layoutGeometry {
 		promptStr = renderPrompt(m.activePrompt, m.width)
 	}
 
-	// 5. Completion dropdown — floats as a centered overlay (see
+	// 5. Completion dropdown - floats as a centered overlay (see
 	// compositeCompletionsOverlay in View()) rather than flow-laid chrome, so
 	// it no longer occupies space here.
 
-	// 6. Notification banner — a fixed notifyReservedLines-tall area is
+	// 6. Notification banner - a fixed notifyReservedLines-tall area is
 	// always reserved directly above the separator/input, even when
 	// there's nothing to show, matching how Claude Code's own status area
 	// never resizes. Previously this only occupied space while
@@ -668,7 +671,7 @@ func (m *model) computeLayout() layoutGeometry {
 	// shrank by that height every time a notification appeared or cleared
 	// ("pushing text up and dropping it back down"). Width-wrapped via
 	// lipgloss (so a message that needs it still gets multiple lines, up
-	// to the reserved height — see notifyStyleForLevel's caller), then
+	// to the reserved height - see notifyStyleForLevel's caller), then
 	// padded/clipped to exactly notifyReservedLines so the reserved height
 	// truly never varies.
 	notifyWidth := m.width
@@ -711,7 +714,7 @@ func (m *model) computeLayout() layoutGeometry {
 		chromeParts = append(chromeParts, promptStr)
 	}
 	// notifyStr is always present (padOrClipLines guarantees
-	// notifyReservedLines rows even when there's no message) — see its
+	// notifyReservedLines rows even when there's no message) - see its
 	// comment above for why that fixed reservation matters.
 	chromeParts = append(chromeParts, notifyStr, sepStr, inputStr, statusStr)
 
@@ -753,7 +756,7 @@ func (m *model) computeLayout() layoutGeometry {
 
 	// chromeParts are joined by a single "\n" each (see step 9 above), which
 	// is the same separator that already appears between any two lines of
-	// rendered text — it does not add a blank row of its own. So advancing
+	// rendered text - it does not add a blank row of its own. So advancing
 	// from one part to the next is exactly visualLineCount(part) rows, with
 	// no extra "+1" per transition (unlike the viewport->chrome boundary
 	// below, which IS a standalone "\n" written outside chromeStr).

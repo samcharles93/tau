@@ -6,7 +6,7 @@ BASE_URL="${TAU_BASE_URL:-https://github.com/${REPO}/releases}"
 
 # Supported OS/ARCH pairs and the "tau_{version}_{os}_{arch}.{ext}" archive
 # name below must match internal/updater/targets.go's SupportedTargets()/
-# ArchiveName() exactly — that's the canonical source. This script can't
+# ArchiveName() exactly - that's the canonical source. This script can't
 # import Go code (it runs before Go is even on the machine), so keep the
 # two in sync by hand whenever the platform matrix changes.
 
@@ -31,7 +31,7 @@ sha256_of() {
 
 # verify_checksum checks that $file's SHA-256 matches the entry for $name
 # in the checksums.txt at $checksums_file. It never touches anything
-# outside $file/$checksums_file — callers are responsible for only
+# outside $file/$checksums_file - callers are responsible for only
 # replacing an installed binary after this succeeds.
 verify_checksum() {
   local file="$1" name="$2" checksums_file="$3"
@@ -133,7 +133,7 @@ run_install() {
 
   echo "$(bold '→') Verifying checksum..."
   if ! verify_checksum "$tmp/$archive" "$archive" "$tmp/checksums.txt"; then
-    echo "$(red 'Error'): checksum verification failed — leaving any existing install untouched"
+    echo "$(red 'Error'): checksum verification failed - leaving any existing install untouched"
     exit 1
   fi
 

@@ -1,23 +1,18 @@
 # Example: Creating an MCP Plugin
 
-This walks through [`plugins/mcp`](https://github.com/samcharles93/tau/blob/main/plugins/mcp/main.go),
-a real, working plugin shipped in the tau repo. It bridges [Model Context
-Protocol](https://modelcontextprotocol.io) (MCP) servers into tau: every tool
-an MCP server exposes becomes a normal agent tool, with no changes to tau
-itself. If you haven't read the [Plugin SDK](/plugins) guide yet, start
-there — this page assumes you know the `Extension` interface, `Tools()` /
+This walks through [`plugins/mcp`](https://github.com/samcharles93/tau/blob/main/plugins/mcp/main.go), a real, working
+plugin shipped in the tau repo. It bridges [Model Context Protocol](https://modelcontextprotocol.io) (MCP) servers into
+tau: every tool an MCP server exposes becomes a normal agent tool, with no changes to tau itself. If you haven't read
+the [Plugin SDK](/plugins) guide yet, start there - this page assumes you know the `Extension` interface, `Tools()` /
 `ExecuteTool()`, and `DispatchEvent()`.
 
 ## Why a plugin, not native support
 
-MCP servers speak JSON-RPC over one of the spec's transports — stdio (a
-subprocess) or Streamable HTTP (a running server reached over HTTP). Tau's
-tool-calling model is Go-native — tools are Go functions returning a result
-string. Rather than teach the coordinator a second tool protocol, the MCP
-plugin does the translation once: it connects to each configured MCP server,
-lists its tools, and re-advertises each one as a `pluginapi.ToolDefinition`.
-From the agent's point of view, an MCP tool looks identical to a built-in tool
-or any other plugin tool.
+MCP servers speak JSON-RPC over one of the spec's transports - stdio (a subprocess) or Streamable HTTP (a running server
+reached over HTTP). Tau's tool-calling model is Go-native - tools are Go functions returning a result string. Rather
+than teach the coordinator a second tool protocol, the MCP plugin does the translation once: it connects to each
+configured MCP server, lists its tools, and re-advertises each one as a `pluginapi.ToolDefinition`. From the agent's
+point of view, an MCP tool looks identical to a built-in tool or any other plugin tool.
 
 ## Configuration
 
@@ -41,15 +36,13 @@ plugins:
 
 Each server uses one of the two MCP-spec transports, selected by config:
 
-- `command`/`args` — **stdio**: exactly what you'd run by hand to start the
-  server; the plugin execs it and speaks MCP over its stdin/stdout.
-- `url` — **Streamable HTTP**: the plugin connects to the running server over
-  HTTP.
+- `command`/`args` - **stdio**: exactly what you'd run by hand to start the server; the plugin execs it and speaks MCP
+  over its stdin/stdout.
+- `url` - **Streamable HTTP**: the plugin connects to the running server over HTTP.
 
 Both transports are the official implementations from
-[`modelcontextprotocol/go-sdk`](https://github.com/modelcontextprotocol/go-sdk),
-so the plugin conforms to the MCP specification rather than defining its own
-wire protocol. Set exactly one of `command` or `url` per server.
+[`modelcontextprotocol/go-sdk`](https://github.com/modelcontextprotocol/go-sdk), so the plugin conforms to the MCP
+specification rather than defining its own wire protocol. Set exactly one of `command` or `url` per server.
 
 ## Struct and capabilities
 
@@ -68,15 +61,14 @@ func (p *MCPPlugin) Capabilities() []string {
 }
 ```
 
-`CapabilityInteractive` matters here specifically because `/mcp-reconnect`
-calls `host.Confirm()` before tearing down a live connection (see below) — it
-tells tau this plugin will make `HostService.Confirm`/`Input` calls, so tau
-doesn't skip wiring them up.
+`CapabilityInteractive` matters here specifically because `/mcp-reconnect` calls `host.Confirm()` before tearing down a
+live connection (see below) - it tells tau this plugin will make `HostService.Confirm`/`Input` calls, so tau doesn't
+skip wiring them up.
 
 ## Bridging tools
 
-Servers connect lazily, on the first `Tools()` call rather than at plugin
-startup — this keeps tau's boot fast even if an MCP server is slow to spawn:
+Servers connect lazily, on the first `Tools()` call rather than at plugin startup - this keeps tau's boot fast even if
+an MCP server is slow to spawn:
 
 ```go
 func (p *MCPPlugin) Tools(ctx context.Context) ([]*pluginapi.ToolDefinition, error) {
@@ -104,8 +96,8 @@ func (p *MCPPlugin) Tools(ctx context.Context) ([]*pluginapi.ToolDefinition, err
 }
 ```
 
-Each MCP tool is renamed `<server>.<tool>` so tools from different servers
-never collide — `filesystem.read_file` and `postgres.read_file` can coexist:
+Each MCP tool is renamed `<server>.<tool>` so tools from different servers never collide - `filesystem.read_file` and
+`postgres.read_file` can coexist:
 
 ```go
 func (s *mcpSession) listTools(ctx context.Context) ([]*pluginapi.ToolDefinition, error) {
@@ -132,24 +124,23 @@ func (p *MCPPlugin) ExecuteTool(ctx context.Context, toolName, arguments string)
 }
 ```
 
-MCP tool results can contain text or image content blocks; `callTool`
-serializes them to a JSON array of `{"type": "text", "text": ...}` /
-`{"type": "image", "data": ..., "mimeType": ...}` objects, which becomes the
-tool's return string.
+MCP tool results can contain text or image content blocks; `callTool` serializes them to a JSON array of
+`{"type": "text", "text": ...}` / `{"type": "image", "data": ..., "mimeType": ...}` objects, which becomes the tool's
+return string.
 
 ## Slash commands for operability
 
-An always-connected background bridge needs a way to inspect and recover it
-without restarting tau — that's what the plugin's three commands are for:
+An always-connected background bridge needs a way to inspect and recover it without restarting tau - that's what the
+plugin's three commands are for:
 
-| Command | Purpose |
-|---------|---------|
-| `/mcp-list` | Show connected servers and their tool counts |
-| `/mcp-reconnect <server>` | Tear down and reconnect one server |
-| `/mcp-reload` | Reconnect everything from the current config |
+| Command                   | Purpose                                      |
+| ------------------------- | -------------------------------------------- |
+| `/mcp-list`               | Show connected servers and their tool counts |
+| `/mcp-reconnect <server>` | Tear down and reconnect one server           |
+| `/mcp-reload`             | Reconnect everything from the current config |
 
-`/mcp-reconnect` is the interesting one — it uses `host.Confirm()` to avoid
-silently killing a connection something else might be mid-call against:
+`/mcp-reconnect` is the interesting one - it uses `host.Confirm()` to avoid silently killing a connection something else
+might be mid-call against:
 
 ```go
 func (p *MCPPlugin) cmdReconnect(ctx context.Context, serverName string) (string, error) {
@@ -165,9 +156,8 @@ func (p *MCPPlugin) cmdReconnect(ctx context.Context, serverName string) (string
 }
 ```
 
-`Confirm()` suspends the command until the user answers a yes/no prompt
-rendered by the TUI (or Web UI) — this is the same interactive surface
-described in [Advanced Plugins](/examples/advanced-plugin).
+`Confirm()` suspends the command until the user answers a yes/no prompt rendered by the TUI (or Web UI) - this is the
+same interactive surface described in [Advanced Plugins](/examples/advanced-plugin).
 
 ## Build and install
 
@@ -181,10 +171,9 @@ cp tau-plugin-mcp ~/.config/tau/plugins/
 tau
 ```
 
-`plugins/mcp` is a standalone Go module (its own `go.mod`, with a `replace`
-directive pointing back at the tau repo root) — see
-[Building, Installing, and go.mod](/plugins#building-installing-and-go-mod)
-for the difference between in-repo and standalone plugin builds.
+`plugins/mcp` is a standalone Go module (its own `go.mod`, with a `replace` directive pointing back at the tau repo
+root) - see [Building, Installing, and go.mod](/plugins#building-installing-and-go-mod) for the difference between
+in-repo and standalone plugin builds.
 
 ## Try it
 
@@ -201,6 +190,5 @@ plugins:
 /mcp-list
 ```
 
-Then ask the agent something that needs the bridged tool — e.g. "list the
-files in /tmp" — and it calls `filesystem.list_directory` exactly like any
-other tool.
+Then ask the agent something that needs the bridged tool - e.g. "list the files in /tmp" - and it calls
+`filesystem.list_directory` exactly like any other tool.

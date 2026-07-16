@@ -8,19 +8,19 @@ import (
 )
 
 // committedReasoningBlock is a completed reasoning block already committed
-// to permanent scrollback that can still be collapsed/expanded afterward —
+// to permanent scrollback that can still be collapsed/expanded afterward -
 // mirroring committedToolGroup's same "stay interactive after it scrolls
 // into history" shape (see spliceCommittedReasoning). Only a finished turn's
 // reasoning gets one of these; the in-progress turn's reasoning is rendered
 // fresh every frame straight from m.reasoning (see viewportLinesForView) and
-// is never a candidate for collapse — "streaming reasoning stays visible
+// is never a candidate for collapse - "streaming reasoning stays visible
 // while active" falls out of that split for free, no separate flag needed.
 type committedReasoningBlock struct {
-	key       string // stable across an applySnapshot rebuild — see committedReasoningKey
+	key       string // stable across an applySnapshot rebuild - see committedReasoningKey
 	text      string // raw reasoning text; unaffected by collapse (presentation-only)
 	collapsed bool
 
-	// lineIdx/lineCount mirror committedToolGroup's own fields — see
+	// lineIdx/lineCount mirror committedToolGroup's own fields - see
 	// spliceCommittedReasoning.
 	lineIdx   int
 	lineCount int
@@ -28,12 +28,12 @@ type committedReasoningBlock struct {
 
 // committedReasoningKey derives a stable key for a completed reasoning
 // block so its collapse state survives an applySnapshot rebuild instead of
-// resetting to expanded every time the user submits another prompt —
+// resetting to expanded every time the user submits another prompt -
 // mirrors committedGroupKey. id is the owning assistant ChatMessage's ID
 // when known: applySnapshot's msg.ID, or finalizeResponse's id param, which
 // is the same persisted ID once the turn completes (see messageRanges). seq
 // is a fallback ordinal (m.reasoningKeySeq) for the rare case a message
-// commits reasoning before it has a real ID — that block's collapse state
+// commits reasoning before it has a real ID - that block's collapse state
 // won't survive a later rebuild, same known limitation as any other
 // synthetic key in this file (e.g. the "bash-%d" tool IDs in applySnapshot).
 func committedReasoningKey(id string, seq int) string {
@@ -45,7 +45,7 @@ func committedReasoningKey(id string, seq int) string {
 
 // reasoningBar prefixes every wrapped line of a reasoning block in Warm
 // Ochre, blockquote-style. A single first-line glyph read as too subtle in
-// testing — barely distinguishable from body text at a glance — so the bar
+// testing - barely distinguishable from body text at a glance - so the bar
 // runs the full height of the block instead, giving reasoning its own
 // visual lane next to the user message above and the answer below, without
 // tinting the body text itself or using a repeated "Reasoning"/"Tau" label.
@@ -83,7 +83,7 @@ const reasoningCollapsedGlyph = "▸ "
 
 // renderReasoningCollapsedLine renders the single-line, subtle stand-in for
 // a folded reasoning block: a small accent glyph plus a muted line count, no
-// border or panel, and deliberately no keybinding hint inline — that lives
+// border or panel, and deliberately no keybinding hint inline - that lives
 // in /help (see help.go) instead of repeating on every collapsed block.
 func renderReasoningCollapsedLine(lineCount int) string {
 	noun := "line"
@@ -96,7 +96,7 @@ func renderReasoningCollapsedLine(lineCount int) string {
 }
 
 // renderCommittedReasoning renders b in its current collapsed/expanded
-// state — the single place that decides between the full block and the
+// state - the single place that decides between the full block and the
 // one-line stand-in, so commitReasoningBlock and spliceCommittedReasoning
 // can't drift apart on how a block looks.
 func (m *model) renderCommittedReasoning(b *committedReasoningBlock) string {
@@ -110,12 +110,12 @@ func (m *model) renderCommittedReasoning(b *committedReasoningBlock) string {
 // commitReasoningBlock appends a completed reasoning block to scrollback and
 // registers a committedReasoningBlock so it can still be collapsed/expanded
 // afterward (see toggleReasoningBlock). autoCollapse is the block's initial
-// fold state for a brand-new commit — finalizeResponse and applySnapshot
+// fold state for a brand-new commit - finalizeResponse and applySnapshot
 // both pass "the turn produced a trailing answer", so a block collapses the
 // moment final-answer generation actually happened (there's something to
 // fold *into*), while a reasoning-only turn stays expanded, since collapsing
 // it would just hide the entire response. restore, when key matches a prior
-// block, always wins over autoCollapse — a user's manual toggle survives a
+// block, always wins over autoCollapse - a user's manual toggle survives a
 // snapshot rebuild regardless of what the message shape defaults to. restore
 // is nil for a fresh live-turn commit, which has no prior state to inherit.
 func (m *model) commitReasoningBlock(text, key string, autoCollapse bool, restore map[string]*committedReasoningBlock) {
@@ -152,7 +152,7 @@ func (m *model) toggleReasoningBlock(key string) bool {
 }
 
 // spliceCommittedReasoning re-renders b after a collapse/expand toggle and
-// splices the result into m.renderedLines in place of its previous lines —
+// splices the result into m.renderedLines in place of its previous lines -
 // shifting every committed tool group, message range, and other reasoning
 // block that comes after it by the resulting line-count delta, exactly like
 // spliceCommittedGroup (see its doc comment: this is the second of the two
@@ -195,7 +195,7 @@ func (m *model) viewportLinesForView(visibleReasoning bool) []string {
 
 	// While thinking (in response, no tool activity, nothing streamed yet,
 	// no visible reasoning), the status bar's own "Thinking ●●●" already
-	// covers this state — nothing to add here.
+	// covers this state - nothing to add here.
 	if visibleReasoning {
 		lines = append(lines, renderReasoningLines(m.reasoning, m.width)...)
 	}

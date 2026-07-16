@@ -55,9 +55,9 @@ func TestLiveMCPServer(t *testing.T) {
 	if len(tools) == 0 {
 		t.Fatalf("connected to %q (%s) but it advertised no tools", name, url)
 	}
-	t.Logf("connected to %q — %d tool(s):", name, len(tools))
+	t.Logf("connected to %q - %d tool(s):", name, len(tools))
 	for _, tl := range tools {
-		t.Logf("  %s — %s", tl.Name, firstLine(tl.Description))
+		t.Logf("  %s - %s", tl.Name, firstLine(tl.Description))
 	}
 
 	call := os.Getenv("MCP_LIVE_CALL")

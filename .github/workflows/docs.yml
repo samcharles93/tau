@@ -23,7 +23,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          fetch-depth: 0 # full history — VitePress lastUpdated needs it
+          fetch-depth: 0 # full history - VitePress lastUpdated needs it
 
       - uses: pnpm/action-setup@v6
         with:

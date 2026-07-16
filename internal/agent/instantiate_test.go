@@ -42,7 +42,7 @@ func saveOpenInstance(t *testing.T, s store.SessionStore, id string, pid int, pr
 
 // TestSweepOrphanedInstances_StaleAgeClosesRegardlessOfPID: the stale-age
 // bound is unconditional per docs/specs/agents/04-storage-and-sessions.md
-// (Orphan sweep: Stale-age bound) — even a row whose pid is alive (our own
+// (Orphan sweep: Stale-age bound) - even a row whose pid is alive (our own
 // test process) must be closed once started_at exceeds the bound.
 func TestSweepOrphanedInstances_StaleAgeClosesRegardlessOfPID(t *testing.T) {
 	s := newSweepTestStore(t)
@@ -82,7 +82,7 @@ func TestSweepOrphanedInstances_NoPIDRecordedCloses(t *testing.T) {
 }
 
 // TestSweepOrphanedInstances_DeadPIDCloses covers a pid that no longer
-// exists (the owning process exited without closing its row — e.g. it was
+// exists (the owning process exited without closing its row - e.g. it was
 // SIGKILLed).
 func TestSweepOrphanedInstances_DeadPIDCloses(t *testing.T) {
 	if _, err := os.Stat("/proc"); err != nil {
@@ -125,7 +125,7 @@ func TestSweepOrphanedInstances_AlivePIDWithMatchingIdentitySkipped(t *testing.T
 		t.Skip("could not capture own process-start identity")
 	}
 	// A different "ownPID" so the sweep doesn't skip via the self-exclusion
-	// path — it must reach the actual PID-identity check.
+	// path - it must reach the actual PID-identity check.
 	saveOpenInstance(t, s, "tau#alive01", selfPID, startNS, time.Now())
 
 	require.NoError(t, SweepOrphanedInstances(context.Background(), s, -1, 24*time.Hour))
@@ -140,7 +140,7 @@ func TestSweepOrphanedInstances_AlivePIDWithMatchingIdentitySkipped(t *testing.T
 // TestSweepOrphanedInstances_RecycledPIDDifferentIdentityCloses proves a
 // live pid whose recorded process-start identity does NOT match the
 // current process (simulating PID recycling) is treated as dead, not
-// alive — the whole point of persisting process_start_ns.
+// alive - the whole point of persisting process_start_ns.
 func TestSweepOrphanedInstances_RecycledPIDDifferentIdentityCloses(t *testing.T) {
 	if _, err := os.Stat("/proc"); err != nil {
 		t.Skip("requires /proc (Linux)")
@@ -152,7 +152,7 @@ func TestSweepOrphanedInstances_RecycledPIDDifferentIdentityCloses(t *testing.T)
 		t.Skip("could not capture own process-start identity")
 	}
 	// Record a bogus process-start identity for our own (very much alive)
-	// pid — this is exactly what a recycled pid looks like: same pid,
+	// pid - this is exactly what a recycled pid looks like: same pid,
 	// different actual start time than what's on file.
 	saveOpenInstance(t, s, "tau#recycled01", selfPID, realStartNS+1, time.Now())
 
@@ -166,7 +166,7 @@ func TestSweepOrphanedInstances_RecycledPIDDifferentIdentityCloses(t *testing.T)
 }
 
 // TestSweepOrphanedInstances_OwnPIDNeverClosed proves the caller's own row
-// (matched by pid) is never swept, even if it happens to be stale by age —
+// (matched by pid) is never swept, even if it happens to be stale by age -
 // self-exclusion must win over every other rule to avoid a process closing
 // its own still-in-use row.
 func TestSweepOrphanedInstances_OwnPIDNeverClosed(t *testing.T) {

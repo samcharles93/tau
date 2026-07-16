@@ -148,7 +148,7 @@ fi
 # Case B: tampered archive is rejected; any pre-existing binary is preserved.
 rm -rf "$run_case_install_dir"
 mkdir -p "$run_case_install_dir"
-printf '%s' "existing binary — must not be touched" >"$run_case_install_dir/tau"
+printf '%s' "existing binary - must not be touched" >"$run_case_install_dir/tau"
 chmod +x "$run_case_install_dir/tau"
 before_hash=$(sha256_of "$run_case_install_dir/tau")
 

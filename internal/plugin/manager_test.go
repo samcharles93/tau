@@ -161,7 +161,7 @@ func TestDispatchEvent_ParentContextCancelled(t *testing.T) {
 
 	resp := m.DispatchEvent(ctx, "test_event", "session-1", nil)
 	// Both plugins should return immediately with context.Canceled.
-	// We don't assert on the response value — the key is that this doesn't hang.
+	// We don't assert on the response value - the key is that this doesn't hang.
 	_ = resp
 }
 
@@ -177,7 +177,7 @@ func TestDispatchEvent_PluginNotFound(t *testing.T) {
 	}
 	m.setPluginClientForTest("plugin-a", &api.GRPCClient{Client: fast})
 
-	// plugin-b is not registered — it should be silently skipped.
+	// plugin-b is not registered - it should be silently skipped.
 	resp := m.DispatchEvent(context.Background(), "test_event", "session-1", nil)
 	if resp == nil || resp.GetInjectSystemPrompt() != "ok" {
 		t.Errorf("expected response from plugin-a only, got %+v", resp)

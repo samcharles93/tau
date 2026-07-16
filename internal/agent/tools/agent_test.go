@@ -36,7 +36,7 @@ func TestExecuteAgentTool_SpecNotFound(t *testing.T) {
 		t.Fatalf("executeAgentTool returned error: %v", err)
 	}
 	// The function returns a Result with IsError=true for spec-not-found,
-	// not a Go error. Wait — let me check. Actually looking at the code,
+	// not a Go error. Wait - let me check. Actually looking at the code,
 	// executeAgentTool returns (Result, error) where error is always nil
 	// (it puts errors in Result.IsError). So we need to check the result.
 }
@@ -91,7 +91,7 @@ func TestExecuteAgentTool_DepthExceeded(t *testing.T) {
 	if result.ErrorKind != "" {
 		t.Logf("error kind: %s, content: %s", result.ErrorKind, result.Content)
 	}
-	// Depth check happens before spec resolve in executeAgentTool —
+	// Depth check happens before spec resolve in executeAgentTool -
 	// the error should be about depth, not spec-not-found.
 }
 
@@ -293,7 +293,7 @@ func TestBuildChildPrompt(t *testing.T) {
 		if !strings.Contains(got, "&lt;/parent_context&gt;") {
 			t.Fatalf("expected escaped closing tag in output, got %q", got)
 		}
-		// Exactly one real closing tag must remain — the wrapper's own.
+		// Exactly one real closing tag must remain - the wrapper's own.
 		if strings.Count(got, "</parent_context>") != 1 {
 			t.Fatalf("expected exactly one real </parent_context>, got %q", got)
 		}
@@ -443,7 +443,7 @@ func TestIsAncestorOf(t *testing.T) {
 }
 
 // TestExecuteResume_RejectsNonAncestor verifies that a sibling (or any
-// non-ancestor) cannot resume a session it didn't create or descend from —
+// non-ancestor) cannot resume a session it didn't create or descend from -
 // the core authorization check in G2.
 func TestExecuteResume_RejectsNonAncestor(t *testing.T) {
 	s := newAncestorTestStore(t)
@@ -522,7 +522,7 @@ func TestExecuteResume_RejectsActiveSession(t *testing.T) {
 }
 
 // TestExecuteResume_RejectsAgentOverride verifies that specifying "agent"
-// alongside "resume" is rejected — spec identity is immutable on resume.
+// alongside "resume" is rejected - spec identity is immutable on resume.
 func TestExecuteResume_RejectsAgentOverride(t *testing.T) {
 	cfg := AgentToolConfig{
 		CWD:              t.TempDir(),
@@ -549,7 +549,7 @@ func TestExecuteResume_RejectsAgentOverride(t *testing.T) {
 
 // TestExecuteResume_RejectsSessionWithNoInstance verifies that a session
 // with no agent_instance_id (e.g. pre-migration history, or a session never
-// owned by any agent instance) cannot be resumed — there is no ancestor
+// owned by any agent instance) cannot be resumed - there is no ancestor
 // chain to authorize against.
 func TestExecuteResume_RejectsSessionWithNoInstance(t *testing.T) {
 	s := newAncestorTestStore(t)
@@ -588,7 +588,7 @@ func TestExecuteResume_RejectsSessionWithNoInstance(t *testing.T) {
 // TestExecuteSpawn_ClosesInstanceOnStartFailure verifies that when the
 // child process fails to start (after the instance row is already
 // persisted), the instance is closed as "failed" rather than left
-// "started" forever — see spawnChildProcess's deferred compensating close
+// "started" forever - see spawnChildProcess's deferred compensating close
 // (docs/specs/agents/04-storage-and-sessions.md, G3).
 func TestExecuteSpawn_ClosesInstanceOnStartFailure(t *testing.T) {
 	dir := t.TempDir()
@@ -613,7 +613,7 @@ func TestExecuteSpawn_ClosesInstanceOnStartFailure(t *testing.T) {
 		Bus:              eventbus.New(),
 		Store:            s,
 		SessionID:        "parent-session",
-		// A path that cannot possibly exec — cmd.Start() fails deterministically.
+		// A path that cannot possibly exec - cmd.Start() fails deterministically.
 		TauPath: filepath.Join(dir, "no-such-tau-binary"),
 	}
 	result, err := executeAgentTool(context.Background(), mustMarshal(map[string]any{
@@ -633,7 +633,7 @@ func TestExecuteSpawn_ClosesInstanceOnStartFailure(t *testing.T) {
 		t.Fatalf("expected exactly 1 instance row, got %d", len(insts))
 	}
 	if insts[0].EndedAt.IsZero() {
-		t.Fatalf("instance was left open (ended_at zero) after a spawn failure — orphaned row")
+		t.Fatalf("instance was left open (ended_at zero) after a spawn failure - orphaned row")
 	}
 	if insts[0].ExitStatus != "failed" {
 		t.Errorf("ExitStatus = %q, want %q", insts[0].ExitStatus, "failed")
@@ -672,7 +672,7 @@ func TestExecuteSpawn_CancellationEscalatesToSIGKILL(t *testing.T) {
 	}, 0))
 
 	// A fake child: sends a valid handshake, then ignores SIGTERM and
-	// sleeps — only SIGKILL can end it. Proves escalation reaches phase 3.
+	// sleeps - only SIGKILL can end it. Proves escalation reaches phase 3.
 	script := filepath.Join(dir, "fake-child.sh")
 	scriptBody := "#!/bin/sh\ntrap '' TERM\necho '{\"type\":\"agent.ready\",\"payload\":{\"instance\":\"x\",\"pid\":1,\"protocol\":1}}'\nsleep 100\n"
 	if err := os.WriteFile(script, []byte(scriptBody), 0o755); err != nil {
@@ -704,7 +704,7 @@ func TestExecuteSpawn_CancellationEscalatesToSIGKILL(t *testing.T) {
 	}()
 
 	// Give the child a moment to start and complete its handshake, then
-	// cancel — this is what triggers the escalation.
+	// cancel - this is what triggers the escalation.
 	time.Sleep(75 * time.Millisecond)
 	cancel()
 
@@ -723,7 +723,7 @@ func TestExecuteSpawn_CancellationEscalatesToSIGKILL(t *testing.T) {
 			t.Errorf("status = %v, want %q (details: %s)", details["status"], "cancelled", result.Details)
 		}
 	case <-time.After(5 * time.Second):
-		t.Fatal("spawn did not return within 5s of cancellation — escalation did not terminate the process group")
+		t.Fatal("spawn did not return within 5s of cancellation - escalation did not terminate the process group")
 	}
 
 	insts, err := s.ListAgentInstances(context.Background(), "tau#root000")
@@ -740,7 +740,7 @@ func TestExecuteSpawn_CancellationEscalatesToSIGKILL(t *testing.T) {
 // max_active_children/max_queued_spawns ceiling for this parent already
 // saturated, a spawn is rejected with a structured "spawn_rejected" result
 // and the newly-created instance row is closed rather than left "started"
-// forever — it never reaches process exec.
+// forever - it never reaches process exec.
 func TestExecuteSpawn_RejectedBySpawnAdmission(t *testing.T) {
 	dir := t.TempDir()
 	s, err := store.NewSQLiteStore(context.Background(), dir+"/sessions.db", dir)
@@ -772,7 +772,7 @@ func TestExecuteSpawn_RejectedBySpawnAdmission(t *testing.T) {
 	// Saturate this parent's only active slot, then its only queue slot
 	// (the second acquire blocks in the queue since nothing releases the
 	// active slot), directly against the same global limiter
-	// executeAgentTool uses — so the tool call under test has nowhere to
+	// executeAgentTool uses - so the tool call under test has nowhere to
 	// go and must reject immediately rather than queue or block.
 	release, err := acquireSpawnSlot(context.Background(), parentID, agentsCfg, time.Time{})
 	if err != nil {
@@ -929,7 +929,7 @@ func TestExecuteSpawn_CapsOversizedTimeoutRatherThanRejecting(t *testing.T) {
 		t.Fatalf("executeAgentTool returned error: %v", err)
 	}
 	// Cancelled by the test's own short ctx, not rejected as invalid_params
-	// — proves the 48h timeout was capped (to 24h) and accepted, not
+	// - proves the 48h timeout was capped (to 24h) and accepted, not
 	// rejected for exceeding a range.
 	if result.ErrorKind == "invalid_params" {
 		t.Fatalf("48h timeout was rejected as invalid_params, want capped and accepted: %+v", result)
@@ -962,7 +962,7 @@ func TestExecuteSpawn_RejectsMalformedDeadline(t *testing.T) {
 	result, err := executeAgentTool(context.Background(), mustMarshal(map[string]any{
 		"agent":  "tau",
 		"prompt": "do something",
-		"budget": map[string]any{"deadline": "5m"}, // duration, not RFC 3339 — the old (wrong) format
+		"budget": map[string]any{"deadline": "5m"}, // duration, not RFC 3339 - the old (wrong) format
 	}), nil, cfg)
 	if err != nil {
 		t.Fatalf("executeAgentTool returned error: %v", err)
@@ -1009,7 +1009,7 @@ func TestExecuteSpawn_RecordsChildPID(t *testing.T) {
 
 // TestSeedFreshSession_UsesChildSystemPromptNotParent proves fresh-mode
 // children get their own ChildSystemPrompt, not whatever ParentSystemPrompt
-// happens to be set to — a spawned "research" child must not start with
+// happens to be set to - a spawned "research" child must not start with
 // the parent's persona/instructions.
 func TestSeedFreshSession_UsesChildSystemPromptNotParent(t *testing.T) {
 	dir := t.TempDir()
@@ -1072,7 +1072,7 @@ func TestSeedFreshSession_ParentSessionNotYetPersisted(t *testing.T) {
 	}
 	defer s.Close()
 
-	// Deliberately no s.Save for "parent-not-yet-saved" — this is the point.
+	// Deliberately no s.Save for "parent-not-yet-saved" - this is the point.
 	err = seedChildSession(context.Background(), seedSessionConfig{
 		Store:             s,
 		SessionID:         "child-session",

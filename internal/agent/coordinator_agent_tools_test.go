@@ -73,7 +73,7 @@ func waitForAgentActivated(t *testing.T, sub interface{ Events() <-chan chat.Cha
 }
 
 // TestHandleRunAgentClampsDiscoveredAgentTools guards the Part B safety
-// guard: a filesystem-discovered agent definition (untrusted — may be
+// guard: a filesystem-discovered agent definition (untrusted - may be
 // self-authored by the model) must never be able to grant itself a wider
 // tool set than the session's current allowlist already permits.
 func TestHandleRunAgentClampsDiscoveredAgentTools(t *testing.T) {
@@ -114,7 +114,7 @@ func TestHandleRunAgentClampsDiscoveredAgentTools(t *testing.T) {
 	require.False(t, active["bash"], "discovered agent must not widen the allowlist to include bash")
 	require.False(t, active["write"], "discovered agent must not widen the allowlist to include write")
 	// The intersection of {read,grep} and {bash,write} is empty. Clamping
-	// to an empty set must NOT call SetAllowedTools(empty) — that method
+	// to an empty set must NOT call SetAllowedTools(empty) - that method
 	// treats an empty list as "no restriction" and would grant everything,
 	// exactly the escalation this guard exists to prevent. The correct
 	// outcome is that the pre-existing allowlist survives untouched.
@@ -165,7 +165,7 @@ func TestHandleRunAgentDiscoveredAgentOverlapKeepsIntersection(t *testing.T) {
 // TestHandleRunAgentDiscoveredAgentWithNoToolsLeavesAllowlistUntouched
 // guards the other half of the escalation path: a discovered definition
 // declaring NO tools list at all must not be treated as "grant everything"
-// — that would be the single largest possible escalation.
+// - that would be the single largest possible escalation.
 func TestHandleRunAgentDiscoveredAgentWithNoToolsLeavesAllowlistUntouched(t *testing.T) {
 	projectDir := t.TempDir()
 	require.NoError(t, os.MkdirAll(filepath.Join(projectDir, ".agents", "agents"), 0o755))
@@ -238,7 +238,7 @@ func TestHandleRunAgentBuiltinToolsApplyDirectly(t *testing.T) {
 	waitForAgentActivated(t, sub, "plan")
 
 	// A built-in's own tool restriction applies as-is and can widen the
-	// session's current allowlist — unchanged from before this change, and
+	// session's current allowlist - unchanged from before this change, and
 	// the direct contrast with the discovered-agent tests above: trust in
 	// a built-in (shipped, reviewed) is what makes this safe, and is
 	// exactly what a filesystem-discovered definition does not get.
@@ -255,7 +255,7 @@ func TestHandleRunAgentBuiltinToolsApplyDirectly(t *testing.T) {
 
 // TestEffectiveToolsCeilingRejectsOutOfSetToolCalls creates a coordinator
 // with an effectiveTools ceiling and verifies that a tool outside the
-// ceiling is rejected as "unknown tool" — the buildToolDefs filter means
+// ceiling is rejected as "unknown tool" - the buildToolDefs filter means
 // the LLM can't see it, and if it somehow calls it anyway (hallucination),
 // the registry lookup fails with the standard unknown-tool path.
 func TestEffectiveToolsCeilingRejectsOutOfSetToolCalls(t *testing.T) {
@@ -279,7 +279,7 @@ func TestEffectiveToolsCeilingRejectsOutOfSetToolCalls(t *testing.T) {
 	require.False(t, active["edit"], "edit is outside the ceiling")
 	require.False(t, active["bash"], "bash is outside the ceiling")
 
-	// Send a prompt — the streamer calls "edit" which IS registered but is
+	// Send a prompt - the streamer calls "edit" which IS registered but is
 	// outside the ceiling (only read/grep are allowed). The execution-time
 	// guard must reject it as unknown tool.
 	sub := eventbus.Subscribe[chat.ChatEvent](coordinator.bus.Client("test-observer"))
@@ -380,7 +380,7 @@ func TestPluginRegistrationMidRunBlockedByCeiling(t *testing.T) {
 
 	// Register a plugin tool "myplugin__read" that overlaps "read" in name.
 	// The ceiling allows "read", and the plugin tool's sanitized name is
-	// "myplugin__read" — this is NOT the same as "read", so it's also blocked.
+	// "myplugin__read" - this is NOT the same as "read", so it's also blocked.
 	require.NoError(t, reg.RegisterPluginTool("myplugin", tools.PluginToolDef{Name: "read"}))
 	active = activeToolNames(coordinator)
 	require.False(t, active["myplugin__read"], "plugin tool with sanitized name must be blocked by ceiling")
@@ -395,7 +395,7 @@ func TestPluginRegistrationNoCeilingPassesThrough(t *testing.T) {
 		TokenSource: func(context.Context, config.ProviderConfig) (string, error) { return "", nil },
 		Streamer:    noopStreamer{},
 		Registry:    reg,
-		// No AllowedTools — unrestricted.
+		// No AllowedTools - unrestricted.
 	})
 	require.NoError(t, err)
 	defer coordinator.Close()
@@ -448,7 +448,7 @@ func TestAgentToolRemovalCutsSpawnCapability(t *testing.T) {
 
 // TestSetAllowedToolsEmptyRevertsToCeiling verifies that mode exit
 // (empty or nil list) reverts allowedTools to nil, restoring the
-// ceiling-only filter — not the full unrestricted registry.
+// ceiling-only filter - not the full unrestricted registry.
 func TestSetAllowedToolsEmptyRevertsToCeiling(t *testing.T) {
 	reg := newRegistryWithTools(t, "read", "grep", "bash", "write")
 	coordinator, err := NewCoordinator(context.Background(), CoordinatorConfig{
@@ -499,7 +499,7 @@ func TestAllowedToolsConstructorDefaultsToUnrestricted(t *testing.T) {
 		TokenSource: func(context.Context, config.ProviderConfig) (string, error) { return "", nil },
 		Streamer:    noopStreamer{},
 		Registry:    reg,
-		// No AllowedTools — nil slice.
+		// No AllowedTools - nil slice.
 	})
 	require.NoError(t, err)
 	defer coordinator.Close()
@@ -537,7 +537,7 @@ func TestAllowedToolsConstructorEmptySliceIsNil(t *testing.T) {
 // hardcoded into the effective tools ceiling. It must be explicitly declared
 // in the spec's or spawn's tools list to participate in attenuation.
 func TestSkillIsNotAutoInjectedAtConstruction(t *testing.T) {
-	// "skill" IS in the registry but NOT in AllowedTools — it should be invisible.
+	// "skill" IS in the registry but NOT in AllowedTools - it should be invisible.
 	reg := newRegistryWithTools(t, "read", "skill")
 	coordinator, err := NewCoordinator(context.Background(), CoordinatorConfig{
 		Bus:          newTestBus(t),
@@ -587,7 +587,7 @@ func TestSkillNotInjectedBySetAllowedTools(t *testing.T) {
 	require.NoError(t, err)
 	defer coordinator.Close()
 
-	// SetAllowedTools narrows to just ["read"] — skill should still NOT appear.
+	// SetAllowedTools narrows to just ["read"] - skill should still NOT appear.
 	coordinator.SetAllowedTools([]string{"read"})
 	active := activeToolNames(coordinator)
 	require.True(t, active["read"])

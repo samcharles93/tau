@@ -12,8 +12,8 @@ import (
 )
 
 // withIsolatedConfigDir points HOME/XDG_CONFIG_HOME at a temp directory for
-// the duration of the test, so trust.yaml reads/writes — and UserSources()
-// discovery — never touch the real user's machine. Returns the resolved
+// the duration of the test, so trust.yaml reads/writes - and UserSources()
+// discovery - never touch the real user's machine. Returns the resolved
 // tau config dir.
 func withIsolatedConfigDir(t *testing.T) string {
 	t.Helper()
@@ -116,7 +116,7 @@ func TestResolveRootSpecWithTrust_AlreadyTrustedSkipsPrompt(t *testing.T) {
 }
 
 // TestResolveRootSpecWithTrust_BypassFlagDoesNotPersist proves
-// --trust-project-root-spec trusts for this invocation only — it must not
+// --trust-project-root-spec trusts for this invocation only - it must not
 // write a trust.yaml entry (the flag/env var has to be supplied every
 // time, or the user approves interactively to persist it).
 func TestResolveRootSpecWithTrust_BypassFlagDoesNotPersist(t *testing.T) {
@@ -161,7 +161,7 @@ func TestResolveRootSpecWithTrust_HeadlessUntrustedFails(t *testing.T) {
 }
 
 // TestResolveRootSpecWithTrust_RejectedPromptFallsBackToBuiltin proves an
-// explicit "N" doesn't fail startup — it falls back to the built-in tau
+// explicit "N" doesn't fail startup - it falls back to the built-in tau
 // spec, per the spec's documented behavior.
 func TestResolveRootSpecWithTrust_RejectedPromptFallsBackToBuiltin(t *testing.T) {
 	withIsolatedConfigDir(t)
@@ -240,8 +240,8 @@ func TestResolveRootSpecWithTrust_EditedSpecRequiresReapproval(t *testing.T) {
 		t.Fatalf("save store: %v", err)
 	}
 
-	// Edit the spec file — its hash changes, invalidating the trust entry.
-	writeProjectRootSpec(t, cwd, "MODIFIED content — this should require re-approval")
+	// Edit the spec file - its hash changes, invalidating the trust entry.
+	writeProjectRootSpec(t, cwd, "MODIFIED content - this should require re-approval")
 
 	origTTY := isInteractiveTTY
 	isInteractiveTTY = func() bool { return false }

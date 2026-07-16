@@ -1,4 +1,4 @@
-// Tau MCP Client Plugin — connects to MCP servers and registers their tools
+// Tau MCP Client Plugin - connects to MCP servers and registers their tools
 // with tau's agent coordinator via the go-plugin extension architecture.
 //
 // Build: cd plugins/mcp && go build -o tau-plugin-mcp .
@@ -264,7 +264,7 @@ func (p *MCPPlugin) cmdReconnect(ctx context.Context, serverName string) (string
 	s, ok := p.sessions[serverName]
 	if !ok {
 		p.mu.Unlock()
-		return "", fmt.Errorf("server %q not found — use /mcp list to see connected servers", serverName)
+		return "", fmt.Errorf("server %q not found - use /mcp list to see connected servers", serverName)
 	}
 	s.session.Close()
 	if s.cmd != nil && s.cmd.Process != nil {
