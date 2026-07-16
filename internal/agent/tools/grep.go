@@ -201,13 +201,6 @@ func grepBackendResult(result Result, backend string) Result {
 	return result
 }
 
-// capGrepOutput enforces the match limit and per-line length cap on
-// ripgrep-style output, then applies the global size truncation. Notices for
-// each cap that fired are appended so the model knows how to narrow the search.
-func capGrepOutput(output string, limit int) string {
-	return capGrepResult(output, limit).Content
-}
-
 func capGrepResult(output string, limit int) Result {
 	lines := strings.Split(strings.TrimSuffix(output, "\n"), "\n")
 	kept := make([]string, 0, len(lines))
