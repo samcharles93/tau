@@ -232,7 +232,7 @@ func TestCapGrepOutput_MatchLimit(t *testing.T) {
 	}
 	output := strings.Join(lines, "\n")
 
-	got := capGrepOutput(output, 5)
+	got := capGrepResult(output, 5).Content
 
 	if !strings.Contains(got, "[showing first 5 matches") {
 		t.Fatalf("expected match-limit notice, got:\n%s", got)
@@ -245,7 +245,7 @@ func TestCapGrepOutput_MatchLimit(t *testing.T) {
 
 func TestCapGrepOutput_LongLines(t *testing.T) {
 	long := "file.js:1:" + strings.Repeat("x", 2000)
-	got := capGrepOutput(long, 100)
+	got := capGrepResult(long, 100).Content
 
 	if !strings.Contains(got, "... [truncated]") {
 		t.Fatalf("expected per-line truncation marker, got:\n%s", got)
@@ -267,7 +267,7 @@ func TestCapGrepOutput_ContextLinesNotCounted(t *testing.T) {
 		"file.go:4:match two",
 	}, "\n")
 
-	got := capGrepOutput(output, 2)
+	got := capGrepResult(output, 2).Content
 
 	if strings.Contains(got, "[showing first") {
 		t.Fatalf("limit notice should not fire for 2 matches with limit 2, got:\n%s", got)
