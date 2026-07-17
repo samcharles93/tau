@@ -702,7 +702,7 @@ func (m *model) startOrQueueTurn(text string) tea.Cmd {
 
 	return sendCommand(m.runtime, tauchat.SubmitChatPromptCommand{
 		SessionID:   m.sessionID,
-		RequestID:   newRequestID(),
+		RequestID:   tauchat.NewRequestID(),
 		Prompt:      text,
 		SubmittedAt: time.Now().UTC(),
 	})

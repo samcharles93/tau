@@ -306,7 +306,7 @@ func RunChat(ctx context.Context, opts ChatOptions) error {
 		}
 	}
 
-	sessionID, err := newID()
+	sessionID, err := tauchat.NewID()
 	if err != nil {
 		return err
 	}

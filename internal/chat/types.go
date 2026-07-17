@@ -8,7 +8,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/google/uuid"
 	"github.com/samcharles93/tau/internal/config"
 )
 
@@ -100,16 +99,6 @@ type ToolResultMetadata struct {
 	ResultBytes int           `json:"result_bytes"`
 	StartedAt   time.Time     `json:"started_at,omitzero"`
 	CompletedAt time.Time     `json:"completed_at,omitzero"`
-}
-
-// NewMessageID generates a UUIDv7 message ID, falling back to a
-// nanosecond-timestamp string if the random source fails - mirrors
-// internal/app's newID and internal/tui2's newRequestID.
-func NewMessageID() string {
-	if id, err := uuid.NewV7(); err == nil {
-		return id.String()
-	}
-	return fmt.Sprintf("msg-%d", time.Now().UnixNano())
 }
 
 func (m ChatMessage) Validate() error {

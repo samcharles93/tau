@@ -144,7 +144,7 @@ func RunStdIn(ctx context.Context, opts ChatOptions, prompt string) error {
 		}
 	}()
 
-	sessionID, err := newID()
+	sessionID, err := tauchat.NewID()
 	if err != nil {
 		return err
 	}
@@ -165,7 +165,7 @@ func RunStdIn(ctx context.Context, opts ChatOptions, prompt string) error {
 	chatSub := eventbus.Subscribe[tauchat.ChatEvent](metricsClient)
 	defer chatSub.Close()
 
-	requestID, err := newID()
+	requestID, err := tauchat.NewID()
 	if err != nil {
 		return err
 	}

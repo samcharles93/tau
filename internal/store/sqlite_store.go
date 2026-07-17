@@ -336,6 +336,17 @@ func (s *SQLiteStore) ExportMessages(ctx context.Context, id string) (<-chan []b
 		defer close(out)
 		defer close(errs)
 
+		var exists int
+		err := s.db.QueryRowContext(ctx, "SELECT 1 FROM sessions WHERE id = ?", id).Scan(&exists)
+		if err != nil {
+			if err == sql.ErrNoRows {
+				errs <- fmt.Errorf("store: session %q not found", id)
+			} else {
+				errs <- err
+			}
+			return
+		}
+
 		rows, err := s.db.QueryContext(ctx, `
 			SELECT role, content, reasoning_content, tool_calls, tool_call_id, tool_result
 			FROM messages WHERE session_id = ? ORDER BY seq
