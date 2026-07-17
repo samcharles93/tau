@@ -159,7 +159,7 @@ func RunChild(ctx context.Context, opts ChatOptions) error {
 		return fmt.Errorf("load session: %w", err)
 	}
 
-	requestID, _ := newID()
+	requestID, _ := tauchat.NewID()
 	if err := coordinator.Send(tauchat.SubmitChatPromptCommand{
 		SessionID:   assign.SessionID,
 		RequestID:   requestID,

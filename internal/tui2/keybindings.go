@@ -1,14 +1,12 @@
 package tui2
 
 import (
-	"fmt"
 	"strings"
 	"time"
 	"unicode/utf8"
 
 	tea "charm.land/bubbletea/v2"
 
-	"github.com/google/uuid"
 	tauchat "github.com/samcharles93/tau/internal/chat"
 )
 
@@ -345,7 +343,7 @@ func (m *model) handleSteer() tea.Cmd {
 	m.steering = true
 	return sendCommand(m.runtime, tauchat.SteerChatPromptCommand{
 		SessionID:   m.sessionID,
-		RequestID:   newRequestID(),
+		RequestID:   tauchat.NewRequestID(),
 		Prompt:      text,
 		SubmittedAt: time.Now().UTC(),
 	})
@@ -367,7 +365,7 @@ func (m *model) handleBashCommand(trimmed string) tea.Cmd {
 		return nil
 	}
 
-	callID := "bash-" + newRequestID()
+	callID := "bash-" + tauchat.NewRequestID()
 	m.bashRunning = true
 	m.bashCallID = callID
 	m.autoFollow = true
@@ -431,13 +429,4 @@ func (m *model) cancelTurn() tea.Cmd {
 		SessionID:   m.sessionID,
 		RequestedAt: time.Now().UTC(),
 	})
-}
-
-// newRequestID generates a UUIDv7 request/call ID, falling back to a
-// timestamp if the platform's random source is unavailable.
-func newRequestID() string {
-	if id, err := uuid.NewV7(); err == nil {
-		return id.String()
-	}
-	return fmt.Sprintf("%d", time.Now().UnixNano())
 }

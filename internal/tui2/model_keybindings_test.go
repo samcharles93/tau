@@ -507,17 +507,6 @@ func TestHandleCtrlCStaleArmDoesNotQuit(t *testing.T) {
 	}
 }
 
-func TestNewRequestIDFormat(t *testing.T) {
-	id := newRequestID()
-	if id == "" {
-		t.Fatal("expected non-empty request ID")
-	}
-	// UUIDv7 should contain hyphens.
-	if !strings.Contains(id, "-") {
-		t.Logf("request ID = %q (not a UUID if no hyphens)", id)
-	}
-}
-
 func TestDispatchKeyCtrlShiftLClearsScreen(t *testing.T) {
 	m := newTestModel(&fakeRuntime{}, nil)
 	m.appendMessage("user", "hello")

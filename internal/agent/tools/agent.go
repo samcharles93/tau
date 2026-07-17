@@ -11,6 +11,8 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/google/uuid"
+
 	"github.com/samcharles93/tau/internal/agent/spec"
 	"github.com/samcharles93/tau/internal/agent/stdio"
 	"github.com/samcharles93/tau/internal/bridge"
@@ -1244,8 +1246,18 @@ func formatDuration(d time.Duration) string {
 	return fmt.Sprintf("%dh%dm", h, m)
 }
 
+// generateSessionID mints a child agent's session ID. Uses uuid.NewV7 (the
+// same scheme as internal/app.newID and chat.NewMessageID) rather than a raw
+// timestamp - the coordinator spawns children concurrently under parallel
+// tool calls, and two children minted within the same clock tick previously
+// got the identical "child-<nanos>" ID, silently colliding in the session
+// store (Save upserts by ID and rewrites that ID's messages).
 func generateSessionID() (string, error) {
-	return fmt.Sprintf("child-%d", time.Now().UnixNano()), nil
+	id, err := uuid.NewV7()
+	if err != nil {
+		return "", fmt.Errorf("generating session id: %w", err)
+	}
+	return "child-" + id.String(), nil
 }
 
 func mustMarshal(v map[string]any) json.RawMessage {

@@ -336,6 +336,40 @@ func TestSQLiteStore_ExportJSONLFile(t *testing.T) {
 	assert.True(t, os.IsNotExist(err), "temp file should be cleaned up")
 }
 
+func TestSQLiteStore_ExportMessages_UnknownSession(t *testing.T) {
+	s := newTestStore(t)
+	ctx := context.Background()
+
+	ch, errCh := s.ExportMessages(ctx, "no-such-session")
+
+	var lines []string
+	for line := range ch {
+		lines = append(lines, string(line))
+	}
+	assert.Empty(t, lines)
+
+	err := <-errCh
+	require.Error(t, err, "exporting a session that was never saved must error, not stream zero lines")
+	assert.Contains(t, err.Error(), "not found")
+}
+
+func TestSQLiteStore_ExportJSONLFile_UnknownSession(t *testing.T) {
+	s := newTestStore(t)
+	ctx := context.Background()
+
+	tmpDir := t.TempDir()
+	outputPath := filepath.Join(tmpDir, "export.jsonl")
+
+	err := store.ExportSessionAsJSONL(ctx, s, "no-such-session", outputPath)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "not found")
+
+	_, statErr := os.Stat(outputPath)
+	assert.True(t, os.IsNotExist(statErr), "no output file should be written when the session does not exist")
+	_, statErr = os.Stat(outputPath + ".tmp")
+	assert.True(t, os.IsNotExist(statErr), "no leftover temp file when the session does not exist")
+}
+
 func TestSQLiteStore_EmptyMessages(t *testing.T) {
 	s := newTestStore(t)
 	ctx := context.Background()

@@ -3,14 +3,12 @@ package tui
 import (
 	"context"
 	"encoding/json"
-	"fmt"
 	"slices"
 	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
 
-	"github.com/google/uuid"
 	tauchat "github.com/samcharles93/tau/internal/chat"
 	"github.com/samcharles93/tau/internal/eventbus"
 	"github.com/samcharles93/tau/internal/metrics"
@@ -269,13 +267,6 @@ func (c *inlineChat) send(cmd tauchat.ChatCommand) {
 	if err := c.runtime.Send(cmd); err != nil {
 		c.engine.PrintAbove("%s %s", c.grey("✗"), err.Error())
 	}
-}
-
-func newRequestID() string {
-	if id, err := uuid.NewV7(); err == nil {
-		return id.String()
-	}
-	return fmt.Sprintf("%d", time.Now().UnixNano())
 }
 
 // ── Spinner ─────────────────────────────────────────────────────────────────
@@ -664,7 +655,7 @@ func (c *inlineChat) onSteer(prompt string) {
 	c.steering.Store(true)
 	_ = c.runtime.Send(tauchat.SteerChatPromptCommand{
 		SessionID:   c.sid(),
-		RequestID:   newRequestID(),
+		RequestID:   tauchat.NewRequestID(),
 		Prompt:      prompt,
 		SubmittedAt: time.Now().UTC(),
 	})
@@ -695,7 +686,7 @@ func (c *inlineChat) handleBashCommand(trimmed string) {
 
 	c.input.AddToHistory(trimmed)
 
-	callID := "bash-" + newRequestID()
+	callID := "bash-" + tauchat.NewRequestID()
 	c.mu.Lock()
 	c.bashCallID = callID
 	c.bashCancelSent = false
@@ -750,7 +741,7 @@ func (c *inlineChat) doTurn(prompt string) {
 
 	err := c.runtime.Send(tauchat.SubmitChatPromptCommand{
 		SessionID:   c.sid(),
-		RequestID:   newRequestID(),
+		RequestID:   tauchat.NewRequestID(),
 		Prompt:      prompt,
 		SubmittedAt: time.Now().UTC(),
 	})
