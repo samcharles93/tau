@@ -218,11 +218,22 @@ func (m *model) upsertToolCall(callID, toolName, argumentsSummary, summary strin
 	})
 }
 
-// adoptToolCallID reconciles the synthetic call IDs used before some
-// providers stream a real tool_call.id with the final IDs used by started /
-// completed lifecycle events. Without this, tui2 can keep rendering the
-// early "tool_call_0" row forever while the real call completes under a
-// different ID.
+// adoptToolCallID reconciles a row's tracking ID with the ID used by started
+// / completed lifecycle events. This covers two cases: the row is still
+// under its original synthetic "tool_call_N" ID (some providers never
+// stream a real ID at all), or adoptStreamedToolCallID already upgraded it
+// to a real "streamed" ID that the lifecycle event's ID still doesn't match
+// - some gateways assign a different ID to the same call in the final
+// assembled response than the one they streamed live in the deltas. Without
+// this, tui2 renders two rows for one call: the original stuck forever in
+// "pending" (only ever settled later, as an error, by failUnfinishedTools
+// at turn end) and a second one created fresh by upsertToolCall under the
+// lifecycle event's unrecognized ID.
+//
+// Matching is by tool name among not-yet-settled (pending/running) rows.
+// Bail out (return false, let the caller create a new row) whenever more
+// than one row could plausibly match - guessing wrong would silently
+// misattribute one call's lifecycle events to a different call.
 func (m *model) adoptToolCallID(callID, toolName string) bool {
 	if callID == "" || toolName == "" {
 		return false
@@ -241,9 +252,6 @@ func (m *model) adoptToolCallID(callID, toolName string) bool {
 		if t.status != "pending" && t.status != "running" {
 			continue
 		}
-		if !strings.HasPrefix(t.id, "tool_call_") {
-			continue
-		}
 		if match >= 0 {
 			return false
 		}
@@ -252,8 +260,9 @@ func (m *model) adoptToolCallID(callID, toolName string) bool {
 	if match < 0 {
 		return false
 	}
+	oldID := m.tools[match].id
 	m.tools[match].id = callID
-	if m.expandedID != "" && strings.HasPrefix(m.expandedID, "tool_call_") {
+	if m.expandedID != "" && m.expandedID == oldID {
 		m.expandedID = callID
 	}
 	return true

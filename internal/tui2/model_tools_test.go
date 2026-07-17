@@ -696,6 +696,56 @@ func TestSpaceTogglesToolExpansion(t *testing.T) {
 	}
 }
 
+// TestAdoptToolCallIDReconcilesIDMismatchBetweenStreamAndLifecycle guards
+// against duplicate rows for a single call: a gateway can stream one ID
+// live in tool-call deltas and then assign a different ID to the same call
+// in the final assembled response used to drive started/completed
+// lifecycle events. Before this fix, adoptToolCallID only reconciled rows
+// still under their original synthetic "tool_call_N" ID; a row already
+// upgraded by adoptStreamedToolCallID to a real streamed ID could never be
+// re-matched, so the started event created a second, duplicate row while
+// the first sat stuck in "pending" until the turn ended.
+func TestAdoptToolCallIDReconcilesIDMismatchBetweenStreamAndLifecycle(t *testing.T) {
+	m := newTestModel(&fakeRuntime{}, nil)
+	m.width = 80
+
+	// Delta arrives under the synthetic index-based ID first.
+	m.handleChatEvent(tauchat.ChatToolCallDeltaEvent{CallID: "tool_call_0", Index: 0, ToolName: "read"})
+	if len(m.tools) != 1 || m.tools[0].id != "tool_call_0" {
+		t.Fatalf("after first delta: tools = %+v, want one row id=tool_call_0", m.tools)
+	}
+
+	// A later delta for the same index reveals a real streamed ID -
+	// adoptStreamedToolCallID upgrades the row in place.
+	m.handleChatEvent(tauchat.ChatToolCallDeltaEvent{CallID: "stream-id-1", Index: 0, ToolName: "read"})
+	if len(m.tools) != 1 || m.tools[0].id != "stream-id-1" {
+		t.Fatalf("after streamed-ID delta: tools = %+v, want one row id=stream-id-1", m.tools)
+	}
+
+	// The lifecycle started event arrives under yet another, unrelated ID -
+	// the row must be adopted, not duplicated.
+	m.handleChatEvent(tauchat.ChatToolExecutionStartedEvent{CallID: "lifecycle-id-1", ToolName: "read"})
+	if len(m.tools) != 1 {
+		t.Fatalf("after started event: len(tools) = %d, want 1 (got duplicate rows: %+v)", len(m.tools), m.tools)
+	}
+	if m.tools[0].id != "lifecycle-id-1" {
+		t.Fatalf("tools[0].id = %q, want lifecycle-id-1", m.tools[0].id)
+	}
+	if m.tools[0].status != "running" {
+		t.Fatalf("tools[0].status = %q, want running", m.tools[0].status)
+	}
+
+	// Completion under the same lifecycle ID must settle the single row,
+	// not leave the adopted row stuck and spawn yet another.
+	m.handleChatEvent(tauchat.ChatToolExecutionCompletedEvent{CallID: "lifecycle-id-1", ToolName: "read"})
+	if len(m.tools) != 1 {
+		t.Fatalf("after completed event: len(tools) = %d, want 1 (got: %+v)", len(m.tools), m.tools)
+	}
+	if m.tools[0].status != "done" {
+		t.Fatalf("tools[0].status = %q, want done", m.tools[0].status)
+	}
+}
+
 func TestUpsertToolCallExisting(t *testing.T) {
 	m := newTestModel(&fakeRuntime{}, nil)
 	m.tools = []toolState{{id: "t1", name: "read", args: "old"}}
