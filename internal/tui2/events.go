@@ -121,6 +121,16 @@ func (m *model) handleChatEvent(evt tauchat.ChatEvent) tea.Cmd {
 		}
 		m.recordChildAgentOrder(e.CallID)
 
+	case tauchat.ChildAgentMessageEvent:
+		// Live child transcript events: convert the inner event to
+		// ChatMessage entries and append to per-callID buffer.
+		m.appendChildMessageEvent(e)
+		// If the live transcript overlay is open for this callID,
+		// refresh it so the user sees new content immediately.
+		if m.childTranscriptViewer != nil && m.childTranscriptViewer.live && m.childTranscriptViewer.callID == e.CallID {
+			m.refreshLiveChildTranscript()
+		}
+
 	case tauchat.ChatToolOutputEvent:
 		m.setToolResult(e.CallID, e.Chunk)
 		m.appendToolTail(e.CallID, e.Chunk)
@@ -305,6 +315,62 @@ func (m *model) handleChatEvent(evt tauchat.ChatEvent) tea.Cmd {
 		return nil
 	}
 	return nil
+}
+
+// appendChildMessageEvent converts a ChildAgentMessageEvent's inner ChatEvent
+// into ChatMessage entries and appends them to the per-callID live transcript
+// buffer (m.childMessages). This is called on every agent.event frame from a
+// running child, building a transcript incrementally without hitting the store.
+func (m *model) appendChildMessageEvent(e tauchat.ChildAgentMessageEvent) {
+	msgs := m.childMessages[e.CallID]
+	switch evt := e.Event.(type) {
+	case tauchat.ChatResponseStartedEvent:
+		msgs = append(msgs, tauchat.ChatMessage{Role: tauchat.ChatRoleAssistant})
+	case tauchat.ChatResponseDeltaEvent:
+		if n := len(msgs); n > 0 && msgs[n-1].Role == tauchat.ChatRoleAssistant {
+			msgs[n-1].Content += evt.Delta
+		}
+	case tauchat.ChatToolCallDeltaEvent:
+		if n := len(msgs); n > 0 && msgs[n-1].Role == tauchat.ChatRoleAssistant {
+			found := false
+			for i, tc := range msgs[n-1].ToolCalls {
+				if tc.ID == evt.CallID {
+					msgs[n-1].ToolCalls[i].Function.Arguments += evt.ArgumentsSummary
+					found = true
+					break
+				}
+			}
+			if !found {
+				msgs[n-1].ToolCalls = append(msgs[n-1].ToolCalls, tauchat.ChatToolCall{
+					ID:   evt.CallID,
+					Type: "function",
+					Function: tauchat.ChatFunctionCall{
+						Name:      evt.ToolName,
+						Arguments: evt.ArgumentsSummary,
+					},
+				})
+			}
+		}
+	case tauchat.ChatToolExecutionCompletedEvent:
+		msgs = append(msgs, tauchat.ChatMessage{
+			Role:       tauchat.ChatRoleTool,
+			ToolCallID: evt.CallID,
+			Content:    evt.ResultSummary,
+		})
+	case tauchat.ChatResponseCompletedEvent:
+		// Finalize the last assistant message from the completed state.
+		if n := len(msgs); n > 0 && msgs[n-1].Role == tauchat.ChatRoleAssistant {
+			messages := evt.State.Messages
+			if len(messages) > 0 {
+				last := messages[len(messages)-1]
+				if last.Role == tauchat.ChatRoleAssistant {
+					msgs[n-1].Content = last.Content
+					msgs[n-1].ToolCalls = last.ToolCalls
+				}
+			}
+		}
+	}
+	m.childMessages[e.CallID] = msgs
 }
 
 func (m *model) applySnapshot(e tauchat.ChatSessionSnapshotEvent) {
