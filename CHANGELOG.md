@@ -1,5 +1,22 @@
 # Changelog
 
+## [0.24.0](https://github.com/samcharles93/tau/compare/v0.23.0...v0.24.0) (2026-07-17)
+
+
+### Features
+
+* **tui,webui,storage:** session tree with agent attribution and lineage (CAT-67) ([b41703f](https://github.com/samcharles93/tau/commit/b41703f7ddaf4b0bfe2c41b1040c4f1bcb5a9c58))
+* **tui,webui,storage:** session tree with agent attribution and lineage (CAT-67) ([#53](https://github.com/samcharles93/tau/issues/53)) ([51be579](https://github.com/samcharles93/tau/commit/51be5790440a7c54c02584c793d8812ad0ab69fe))
+* **tui:** live child drill-down + open child session (CAT-107) ([801071e](https://github.com/samcharles93/tau/commit/801071eb4f2049f25ed368c1abe33e322903eb7b))
+* **tui:** live child drill-down + open child session (CAT-107) ([f0282c4](https://github.com/samcharles93/tau/commit/f0282c4f40b2ce889673c13e9b395af2ae64e26f))
+
+
+### Bug Fixes
+
+* consolidate ID helpers, fix child session ID collision, add session CRUD test coverage (CAT-169) ([eac61a2](https://github.com/samcharles93/tau/commit/eac61a2adf9846b05a4110b00175f758aeb74567))
+* consolidate ID helpers, fix child session ID collision, add session CRUD test coverage (CAT-169) ([478d2b5](https://github.com/samcharles93/tau/commit/478d2b575fbf09ba84b063a88cff87efd25c5666))
+* **tui2:** reconcile tool-call IDs that change again after streaming ([63c2fda](https://github.com/samcharles93/tau/commit/63c2fda959f535d452b40268324171c8c8ab5807))
+
 ## [0.23.0](https://github.com/samcharles93/tau/compare/v0.22.0...v0.23.0) (2026-07-16)
 
 
