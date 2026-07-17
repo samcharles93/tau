@@ -80,6 +80,7 @@ var EventTypes = []EventTypeInfo{
 	{"CommandsChangedEvent", reflect.TypeFor[tauchat.CommandsChangedEvent]()},
 	{"SkillsChangedEvent", reflect.TypeFor[tauchat.SkillsChangedEvent]()},
 	{"ChildAgentStateEvent", reflect.TypeFor[tauchat.ChildAgentStateEvent]()},
+	{"ChildAgentMessageEvent", reflect.TypeFor[tauchat.ChildAgentMessageEvent]()},
 }
 
 // CommandTypeInfo pairs a wire discriminator name with its concrete

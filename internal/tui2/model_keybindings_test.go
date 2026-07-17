@@ -591,11 +591,11 @@ func TestDispatchPrintableNonPrintableIgnored(t *testing.T) {
 	// No crash expected.
 }
 
-// TestEnterOnFocusedNonTerminalChildIsNoop guards the "running children
-// aren't expandable" requirement (CAT-65 P4.2) at the key-dispatch layer:
-// even if focusedChild somehow points at a non-terminal child, Enter must
-// not open the overlay.
-func TestEnterOnFocusedNonTerminalChildIsNoop(t *testing.T) {
+// TestEnterOnFocusedNonTerminalChildIsNoop became
+// TestEnterOnFocusedLiveChildOpensOverlay after CAT-107 (P4.2b): live
+// children are now drill-down-able — Enter opens the overlay from the
+// in-memory childMessages buffer instead of the store.
+func TestEnterOnFocusedLiveChildOpensOverlay(t *testing.T) {
 	rt := &fakeRuntime{}
 	m := newTestModel(rt, nil)
 	m.childAgentOrder = []string{"c1"}
@@ -608,10 +608,10 @@ func TestEnterOnFocusedNonTerminalChildIsNoop(t *testing.T) {
 
 	m.dispatchKey(tea.KeyPressMsg{Code: tea.KeyEnter})
 
-	if m.childTranscriptViewer != nil {
-		t.Fatal("expected Enter on a non-terminal focused child not to open the overlay")
+	if m.childTranscriptViewer == nil {
+		t.Fatal("expected Enter on a live focused child to open the overlay")
 	}
-	if len(rt.sent) != 0 {
-		t.Fatalf("expected no command sent, got %d", len(rt.sent))
+	if !m.childTranscriptViewer.live {
+		t.Error("expected overlay to be in live mode for a non-terminal child")
 	}
 }

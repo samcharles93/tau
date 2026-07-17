@@ -810,10 +810,11 @@ func TestOpenChildTranscriptViewerTerminalChild(t *testing.T) {
 	}
 }
 
-// TestOpenChildTranscriptViewerNonTerminalChild guards the "running children
-// aren't expandable" requirement: no overlay opens and no command is sent
-// for a child that hasn't reached a terminal status yet.
-func TestOpenChildTranscriptViewerNonTerminalChild(t *testing.T) {
+// TestOpenChildTranscriptViewerLiveChild opens the overlay for a running
+// (non-terminal) child — live drill-down via in-memory childMessages, per
+// CAT-107 (P4.2b). No store command is sent; the overlay renders from the
+// live buffer.
+func TestOpenChildTranscriptViewerLiveChild(t *testing.T) {
 	rt := &fakeRuntime{}
 	m := newTestModel(rt, nil)
 	m.childAgents = map[string]childAgentResult{
@@ -822,14 +823,18 @@ func TestOpenChildTranscriptViewerNonTerminalChild(t *testing.T) {
 
 	drainCmd(m.openChildTranscriptViewer("c1"))
 
-	if m.childTranscriptViewer != nil {
-		t.Fatal("expected no overlay to open for a non-terminal child")
+	if m.childTranscriptViewer == nil {
+		t.Fatal("expected overlay to open for a live (non-terminal) child")
 	}
+	if !m.childTranscriptViewer.live {
+		t.Error("expected overlay to be in live mode")
+	}
+	if m.childTranscriptViewer.callID != "c1" {
+		t.Errorf("callID = %q, want %q", m.childTranscriptViewer.callID, "c1")
+	}
+	// No store load command for live children.
 	if len(rt.sent) != 0 {
-		t.Fatalf("expected no command sent, got %d", len(rt.sent))
-	}
-	if m.notification == "" {
-		t.Error("expected an inline notification explaining why drill-down isn't available yet")
+		t.Fatalf("expected no command sent for live child, got %d", len(rt.sent))
 	}
 }
 

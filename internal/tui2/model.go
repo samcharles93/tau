@@ -75,6 +75,7 @@ type model struct {
 	// tool call. Keyed by tool call id. Rendered as a compact status line
 	// above the tool result per docs/specs/agents/05-ui.md (The state block).
 	childAgents      map[string]childAgentResult
+	childMessages    map[string][]tauchat.ChatMessage // live child transcripts, keyed by callID
 	lastReasoningKey string
 	reasoningKeySeq  int
 
@@ -345,6 +346,7 @@ func newModel(
 		extensionCommands:         make(map[string]tauchat.ExtensionCommand),
 		panels:                    make(map[string]pluginPanel),
 		childAgents:               make(map[string]childAgentResult),
+		childMessages:             make(map[string][]tauchat.ChatMessage),
 		mdCache:                   mdCache,
 	}
 }

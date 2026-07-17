@@ -1168,6 +1168,14 @@ func readChildResult(ctx context.Context, reader *stdio.Reader, instanceID, call
 					Chunk:      string(payload),
 					ReceivedAt: time.Now(),
 				})
+				var agentEv bridge.AgentEvent
+				if err := json.Unmarshal(payload, &agentEv); err == nil && agentEv.Event != nil {
+					childPub.Publish(tauchat.ChildAgentMessageEvent{
+						InstanceID: instanceID,
+						CallID:     callID,
+						Event:      agentEv.Event,
+					})
+				}
 			}
 			// Try to extract the inner event type for activity tracking.
 			if activity == "" {

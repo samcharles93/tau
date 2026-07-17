@@ -771,6 +771,17 @@ type ChildAgentStateEvent struct {
 
 func (ChildAgentStateEvent) IsChatEvent() {}
 
+// ChildAgentMessageEvent forwards a child agent's inner chat event to the
+// parent bus so the TUI/WebUI can render a live transcript for a running
+// child, mirroring the events the child's own session would emit.
+type ChildAgentMessageEvent struct {
+	InstanceID string    `json:"instance_id"`
+	CallID     string    `json:"call_id"`
+	Event      ChatEvent `json:"event"`
+}
+
+func (ChildAgentMessageEvent) IsChatEvent() {}
+
 // WidgetKind identifies which field of Widget is populated.
 type WidgetKind string
 
@@ -973,6 +984,7 @@ type SessionSummary struct {
 	SystemPrompt    string    `json:"system_prompt,omitempty"`
 	ParentSessionID string    `json:"parent_session_id,omitempty"`
 	AgentInstanceID string    `json:"agent_instance_id,omitempty"`
+	AgentSpecName   string    `json:"agent_spec_name,omitempty"`
 }
 
 // SessionsListedEvent carries paginated session summaries back to the TUI.
