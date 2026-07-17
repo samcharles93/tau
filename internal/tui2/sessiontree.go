@@ -15,10 +15,11 @@ import (
 // session summary plus its nesting depth (from ParentSessionID) and whether
 // it's the session currently loaded in this TUI instance.
 type sessionTreeRow struct {
-	id       string
-	label    string
-	depth    int
-	isActive bool
+	id        string
+	label     string
+	depth     int
+	isActive  bool
+	agentInfo string // e.g. "spec_name · instance_id"
 }
 
 // sessionTreeState is the state of an open Ctrl+O session navigator - a nil
@@ -77,7 +78,8 @@ func (m *model) sessionTreeRows() []sessionTreeRow {
 			parts = append(parts, age.String())
 		}
 		label := s.ID + "  " + strings.Join(parts, " · ")
-		rows = append(rows, sessionTreeRow{id: s.ID, label: label, depth: depth, isActive: s.ID == m.sessionID})
+		agentInfo := agentAttribution(s.AgentSpecName, s.AgentInstanceID)
+		rows = append(rows, sessionTreeRow{id: s.ID, label: label, depth: depth, isActive: s.ID == m.sessionID, agentInfo: agentInfo})
 		for _, child := range childrenOf[s.ID] {
 			walk(child, depth+1)
 		}
@@ -130,22 +132,18 @@ func (m *model) handleSessionTreeKey(msg tea.KeyPressMsg) tea.Cmd {
 // completions dropdown and palette (compItemStyle/compSelectedStyle,
 // styles.go), and a "(current)" suffix on the active session.
 func renderSessionTreeRow(r sessionTreeRow, selected bool, width int) string {
-	chevron := "  "
 	style := compItemStyle
 	if selected {
-		chevron = "▶ "
 		style = compSelectedStyle
-	}
-	glyph := ""
-	if r.depth > 0 {
-		glyph = "└─ "
 	}
 	label := r.label
 	if r.isActive {
-		label += "  (current)"
+		label += " (current)"
 	}
-	line := chevron + strings.Repeat("  ", r.depth) + glyph + style.Render(label)
-	return truncateANSIToWidth(line, width, "…")
+	if r.agentInfo != "" {
+		label += "\n  " + r.agentInfo
+	}
+	return style.Render(label)
 }
 
 // renderSessionTreeOverlay renders the open session navigator: a scrolling
@@ -182,6 +180,26 @@ func (m *model) renderSessionTreeOverlay() string {
 	}
 
 	return renderBoxAround(width, "Sessions", body)
+}
+
+// agentAttribution builds a human-readable agent identity string from the
+// spec name and instance ID. Returns "" when there's no instance to attribute.
+func agentAttribution(specName, instanceID string) string {
+	if instanceID == "" {
+		return ""
+	}
+	name := specName
+	if name == "" {
+		// Fallback: parse from instance_id format "specname#suffix"
+		if before, _, ok := strings.Cut(instanceID, "#"); ok {
+			name = before
+		}
+	}
+	id := instanceID
+	if _, after, ok := strings.Cut(instanceID, "#"); ok {
+		id = after
+	}
+	return "agent " + name + " · " + id
 }
 
 // compositeSessionTreeOverlay overlays the open session navigator centered

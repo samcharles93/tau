@@ -253,16 +253,18 @@ func (s *SQLiteStore) List(ctx context.Context, limit int, cursor string) ([]Ses
 	}
 
 	query := `
-		SELECT id, model_id, provider, created_at, updated_at, status,
-		       message_count, input_tokens, output_tokens, total_tokens,
-		       cost, duration_ms, tool_calls, tool_errors,
-		       system_prompt, parent_session_id, agent_instance_id
-		FROM sessions
+		SELECT s.id, s.model_id, s.provider, s.created_at, s.updated_at, s.status,
+		       s.message_count, s.input_tokens, s.output_tokens, s.total_tokens,
+		       s.cost, s.duration_ms, s.tool_calls, s.tool_errors,
+		       s.system_prompt, s.parent_session_id, s.agent_instance_id,
+		       COALESCE(ai.spec_name, '') as agent_spec_name
+		FROM sessions s
+		LEFT JOIN agent_instances ai ON s.agent_instance_id = ai.id
 	`
 	var args []any
 
 	if cursor != "" {
-		query += " WHERE created_at < ?"
+		query += " WHERE s.created_at < ?"
 		args = append(args, cursor)
 	}
 	query += " ORDER BY created_at DESC LIMIT ?"
@@ -286,6 +288,7 @@ func (s *SQLiteStore) List(ctx context.Context, limit int, cursor string) ([]Ses
 			&sum.TotalTokens, &sum.Cost, &sum.DurationMs,
 			&sum.ToolCalls, &sum.ToolErrors,
 			&sum.SystemPrompt, &parentID, &agentInstID,
+			&sum.AgentSpecName,
 		); err != nil {
 			return nil, "", fmt.Errorf("store: scan session row: %w", err)
 		}
@@ -712,13 +715,15 @@ func scanAgentInstances(rows *sql.Rows) ([]AgentInstance, error) {
 // ordered by created_at desc.
 func (s *SQLiteStore) ListChildren(ctx context.Context, parentSessionID string) ([]SessionSummary, error) {
 	rows, err := s.db.QueryContext(ctx, `
-		SELECT id, model_id, provider, created_at, updated_at, status,
-		       message_count, input_tokens, output_tokens, total_tokens,
-		       cost, duration_ms, tool_calls, tool_errors,
-		       system_prompt, parent_session_id, agent_instance_id
-		FROM sessions
-		WHERE parent_session_id = ?
-		ORDER BY created_at DESC
+		SELECT s.id, s.model_id, s.provider, s.created_at, s.updated_at, s.status,
+		       s.message_count, s.input_tokens, s.output_tokens, s.total_tokens,
+		       s.cost, s.duration_ms, s.tool_calls, s.tool_errors,
+		       s.system_prompt, s.parent_session_id, s.agent_instance_id,
+		       COALESCE(ai.spec_name, '') as agent_spec_name
+		FROM sessions s
+		LEFT JOIN agent_instances ai ON s.agent_instance_id = ai.id
+		WHERE s.parent_session_id = ?
+		ORDER BY s.created_at DESC
 	`, parentSessionID)
 	if err != nil {
 		return nil, fmt.Errorf("store: list children: %w", err)
@@ -737,6 +742,7 @@ func (s *SQLiteStore) ListChildren(ctx context.Context, parentSessionID string) 
 			&sum.TotalTokens, &sum.Cost, &sum.DurationMs,
 			&sum.ToolCalls, &sum.ToolErrors,
 			&sum.SystemPrompt, &parentID, &agentInstID,
+			&sum.AgentSpecName,
 		); err != nil {
 			return nil, fmt.Errorf("store: scan child: %w", err)
 		}

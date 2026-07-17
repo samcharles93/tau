@@ -247,7 +247,8 @@ export interface SessionSummary {
   total_tokens: number
   cost: number
   parent_session_id?: string
-  agent_instance_id?: string
+  agent_instance_id?: string;
+    agent_spec_name?: string;
 }
 
 export interface SessionsListedEvent {

@@ -85,6 +85,7 @@ func (m *Manager) List(ctx context.Context, limit int, cursor string) ([]chat.Se
 			SystemPrompt:    s.SystemPrompt,
 			ParentSessionID: s.ParentSessionID,
 			AgentInstanceID: s.AgentInstanceID,
+			AgentSpecName:   s.AgentSpecName,
 		}
 	}
 	return result, nextCursor, nil

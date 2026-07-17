@@ -34,7 +34,7 @@
               </span>
               <span class="truncate text-[11px] text-muted-foreground">
                 {{ shortId(row.session.id) }} · {{ row.session.status }}
-                <template v-if="row.session.agent_instance_id"> · agent {{ row.session.agent_instance_id }}</template>
+                <template v-if="row.session.agent_instance_id"> · {{ agentLabel(row.session) }}</template>
               </span>
             </button>
             <div class="mt-1 flex gap-1 opacity-0 transition-opacity group-hover:opacity-100">

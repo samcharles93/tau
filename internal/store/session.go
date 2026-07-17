@@ -36,6 +36,7 @@ type SessionSummary struct {
 	SystemPrompt    string    `json:"system_prompt,omitempty"`
 	ParentSessionID string    `json:"parent_session_id,omitempty"`
 	AgentInstanceID string    `json:"agent_instance_id,omitempty"`
+	AgentSpecName   string    `json:"agent_spec_name,omitempty"`
 }
 
 // AgentInstance is the wire type for a persisted agent instance row.
