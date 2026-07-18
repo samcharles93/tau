@@ -12,6 +12,23 @@ $baseUrl = if ($env:TAU_BASE_URL) { $env:TAU_BASE_URL } else { "https://github.c
 # import Go code (it runs before Go is even on the machine), so keep the
 # two in sync by hand whenever the platform matrix changes.
 
+# Test-TauPrerequisites verifies the cmdlets Invoke-TauInstall depends on
+# are available before any network call is made, so a missing dependency
+# (e.g. an old PowerShell without the Archive module) fails fast with a
+# clear message instead of a confusing error mid-run.
+function Test-TauPrerequisites {
+    [CmdletBinding()]
+    param()
+
+    $missing = @()
+    if (-not (Get-Command Invoke-WebRequest -ErrorAction SilentlyContinue)) { $missing += "Invoke-WebRequest" }
+    if (-not (Get-Command Expand-Archive -ErrorAction SilentlyContinue)) { $missing += "Expand-Archive" }
+
+    if ($missing.Count -gt 0) {
+        throw "missing required PowerShell command(s): $($missing -join ', ') -- install/upgrade PowerShell and re-run this script"
+    }
+}
+
 function Get-TauSha256 {
     [CmdletBinding()]
     param([Parameter(Mandatory)][string]$Path)
@@ -60,6 +77,27 @@ function Test-TauChecksum {
     return $true
 }
 
+# Test-TauArchiveBinary checks that $ArchivePath contains exactly the
+# expected $BinaryName entry, refusing anything that doesn't match. It
+# never touches the install directory - callers are responsible for only
+# replacing an installed binary after this and the --version check below
+# both succeed.
+function Test-TauArchiveBinary {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)][string]$ArchivePath,
+        [Parameter(Mandatory)][string]$BinaryName
+    )
+
+    Add-Type -AssemblyName System.IO.Compression.FileSystem
+    $zip = [System.IO.Compression.ZipFile]::OpenRead($ArchivePath)
+    try {
+        return [bool]($zip.Entries | Where-Object { $_.FullName -eq $BinaryName })
+    } finally {
+        $zip.Dispose()
+    }
+}
+
 # Invoke-TauInstall performs arch detection, download, checksum
 # verification, and installation. It throws on failure rather than calling
 # exit directly, so tests can dot-source this file with
@@ -70,6 +108,8 @@ function Test-TauChecksum {
 function Invoke-TauInstall {
     [CmdletBinding()]
     param([string]$Version)
+
+    Test-TauPrerequisites
 
     # ---------- detect arch ----------
     $arch = switch ([System.Runtime.InteropServices.RuntimeInformation]::ProcessArchitecture) {
@@ -115,12 +155,36 @@ function Invoke-TauInstall {
             throw "checksum verification failed -- leaving any existing install untouched"
         }
 
+        if (-not (Test-TauArchiveBinary -ArchivePath $archivePath -BinaryName "tau.exe")) {
+            throw "archive does not contain expected binary 'tau.exe' -- leaving any existing install untouched"
+        }
+
         Expand-Archive -Path $archivePath -DestinationPath $tmp -Force
         $binary = Join-Path $tmp "tau.exe"
 
-        # ---------- install ----------
+        if (-not (Test-Path -LiteralPath $binary)) {
+            throw "extraction did not produce 'tau.exe' -- leaving any existing install untouched"
+        }
+
+        Write-Output "Verifying downloaded binary..."
+        & $binary --version *>$null
+        if ($LASTEXITCODE -ne 0) {
+            throw "downloaded binary failed to run '--version' -- leaving any existing install untouched"
+        }
+
+        # ---------- atomic install ----------
+        # Copy into a temp file in the destination directory, then rename
+        # into place. A rename within the same directory is atomic, so
+        # there is never a window where tau.exe is missing or partially
+        # written.
         New-Item -ItemType Directory -Path $installDir -Force | Out-Null
-        Copy-Item -Path $binary -Destination (Join-Path $installDir "tau.exe") -Force
+        $destTmp = Join-Path $installDir ".tau.tmp.$([System.Guid]::NewGuid().ToString('N'))"
+        try {
+            Copy-Item -Path $binary -Destination $destTmp -Force
+            Move-Item -Path $destTmp -Destination (Join-Path $installDir "tau.exe") -Force
+        } finally {
+            Remove-Item -LiteralPath $destTmp -ErrorAction SilentlyContinue
+        }
 
         Write-Output ""
         Write-Output "tau ${Version} installed to ${installDir}\tau.exe"
