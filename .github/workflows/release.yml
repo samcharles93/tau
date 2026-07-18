@@ -51,6 +51,20 @@ jobs:
       - name: Run tests
         run: go test ./...
 
+      # Dry-run goreleaser (build + archive + checksum, skip publish) so a
+      # misconfigured platform matrix fails CI before anything is uploaded.
+      - name: goreleaser dry-run
+        uses: goreleaser/goreleaser-action@v6
+        with:
+          distribution: goreleaser
+          version: "~> v2"
+          args: release --clean --skip=publish
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Verify release asset matrix
+        run: go run ./scripts/verify-release-assets --dist dist --tag "${{ needs.release-please.outputs.tag_name }}"
+
       - uses: goreleaser/goreleaser-action@v6
         with:
           distribution: goreleaser
@@ -58,3 +72,13 @@ jobs:
           args: release --clean
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Verify published release assets
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG_NAME: ${{ needs.release-please.outputs.tag_name }}
+        run: |
+          set -euo pipefail
+          rm -rf live-release && mkdir live-release
+          gh release download "$TAG_NAME" --dir live-release --repo samcharles93/tau
+          go run ./scripts/verify-release-assets --dist live-release --tag "$TAG_NAME"
