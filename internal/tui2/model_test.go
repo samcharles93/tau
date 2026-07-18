@@ -20,6 +20,8 @@ import (
 	"github.com/samcharles93/tau/internal/providers"
 )
 
+var errIntentional = errors.New("intentional")
+
 func TestMain(m *testing.M) {
 	notificationClearDelay = time.Millisecond
 	notifyWarnDuration = time.Millisecond

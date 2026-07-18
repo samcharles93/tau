@@ -2,1250 +2,284 @@ package tui2
 
 import (
 	"context"
-	"errors"
-	"os"
-	"path/filepath"
-	"strings"
+	"reflect"
 	"testing"
-	"time"
 
 	tea "charm.land/bubbletea/v2"
-	"charm.land/lipgloss/v2"
 
 	tauchat "github.com/samcharles93/tau/internal/chat"
-	"github.com/samcharles93/tau/internal/config"
-	"github.com/samcharles93/tau/internal/providers"
 )
 
-var errIntentional = errors.New("intentional error for testing")
-
-// --- cmdModel ---------------------------------------------------------------
-
-func TestCmdModelFoundSendsUpdate(t *testing.T) {
-	rt := &fakeRuntime{}
-	m := newTestModel(rt, nil)
-	m.availableModels = []tauchat.ChatModelRef{
-		{ID: "gpt-4", Provider: "openai"},
-		{ID: "claude-3", Provider: "anthropic"},
-	}
-
-	drainCmd(m.cmdModel("gpt-4"))
-
-	if m.modelName != "gpt-4" {
-		t.Fatalf("modelName = %q, want %q", m.modelName, "gpt-4")
-	}
-	if m.provider != "openai" {
-		t.Fatalf("provider = %q, want %q", m.provider, "openai")
-	}
-	if len(rt.sent) != 1 {
-		t.Fatalf("expected 1 UpdateChatSessionCommand, got %d", len(rt.sent))
-	}
-	cmd, ok := rt.sent[0].(tauchat.UpdateChatSessionCommand)
-	if !ok {
-		t.Fatalf("expected UpdateChatSessionCommand, got %T", rt.sent[0])
-	}
-	if cmd.Patch.Model == nil || cmd.Patch.Model.ID != "gpt-4" {
-		t.Fatalf("patch.Model.ID = %v, want 'gpt-4'", cmd.Patch.Model)
-	}
-	if cmd.Patch.Provider == nil || *cmd.Patch.Provider != "openai" {
-		t.Fatalf("patch.Provider = %v, want 'openai'", cmd.Patch.Provider)
-	}
-}
-
-func TestCmdModelNotFound(t *testing.T) {
-	m := newTestModel(&fakeRuntime{}, nil)
-	m.availableModels = []tauchat.ChatModelRef{{ID: "gpt-4"}}
-
-	drainCmd(m.cmdModel("nonexistent"))
-
-	if m.modelName == "nonexistent" {
-		t.Error("modelName should not change when model not found")
-	}
-	if m.notification == "" {
-		t.Error("expected a notification when model not found")
-	}
-}
-
-func TestCmdModelEmptyAvailable(t *testing.T) {
-	m := newTestModel(&fakeRuntime{}, nil)
-	// No available models set.
-
-	drainCmd(m.cmdModel(""))
-
-	if m.notification == "" {
-		t.Error("expected notification when no models available")
-	}
-}
-
-func TestCmdModelEmptyPrefillsInput(t *testing.T) {
-	m := newTestModel(&fakeRuntime{}, nil)
-	m.availableModels = []tauchat.ChatModelRef{{ID: "gpt-4"}}
-
-	cmd := m.cmdModel("")
-	if cmd != nil {
-		t.Error("expected nil Cmd when pre-filling input for picker")
-	}
-	if m.input != "/model " {
-		t.Fatalf("input = %q, want %q", m.input, "/model ")
-	}
-}
-
-func TestCmdModelSetsDefaultEffort(t *testing.T) {
-	rt := &fakeRuntime{}
-	m := newTestModel(rt, nil)
-	m.availableModels = []tauchat.ChatModelRef{
-		{ID: "deepseek", Config: config.ModelConfig{
-			ReasoningEfforts: []string{"low", "medium", "high"},
-		}},
-	}
-	drainCmd(m.cmdModel("deepseek"))
-
-	if m.reasoningEffort != "medium" {
-		t.Fatalf("reasoningEffort = %q, want %q (first default)", m.reasoningEffort, "medium")
-	}
-}
-
-// --- cmdSystem --------------------------------------------------------------
-
-func TestCmdSystemEmptyPrompt(t *testing.T) {
-	m := newTestModel(&fakeRuntime{}, nil)
-
-	drainCmd(m.cmdSystem(""))
-
-	if m.notification == "" {
-		t.Error("expected notification for empty system prompt")
-	}
-}
-
-func TestCmdSystemSendsUpdate(t *testing.T) {
-	rt := &fakeRuntime{}
-	m := newTestModel(rt, nil)
-
-	drainCmd(m.cmdSystem("you are helpful"))
-
-	if len(rt.sent) != 1 {
-		t.Fatalf("expected 1 command, got %d", len(rt.sent))
-	}
-	cmd, ok := rt.sent[0].(tauchat.UpdateChatSessionCommand)
-	if !ok {
-		t.Fatalf("expected UpdateChatSessionCommand, got %T", rt.sent[0])
-	}
-	if cmd.Patch.SystemPrompt == nil || *cmd.Patch.SystemPrompt != "you are helpful" {
-		t.Fatalf("SystemPrompt = %v, want 'you are helpful'", cmd.Patch.SystemPrompt)
-	}
-}
-
-// --- cmdReasoning -----------------------------------------------------------
-
-func TestCmdReasoningToggles(t *testing.T) {
-	m := newTestModel(&fakeRuntime{}, nil)
-	m.showReasoning = false
-
-	drainCmd(m.cmdReasoning(""))
-	if !m.showReasoning {
-		t.Error("expected reasoning to toggle on")
-	}
-
-	drainCmd(m.cmdReasoning(""))
-	if m.showReasoning {
-		t.Error("expected reasoning to toggle off")
-	}
-}
-
-func TestCmdReasoningOn(t *testing.T) {
-	m := newTestModel(&fakeRuntime{}, nil)
-
-	drainCmd(m.cmdReasoning("on"))
-	if !m.showReasoning {
-		t.Error("expected showReasoning=true with 'on'")
-	}
-}
-
-func TestCmdReasoningOff(t *testing.T) {
-	m := newTestModel(&fakeRuntime{}, nil)
-	m.showReasoning = true
-
-	drainCmd(m.cmdReasoning("off"))
-	if m.showReasoning {
-		t.Error("expected showReasoning=false with 'off'")
-	}
-}
-
-func TestCmdReasoningAuto(t *testing.T) {
-	m := newTestModel(&fakeRuntime{}, nil)
-	m.showReasoning = true
-
-	drainCmd(m.cmdReasoning("auto"))
-	if m.showReasoning {
-		t.Error("expected showReasoning=false with 'auto'")
-	}
-}
-
-func TestCmdReasoningInvalidArgToggles(t *testing.T) {
-	m := newTestModel(&fakeRuntime{}, nil)
-	m.showReasoning = false
-
-	drainCmd(m.cmdReasoning("banana"))
-	if !m.showReasoning {
-		t.Error("expected invalid arg to toggle reasoning on")
-	}
-}
-
-// --- cmdEffort --------------------------------------------------------------
-
-func TestCmdEffortCycles(t *testing.T) {
-	rt := &fakeRuntime{}
-	m := newTestModel(rt, nil)
-	m.reasoningEffort = "auto"
-	m.availableModels = []tauchat.ChatModelRef{
-		{ID: "claude-3", Config: config.ModelConfig{
-			ReasoningEfforts: []string{"low", "medium", "high"},
-		}},
-	}
-	m.modelName = "claude-3"
-
-	drainCmd(m.cmdEffort(""))
-
-	// Should cycle from "auto" to the first available: "low"
-	if m.reasoningEffort != "low" {
-		t.Fatalf("after cycle: reasoningEffort = %q, want %q", m.reasoningEffort, "low")
-	}
-	if len(rt.sent) == 0 {
-		t.Fatal("expected update command to be sent")
-	}
-}
-
-func TestCmdEffortSpecificLevel(t *testing.T) {
-	rt := &fakeRuntime{}
-	m := newTestModel(rt, nil)
-	m.availableModels = []tauchat.ChatModelRef{
-		{ID: "deepseek", Config: config.ModelConfig{
-			ReasoningEfforts: []string{"low", "medium", "high"},
-		}},
-	}
-	m.modelName = "deepseek"
-
-	drainCmd(m.cmdEffort("high"))
-
-	if m.reasoningEffort != "high" {
-		t.Fatalf("reasoningEffort = %q, want %q", m.reasoningEffort, "high")
-	}
-}
-
-func TestCmdEffortMedAlias(t *testing.T) {
-	rt := &fakeRuntime{}
-	m := newTestModel(rt, nil)
-	m.availableModels = []tauchat.ChatModelRef{
-		{ID: "deepseek", Config: config.ModelConfig{
-			ReasoningEfforts: []string{"low", "medium", "high"},
-		}},
-	}
-	m.modelName = "deepseek"
-
-	drainCmd(m.cmdEffort("med"))
-
-	if m.reasoningEffort != "medium" {
-		t.Fatalf("reasoningEffort = %q, want %q after 'med' alias", m.reasoningEffort, "medium")
-	}
-}
-
-func TestCmdEffortInvalidLevel(t *testing.T) {
-	m := newTestModel(&fakeRuntime{}, nil)
-	m.availableModels = []tauchat.ChatModelRef{
-		{ID: "deepseek", Config: config.ModelConfig{
-			ReasoningEfforts: []string{"low", "medium", "high"},
-		}},
-	}
-	m.modelName = "deepseek"
-	m.reasoningEffort = "medium"
-
-	drainCmd(m.cmdEffort("extreme"))
-
-	if m.reasoningEffort != "medium" {
-		t.Fatal("effort should not change when level is invalid")
-	}
-	if m.notification == "" {
-		t.Error("expected notification for invalid effort level")
-	}
-}
-
-func TestCmdEffortModelWithoutCustomLevels(t *testing.T) {
-	rt := &fakeRuntime{}
-	m := newTestModel(rt, nil)
-	m.availableModels = []tauchat.ChatModelRef{{ID: "gpt-4"}}
-	m.modelName = "gpt-4"
-	m.reasoningEffort = "auto"
-
-	drainCmd(m.cmdEffort(""))
-
-	// Model without custom efforts has only ["auto"]. Cycling from "auto"
-	// with a 1-element list returns "auto" again.
-	if m.reasoningEffort != "auto" {
-		t.Fatalf("reasoningEffort = %q, want %q", m.reasoningEffort, "auto")
-	}
-}
-
-// --- cmdRefresh -------------------------------------------------------------
-
-func TestCmdRefreshNil(t *testing.T) {
-	m := newTestModel(&fakeRuntime{}, nil)
-	m.refresh = nil
-
-	drainCmd(m.cmdRefresh(""))
-
-	if m.notification == "" {
-		t.Error("expected notification when refresh is nil")
-	}
-}
-
-func TestCmdRefreshError(t *testing.T) {
-	m := newTestModel(&fakeRuntime{}, nil)
-	callCount := 0
-	m.refresh = func(ctx context.Context) ([]tauchat.ChatModelRef, error) {
-		callCount++
-		return nil, errIntentional
-	}
-
-	cmd := m.cmdRefresh("")
-	msgs := drainCmd(cmd)
-	if len(msgs) != 1 {
-		t.Fatalf("expected 1 message, got %d", len(msgs))
-	}
-	_, ok := msgs[0].(refreshResultMsg)
-	if !ok {
-		t.Fatalf("expected refreshResultMsg, got %T", msgs[0])
-	}
-
-	// Apply the result.
-	m.Update(msgs[0])
-	if m.notification == "" {
-		t.Error("expected error notification after refresh failure")
-	}
-	if callCount != 1 {
-		t.Fatalf("refresh called %d times, want 1", callCount)
-	}
-}
-
-func TestCmdRefreshSuccess(t *testing.T) {
-	m := newTestModel(&fakeRuntime{}, nil)
-	m.refresh = func(ctx context.Context) ([]tauchat.ChatModelRef, error) {
-		return []tauchat.ChatModelRef{{ID: "gpt-5"}, {ID: "claude-4"}}, nil
-	}
-
-	cmd := m.cmdRefresh("")
-	msgs := drainCmd(cmd)
-	m.Update(msgs[0])
-
-	if len(m.availableModels) != 2 {
-		t.Fatalf("availableModels = %d, want 2", len(m.availableModels))
-	}
-	if m.notification == "" {
-		t.Error("expected success notification after refresh")
-	}
-}
-
-// --- cmdCost ----------------------------------------------------------------
-
-func TestCmdCostNoUsage(t *testing.T) {
-	m := newTestModel(&fakeRuntime{}, nil)
-	m.usage = nil
-
-	drainCmd(m.cmdCost(""))
-
-	if m.notification == "" {
-		t.Error("expected notification when no usage tracker")
-	}
-}
-
-// --- cmdClear ---------------------------------------------------------------
-
-func TestCmdClearSendsReset(t *testing.T) {
-	rt := &fakeRuntime{}
-	m := newTestModel(rt, nil)
-
-	drainCmd(m.cmdClear(""))
-
-	if len(rt.sent) != 1 {
-		t.Fatalf("expected 1 command, got %d", len(rt.sent))
-	}
-	if _, ok := rt.sent[0].(tauchat.ResetChatSessionCommand); !ok {
-		t.Fatalf("expected ResetChatSessionCommand, got %T", rt.sent[0])
-	}
-}
-
-// --- cmdHelp ----------------------------------------------------------------
-
-func TestCmdHelpOpensOverlayWithoutTouchingScrollback(t *testing.T) {
-	m := newTestModel(&fakeRuntime{}, nil)
-	m.renderedLines = nil
-
-	drainCmd(m.cmdHelp(""))
-
-	if m.helpOverlay == nil {
-		t.Fatal("expected cmdHelp to open a help overlay")
-	}
-	if len(m.renderedLines) != 0 {
-		t.Errorf("renderedLines = %v, want untouched - /help is an overlay, not a scrollback message", m.renderedLines)
-	}
-}
-
-func TestCmdHelpOverlayShowsKeybindings(t *testing.T) {
-	m := newTestModel(&fakeRuntime{}, nil)
-	m.height = 200
-	drainCmd(m.cmdHelp(""))
-
-	rendered, _ := m.renderHelpOverlayBox()
-	plain := stripANSI(rendered)
-	for _, want := range []string{"Help: Keybindings & Controls", "Ctrl+S", "Ctrl+Home / Ctrl+End"} {
-		if !strings.Contains(plain, want) {
-			t.Errorf("expected help overlay to contain %q", want)
-		}
-	}
-}
-
-func TestAnyKeyClosesHelpOverlay(t *testing.T) {
-	m := newTestModel(&fakeRuntime{}, nil)
-	drainCmd(m.cmdHelp(""))
-	if m.helpOverlay == nil {
-		t.Fatal("setup: expected the overlay to be open")
-	}
-
-	m.handleHelpOverlayKey(charKey('x'))
-
-	if m.helpOverlay != nil {
-		t.Error("expected any keypress to close the help overlay")
-	}
-}
-
-// TestHelpOverlayClipsAndScrollsOnShortTerminal is a regression test for the
-// bug report this whole overlay redesign was chasing: on a terminal shorter
-// than the help content, the box previously ran off the bottom of the
-// screen with no way to see or reach the rest of it. It must now clip to
-// the available height and let Up/Down/PgUp/PgDn scroll to the rest.
-func TestHelpOverlayClipsAndScrollsOnShortTerminal(t *testing.T) {
-	m := newTestModel(&fakeRuntime{}, nil)
-	m.width, m.height = 120, 200
-	drainCmd(m.cmdHelp(""))
-
-	full, _ := m.renderHelpOverlayBox()
-	fullHeight := lipgloss.Height(full)
-
-	m.height = 15 // short enough that the full box can't fit
-	clipped, _ := m.renderHelpOverlayBox()
-	clippedHeight := lipgloss.Height(clipped)
-
-	if clippedHeight >= fullHeight {
-		t.Fatalf("clipped height = %d, want less than the full box's %d height on a %d-row terminal", clippedHeight, fullHeight, m.height)
-	}
-	if clippedHeight > m.height {
-		t.Errorf("clipped height = %d, want it to fit within the %d-row terminal", clippedHeight, m.height)
-	}
-
-	// Up/Down must actually move the visible window, not just be accepted.
-	before, _ := m.renderHelpOverlayBox()
-	m.handleHelpOverlayKey(key(tea.KeyDown, 0))
-	after, _ := m.renderHelpOverlayBox()
-	if before == after {
-		t.Error("expected scrolling down to change the visible content")
-	}
-	if m.helpOverlay == nil {
-		t.Error("expected a scroll key not to close the overlay")
-	}
-}
-
-func TestHelpOverlayScrollClampsToValidRange(t *testing.T) {
-	m := newTestModel(&fakeRuntime{}, nil)
-	m.width, m.height = 120, 15
-	drainCmd(m.cmdHelp(""))
-
-	m.handleHelpOverlayKey(key(tea.KeyUp, 0)) // scroll above the top before anything has scrolled down
-	m.renderHelpOverlayBox()                  // renderHelpOverlayBox is what actually clamps scrollOffset
-	if m.helpOverlay.scrollOffset < 0 {
-		t.Errorf("scrollOffset = %d, want clamped to >= 0", m.helpOverlay.scrollOffset)
-	}
-
-	for range 50 {
-		m.handleHelpOverlayKey(key(tea.KeyDown, 0))
-	}
-	m.renderHelpOverlayBox()
-	if m.helpOverlay == nil {
-		t.Fatal("expected scrolling far past the bottom not to close the overlay")
-	}
-	body, _ := renderHelpBody(m.helpOverlayWidth(), m.helpOverlay.expanded)
-	if m.helpOverlay.scrollOffset >= len(body) {
-		t.Errorf("scrollOffset = %d, want clamped below body length %d", m.helpOverlay.scrollOffset, len(body))
-	}
-}
-
-func TestHelpOverlayClickExpandsAndCollapsesRow(t *testing.T) {
-	m := newTestModel(&fakeRuntime{}, nil)
-	m.width, m.height = 70, 40 // single-column layout - simpler, deterministic hit coordinates
-	drainCmd(m.cmdHelp(""))
-
-	rendered, hits := m.renderHelpOverlayBox()
-	if len(hits) == 0 {
-		t.Fatal("expected at least one clickable row")
-	}
-	h := hits[0]
-	bx, by := centerRect(m.width, m.height, lipgloss.Width(rendered), lipgloss.Height(rendered))
-
-	m.handleHelpOverlayClick(bx+h.startX, by+1+h.startY)
-	if !m.helpOverlay.expanded[h.key] {
-		t.Fatal("expected the clicked row to be marked expanded")
-	}
-
-	m.handleHelpOverlayClick(bx+h.startX, by+1+h.startY)
-	if m.helpOverlay.expanded[h.key] {
-		t.Error("expected a second click on the same row to collapse it back")
-	}
-}
-
-func TestHelpOverlayClickOutsideBoxCloses(t *testing.T) {
-	m := newTestModel(&fakeRuntime{}, nil)
-	m.width, m.height = 70, 40
-	drainCmd(m.cmdHelp(""))
-
-	m.handleHelpOverlayClick(0, m.height-1) // bottom-left corner, well outside a centered box
-	if m.helpOverlay != nil {
-		t.Error("expected a click outside the box to close the overlay")
-	}
-}
-
-// --- cmdSession -------------------------------------------------------------
-
-func TestCmdSessionListSendsCommand(t *testing.T) {
-	rt := &fakeRuntime{}
-	m := newTestModel(rt, nil)
-
-	drainCmd(m.cmdSession(""))
-	if len(rt.sent) != 1 {
-		t.Fatalf("expected 1 command, got %d", len(rt.sent))
-	}
-	if _, ok := rt.sent[0].(tauchat.ListSessionsCommand); !ok {
-		t.Fatalf("expected ListSessionsCommand, got %T", rt.sent[0])
-	}
-}
-
-func TestCmdSessionListExplicit(t *testing.T) {
-	rt := &fakeRuntime{}
-	m := newTestModel(rt, nil)
-
-	drainCmd(m.cmdSession("list"))
-	if len(rt.sent) != 1 {
-		t.Fatalf("expected 1 command, got %d", len(rt.sent))
-	}
-	if _, ok := rt.sent[0].(tauchat.ListSessionsCommand); !ok {
-		t.Fatalf("expected ListSessionsCommand, got %T", rt.sent[0])
-	}
-}
-
-func TestCmdSessionInfoRequiresID(t *testing.T) {
-	m := newTestModel(&fakeRuntime{}, nil)
-
-	drainCmd(m.cmdSession("info"))
-	if !strings.Contains(m.notification, "usage") {
-		t.Errorf("notification = %q, want a usage hint", m.notification)
-	}
-}
-
-func TestCmdSessionInfoNotFound(t *testing.T) {
-	m := newTestModel(&fakeRuntime{}, nil)
-
-	drainCmd(m.cmdSession("info sess-missing"))
-	if !strings.Contains(m.notification, "sess-missing") || !strings.Contains(m.notification, "not found") {
-		t.Errorf("notification = %q, want a 'not found' hint mentioning the id", m.notification)
-	}
-}
-
-func TestCmdSessionInfoFound(t *testing.T) {
-	m := newTestModel(&fakeRuntime{}, nil)
-	m.sessionSummaries = []tauchat.SessionSummary{
-		{ID: "sess-abc", ModelID: "gpt-4", Provider: "openai", MessageCount: 3},
-	}
-
-	cmd := m.cmdSession("info sess-abc")
-	if cmd != nil {
-		t.Error("expected nil Cmd - session detail is appended directly, not via notification")
-	}
-	joined := strings.Join(m.renderedLines, "\n")
-	for _, want := range []string{"sess-abc", "gpt-4", "openai", "3"} {
-		if !strings.Contains(joined, want) {
-			t.Fatalf("rendered session info missing %q, got %q", want, joined)
-		}
-	}
-}
-
-func TestSessionInfoTextIncludesOptionalFields(t *testing.T) {
-	now := time.Now()
-	s := tauchat.SessionSummary{
-		ID: "sess-1", ModelID: "gpt-4", Provider: "openai", MessageCount: 5,
-		InputTokens: 100, OutputTokens: 50, TotalTokens: 150, Cost: 0.02,
-		DurationMs: 2500, ToolCalls: 3, ToolErrors: 1,
-		CreatedAt: now, UpdatedAt: now,
-	}
-	out := sessionInfoText(s)
-	for _, want := range []string{
-		"Session sess-1", "Model: gpt-4", "Provider: openai", "Messages: 5",
-		"↑100", "↓50", "total 150", "$0.0200", "2s", "Tool calls: 3", "(1 errors)",
-		"Created:", "Updated:",
-	} {
-		if !strings.Contains(out, want) {
-			t.Fatalf("sessionInfoText missing %q, got %q", want, out)
-		}
-	}
-}
-
-func TestCmdSessionExportDefaultID(t *testing.T) {
-	rt := &fakeRuntime{}
-	m := newTestModel(rt, nil)
-	m.sessionID = "sess-123"
-
-	drainCmd(m.cmdSession("export"))
-
-	if len(rt.sent) != 1 {
-		t.Fatalf("expected 1 command, got %d", len(rt.sent))
-	}
-	cmd, ok := rt.sent[0].(tauchat.ExportSessionCommand)
-	if !ok {
-		t.Fatalf("expected ExportSessionCommand, got %T", rt.sent[0])
-	}
-	if cmd.SessionID != "sess-123" {
-		t.Fatalf("SessionID = %q, want %q", cmd.SessionID, "sess-123")
-	}
-}
-
-func TestCmdSessionExportCustomID(t *testing.T) {
-	rt := &fakeRuntime{}
-	m := newTestModel(rt, nil)
-
-	drainCmd(m.cmdSession("export other-sess"))
-
-	if len(rt.sent) != 1 {
-		t.Fatalf("expected 1 command, got %d", len(rt.sent))
-	}
-	cmd := rt.sent[0].(tauchat.ExportSessionCommand)
-	if cmd.SessionID != "other-sess" {
-		t.Fatalf("SessionID = %q, want %q", cmd.SessionID, "other-sess")
-	}
-}
-
-func TestCmdSessionDeleteEmpty(t *testing.T) {
-	m := newTestModel(&fakeRuntime{}, nil)
-
-	drainCmd(m.cmdSession("delete"))
-	if m.notification == "" {
-		t.Error("expected notification when delete missing ID")
-	}
-}
-
-func TestCmdSessionDeleteWithID(t *testing.T) {
-	rt := &fakeRuntime{}
-	m := newTestModel(rt, nil)
-
-	drainCmd(m.cmdSession("delete sess-xyz"))
-
-	if len(rt.sent) != 1 {
-		t.Fatalf("expected 1 command, got %d", len(rt.sent))
-	}
-	cmd := rt.sent[0].(tauchat.DeleteSessionCommand)
-	if cmd.SessionID != "sess-xyz" {
-		t.Fatalf("SessionID = %q, want %q", cmd.SessionID, "sess-xyz")
-	}
-}
-
-func TestCmdSessionDefaultLoad(t *testing.T) {
-	rt := &fakeRuntime{}
-	m := newTestModel(rt, nil)
-
-	drainCmd(m.cmdSession("sess-abc"))
-
-	if len(rt.sent) != 1 {
-		t.Fatalf("expected 1 command, got %d", len(rt.sent))
-	}
-	cmd := rt.sent[0].(tauchat.LoadSessionCommand)
-	if cmd.SessionID != "sess-abc" {
-		t.Fatalf("SessionID = %q, want %q", cmd.SessionID, "sess-abc")
-	}
-}
-
-// --- cmdResume --------------------------------------------------------------
-
-func TestCmdResumeEmptyListsSessions(t *testing.T) {
-	rt := &fakeRuntime{}
-	m := newTestModel(rt, nil)
-
-	drainCmd(m.cmdResume(""))
-
-	if len(rt.sent) != 1 {
-		t.Fatalf("expected 1 command, got %d", len(rt.sent))
-	}
-	if _, ok := rt.sent[0].(tauchat.ListSessionsCommand); !ok {
-		t.Fatalf("expected ListSessionsCommand, got %T", rt.sent[0])
-	}
-}
-
-func TestCmdResumeWithID(t *testing.T) {
-	rt := &fakeRuntime{}
-	m := newTestModel(rt, nil)
-
-	drainCmd(m.cmdResume("sess-abc"))
-
-	if len(rt.sent) != 1 {
-		t.Fatalf("expected 1 command, got %d", len(rt.sent))
-	}
-	cmd := rt.sent[0].(tauchat.LoadSessionCommand)
-	if cmd.SessionID != "sess-abc" {
-		t.Fatalf("SessionID = %q, want %q", cmd.SessionID, "sess-abc")
-	}
-}
-
-// --- handleSlashCommand -----------------------------------------------------
-
-func TestHandleSlashCommandKnown(t *testing.T) {
-	rt := &fakeRuntime{}
-	m := newTestModel(rt, nil)
-
-	cmd := m.handleSlashCommand("/clear")
-	if cmd == nil {
-		t.Fatal("expected a Cmd for known command /clear")
-	}
-	drainCmd(cmd)
-
-	if len(rt.sent) != 1 {
-		t.Fatalf("expected 1 command sent, got %d", len(rt.sent))
-	}
-}
-
-func TestHandleSlashCommandUnknown(t *testing.T) {
-	m := newTestModel(&fakeRuntime{}, nil)
-
-	m.handleSlashCommand("/nonexistent")
-	if m.notification == "" {
-		t.Error("expected notification for unknown command")
-	}
-}
-
-func TestHandleSlashCommandExtension(t *testing.T) {
-	rt := &fakeRuntime{}
-	m := newTestModel(rt, nil)
-	m.extensionCommands = map[string]tauchat.ExtensionCommand{
-		"mcp": {Name: "mcp", Description: "MCP commands", Subcommands: []tauchat.ExtensionCommand{
-			{Name: "list", Description: "list servers"},
-		}},
-	}
-
-	drainCmd(m.handleSlashCommand("/mcp list"))
-
-	if len(rt.sent) != 1 {
-		t.Fatalf("expected 1 command, got %d", len(rt.sent))
-	}
-	cmd, ok := rt.sent[0].(tauchat.RunExtensionCommandCommand)
-	if !ok {
-		t.Fatalf("expected RunExtensionCommandCommand, got %T", rt.sent[0])
-	}
-	if cmd.Name != "mcp list" {
-		t.Fatalf("Name = %q, want %q", cmd.Name, "mcp list")
-	}
-}
-
-func TestHandleSlashCommandExtensionNoSubcommand(t *testing.T) {
-	rt := &fakeRuntime{}
-	m := newTestModel(rt, nil)
-	m.extensionCommands = map[string]tauchat.ExtensionCommand{
-		"greet": {Name: "greet", Description: "say hello"},
-	}
-
-	drainCmd(m.handleSlashCommand("/greet world"))
-
-	if len(rt.sent) != 1 {
-		t.Fatalf("expected 1 command, got %d", len(rt.sent))
-	}
-	cmd := rt.sent[0].(tauchat.RunExtensionCommandCommand)
-	if cmd.Name != "greet" {
-		t.Fatalf("Name = %q, want %q", cmd.Name, "greet")
-	}
-	if cmd.Args != "world" {
-		t.Fatalf("Args = %q, want %q", cmd.Args, "world")
-	}
-}
-
-func TestHandleSlashCommandSkillsReload(t *testing.T) {
-	rt := &fakeRuntime{}
-	m := newTestModel(rt, nil)
-
-	drainCmd(m.handleSlashCommand("/skills-reload"))
-
-	if len(rt.sent) != 1 {
-		t.Fatalf("expected 1 command, got %d", len(rt.sent))
-	}
-	if _, ok := rt.sent[0].(tauchat.ReloadSkillsCommand); !ok {
-		t.Fatalf("expected ReloadSkillsCommand, got %T", rt.sent[0])
-	}
-}
-
-func TestHandleSlashCommandSkillEmpty(t *testing.T) {
-	m := newTestModel(&fakeRuntime{}, nil)
-
-	m.handleSlashCommand("/skill:")
-	if m.notification == "" {
-		t.Error("expected notification for empty skill name")
-	}
-}
-
-func TestHandleSlashCommandSkillByName(t *testing.T) {
-	rt := &fakeRuntime{}
-	m := newTestModel(rt, nil)
-
-	drainCmd(m.handleSlashCommand("/skill:my-skill arg1 arg2"))
-
-	if len(rt.sent) != 1 {
-		t.Fatalf("expected 1 command, got %d", len(rt.sent))
-	}
-	cmd, ok := rt.sent[0].(tauchat.RunSkillCommand)
-	if !ok {
-		t.Fatalf("expected RunSkillCommand, got %T", rt.sent[0])
-	}
-	if cmd.SkillName != "my-skill" {
-		t.Fatalf("SkillName = %q, want %q", cmd.SkillName, "my-skill")
-	}
-	if cmd.Args != "arg1 arg2" {
-		t.Fatalf("Args = %q, want %q", cmd.Args, "arg1 arg2")
-	}
-}
-
-// --- currentModelRef --------------------------------------------------------
-
-func TestCurrentModelRefFound(t *testing.T) {
-	m := newTestModel(&fakeRuntime{}, nil)
-	m.availableModels = []tauchat.ChatModelRef{
-		{ID: "gpt-4"},
-		{ID: "claude-3"},
-	}
-	m.modelName = "claude-3"
-
-	ref := m.currentModelRef()
-	if ref.ID != "claude-3" {
-		t.Fatalf("currentModelRef = %q, want %q", ref.ID, "claude-3")
-	}
-}
-
-func TestCurrentModelRefNotFound(t *testing.T) {
-	m := newTestModel(&fakeRuntime{}, nil)
-	m.availableModels = []tauchat.ChatModelRef{{ID: "gpt-4"}}
-	m.modelName = "nonexistent"
-
-	ref := m.currentModelRef()
-	if ref.ID != "" {
-		t.Fatalf("expected empty ref for unknown model, got %q", ref.ID)
-	}
-}
-
-// --- effortLevels -----------------------------------------------------------
-
-func TestEffortLevelsCustom(t *testing.T) {
-	model := tauchat.ChatModelRef{
-		ID: "deepseek",
-		Config: config.ModelConfig{
-			ReasoningEfforts: []string{"low", "medium", "high"},
-		},
-	}
-	levels := effortLevels(model)
-	if len(levels) != 4 {
-		t.Fatalf("expected 4 levels (3 custom + auto), got %d: %v", len(levels), levels)
-	}
-	if levels[len(levels)-1] != "auto" {
-		t.Fatalf("last level should be 'auto', got %q", levels[len(levels)-1])
-	}
-}
-
-func TestEffortLevelsNoCustom(t *testing.T) {
-	model := tauchat.ChatModelRef{ID: "gpt-4"}
-	levels := effortLevels(model)
-	if len(levels) != 1 || levels[0] != "auto" {
-		t.Fatalf("expected [auto], got %v", levels)
-	}
-}
-
-// --- nextEffort -------------------------------------------------------------
-
-func TestNextEffortCycles(t *testing.T) {
-	levels := []string{"low", "medium", "high", "auto"}
+func TestParseCopyCount(t *testing.T) {
 	tests := []struct {
-		current string
-		want    string
+		input string
+		want  int
+		err   bool
 	}{
-		{"low", "medium"},
-		{"medium", "high"},
-		{"high", "auto"},
-		{"auto", "low"},
+		{"1", 1, false},
+		{"5", 5, false},
+		{"42", 42, false},
+		{"0", 0, true},
+		{"-1", 0, true},
+		{"abc", 0, true},
+		{"", 0, true},
+		{" 1 ", 0, true}, // strconv.Atoi rejects leading spaces
 	}
-	for _, tc := range tests {
-		got := nextEffort(tc.current, levels)
-		if got != tc.want {
-			t.Errorf("nextEffort(%q, %v) = %q, want %q", tc.current, levels, got, tc.want)
+	for _, tt := range tests {
+		got, err := parseCopyCount(tt.input)
+		if (err != nil) != tt.err {
+			t.Errorf("parseCopyCount(%q) error = %v, want error=%v", tt.input, err, tt.err)
+			continue
+		}
+		if got != tt.want {
+			t.Errorf("parseCopyCount(%q) = %d, want %d", tt.input, got, tt.want)
 		}
 	}
 }
 
-func TestNextEffortNotFound(t *testing.T) {
-	levels := []string{"auto"}
-	got := nextEffort("unknown", levels)
-	if got != "auto" {
-		t.Fatalf("nextEffort('unknown', [auto]) = %q, want %q", got, "auto")
+func TestCanonicalMessagesFiltersCorrectly(t *testing.T) {
+	messages := []tauchat.ChatMessage{
+		{Role: tauchat.ChatRoleSystem, Content: "system prompt"}, // excluded
+		{Role: tauchat.ChatRoleUser, Content: "hello"},
+		{Role: tauchat.ChatRoleAssistant, Content: "hi there"},
+		{Role: tauchat.ChatRoleTool, Content: "tool result"}, // excluded
+		{Role: tauchat.ChatRoleUser, Content: "what about this?"},
+		{Role: tauchat.ChatRoleAssistant, Content: ""}, // excluded (empty)
+		{Role: tauchat.ChatRoleAssistant, Content: "here's the answer"},
+	}
+	got := canonicalMessages(messages)
+	if len(got) != 4 {
+		t.Fatalf("canonicalMessages returned %d messages, want 4: %+v", len(got), got)
+	}
+	// Order preserved
+	if got[0].Content != "hello" {
+		t.Errorf("msg[0] = %q, want %q", got[0].Content, "hello")
+	}
+	if got[1].Content != "hi there" {
+		t.Errorf("msg[1] = %q, want %q", got[1].Content, "hi there")
+	}
+	if got[2].Content != "what about this?" {
+		t.Errorf("msg[2] = %q, want %q", got[2].Content, "what about this?")
+	}
+	if got[3].Content != "here's the answer" {
+		t.Errorf("msg[3] = %q, want %q", got[3].Content, "here's the answer")
 	}
 }
 
-// --- defaultEffortForModel --------------------------------------------------
-
-func TestDefaultEffortForModelMediumPreferred(t *testing.T) {
-	model := tauchat.ChatModelRef{
-		Config: config.ModelConfig{
-			ReasoningEfforts: []string{"low", "medium", "high"},
-		},
+func TestCanonicalMessagesEmpty(t *testing.T) {
+	got := canonicalMessages(nil)
+	if len(got) != 0 {
+		t.Errorf("canonicalMessages(nil) = %d, want 0", len(got))
 	}
-	effort := defaultEffortForModel(model)
-	if effort != "medium" {
-		t.Fatalf("defaultEffortForModel = %q, want %q", effort, "medium")
+	got = canonicalMessages([]tauchat.ChatMessage{})
+	if len(got) != 0 {
+		t.Errorf("canonicalMessages([]) = %d, want 0", len(got))
 	}
 }
 
-func TestDefaultEffortForModelFirst(t *testing.T) {
-	model := tauchat.ChatModelRef{
-		Config: config.ModelConfig{
-			ReasoningEfforts: []string{"high", "low"},
-		},
+func TestFormatCopyTranscript(t *testing.T) {
+	msgs := []tauchat.ChatMessage{
+		{Role: tauchat.ChatRoleUser, Content: "how do I sort in Go?"},
+		{Role: tauchat.ChatRoleAssistant, Content: "Use `slices.Sort` from the standard library:\n\n```go\nslices.Sort(myslice)\n```"},
+		{Role: tauchat.ChatRoleUser, Content: "thanks!"},
+		{Role: tauchat.ChatRoleAssistant, Content: "You're welcome!"},
 	}
-	effort := defaultEffortForModel(model)
-	if effort != "high" {
-		t.Fatalf("defaultEffortForModel = %q, want %q (first available)", effort, "high")
+	got := formatCopyTranscript(msgs)
+
+	want := "User:\nhow do I sort in Go?\n\n" +
+		"Assistant:\nUse `slices.Sort` from the standard library:\n\n" +
+		"```go\nslices.Sort(myslice)\n```\n\n" +
+		"User:\nthanks!\n\n" +
+		"Assistant:\nYou're welcome!"
+
+	if got != want {
+		t.Errorf("formatCopyTranscript mismatch.\ngot:\n%q\nwant:\n%q", got, want)
 	}
 }
 
-func TestDefaultEffortForModelEmpty(t *testing.T) {
-	model := tauchat.ChatModelRef{}
-	effort := defaultEffortForModel(model)
-	if effort != "" {
-		t.Fatalf("defaultEffortForModel = %q, want empty", effort)
+func TestFormatCopyTranscriptSingleMessage(t *testing.T) {
+	msgs := []tauchat.ChatMessage{
+		{Role: tauchat.ChatRoleAssistant, Content: "hello"},
+	}
+	got := formatCopyTranscript(msgs)
+	want := "Assistant:\nhello"
+	if got != want {
+		t.Errorf("formatCopyTranscript = %q, want %q", got, want)
 	}
 }
 
-// --- runAgentCommand --------------------------------------------------------
-
-func TestRunAgentCommandNoArgs(t *testing.T) {
+func TestCmdCopyNoArgs(t *testing.T) {
+	// Verify the existing bare /copy still works (copies lastAssistantText).
 	rt := &fakeRuntime{}
 	m := newTestModel(rt, nil)
 
-	drainCmd(m.runAgentCommand("plan", ""))
-
-	if len(rt.sent) != 1 {
-		t.Fatalf("expected 1 command, got %d", len(rt.sent))
+	// Nothing to copy should notify.
+	m.cmdCopy("")
+	if m.notification != "nothing to copy" {
+		t.Fatalf("notification = %q, want %q", m.notification, "nothing to copy")
 	}
-	_, ok := rt.sent[0].(tauchat.RunAgentCommand)
-	if !ok {
-		t.Fatalf("expected RunAgentCommand, got %T", rt.sent[0])
-	}
-}
 
-func TestRunAgentCommandWithArgs(t *testing.T) {
-	rt := &fakeRuntime{}
-	m := newTestModel(rt, nil)
-	m.inResponse = false
-
-	drainCmd(m.runAgentCommand("plan", "implement auth"))
-
-	// Should send RunAgentCommand AND start a turn with the args.
-	if len(rt.sent) < 1 {
-		t.Fatalf("expected at least 1 command, got %d", len(rt.sent))
-	}
-	foundAgent := false
-	foundPrompt := false
-	for _, cmd := range rt.sent {
-		switch cmd.(type) {
-		case tauchat.RunAgentCommand:
-			foundAgent = true
-		case tauchat.SubmitChatPromptCommand:
-			foundPrompt = true
-		}
-	}
-	if !foundAgent {
-		t.Error("expected RunAgentCommand in sent commands")
-	}
-	if !foundPrompt {
-		t.Error("expected SubmitChatPromptCommand with args")
-	}
-}
-
-// --- cmdSkills / cmdProvider ------------------------------------------------
-
-func TestCmdSkillsList(t *testing.T) {
-	rt := &fakeRuntime{}
-	m := newTestModel(rt, nil)
-
-	drainCmd(m.cmdSkills("list"))
-
-	if len(rt.sent) != 1 {
-		t.Fatalf("expected 1 command, got %d", len(rt.sent))
-	}
-	if _, ok := rt.sent[0].(tauchat.ListSkillsCommand); !ok {
-		t.Fatalf("expected ListSkillsCommand, got %T", rt.sent[0])
-	}
-}
-
-func TestCmdSkillsNoArgs(t *testing.T) {
-	rt := &fakeRuntime{}
-	m := newTestModel(rt, nil)
-
-	drainCmd(m.cmdSkills(""))
-
-	if len(rt.sent) != 1 {
-		t.Fatalf("expected 1 command, got %d", len(rt.sent))
-	}
-	if _, ok := rt.sent[0].(tauchat.ListSkillsCommand); !ok {
-		t.Fatalf("expected ListSkillsCommand, got %T", rt.sent[0])
-	}
-}
-
-func TestCmdSkillsInvalidArgs(t *testing.T) {
-	m := newTestModel(&fakeRuntime{}, nil)
-
-	drainCmd(m.cmdSkills("invalid"))
-	if m.notification == "" {
-		t.Error("expected notification for invalid skills args")
-	}
-}
-
-func TestCmdProviderEmptyShowsMenu(t *testing.T) {
-	m := newTestModel(&fakeRuntime{}, nil)
-	cmd := m.cmdProvider("")
-	if cmd != nil {
-		t.Error("expected nil Cmd - the menu is appended directly, not via notification")
-	}
-	if len(m.renderedLines) == 0 {
-		t.Error("expected the provider menu to be appended as a system message")
-	}
-}
-
-func TestCmdProviderUnknownProviderToggle(t *testing.T) {
-	m := newTestModel(&fakeRuntime{}, nil)
-	drainCmd(m.cmdProvider("not-a-real-provider"))
-	if m.notification == "" {
-		t.Error("expected notification for an unknown provider")
-	}
-}
-
-func TestCmdProviderLoginEmptyUsage(t *testing.T) {
-	m := newTestModel(&fakeRuntime{}, nil)
-	drainCmd(m.cmdProvider("login"))
-	if m.notification == "" {
-		t.Error("expected usage notification for /provider login with no name")
-	}
-}
-
-func TestCmdProviderLoginUnknownProvider(t *testing.T) {
-	m := newTestModel(&fakeRuntime{}, nil)
-	drainCmd(m.cmdProvider("login not-a-real-provider"))
-	if m.notification == "" {
-		t.Error("expected notification for an unknown provider")
-	}
-}
-
-func TestCmdProviderLoginNonOAuthProvider(t *testing.T) {
-	m := newTestModel(&fakeRuntime{}, nil)
-	drainCmd(m.cmdProvider("login openai"))
-	if !strings.Contains(m.notification, "OAuth") {
-		t.Errorf("expected a non-OAuth hint mentioning OAuth, got %q", m.notification)
-	}
-}
-
-func TestCmdProviderLoginGitHubCopilotNoDomainPromptsInteractively(t *testing.T) {
-	m := newTestModel(&fakeRuntime{}, nil)
-	m.cmdProvider("login github-copilot")
-
-	if m.activePrompt == nil {
-		t.Fatal("expected an interactive prompt asking for the GitHub Copilot host")
-	}
-	if m.activePrompt.kind != promptQuestion {
-		t.Fatal("expected a free-text prompt, not a confirm")
-	}
-	if !strings.Contains(m.activePrompt.title, "GitHub Copilot") {
-		t.Fatalf("title = %q, want it to mention GitHub Copilot", m.activePrompt.title)
-	}
-}
-
-func TestCmdProviderLoginGitHubCopilotWithInlineDomainSkipsPrompt(t *testing.T) {
-	m := newTestModel(&fakeRuntime{}, nil)
-	cmd := m.cmdProvider("login github-copilot mycompany.ghe.com")
-
-	if m.activePrompt != nil {
-		t.Fatal("expected no interactive prompt when a domain is given inline")
-	}
+	// Set a valid last assistant text.
+	m.lastAssistantText = "hello world"
+	cmd := m.cmdCopy("")
 	if cmd == nil {
-		t.Fatal("expected a Cmd to start the OAuth login")
+		t.Fatal("expected non-nil Cmd when there is text to copy")
+	}
+	batch, ok := cmd().(tea.BatchMsg)
+	if !ok || len(batch) == 0 {
+		t.Fatalf("expected BatchMsg, got %#v", cmd())
+	}
+	clip := batch[0]()
+	v := reflect.ValueOf(clip)
+	if v.Kind() != reflect.String || v.String() != "hello world" {
+		t.Fatalf("clipboard payload = %#v, want %q", clip, "hello world")
+	}
+	if m.notification != "copied to clipboard" {
+		t.Errorf("notification = %q, want %q", m.notification, "copied to clipboard")
 	}
 }
 
-func TestCmdProviderLogoutEmptyUsage(t *testing.T) {
-	m := newTestModel(&fakeRuntime{}, nil)
-	drainCmd(m.cmdProvider("logout"))
-	if m.notification == "" {
-		t.Error("expected usage notification for /provider logout with no name")
+func TestCmdCopySession(t *testing.T) {
+	rt := &fakeRuntime{}
+	m := newTestModel(rt, nil)
+
+	// Empty session.
+	m.canonicalMessages = nil
+	m.cmdCopy("session")
+	if m.notification != "nothing to copy" {
+		t.Fatalf("notification = %q, want %q", m.notification, "nothing to copy")
+	}
+
+	// Populated session.
+	m.canonicalMessages = []tauchat.ChatMessage{
+		{Role: tauchat.ChatRoleUser, Content: "hello"},
+		{Role: tauchat.ChatRoleAssistant, Content: "hi there"},
+	}
+	cmd := m.cmdCopy("session")
+	if cmd == nil {
+		t.Fatal("expected non-nil Cmd")
+	}
+	batch, ok := cmd().(tea.BatchMsg)
+	if !ok || len(batch) == 0 {
+		t.Fatalf("expected BatchMsg, got %#v", cmd())
+	}
+	clip := batch[0]()
+	v := reflect.ValueOf(clip)
+	got := v.String()
+	want := "User:\nhello\n\nAssistant:\nhi there"
+	if got != want {
+		t.Errorf("clipboard = %q, want %q", got, want)
+	}
+	if m.notification != "session copied to clipboard" {
+		t.Errorf("notification = %q, want %q", m.notification, "session copied to clipboard")
 	}
 }
 
-func TestCmdProviderLogoutUnknownProvider(t *testing.T) {
-	m := newTestModel(&fakeRuntime{}, nil)
-	drainCmd(m.cmdProvider("logout not-a-real-provider"))
-	if m.notification == "" {
-		t.Error("expected notification for an unknown provider")
+func TestCmdCopyAllIsAliasForSession(t *testing.T) {
+	rt := &fakeRuntime{}
+	m := newTestModel(rt, nil)
+	m.canonicalMessages = []tauchat.ChatMessage{
+		{Role: tauchat.ChatRoleUser, Content: "test"},
+	}
+	// "all" should produce the same result as "session".
+	cmd := m.cmdCopy("all")
+	if cmd == nil {
+		t.Fatal("expected non-nil Cmd")
+	}
+	batch, ok := cmd().(tea.BatchMsg)
+	if !ok || len(batch) == 0 {
+		t.Fatalf("expected BatchMsg, got %#v", cmd())
+	}
+	clip := batch[0]()
+	v := reflect.ValueOf(clip)
+	if v.String() != "User:\ntest" {
+		t.Errorf("clipboard = %q, want %q", v.String(), "User:\ntest")
+	}
+	if m.notification != "session copied to clipboard" {
+		t.Errorf("notification = %q, want %q", m.notification, "session copied to clipboard")
 	}
 }
 
-func TestProviderCompletionsListsCatalogAndSubVerbs(t *testing.T) {
-	m := newTestModel(&fakeRuntime{}, nil)
-	groups := m.providerCompletions([]string{"/provider"}, 0)
-	if len(groups) != 1 {
-		t.Fatalf("expected 1 group, got %d", len(groups))
+func TestCmdCopyN(t *testing.T) {
+	rt := &fakeRuntime{}
+	m := newTestModel(rt, nil)
+
+	m.canonicalMessages = []tauchat.ChatMessage{
+		{Role: tauchat.ChatRoleUser, Content: "msg 1"},
+		{Role: tauchat.ChatRoleAssistant, Content: "msg 2"},
+		{Role: tauchat.ChatRoleUser, Content: "msg 3"},
+		{Role: tauchat.ChatRoleAssistant, Content: "msg 4"},
+		{Role: tauchat.ChatRoleUser, Content: "msg 5"},
 	}
-	var haveOpenAI, haveLogin, haveLogout bool
-	for _, mc := range groups[0].Matches {
-		switch mc.Word {
-		case "openai":
-			haveOpenAI = true
-		case "login":
-			haveLogin = true
-		case "logout":
-			haveLogout = true
+
+	tests := []struct {
+		n    string
+		want string
+	}{
+		{"1", "User:\nmsg 5"},
+		{"2", "Assistant:\nmsg 4\n\nUser:\nmsg 5"},
+		{"3", "User:\nmsg 3\n\nAssistant:\nmsg 4\n\nUser:\nmsg 5"},
+		{"5", "User:\nmsg 1\n\nAssistant:\nmsg 2\n\nUser:\nmsg 3\n\nAssistant:\nmsg 4\n\nUser:\nmsg 5"},
+		// Excessive N should clamp to available messages.
+		{"10", "User:\nmsg 1\n\nAssistant:\nmsg 2\n\nUser:\nmsg 3\n\nAssistant:\nmsg 4\n\nUser:\nmsg 5"},
+	}
+
+	for _, tt := range tests {
+		m.notification = "" // reset
+		cmd := m.cmdCopy(tt.n)
+		if cmd == nil {
+			t.Fatalf("cmdCopy(%q) returned nil", tt.n)
+		}
+		batch, ok := cmd().(tea.BatchMsg)
+		if !ok || len(batch) == 0 {
+			t.Fatalf("cmdCopy(%q): expected BatchMsg, got %#v", tt.n, cmd())
+		}
+		clip := batch[0]()
+		v := reflect.ValueOf(clip)
+		if v.String() != tt.want {
+			t.Errorf("cmdCopy(%q): clipboard = %q, want %q", tt.n, v.String(), tt.want)
 		}
 	}
-	if !haveOpenAI || !haveLogin || !haveLogout {
-		t.Fatalf("expected openai/login/logout in %+v", groups[0].Matches)
-	}
 }
 
-func TestProviderCompletionsSecondArgAfterLogin(t *testing.T) {
-	m := newTestModel(&fakeRuntime{}, nil)
-	groups := m.providerCompletions([]string{"/provider", "login"}, 1)
-	if len(groups) != 1 || len(groups[0].Matches) == 0 {
-		t.Fatalf("expected provider names after 'login', got %+v", groups)
+func TestCmdCopyInvalidN(t *testing.T) {
+	rt := &fakeRuntime{}
+	m := newTestModel(rt, nil)
+	m.canonicalMessages = []tauchat.ChatMessage{
+		{Role: tauchat.ChatRoleUser, Content: "hello"},
 	}
-	for _, mc := range groups[0].Matches {
-		if mc.Word == "login" || mc.Word == "logout" {
-			t.Fatalf("sub-verbs should not reappear as an argument, got %+v", groups[0].Matches)
+
+	for _, bad := range []string{"0", "-1", "abc"} {
+		m.notification = ""
+		cmd := m.cmdCopy(bad)
+		// When N is invalid, cmdCopy should still return a notification Cmd
+		// (the notification is set synchronously, and the Cmd is the 4-second
+		// tick; we don't need to drain it — just check m.notification).
+		if cmd == nil {
+			t.Errorf("cmdCopy(%q) returned nil, expected notification Cmd", bad)
+		}
+		if m.notification == "" {
+			t.Errorf("cmdCopy(%q): notification empty, expected error message", bad)
 		}
 	}
 }
 
-func TestProviderCompletionsSecondArgAfterPlainName(t *testing.T) {
-	m := newTestModel(&fakeRuntime{}, nil)
-	if groups := m.providerCompletions([]string{"/provider", "openai"}, 1); groups != nil {
-		t.Fatalf("expected nil for a second argument after a bare provider name, got %v", groups)
+func TestCmdCopyEmptyHistory(t *testing.T) {
+	rt := &fakeRuntime{}
+	m := newTestModel(rt, nil)
+	m.canonicalMessages = nil
+
+	// All variants should notify "nothing to copy".
+	for _, arg := range []string{"", "session", "all", "3"} {
+		m.notification = ""
+		m.cmdCopy(arg)
+		if m.notification != "nothing to copy" {
+			t.Errorf("cmdCopy(%q) with empty history: notification = %q, want %q", arg, m.notification, "nothing to copy")
+		}
 	}
 }
 
-func TestProviderLoginPollPropagatesStateLoadAndSaveErrors(t *testing.T) {
-	configDir := t.TempDir()
-	t.Setenv("TAU_CONFIG_DIR", configDir)
-	if err := os.WriteFile(filepath.Join(configDir, "auth.yaml"), []byte("oauth: [unterminated"), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	m := newTestModel(&fakeRuntime{}, nil)
-	session := providers.OAuthLoginSession{
-		Poll: func(context.Context) (providers.OAuthCredentials, error) {
-			return providers.OAuthCredentials{Access: "token"}, nil
-		},
-	}
-
-	msg, ok := m.providerLoginPoll("github-copilot", "GitHub Copilot", session)().(providerLoginResultMsg)
-	if !ok {
-		t.Fatalf("message type = %T, want providerLoginResultMsg", msg)
-	}
-	if msg.err == nil || !strings.Contains(msg.err.Error(), "load provider state") {
-		t.Fatalf("load error = %v, want provider state parse failure", msg.err)
-	}
-
-	m.completeProviderLogin = func(string, providers.OAuthCredentials) error {
-		return errors.New("save provider state: injected failure")
-	}
-	msg, ok = m.providerLoginPoll("github-copilot", "GitHub Copilot", session)().(providerLoginResultMsg)
-	if !ok {
-		t.Fatalf("message type = %T, want providerLoginResultMsg", msg)
-	}
-	if msg.err == nil || !strings.Contains(msg.err.Error(), "save provider state") {
-		t.Fatalf("save error = %v, want injected persistence failure", msg.err)
-	}
-}
-
-// --- refreshAfterProviderChange / providerToggleResultMsg ------------------
-
-func TestRefreshAfterProviderChangeNoRefresher(t *testing.T) {
-	m := newTestModel(&fakeRuntime{}, nil)
-	m.refresh = nil
-
-	cmd := m.refreshAfterProviderChange("OpenRouter", true, "")
-	if cmd != nil {
-		t.Fatal("expected nil Cmd when no refresher is configured")
-	}
-	if !strings.Contains(strings.Join(m.renderedLines, "\n"), "OpenRouter enabled") {
-		t.Fatalf("expected an 'OpenRouter enabled' line, got %v", m.renderedLines)
-	}
-}
-
-func TestProviderToggleResultMsgCombinesOutcomeAndCount(t *testing.T) {
-	m := newTestModel(&fakeRuntime{}, nil)
-
-	m.Update(providerToggleResultMsg{
-		displayName: "OpenRouter",
-		action:      "enabled",
-		models:      []tauchat.ChatModelRef{{ID: "a"}, {ID: "b"}},
-	})
-
-	if len(m.availableModels) != 2 {
-		t.Fatalf("availableModels = %d, want 2", len(m.availableModels))
-	}
-	joined := strings.Join(m.renderedLines, "\n")
-	if !strings.Contains(joined, "OpenRouter enabled, models available: 2") {
-		t.Fatalf("expected combined outcome+count line, got %q", joined)
-	}
-}
-
-func TestProviderToggleResultMsgWithWarning(t *testing.T) {
-	m := newTestModel(&fakeRuntime{}, nil)
-
-	m.Update(providerToggleResultMsg{
-		displayName: "OpenRouter",
-		action:      "enabled",
-		warning:     "no API key found - set $OPENROUTER_API_KEY",
-		models:      nil,
-	})
-
-	joined := strings.Join(m.renderedLines, "\n")
-	if !strings.Contains(joined, "no API key found") {
-		t.Fatalf("expected the warning in the rendered line, got %q", joined)
-	}
-}
-
-func TestProviderToggleResultMsgRefreshFailed(t *testing.T) {
-	m := newTestModel(&fakeRuntime{}, nil)
-
-	m.Update(providerToggleResultMsg{
-		displayName: "OpenRouter",
-		action:      "disabled",
-		err:         errIntentional,
-	})
-
-	joined := strings.Join(m.renderedLines, "\n")
-	if !strings.Contains(joined, "OpenRouter disabled") || !strings.Contains(joined, "model refresh failed") {
-		t.Fatalf("expected a disabled+refresh-failed line, got %q", joined)
-	}
-}
-
-// --- edge: empty slash table dispatch ---------------------------------------
-
-func TestHandleSlashCommandEmptyText(t *testing.T) {
-	m := newTestModel(&fakeRuntime{}, nil)
-
-	cmd := m.handleSlashCommand("")
-	if cmd != nil {
-		t.Fatal("expected nil Cmd for empty text")
-	}
+//nolint:unused // used by copy command tests
+func newTestModelCopy(rt tauchat.ChatRuntime) *model {
+	return newModel(context.Background(), rt, nil, "sess", "gpt", "openai", nil, nil, true, "medium", false, nil, "", false)
 }

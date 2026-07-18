@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"slices"
+	"strconv"
 	"strings"
 	"time"
 
@@ -132,7 +133,7 @@ func init() {
 			run:         (*model).cmdCost,
 		},
 		{
-			name: "copy", description: "copy the assistant's last response to the clipboard",
+			name: "copy", usage: "[session|all|<N>]", description: "copy last response or transcript to clipboard",
 			run: (*model).cmdCopy,
 		},
 		{
@@ -445,11 +446,70 @@ func (m *model) cmdCost(_ string) tea.Cmd {
 	return nil
 }
 
-func (m *model) cmdCopy(_ string) tea.Cmd {
-	if m.lastAssistantText == "" {
-		return m.setNotification("nothing to copy")
+func (m *model) cmdCopy(args string) tea.Cmd {
+	args = strings.TrimSpace(args)
+
+	switch {
+	case args == "":
+		if m.lastAssistantText == "" {
+			return m.setNotification("nothing to copy")
+		}
+		return tea.Batch(tea.SetClipboard(m.lastAssistantText), m.setNotification("copied to clipboard"))
+
+	case args == "session" || args == "all":
+		msgs := m.canonicalMessages
+		if len(msgs) == 0 {
+			return m.setNotification("nothing to copy")
+		}
+		text := formatCopyTranscript(msgs)
+		return tea.Batch(tea.SetClipboard(text), m.setNotification("session copied to clipboard"))
+
+	default:
+		n, err := parseCopyCount(args)
+		if err != nil {
+			return m.setNotification(err.Error())
+		}
+		msgs := m.canonicalMessages
+		if len(msgs) == 0 {
+			return m.setNotification("nothing to copy")
+		}
+		if n > len(msgs) {
+			n = len(msgs)
+		}
+		if n < 1 {
+			n = 1
+		}
+		text := formatCopyTranscript(msgs[len(msgs)-n:])
+		return tea.Batch(tea.SetClipboard(text), m.setNotification(fmt.Sprintf("%d messages copied to clipboard", n)))
 	}
-	return tea.Batch(tea.SetClipboard(m.lastAssistantText), m.setNotification("copied to clipboard"))
+}
+
+// parseCopyCount parses the /copy <N> argument as a positive integer.
+func parseCopyCount(s string) (int, error) {
+	n, err := strconv.Atoi(s)
+	if err != nil || n < 1 {
+		return 0, fmt.Errorf("invalid message count: %q - use a positive number", s)
+	}
+	return n, nil
+}
+
+// formatCopyTranscript formats a slice of canonical (user/assistant) messages
+// as a plain-text transcript with role labels, preserving Markdown and code
+// fences. No ANSI styling, system prompts, tool protocol, or internal events
+// are included.
+func formatCopyTranscript(msgs []tauchat.ChatMessage) string {
+	var b strings.Builder
+	for i, msg := range msgs {
+		label := "User"
+		if msg.Role == tauchat.ChatRoleAssistant {
+			label = "Assistant"
+		}
+		if i > 0 {
+			b.WriteString("\n\n")
+		}
+		fmt.Fprintf(&b, "%s:\n%s", label, msg.Content)
+	}
+	return b.String()
 }
 
 // cmdProvider dispatches /provider's three forms: bare (show the menu), a
