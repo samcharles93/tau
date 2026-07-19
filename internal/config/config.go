@@ -1451,11 +1451,17 @@ func SaveDefaultProviderAndModel(cwd, provider, model string) error {
 // crash mid-write can never leave the config file truncated or missing.
 // Existing files are replaced atomically; the parent directory is created
 // with mode 0o700 if it doesn't already exist. The caller passes the file
-// mode they want on the final file.
+// mode to use for a newly created file; if path already exists, its current
+// mode is preserved instead, so a user who has tightened permissions on a
+// config file (e.g. because it holds a plaintext secret) doesn't have them
+// silently widened back out on the next rewrite.
 func atomicWriteFile(path string, data []byte, perm os.FileMode) error {
 	dir := filepath.Dir(path)
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return fmt.Errorf("create config dir: %w", err)
+	}
+	if info, err := os.Stat(path); err == nil {
+		perm = info.Mode().Perm()
 	}
 	tmp, err := os.CreateTemp(dir, filepath.Base(path)+".*.tmp")
 	if err != nil {

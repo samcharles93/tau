@@ -4,6 +4,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -653,6 +654,75 @@ ui:
 	}
 	if len(cfg.Providers) != 1 || cfg.Providers[0].Name != "acme" {
 		t.Fatalf("expected the acme provider to survive untouched, got %+v", cfg.Providers)
+	}
+}
+
+// TestSyncConfigSchemaPreservesFilePermissions guards against atomicWriteFile
+// silently widening a config file's permissions back to its default mode on
+// every rewrite, which would undo a user's deliberate `chmod 600` on a file
+// holding a plaintext secret (e.g. a literal auth.api_key).
+func TestSyncConfigSchemaPreservesFilePermissions(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("os.Chmod perm bits are POSIX-only")
+	}
+
+	dir := t.TempDir()
+	path := filepath.Join(dir, "config.yaml")
+	writeFile(t, path, `default_provider: acme
+providers:
+  - name: acme
+    base_url: https://acme.example
+    auth:
+      type: none
+`)
+	if err := os.Chmod(path, 0o600); err != nil {
+		t.Fatalf("Chmod() error = %v", err)
+	}
+
+	if err := syncConfigSchema(path); err != nil {
+		t.Fatalf("syncConfigSchema() error = %v", err)
+	}
+
+	info, err := os.Stat(path)
+	if err != nil {
+		t.Fatalf("Stat() error = %v", err)
+	}
+	if got := info.Mode().Perm(); got != 0o600 {
+		t.Fatalf("file permissions = %o, want 0600 to be preserved", got)
+	}
+}
+
+// TestSaveDefaultProviderAndModelPreservesFilePermissions is the
+// SaveDefaultProviderAndModel equivalent of
+// TestSyncConfigSchemaPreservesFilePermissions.
+func TestSaveDefaultProviderAndModelPreservesFilePermissions(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("os.Chmod perm bits are POSIX-only")
+	}
+
+	dir := t.TempDir()
+	t.Setenv("TAU_CONFIG_DIR", dir)
+	path := GlobalPath()
+	writeFile(t, path, `providers:
+  - name: acme
+    base_url: https://acme.example
+    auth:
+      type: none
+`)
+	if err := os.Chmod(path, 0o600); err != nil {
+		t.Fatalf("Chmod() error = %v", err)
+	}
+
+	if err := SaveDefaultProviderAndModel("", "openrouter", "gpt-5.6"); err != nil {
+		t.Fatalf("SaveDefaultProviderAndModel() error = %v", err)
+	}
+
+	info, err := os.Stat(path)
+	if err != nil {
+		t.Fatalf("Stat() error = %v", err)
+	}
+	if got := info.Mode().Perm(); got != 0o600 {
+		t.Fatalf("file permissions = %o, want 0600 to be preserved", got)
 	}
 }
 
