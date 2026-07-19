@@ -9,6 +9,12 @@ import (
 // dispatch priority once, replacing what used to be a hand-written ladder in
 // dispatchKey plus scattered manual "close my siblings" calls at each open
 // site (openDiffViewer, openSessionTree, presentPrompt, ...).
+//
+// Completions is not registered here: it's the one soft overlay and has its
+// own explicit call site in dispatchKey between "no exclusive overlay is
+// open" and "normal keybindings," which a single combined loop can't
+// express. It's listed in the const block only as documentation of the full
+// precedence order; no live code reads overlayCompletions at runtime.
 type overlayID int
 
 const (
@@ -18,7 +24,7 @@ const (
 	overlayChildTranscript
 	overlaySessionTree
 	overlayContextMenu
-	overlayCompletions // the one soft (non-exclusive) slot
+	overlayCompletions // soft overlay — documented here, dispatched outside this registry
 )
 
 // overlay is the uniform surface every Category 2 modal implements, so
@@ -51,10 +57,10 @@ type overlaySlot struct {
 }
 
 // overlayPrecedence is the single declared dispatch order - first active
-// exclusive slot wins; the soft completions slot at the end only wins if it
-// reports consumed. Rebuilt on every call: each adapter is a thin struct
+// exclusive slot wins. Rebuilt on every call: each adapter is a thin struct
 // wrapping *model, so this always reflects live state and costs nothing
-// beyond the slice allocation.
+// beyond the slice allocation. Completions (soft) is deliberately NOT in
+// this list - see the overlayID doc comment above.
 func (m *model) overlayPrecedence() []overlaySlot {
 	return []overlaySlot{
 		{overlayPrompt, promptOverlay{m}, true},
@@ -63,7 +69,6 @@ func (m *model) overlayPrecedence() []overlaySlot {
 		{overlayChildTranscript, childTranscriptOverlay{m}, true},
 		{overlaySessionTree, sessionTreeOverlay{m}, true},
 		{overlayContextMenu, contextMenuOverlay{m}, true},
-		{overlayCompletions, completionsOverlay{m}, false},
 	}
 }
 
@@ -72,13 +77,6 @@ func (m *model) overlayPrecedence() []overlaySlot {
 // slot always claims the key entirely. Returns (nil, false) when none is
 // active, so the caller falls through to the inputSel-clear step and then
 // the soft completions slot (see dispatchKey) before normal keybindings.
-// The soft completions slot is deliberately not tried here even though it's
-// registered in overlayPrecedence - dispatchKey needs to run the
-// inputSel-clear step strictly between "no exclusive overlay is open" and
-// "try completions," which a single combined loop can't express - so
-// completions keeps its own explicit call site, same as before this
-// mechanism existed. It stays registered here purely for
-// closeOtherExclusiveOverlays and future precedence documentation.
 func (m *model) dispatchExclusiveOverlayKey(msg tea.KeyPressMsg) (tea.Cmd, bool) {
 	for _, slot := range m.overlayPrecedence() {
 		if !slot.exclusive || !slot.ov.active() {
@@ -166,18 +164,3 @@ func (o contextMenuOverlay) handleKey(m *model, msg tea.KeyPressMsg) (tea.Cmd, b
 }
 
 func (o contextMenuOverlay) close(m *model) { m.contextMenu = nil }
-
-// completionsOverlay is the one soft slot - handleCompletionKey already
-// reports its own consumed bool, so this adapter is a pure pass-through.
-type completionsOverlay struct{ m *model }
-
-func (o completionsOverlay) active() bool {
-	_, _, ok := o.m.completionsVisible()
-	return ok
-}
-
-func (o completionsOverlay) handleKey(m *model, msg tea.KeyPressMsg) (tea.Cmd, bool) {
-	return m.handleCompletionKey(msg)
-}
-
-func (o completionsOverlay) close(m *model) {} // soft overlay: nothing to force-close
