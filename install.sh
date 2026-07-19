@@ -3,6 +3,9 @@ set -euo pipefail
 
 REPO="samcharles93/tau"
 BASE_URL="${TAU_BASE_URL:-https://github.com/${REPO}/releases}"
+# How long verify_binary_runs waits for `--version` before giving up on a
+# hung binary. Overridable so tests don't have to wait out the real timeout.
+VERIFY_BINARY_TIMEOUT_SECS="${TAU_INSTALL_VERIFY_TIMEOUT_SECS:-10}"
 
 # Supported OS/ARCH pairs and the "tau_{version}_{os}_{arch}.{ext}" archive
 # name below must match internal/updater/targets.go's SupportedTargets()/
@@ -111,14 +114,38 @@ extract_binary() {
 
 # verify_binary_runs runs $binary_path --version to prove the extracted
 # file is a working tau binary, not a corrupt or unrelated file, before it
-# is ever put anywhere near the install directory.
+# is ever put anywhere near the install directory. The wait is bounded by
+# VERIFY_BINARY_TIMEOUT_SECS so a binary whose --version path hangs (e.g.
+# waiting on stdin) can't stall the installer forever - notably bad for the
+# documented `curl | bash` flow, which has no terminal to interrupt it.
 verify_binary_runs() {
   local binary_path="$1"
 
-  if ! "$binary_path" --version >/dev/null 2>&1; then
-    echo "$(red 'Error'): downloaded binary failed to run '--version' - leaving any existing install untouched" >&2
+  "$binary_path" --version >/dev/null 2>&1 &
+  local pid=$!
+  local waited=0
+  while kill -0 "$pid" 2>/dev/null; do
+    if [ "$waited" -ge "$VERIFY_BINARY_TIMEOUT_SECS" ]; then
+      kill -9 "$pid" 2>/dev/null
+      wait "$pid" 2>/dev/null
+      echo "$(red 'Error'): downloaded binary did not respond to '--version' within ${VERIFY_BINARY_TIMEOUT_SECS}s - leaving any existing install untouched" >&2
+      return 1
+    fi
+    sleep 1
+    waited=$((waited + 1))
+  done
+
+  wait "$pid"
+  local status=$?
+  if [ "$status" -eq 0 ]; then
+    return 0
+  fi
+  if [ "$status" -eq 126 ]; then
+    echo "$(red 'Error'): could not execute the downloaded binary (permission denied) - if the temp directory is mounted noexec, set TMPDIR to a writable, executable directory and re-run" >&2
     return 1
   fi
+  echo "$(red 'Error'): downloaded binary failed to run '--version' - leaving any existing install untouched" >&2
+  return 1
 }
 
 # run_install performs OS/arch detection, download, checksum verification,
