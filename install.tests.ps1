@@ -119,6 +119,63 @@ Describe "Test-TauArchiveBinary" {
     }
 }
 
+Describe "Test-TauBinaryRuns" {
+    BeforeEach {
+        $script:BinDir = Join-Path ([System.IO.Path]::GetTempPath()) ([System.Guid]::NewGuid())
+        New-Item -ItemType Directory -Path $script:BinDir | Out-Null
+    }
+
+    AfterEach {
+        Remove-Item -Recurse -Force $script:BinDir -ErrorAction SilentlyContinue
+    }
+
+    It "returns true for a binary that exits 0 on --version" {
+        $binaryPath = Join-Path $script:BinDir "tau.exe"
+        Add-Type -OutputType ConsoleApplication -OutputAssembly $binaryPath -TypeDefinition @"
+public class TauFixtureBinaryRunsGood {
+    public static int Main(string[] args) {
+        System.Console.WriteLine("tau version 9.9.9 (fixture)");
+        return 0;
+    }
+}
+"@
+        Test-TauBinaryRuns -BinaryPath $binaryPath | Should -BeTrue
+    }
+
+    It "returns false for a binary that exits nonzero on --version" {
+        $binaryPath = Join-Path $script:BinDir "tau.exe"
+        Add-Type -OutputType ConsoleApplication -OutputAssembly $binaryPath -TypeDefinition @"
+public class TauFixtureBinaryRunsBad {
+    public static int Main(string[] args) {
+        return 1;
+    }
+}
+"@
+        Test-TauBinaryRuns -BinaryPath $binaryPath -ErrorAction SilentlyContinue | Should -BeFalse
+    }
+
+    # Guards against a real bug: --version was run with no timeout at all,
+    # so a released build whose --version path hangs (e.g. waiting on
+    # stdin) would stall the installer forever.
+    It "returns false, within the timeout, for a binary whose --version hangs" {
+        $binaryPath = Join-Path $script:BinDir "tau.exe"
+        Add-Type -OutputType ConsoleApplication -OutputAssembly $binaryPath -TypeDefinition @"
+public class TauFixtureBinaryRunsHang {
+    public static int Main(string[] args) {
+        System.Threading.Thread.Sleep(60000);
+        return 0;
+    }
+}
+"@
+        $start = Get-Date
+        $result = Test-TauBinaryRuns -BinaryPath $binaryPath -TimeoutSeconds 1 -ErrorAction SilentlyContinue
+        $elapsed = (Get-Date) - $start
+
+        $result | Should -BeFalse
+        $elapsed.TotalSeconds | Should -BeLessThan 5
+    }
+}
+
 Describe "Invoke-TauInstall end to end" {
     BeforeEach {
         $script:FixturesDir = Join-Path ([System.IO.Path]::GetTempPath()) ([System.Guid]::NewGuid())

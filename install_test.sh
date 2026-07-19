@@ -175,6 +175,42 @@ assert_success "extract_binary accepts an archive whose 'tau' fails --version (e
 assert_failure "verify_binary_runs rejects a binary that exits nonzero on --version" \
   verify_binary_runs "$bad_extract_tmp/tau"
 
+hang_bin_src="$unit_tmp/hang-src"
+mkdir -p "$hang_bin_src"
+printf '#!/usr/bin/env bash\nsleep 60\n' >"$hang_bin_src/tau"
+chmod +x "$hang_bin_src/tau"
+hang_archive="$unit_tmp/hang.tar.gz"
+tar -czf "$hang_archive" -C "$hang_bin_src" tau
+hang_extract_tmp="$unit_tmp/extract-hang"
+mkdir -p "$hang_extract_tmp"
+extract_binary "$hang_archive" "$hang_extract_tmp" tau >/dev/null 2>&1
+
+hang_start=$(date +%s)
+if bash -c "TAU_INSTALL_VERIFY_TIMEOUT_SECS=1; export TAU_INSTALL_VERIFY_TIMEOUT_SECS; source '$SCRIPT_DIR/install.sh'; verify_binary_runs '$hang_extract_tmp/tau'" >/dev/null 2>&1; then
+  not_ok "verify_binary_runs rejects a binary whose --version hangs, within the timeout (expected failure, got success)"
+else
+  hang_elapsed=$(($(date +%s) - hang_start))
+  if [ "$hang_elapsed" -le 5 ]; then
+    ok "verify_binary_runs rejects a binary whose --version hangs, within the timeout (took ${hang_elapsed}s)"
+  else
+    not_ok "verify_binary_runs rejects a binary whose --version hangs, within the timeout (took ${hang_elapsed}s, too slow)"
+  fi
+fi
+
+noexec_bin_src="$unit_tmp/noexec-src"
+mkdir -p "$noexec_bin_src"
+printf '#!/usr/bin/env bash\nexit 0\n' >"$noexec_bin_src/tau"
+chmod +x "$noexec_bin_src/tau"
+noexec_archive="$unit_tmp/noexec.tar.gz"
+tar -czf "$noexec_archive" -C "$noexec_bin_src" tau
+noexec_extract_tmp="$unit_tmp/extract-noexec"
+mkdir -p "$noexec_extract_tmp"
+extract_binary "$noexec_archive" "$noexec_extract_tmp" tau >/dev/null 2>&1
+chmod -x "$noexec_extract_tmp/tau"
+
+assert_failure "verify_binary_runs rejects a binary it cannot execute (e.g. noexec temp mount)" \
+  verify_binary_runs "$noexec_extract_tmp/tau"
+
 # ---------- Part 2: end-to-end run_install against a local file server ----------
 
 e2e_root=$(mktemp -d)

@@ -98,6 +98,38 @@ function Test-TauArchiveBinary {
     }
 }
 
+# Test-TauBinaryRuns runs $BinaryPath --version to prove the extracted file
+# is a working tau binary, not a corrupt or unrelated file, before it is
+# ever put anywhere near the install directory. The wait is bounded by
+# TimeoutSeconds so a binary whose --version path hangs (e.g. waiting on
+# stdin) can't stall the installer forever.
+function Test-TauBinaryRuns {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)][string]$BinaryPath,
+        [int]$TimeoutSeconds = 10
+    )
+
+    $psi = [System.Diagnostics.ProcessStartInfo]::new()
+    $psi.FileName = $BinaryPath
+    $psi.Arguments = "--version"
+    $psi.UseShellExecute = $false
+    $psi.RedirectStandardOutput = $true
+    $psi.RedirectStandardError = $true
+
+    $proc = [System.Diagnostics.Process]::Start($psi)
+    if (-not $proc.WaitForExit($TimeoutSeconds * 1000)) {
+        try { $proc.Kill() } catch {}
+        Write-Error "downloaded binary did not respond to '--version' within ${TimeoutSeconds}s -- leaving any existing install untouched"
+        return $false
+    }
+    if ($proc.ExitCode -ne 0) {
+        Write-Error "downloaded binary failed to run '--version' -- leaving any existing install untouched"
+        return $false
+    }
+    return $true
+}
+
 # Invoke-TauInstall performs arch detection, download, checksum
 # verification, and installation. It throws on failure rather than calling
 # exit directly, so tests can dot-source this file with
@@ -167,9 +199,8 @@ function Invoke-TauInstall {
         }
 
         Write-Output "Verifying downloaded binary..."
-        & $binary --version *>$null
-        if ($LASTEXITCODE -ne 0) {
-            throw "downloaded binary failed to run '--version' -- leaving any existing install untouched"
+        if (-not (Test-TauBinaryRuns -BinaryPath $binary)) {
+            throw "downloaded binary failed verification -- leaving any existing install untouched"
         }
 
         # ---------- atomic install ----------
