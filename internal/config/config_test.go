@@ -4,6 +4,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -585,6 +586,299 @@ func TestSyncConfigSchemaSkipsMissingFile(t *testing.T) {
 	}
 	if _, err := os.Stat(path); !errors.Is(err, os.ErrNotExist) {
 		t.Fatalf("expected syncConfigSchema not to create a file, stat err = %v", err)
+	}
+}
+
+// TestSyncConfigSchemaPreservesCommentsAndFormatting guards against the
+// original CAT-165 bug: syncConfigSchema used to round-trip the whole file
+// through yaml.Unmarshal → yaml.Marshal(map[string]any{...}), which silently
+// discards comments, key order, and formatting. The first time a user runs
+// tau after a schema change, their hand-edited config was getting rewritten
+// as the encoder's view of the world.
+func TestSyncConfigSchemaPreservesCommentsAndFormatting(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "config.yaml")
+	original := `# my personal tau config, hand-tuned over months
+default_provider: acme # was the cheapest option at the time
+
+# provider block follows
+providers:
+  - name: acme
+    base_url: https://acme.example
+    auth:
+      type: none
+
+ui:
+  show_reasoning: true # I like seeing the thinking
+`
+	writeFile(t, path, original)
+
+	if err := syncConfigSchema(path); err != nil {
+		t.Fatalf("syncConfigSchema() error = %v", err)
+	}
+
+	out, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("ReadFile() error = %v", err)
+	}
+	got := string(out)
+
+	// Every existing comment and key must survive untouched.
+	if !containsAll(
+		got,
+		"# my personal tau config, hand-tuned over months",
+		"# was the cheapest option at the time",
+		"# provider block follows",
+		"# I like seeing the thinking",
+		"base_url: https://acme.example",
+	) {
+		t.Fatalf("expected existing comments and keys to survive, got:\n%s", got)
+	}
+
+	// Missing schema blocks should still have been appended.
+	if !containsAll(got, "metrics:", "registry:") {
+		t.Fatalf("expected missing schema blocks to be added, got:\n%s", got)
+	}
+
+	// Parsing the rewritten file must yield identical values for everything
+	// the user already had.
+	var cfg Config
+	if err := yaml.Unmarshal(out, &cfg); err != nil {
+		t.Fatalf("Unmarshal() error = %v", err)
+	}
+	if cfg.DefaultProvider != "acme" {
+		t.Fatalf("DefaultProvider = %q, want acme", cfg.DefaultProvider)
+	}
+	if !cfg.UI.ShowReasoning {
+		t.Fatal("expected ui.show_reasoning to remain true")
+	}
+	if len(cfg.Providers) != 1 || cfg.Providers[0].Name != "acme" {
+		t.Fatalf("expected the acme provider to survive untouched, got %+v", cfg.Providers)
+	}
+}
+
+// TestSyncConfigSchemaPreservesFilePermissions guards against atomicWriteFile
+// silently widening a config file's permissions back to its default mode on
+// every rewrite, which would undo a user's deliberate `chmod 600` on a file
+// holding a plaintext secret (e.g. a literal auth.api_key).
+func TestSyncConfigSchemaPreservesFilePermissions(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("os.Chmod perm bits are POSIX-only")
+	}
+
+	dir := t.TempDir()
+	path := filepath.Join(dir, "config.yaml")
+	writeFile(t, path, `default_provider: acme
+providers:
+  - name: acme
+    base_url: https://acme.example
+    auth:
+      type: none
+`)
+	if err := os.Chmod(path, 0o600); err != nil {
+		t.Fatalf("Chmod() error = %v", err)
+	}
+
+	if err := syncConfigSchema(path); err != nil {
+		t.Fatalf("syncConfigSchema() error = %v", err)
+	}
+
+	info, err := os.Stat(path)
+	if err != nil {
+		t.Fatalf("Stat() error = %v", err)
+	}
+	if got := info.Mode().Perm(); got != 0o600 {
+		t.Fatalf("file permissions = %o, want 0600 to be preserved", got)
+	}
+}
+
+// TestSaveDefaultProviderAndModelPreservesFilePermissions is the
+// SaveDefaultProviderAndModel equivalent of
+// TestSyncConfigSchemaPreservesFilePermissions.
+func TestSaveDefaultProviderAndModelPreservesFilePermissions(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("os.Chmod perm bits are POSIX-only")
+	}
+
+	dir := t.TempDir()
+	t.Setenv("TAU_CONFIG_DIR", dir)
+	path := GlobalPath()
+	writeFile(t, path, `providers:
+  - name: acme
+    base_url: https://acme.example
+    auth:
+      type: none
+`)
+	if err := os.Chmod(path, 0o600); err != nil {
+		t.Fatalf("Chmod() error = %v", err)
+	}
+
+	if err := SaveDefaultProviderAndModel("", "openrouter", "gpt-5.6"); err != nil {
+		t.Fatalf("SaveDefaultProviderAndModel() error = %v", err)
+	}
+
+	info, err := os.Stat(path)
+	if err != nil {
+		t.Fatalf("Stat() error = %v", err)
+	}
+	if got := info.Mode().Perm(); got != 0o600 {
+		t.Fatalf("file permissions = %o, want 0600 to be preserved", got)
+	}
+}
+
+// TestSyncConfigSchemaPreservesKeyOrder guards specifically against
+// reordering of user-authored top-level keys, which a naive
+// map[string]any rewrite would also corrupt. Key order matters to users
+// who group related settings visually in their config file.
+func TestSyncConfigSchemaPreservesKeyOrder(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "config.yaml")
+	original := `ui:
+  show_reasoning: false
+default_provider: acme
+providers:
+  - name: acme
+    base_url: https://acme.example
+    auth:
+      type: none
+debug: false
+`
+	writeFile(t, path, original)
+
+	if err := syncConfigSchema(path); err != nil {
+		t.Fatalf("syncConfigSchema() error = %v", err)
+	}
+
+	out, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("ReadFile() error = %v", err)
+	}
+	got := string(out)
+
+	// The four user-authored keys must still appear in the order the user
+	// wrote them, before any newly-added schema blocks.
+	userOrder := []string{"ui:", "default_provider:", "providers:", "debug:"}
+	lastIdx := -1
+	for _, key := range userOrder {
+		idx := strings.Index(got, key)
+		if idx < 0 {
+			t.Fatalf("expected %q to be present after sync, got:\n%s", key, got)
+		}
+		if idx <= lastIdx {
+			t.Fatalf("expected user-authored keys to keep their order; %q appeared at offset %d but earlier key was at %d\n%s",
+				key, idx, lastIdx, got)
+		}
+		lastIdx = idx
+	}
+}
+
+// TestSyncConfigSchemaBackfillsMetricsDirWithoutLosingComments proves the
+// backfill path - which writes inside an existing block, not just at the
+// top level - also preserves comments. Previously, even a metrics.dir
+// backfill rewrote the whole file.
+func TestSyncConfigSchemaBackfillsMetricsDirWithoutLosingComments(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("TAU_CONFIG_DIR", dir)
+	path := filepath.Join(dir, "config.yaml")
+	writeFile(t, path, `# top-level config comment
+ui:
+  show_reasoning: false
+metrics:
+  # default export directory - leave blank to disable
+  dir: ""
+  session: false
+  tui: false
+`)
+
+	if err := syncConfigSchema(path); err != nil {
+		t.Fatalf("syncConfigSchema() error = %v", err)
+	}
+
+	out, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("ReadFile() error = %v", err)
+	}
+	got := string(out)
+
+	if !containsAll(
+		got,
+		"# top-level config comment",
+		"# default export directory - leave blank to disable",
+	) {
+		t.Fatalf("expected comments to survive metrics.dir backfill, got:\n%s", got)
+	}
+
+	var cfg Config
+	if err := yaml.Unmarshal(out, &cfg); err != nil {
+		t.Fatalf("Unmarshal() error = %v", err)
+	}
+	if cfg.Metrics.Dir == "" {
+		t.Fatal("expected metrics.dir to be backfilled to a non-empty default")
+	}
+	if cfg.Metrics.Dir != MetricsDir() {
+		t.Fatalf("metrics.dir = %q, want %q", cfg.Metrics.Dir, MetricsDir())
+	}
+}
+
+// TestSyncConfigSchemaBackfillDoesNotDuplicateMetricsDir guards against a
+// subtle regression where the backfill path would insert a fresh
+// `dir:` key alongside an existing one (because the old map-based code
+// didn't distinguish "key present but empty" from "key missing"). The
+// yaml.Node-based update should mutate the existing scalar in place.
+func TestSyncConfigSchemaBackfillDoesNotDuplicateMetricsDir(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "config.yaml")
+	writeFile(t, path, `metrics:
+  dir: ""
+  session: false
+  tui: false
+`)
+
+	if err := syncConfigSchema(path); err != nil {
+		t.Fatalf("syncConfigSchema() error = %v", err)
+	}
+
+	out, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("ReadFile() error = %v", err)
+	}
+	if n := strings.Count(string(out), "dir:"); n != 1 {
+		t.Fatalf("expected exactly one `dir:` key, got %d in:\n%s", n, out)
+	}
+}
+
+// TestSyncConfigSchemaPreservesInlineCommentOnMetricsDir ensures the
+// comment that sits on the same line as a metrics.dir entry survives
+// when backfill rewrites the scalar. The yaml.Node update path mutates
+// the scalar's .Value but leaves the surrounding LineComment intact.
+func TestSyncConfigSchemaPreservesInlineCommentOnMetricsDir(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "config.yaml")
+	writeFile(t, path, `metrics:
+  dir: "" # legacy placeholder from auto-schema, please backfill
+  session: false
+  tui: false
+`)
+
+	if err := syncConfigSchema(path); err != nil {
+		t.Fatalf("syncConfigSchema() error = %v", err)
+	}
+
+	out, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("ReadFile() error = %v", err)
+	}
+	got := string(out)
+	if !strings.Contains(got, "# legacy placeholder from auto-schema, please backfill") {
+		t.Fatalf("expected inline comment to survive backfill, got:\n%s", got)
+	}
+
+	var cfg Config
+	if err := yaml.Unmarshal(out, &cfg); err != nil {
+		t.Fatalf("Unmarshal() error = %v", err)
+	}
+	if cfg.Metrics.Dir == "" || cfg.Metrics.Dir != MetricsDir() {
+		t.Fatalf("metrics.dir = %q, want %q", cfg.Metrics.Dir, MetricsDir())
 	}
 }
 
