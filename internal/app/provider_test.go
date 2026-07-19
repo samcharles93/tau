@@ -43,6 +43,7 @@ func TestListProvidersKeepsConfigAndManagedSourcesDistinct(t *testing.T) {
 
 func TestRunProviderLoginStoresAPIKey(t *testing.T) {
 	sandboxConfigDir(t)
+	stubAPIKeyValidation(t, alwaysValid)
 	prompter := &fakeSetupPrompter{secretQueue: []string{"", "sk-test-key"}}
 
 	result, err := RunProviderLogin(context.Background(), ProviderLoginOptions{
