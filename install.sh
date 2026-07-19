@@ -3,6 +3,9 @@ set -euo pipefail
 
 REPO="samcharles93/tau"
 BASE_URL="${TAU_BASE_URL:-https://github.com/${REPO}/releases}"
+# How long verify_binary_runs waits for `--version` before giving up on a
+# hung binary. Overridable so tests don't have to wait out the real timeout.
+VERIFY_BINARY_TIMEOUT_SECS="${TAU_INSTALL_VERIFY_TIMEOUT_SECS:-10}"
 
 # Supported OS/ARCH pairs and the "tau_{version}_{os}_{arch}.{ext}" archive
 # name below must match internal/updater/targets.go's SupportedTargets()/
@@ -26,6 +29,21 @@ sha256_of() {
   else
     echo "$(red 'Error'): no sha256sum or shasum available to verify checksum" >&2
     return 1
+  fi
+}
+
+# check_prerequisites verifies the commands run_install depends on are
+# present before any network call is made, so a missing dependency fails
+# fast with a clear message instead of a confusing curl/tar error mid-run.
+check_prerequisites() {
+  local missing=()
+  command -v curl >/dev/null 2>&1 || missing+=("curl")
+  command -v tar >/dev/null 2>&1 || missing+=("tar")
+
+  if [ ${#missing[@]} -gt 0 ]; then
+    echo "$(red 'Error'): missing required command(s): ${missing[*]}" >&2
+    echo "  Install them and re-run this script." >&2
+    exit 1
   fi
 }
 
@@ -59,11 +77,84 @@ verify_checksum() {
   fi
 }
 
+# extract_binary extracts exactly $binary_name from $archive_path into $tmp,
+# refusing anything that doesn't match. It never touches the install
+# directory - callers are responsible for only replacing an installed
+# binary after this and verify_binary_runs both succeed.
+extract_binary() {
+  local archive_path="$1" tmp="$2" binary_name="$3"
+
+  local listing
+  if ! listing=$(tar -tzf "$archive_path" 2>/dev/null); then
+    echo "$(red 'Error'): failed to read archive contents - leaving any existing install untouched" >&2
+    return 1
+  fi
+
+  if ! grep -qx "$binary_name" <<<"$listing"; then
+    echo "$(red 'Error'): archive does not contain expected binary '$binary_name' - leaving any existing install untouched" >&2
+    return 1
+  fi
+
+  tar -xzf "$archive_path" -C "$tmp" "$binary_name"
+
+  # tar preserves symlinks by default, and a symlinked entry named
+  # "$binary_name" would otherwise pass the `-f` check below (which follows
+  # symlinks) and let verify_binary_runs/the atomic install silently operate
+  # on whatever unrelated file the symlink points at. Reject it outright.
+  if [ -L "$tmp/$binary_name" ]; then
+    echo "$(red 'Error'): archive entry '$binary_name' is a symlink, not a regular file - leaving any existing install untouched" >&2
+    return 1
+  fi
+
+  if [ ! -f "$tmp/$binary_name" ]; then
+    echo "$(red 'Error'): extraction did not produce '$binary_name' - leaving any existing install untouched" >&2
+    return 1
+  fi
+}
+
+# verify_binary_runs runs $binary_path --version to prove the extracted
+# file is a working tau binary, not a corrupt or unrelated file, before it
+# is ever put anywhere near the install directory. The wait is bounded by
+# VERIFY_BINARY_TIMEOUT_SECS so a binary whose --version path hangs (e.g.
+# waiting on stdin) can't stall the installer forever - notably bad for the
+# documented `curl | bash` flow, which has no terminal to interrupt it.
+verify_binary_runs() {
+  local binary_path="$1"
+
+  "$binary_path" --version >/dev/null 2>&1 &
+  local pid=$!
+  local waited=0
+  while kill -0 "$pid" 2>/dev/null; do
+    if [ "$waited" -ge "$VERIFY_BINARY_TIMEOUT_SECS" ]; then
+      kill -9 "$pid" 2>/dev/null
+      wait "$pid" 2>/dev/null
+      echo "$(red 'Error'): downloaded binary did not respond to '--version' within ${VERIFY_BINARY_TIMEOUT_SECS}s - leaving any existing install untouched" >&2
+      return 1
+    fi
+    sleep 1
+    waited=$((waited + 1))
+  done
+
+  wait "$pid"
+  local status=$?
+  if [ "$status" -eq 0 ]; then
+    return 0
+  fi
+  if [ "$status" -eq 126 ]; then
+    echo "$(red 'Error'): could not execute the downloaded binary (permission denied) - if the temp directory is mounted noexec, set TMPDIR to a writable, executable directory and re-run" >&2
+    return 1
+  fi
+  echo "$(red 'Error'): downloaded binary failed to run '--version' - leaving any existing install untouched" >&2
+  return 1
+}
+
 # run_install performs OS/arch detection, download, checksum verification,
 # and installation. Split out of top level so tests can source this file
 # with TAU_INSTALL_TEST_MODE=1 to exercise verify_checksum/sha256_of
 # in isolation, without running the real install or touching the network.
 run_install() {
+  check_prerequisites
+
   # ---------- detect OS / arch ----------
   local os arch platform
   os=$(uname -s | tr '[:upper:]' '[:lower:]')
@@ -126,7 +217,8 @@ run_install() {
   # Not `local`: the EXIT trap below fires at process exit, after this
   # function has already returned and any local would be gone.
   tmp=$(mktemp -d)
-  trap 'rm -rf "$tmp"' EXIT
+  dest_tmp=""
+  trap 'rm -rf "$tmp"; [ -n "$dest_tmp" ] && rm -f "$dest_tmp"' EXIT
 
   curl -fsSL# -o "$tmp/$archive" "$download_url"
   curl -fsSL -o "$tmp/checksums.txt" "$checksums_url"
@@ -137,9 +229,27 @@ run_install() {
     exit 1
   fi
 
-  tar -xzf "$tmp/$archive" -C "$tmp"
+  if ! extract_binary "$tmp/$archive" "$tmp" tau; then
+    exit 1
+  fi
   chmod +x "$tmp/tau"
-  mv "$tmp/tau" "${install_dir}/tau"
+
+  echo "$(bold '→') Verifying downloaded binary..."
+  if ! verify_binary_runs "$tmp/tau"; then
+    exit 1
+  fi
+
+  # ---------- atomic install ----------
+  # Copy into a temp file in the destination directory, then rename into
+  # place. A rename within the same directory is atomic, so there is never
+  # a window where ${install_dir}/tau is missing or partially written.
+  # mktemp (not a PID-based name) gives an unpredictable path created with
+  # O_EXCL, so another local user on a shared install_dir can't pre-place a
+  # symlink at a guessable location ahead of the cp below.
+  dest_tmp=$(mktemp "${install_dir}/.tau.tmp.XXXXXX")
+  cp "$tmp/tau" "$dest_tmp"
+  chmod +x "$dest_tmp"
+  mv -f "$dest_tmp" "${install_dir}/tau"
 
   echo ""
   echo "$(green '✓') tau ${version} installed to ${install_dir}/tau"

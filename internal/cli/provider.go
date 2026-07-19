@@ -66,6 +66,7 @@ func providerCmd() *urfavecli.Command {
 							EnterpriseDomain: cmd.String("enterprise-domain"),
 							Prompter:         cliSetupPrompter{},
 							Stdout:           os.Stdout,
+							Insecure:         cmd.Root().Bool("insecure"),
 						})
 						if err == nil {
 							_, _ = fmt.Fprintf(os.Stdout, "%s login complete.\n", result.ProviderName)
