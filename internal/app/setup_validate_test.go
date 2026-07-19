@@ -77,6 +77,43 @@ func TestLiveValidateAPIKeyAnthropicUsesNativeAuthHeaders(t *testing.T) {
 	assert.Empty(t, gotAuth, "anthropic must not receive a Bearer Authorization header")
 }
 
+// TestLiveValidateAPIKeyOpenRouterProbesAuthKeyNotModels guards against a
+// real bug: OpenRouter's /models endpoint requires no authentication at all,
+// so probing it (the default OpenAI-compatible path) would classify every
+// key - including garbage or revoked ones - as valid. OpenRouter's /auth/key
+// endpoint is the one that actually gates on the credential.
+func TestLiveValidateAPIKeyOpenRouterProbesAuthKeyNotModels(t *testing.T) {
+	var gotPath, gotAuth string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotPath = r.URL.Path
+		gotAuth = r.Header.Get("Authorization")
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer srv.Close()
+
+	entry := providers.CatalogEntry{ID: "openrouter", DisplayName: "OpenRouter", BaseURL: srv.URL + "/api/v1", Auth: providers.AuthAPIKey}
+	result := liveValidateAPIKey(context.Background(), entry, "sk-or-test-key", false)
+
+	require.Equal(t, apiKeyValid, result.outcome)
+	assert.Equal(t, "/api/v1/auth/key", gotPath)
+	assert.Equal(t, "Bearer sk-or-test-key", gotAuth)
+}
+
+// TestLiveValidateAPIKeyOpenRouterUnauthorizedIsRejected mirrors OpenRouter's
+// real /auth/key behavior: a missing/invalid key gets a 401, which must
+// still classify as a definite rejection, not a silent pass.
+func TestLiveValidateAPIKeyOpenRouterUnauthorizedIsRejected(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusUnauthorized)
+	}))
+	defer srv.Close()
+
+	entry := providers.CatalogEntry{ID: "openrouter", DisplayName: "OpenRouter", BaseURL: srv.URL, Auth: providers.AuthAPIKey}
+	result := liveValidateAPIKey(context.Background(), entry, "sk-or-bad-key", false)
+
+	require.Equal(t, apiKeyRejected, result.outcome)
+}
+
 func TestLiveValidateAPIKeyNetworkErrorIsInconclusive(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {}))
 	unreachable := srv.URL

@@ -59,8 +59,10 @@ var validateAPIKey = liveValidateAPIKey
 // response. OpenAI-compatible providers (the default class) are probed at
 // GET {baseURL}/models with a Bearer token; Anthropic's native Messages API
 // is probed at GET {baseURL}/v1/models with x-api-key plus anthropic-version,
-// per internal/providers/catalog.go's Class field. The key is never logged or
-// placed anywhere but the request header.
+// per internal/providers/catalog.go's Class field; OpenRouter is probed at
+// GET {baseURL}/auth/key since its /models endpoint requires no credential
+// and would accept any key. The key is never logged or placed anywhere but
+// the request header.
 func liveValidateAPIKey(ctx context.Context, entry providers.CatalogEntry, key string, insecure bool) apiKeyValidationResult {
 	ctx, cancel := context.WithTimeout(ctx, apiKeyValidationTimeout)
 	defer cancel()
@@ -99,13 +101,22 @@ func liveValidateAPIKey(ctx context.Context, entry providers.CatalogEntry, key s
 // validation probe. key is placed only in the returned header map.
 func apiKeyValidationRequest(entry providers.CatalogEntry, key string) (endpoint string, headers map[string]string) {
 	baseURL := strings.TrimRight(entry.BaseURL, "/")
-	if entry.Class == "anthropic" {
+	switch {
+	case entry.Class == "anthropic":
 		return baseURL + "/v1/models", map[string]string{
 			"x-api-key":         key,
 			"anthropic-version": anthropicAPIVersion,
 		}
+	case entry.ID == "openrouter":
+		// OpenRouter's /models endpoint is public and lists the catalog
+		// for any caller, authenticated or not, so it would accept every
+		// key as valid. /auth/key is documented specifically for checking
+		// a key's validity and correctly rejects a missing/invalid
+		// credential with 401.
+		return baseURL + "/auth/key", map[string]string{"Authorization": "Bearer " + key}
+	default:
+		return baseURL + "/models", map[string]string{"Authorization": "Bearer " + key}
 	}
-	return baseURL + "/models", map[string]string{"Authorization": "Bearer " + key}
 }
 
 func statusError(code int) error {
