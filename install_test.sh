@@ -138,6 +138,19 @@ assert_success "extract_binary accepts an archive containing exactly 'tau'" \
 assert_success "verify_binary_runs accepts a binary that exits 0 on --version" \
   verify_binary_runs "$extract_tmp/tau"
 
+symlink_bin_src="$unit_tmp/symlink-src"
+mkdir -p "$symlink_bin_src"
+printf '#!/usr/bin/env bash\necho "not the real tau"\n' >"$unit_tmp/symlink-target"
+chmod +x "$unit_tmp/symlink-target"
+ln -s "$unit_tmp/symlink-target" "$symlink_bin_src/tau"
+symlink_archive="$unit_tmp/symlink.tar.gz"
+tar -czf "$symlink_archive" -C "$symlink_bin_src" tau
+symlink_extract_tmp="$unit_tmp/extract-symlink"
+mkdir -p "$symlink_extract_tmp"
+
+assert_failure "extract_binary rejects an archive where 'tau' is a symlink, not a regular file" \
+  extract_binary "$symlink_archive" "$symlink_extract_tmp" tau
+
 no_binary_src="$unit_tmp/no-binary-src"
 mkdir -p "$no_binary_src"
 printf 'not a binary' >"$no_binary_src/readme.txt"

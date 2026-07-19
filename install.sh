@@ -94,6 +94,15 @@ extract_binary() {
 
   tar -xzf "$archive_path" -C "$tmp" "$binary_name"
 
+  # tar preserves symlinks by default, and a symlinked entry named
+  # "$binary_name" would otherwise pass the `-f` check below (which follows
+  # symlinks) and let verify_binary_runs/the atomic install silently operate
+  # on whatever unrelated file the symlink points at. Reject it outright.
+  if [ -L "$tmp/$binary_name" ]; then
+    echo "$(red 'Error'): archive entry '$binary_name' is a symlink, not a regular file - leaving any existing install untouched" >&2
+    return 1
+  fi
+
   if [ ! -f "$tmp/$binary_name" ]; then
     echo "$(red 'Error'): extraction did not produce '$binary_name' - leaving any existing install untouched" >&2
     return 1
@@ -207,7 +216,10 @@ run_install() {
   # Copy into a temp file in the destination directory, then rename into
   # place. A rename within the same directory is atomic, so there is never
   # a window where ${install_dir}/tau is missing or partially written.
-  dest_tmp="${install_dir}/.tau.tmp.$$"
+  # mktemp (not a PID-based name) gives an unpredictable path created with
+  # O_EXCL, so another local user on a shared install_dir can't pre-place a
+  # symlink at a guessable location ahead of the cp below.
+  dest_tmp=$(mktemp "${install_dir}/.tau.tmp.XXXXXX")
   cp "$tmp/tau" "$dest_tmp"
   chmod +x "$dest_tmp"
   mv -f "$dest_tmp" "${install_dir}/tau"
