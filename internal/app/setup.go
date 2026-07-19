@@ -170,20 +170,86 @@ func authenticateProviderOAuth(ctx context.Context, stdout io.Writer, manage *pr
 	return nil
 }
 
+// apiKeyRetryOption re-prompts for a fresh key; apiKeyOverrideOption stores
+// the just-entered key despite a definite rejection; apiKeyProceedOption
+// stores it despite an inconclusive validation result. Shared across both
+// choice prompts below so the retry branch is identical either way.
+const (
+	apiKeyRetryOption    = "retry"
+	apiKeyOverrideOption = "override"
+	apiKeyProceedOption  = "proceed"
+)
+
 func authenticateProviderAPIKey(ctx context.Context, opts RunSetupOptions, manage *providers.Manage, entry providers.CatalogEntry) error {
 	for {
 		key, err := opts.Prompter.ReadSecret(ctx, fmt.Sprintf("Paste your API key for %s (input hidden): ", entry.DisplayName))
 		if err != nil {
 			return setupPromptError(err)
 		}
-		if strings.TrimSpace(key) == "" {
+		// Trim once, up front: validateAPIKey and manage.StoreAPIKey must see
+		// the same value, or trailing whitespace from a clipboard paste (which
+		// StoreAPIKey alone used to strip) could fail live validation for a
+		// key that would work fine once trimmed and stored.
+		key = strings.TrimSpace(key)
+		if key == "" {
 			continue // re-prompt; only Ctrl+C (already handled above) exits this loop
 		}
+
+		switch result := validateAPIKey(ctx, entry, key, opts.Insecure); result.outcome {
+		case apiKeyValid:
+			// fall through to store below
+		case apiKeyRejected:
+			choice, err := opts.Prompter.Select(ctx, apiKeyRejectedPrompt(entry, result.err), []SetupOption{
+				{Label: "Try a different key", Value: apiKeyRetryOption},
+				{Label: "Use this key anyway (not recommended)", Value: apiKeyOverrideOption},
+			})
+			if err != nil {
+				return setupPromptError(err)
+			}
+			if choice.Value == apiKeyRetryOption {
+				continue
+			}
+		case apiKeyInconclusive:
+			choice, err := opts.Prompter.Select(ctx, apiKeyInconclusivePrompt(entry, result.err), []SetupOption{
+				{Label: "Continue without verifying", Value: apiKeyProceedOption},
+				{Label: "Try a different key", Value: apiKeyRetryOption},
+			})
+			if err != nil {
+				return setupPromptError(err)
+			}
+			if choice.Value == apiKeyRetryOption {
+				continue
+			}
+		}
+
 		if err := manage.StoreAPIKey(entry.ID, key); err != nil {
 			return fmt.Errorf("store %s API key: %w", entry.DisplayName, err)
 		}
 		return nil
 	}
+}
+
+// apiKeyRejectedPrompt formats a clear, actionable message for a definite
+// key rejection (401/403): the provider said this credential is wrong, not
+// "something went wrong". err is safe to include - it never contains the key
+// (see liveValidateAPIKey).
+func apiKeyRejectedPrompt(entry providers.CatalogEntry, err error) string {
+	detail := "the provider rejected it"
+	if err != nil {
+		detail = err.Error()
+	}
+	return fmt.Sprintf("%s rejected this API key (%s). It looks incorrect, expired, or revoked.", entry.DisplayName, detail)
+}
+
+// apiKeyInconclusivePrompt formats a warning for a validation attempt that
+// could not reach a definite answer (network error, timeout, provider
+// outage, unexpected status) - the key might still be valid.
+func apiKeyInconclusivePrompt(entry providers.CatalogEntry, err error) string {
+	detail := "an unknown error"
+	if err != nil {
+		detail = err.Error()
+	}
+	return fmt.Sprintf("Could not verify this %s API key (%s). The key may still be valid - this could be a network issue.", entry.DisplayName, detail)
 }
 
 // setupResolveProviderConfig re-resolves the effective provider set after
