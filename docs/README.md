@@ -33,12 +33,23 @@ not need a `--model` flag; if no model is configured the session starts unselect
 
 Tau discovers providers automatically. To enable a provider:
 
-1. **Environment variable (simplest):** Export the provider's API key env var (e.g. `DEEPSEEK_API_KEY=sk-...`). Tau
+1. **`tau setup` (recommended for first run):** Interactive walkthrough for selecting a provider and authenticating.
+   Managed credentials are stored in `~/.config/tau/auth.yaml`.
+
+2. **`tau provider` CLI:**
+   ```bash
+   tau provider list                      # show all providers and auth state
+   tau provider login openai-codex        # OAuth device-code flow
+   tau provider login                     # interactive selector (TTY only)
+   tau provider logout openai             # disable and clear credentials
+   ```
+
+3. **Environment variable:** Export the provider's API key env var (e.g. `DEEPSEEK_API_KEY=sk-...`). Tau
    detects it at startup.
-2. **TUI:** Run `tau` and type `/provider <name>` in the chat input to toggle a provider on/off; saved to
-   `~/.config/tau/auth.yaml`. OAuth providers use `/provider login <name>` instead; Tau opens the browser, copies the
-   code when possible, and always prints the URL/code fallback.
-3. **config.yaml:** Add a provider block (see Configuration below).
+
+4. **TUI slash commands:** `/provider [name]` to toggle a provider, `/provider login <name>` for OAuth flow.
+
+5. **config.yaml:** Add a provider block (see Configuration below).
 
 Run `/model` in the TUI to pick from all enabled providers' models.
 
@@ -77,6 +88,29 @@ forwarded to the coordinator identically to TUI commands. Multiple browser tabs 
 | `/exit`                                       | Quit tau                                                                                                              |
 
 ## Subcommands
+
+### `tau setup`
+
+Interactive setup wizard for first-run configuration. Walks through provider selection, authentication (API key or OAuth), and model selection.
+
+```bash
+tau setup
+```
+
+Called automatically on first run if no providers are configured.
+
+### `tau provider`
+
+Manage provider authentication from the CLI.
+
+```bash
+tau provider list                       # table of providers with status, source, and auth type
+tau provider login [name]               # authenticate an OAuth or API-key provider
+tau provider login                      # interactive selector when stdin is a TTY
+tau provider logout <name>              # disable provider and clear managed credentials
+```
+
+Provider credentials are managed via the keychain or stored in `~/.config/tau/auth.yaml`. See [`docs/providers.md`](providers.md) for the full provider architecture.
 
 ### `tau models`
 

@@ -44,29 +44,32 @@ task                                                                # build Go b
 ## Quick start
 
 ```bash
-# Create a project config (or ~/.config/tau/config.yaml for a global default)
-cat > .tau.yaml <<EOF
-default_provider: deepseek
-default_model: deepseek-v4-flash
+# First run — interactive setup walks you through provider auth and model selection
+tau
 
-providers:
-  - name: deepseek
-    base_url: https://api.deepseek.com
-    auth:
-      type: api_key
-      api_key_env: DEEPSEEK_API_KEY
-EOF
+# Or use the setup command directly
+tau setup
 
-export DEEPSEEK_API_KEY=sk-...
-
-tau                                    # TUI + Web UI, URL in status bar
+# Start chatting (TUI + Web UI, URL in status bar)
+tau
 tau --web                              # also opens the browser automatically
 tau --no-web                           # TUI only
 tau -p "Explain the architecture of this codebase"   # single-shot, no UI
 ```
 
-No config file yet? Run `tau` and use `/provider <name>` in the chat input to enable a provider - it's saved to
-`~/.config/tau/auth.yaml`. Full flag reference: [`docs/README.md`](docs/README.md).
+No config file yet? Run `tau setup` or just `tau` — the first-run experience walks you through selecting a provider
+and authenticating. Managed credentials are stored in `~/.config/tau/auth.yaml`.
+
+### Managing providers
+
+```bash
+tau provider list                      # show all providers and auth state
+tau provider login openai-codex        # start OAuth device-code flow
+tau provider login                     # interactive selector on TTY
+tau provider logout openai             # disable and clear credentials
+```
+
+Full flag reference: [`docs/README.md`](docs/README.md).
 
 ## Web UI
 
