@@ -90,7 +90,12 @@ func liveValidateAPIKey(ctx context.Context, entry providers.CatalogEntry, key s
 	switch resp.StatusCode {
 	case http.StatusOK:
 		return apiKeyValidationResult{outcome: apiKeyValid}
-	case http.StatusUnauthorized, http.StatusForbidden:
+	case http.StatusUnauthorized, http.StatusForbidden, http.StatusBadRequest:
+		// 400 is included alongside the standard auth-failure codes because
+		// at least one provider (Gemini's OpenAI-compat endpoint) responds
+		// with 400 INVALID_ARGUMENT for a missing/malformed key rather than
+		// 401/403. The probe request itself is a bare, parameter-free GET,
+		// so a well-formed key has no other way to trigger a 400 here.
 		return apiKeyValidationResult{outcome: apiKeyRejected, err: statusError(resp.StatusCode)}
 	default:
 		return apiKeyValidationResult{outcome: apiKeyInconclusive, err: statusError(resp.StatusCode)}

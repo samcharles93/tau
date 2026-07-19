@@ -186,7 +186,12 @@ func authenticateProviderAPIKey(ctx context.Context, opts RunSetupOptions, manag
 		if err != nil {
 			return setupPromptError(err)
 		}
-		if strings.TrimSpace(key) == "" {
+		// Trim once, up front: validateAPIKey and manage.StoreAPIKey must see
+		// the same value, or trailing whitespace from a clipboard paste (which
+		// StoreAPIKey alone used to strip) could fail live validation for a
+		// key that would work fine once trimmed and stored.
+		key = strings.TrimSpace(key)
+		if key == "" {
 			continue // re-prompt; only Ctrl+C (already handled above) exits this loop
 		}
 
