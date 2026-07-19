@@ -104,8 +104,244 @@ func TestRunSetupKeylessProviderPersists(t *testing.T) {
 	assert.Equal(t, "ollama", cfg.DefaultProvider)
 }
 
+// stubAPIKeyValidation replaces the validateAPIKey seam for the duration of
+// a test so RunSetup's live-validation step never makes a real network call.
+// fn is called once per ReadSecret entry, in order.
+func stubAPIKeyValidation(t *testing.T, fn func(key string) apiKeyValidationResult) {
+	t.Helper()
+	orig := validateAPIKey
+	validateAPIKey = func(_ context.Context, _ providers.CatalogEntry, key string, _ bool) apiKeyValidationResult {
+		return fn(key)
+	}
+	t.Cleanup(func() { validateAPIKey = orig })
+}
+
+func alwaysValid(_ string) apiKeyValidationResult {
+	return apiKeyValidationResult{outcome: apiKeyValid}
+}
+
+func TestRunSetupAPIKeyRejectedRetryThenValidPersists(t *testing.T) {
+	sandboxConfigDir(t)
+	var validateCalls []string
+	stubAPIKeyValidation(t, func(key string) apiKeyValidationResult {
+		validateCalls = append(validateCalls, key)
+		if key == "sk-bad-key" {
+			return apiKeyValidationResult{outcome: apiKeyRejected, err: errors.New("status 401")}
+		}
+		return apiKeyValidationResult{outcome: apiKeyValid}
+	})
+
+	prompter := &fakeSetupPrompter{
+		secretQueue: []string{"sk-bad-key", "sk-good-key"},
+		selectPick: func(call int, options []SetupOption) SetupOption {
+			if call == 1 {
+				for _, o := range options {
+					if o.Value == "deepseek" {
+						return o
+					}
+				}
+			}
+			if call == 2 {
+				// The rejected-key prompt: choose to retry with a new key.
+				for _, o := range options {
+					if o.Value == "retry" {
+						return o
+					}
+				}
+			}
+			return options[0]
+		},
+	}
+
+	result, err := RunSetup(context.Background(), RunSetupOptions{Prompter: prompter})
+	require.NoError(t, err)
+	assert.Equal(t, "deepseek", result.ProviderID)
+	assert.Equal(t, []string{"sk-bad-key", "sk-good-key"}, validateCalls, "rejection must trigger a retry, not an immediate store")
+
+	state, err := providers.LoadState()
+	require.NoError(t, err)
+	key, ok := state.APIKeyFor("deepseek")
+	require.True(t, ok)
+	assert.Equal(t, "sk-good-key", key, "the retried, valid key must be the one persisted")
+}
+
+func TestRunSetupAPIKeyRejectedOverridePersistsAndDoesNotLeakKey(t *testing.T) {
+	sandboxConfigDir(t)
+	stubAPIKeyValidation(t, func(string) apiKeyValidationResult {
+		return apiKeyValidationResult{outcome: apiKeyRejected, err: errors.New("status 401")}
+	})
+
+	prompter := &fakeSetupPrompter{
+		secretQueue: []string{"sk-rejected-but-forced"},
+		selectPick: func(call int, options []SetupOption) SetupOption {
+			if call == 1 {
+				for _, o := range options {
+					if o.Value == "deepseek" {
+						return o
+					}
+				}
+			}
+			if call == 2 {
+				for _, o := range options {
+					if o.Value == "override" {
+						return o
+					}
+				}
+			}
+			return options[0]
+		},
+	}
+
+	result, err := RunSetup(context.Background(), RunSetupOptions{Prompter: prompter})
+	require.NoError(t, err)
+	assert.Equal(t, "deepseek", result.ProviderID)
+
+	require.Len(t, prompter.selectCalls, 3, "provider, rejection choice, model")
+	choicePromptTitle := prompter.selectCalls[1].title
+	assert.NotContains(t, choicePromptTitle, "sk-rejected-but-forced", "the rejection prompt must never echo the key")
+	assert.Contains(t, choicePromptTitle, "rejected")
+
+	state, err := providers.LoadState()
+	require.NoError(t, err)
+	key, ok := state.APIKeyFor("deepseek")
+	require.True(t, ok, "an explicit override must persist the key despite rejection")
+	assert.Equal(t, "sk-rejected-but-forced", key)
+}
+
+func TestRunSetupAPIKeyRejectedCanceledAtChoiceWritesNothing(t *testing.T) {
+	sandboxConfigDir(t)
+	stubAPIKeyValidation(t, func(string) apiKeyValidationResult {
+		return apiKeyValidationResult{outcome: apiKeyRejected, err: errors.New("status 401")}
+	})
+
+	prompter := &fakeSetupPrompter{
+		secretQueue: []string{"sk-test-key"},
+		selectPick: func(call int, options []SetupOption) SetupOption {
+			if call == 1 {
+				for _, o := range options {
+					if o.Value == "deepseek" {
+						return o
+					}
+				}
+			}
+			return options[0]
+		},
+	}
+	// Cancel exactly at the rejection-choice prompt (the second Select call).
+	calls := 0
+	cancelingPrompter := &cancelAtCallPrompter{fakeSetupPrompter: prompter, cancelAtCall: 2, calls: &calls}
+
+	_, err := RunSetup(context.Background(), RunSetupOptions{Prompter: cancelingPrompter})
+	require.ErrorIs(t, err, ErrSetupCanceled)
+
+	state, err := providers.LoadState()
+	require.NoError(t, err)
+	_, ok := state.APIKeyFor("deepseek")
+	assert.False(t, ok, "canceling at the rejection choice must not persist the rejected key")
+}
+
+// cancelAtCallPrompter wraps fakeSetupPrompter and turns the Nth Select call
+// into ErrSetupCanceled, so a test can exercise cancellation from inside the
+// retry/override choice prompt specifically (never-locked-out guarantee: the
+// user can always back out, even mid-validation-choice).
+type cancelAtCallPrompter struct {
+	*fakeSetupPrompter
+	cancelAtCall int
+	calls        *int
+}
+
+func (c *cancelAtCallPrompter) Select(ctx context.Context, title string, options []SetupOption) (SetupOption, error) {
+	*c.calls++
+	if *c.calls == c.cancelAtCall {
+		return SetupOption{}, ErrSetupCanceled
+	}
+	return c.fakeSetupPrompter.Select(ctx, title, options)
+}
+
+func TestRunSetupAPIKeyInconclusiveProceedPersists(t *testing.T) {
+	sandboxConfigDir(t)
+	stubAPIKeyValidation(t, func(string) apiKeyValidationResult {
+		return apiKeyValidationResult{outcome: apiKeyInconclusive, err: errors.New("dial tcp: connection refused")}
+	})
+
+	prompter := &fakeSetupPrompter{
+		secretQueue: []string{"sk-unverified-key"},
+		selectPick: func(call int, options []SetupOption) SetupOption {
+			if call == 1 {
+				for _, o := range options {
+					if o.Value == "deepseek" {
+						return o
+					}
+				}
+			}
+			if call == 2 {
+				for _, o := range options {
+					if o.Value == "proceed" {
+						return o
+					}
+				}
+			}
+			return options[0]
+		},
+	}
+
+	result, err := RunSetup(context.Background(), RunSetupOptions{Prompter: prompter})
+	require.NoError(t, err)
+	assert.Equal(t, "deepseek", result.ProviderID)
+
+	state, err := providers.LoadState()
+	require.NoError(t, err)
+	key, ok := state.APIKeyFor("deepseek")
+	require.True(t, ok, "explicit proceed must persist the key despite an inconclusive check")
+	assert.Equal(t, "sk-unverified-key", key)
+}
+
+func TestRunSetupAPIKeyInconclusiveRetryThenValidPersists(t *testing.T) {
+	sandboxConfigDir(t)
+	var validateCalls []string
+	stubAPIKeyValidation(t, func(key string) apiKeyValidationResult {
+		validateCalls = append(validateCalls, key)
+		if key == "sk-first-attempt" {
+			return apiKeyValidationResult{outcome: apiKeyInconclusive, err: errors.New("timeout")}
+		}
+		return apiKeyValidationResult{outcome: apiKeyValid}
+	})
+
+	prompter := &fakeSetupPrompter{
+		secretQueue: []string{"sk-first-attempt", "sk-second-attempt"},
+		selectPick: func(call int, options []SetupOption) SetupOption {
+			if call == 1 {
+				for _, o := range options {
+					if o.Value == "deepseek" {
+						return o
+					}
+				}
+			}
+			if call == 2 {
+				for _, o := range options {
+					if o.Value == "retry" {
+						return o
+					}
+				}
+			}
+			return options[0]
+		},
+	}
+
+	_, err := RunSetup(context.Background(), RunSetupOptions{Prompter: prompter})
+	require.NoError(t, err)
+	assert.Equal(t, []string{"sk-first-attempt", "sk-second-attempt"}, validateCalls)
+
+	state, err := providers.LoadState()
+	require.NoError(t, err)
+	key, ok := state.APIKeyFor("deepseek")
+	require.True(t, ok)
+	assert.Equal(t, "sk-second-attempt", key)
+}
+
 func TestRunSetupAPIKeyProviderPersists(t *testing.T) {
 	sandboxConfigDir(t)
+	stubAPIKeyValidation(t, alwaysValid)
 	prompter := &fakeSetupPrompter{
 		selectPick:  pickProviderThenFirst("deepseek"),
 		secretQueue: []string{"sk-test-key"},
@@ -127,8 +363,38 @@ func TestRunSetupAPIKeyProviderPersists(t *testing.T) {
 	assert.Equal(t, "deepseek", cfg.DefaultProvider)
 }
 
+// TestRunSetupAPIKeyTrimsWhitespaceBeforeValidatingAndStoring guards against
+// a real bug: only manage.StoreAPIKey trimmed the key before persisting it,
+// while validateAPIKey saw the raw, untrimmed value. A key with trailing
+// whitespace/newline (common from a clipboard paste) could fail live
+// validation even though the trimmed value that actually got stored would
+// have worked fine.
+func TestRunSetupAPIKeyTrimsWhitespaceBeforeValidatingAndStoring(t *testing.T) {
+	sandboxConfigDir(t)
+	var validatedKey string
+	stubAPIKeyValidation(t, func(key string) apiKeyValidationResult {
+		validatedKey = key
+		return apiKeyValidationResult{outcome: apiKeyValid}
+	})
+	prompter := &fakeSetupPrompter{
+		selectPick:  pickProviderThenFirst("deepseek"),
+		secretQueue: []string{"  sk-test-key\n"},
+	}
+
+	_, err := RunSetup(context.Background(), RunSetupOptions{Prompter: prompter})
+	require.NoError(t, err)
+	assert.Equal(t, "sk-test-key", validatedKey, "validateAPIKey should see the trimmed key, not the raw clipboard paste")
+
+	state, err := providers.LoadState()
+	require.NoError(t, err)
+	key, ok := state.APIKeyFor("deepseek")
+	require.True(t, ok)
+	assert.Equal(t, "sk-test-key", key)
+}
+
 func TestRunSetupAPIKeyEmptyEntryReprompts(t *testing.T) {
 	sandboxConfigDir(t)
+	stubAPIKeyValidation(t, alwaysValid)
 	prompter := &fakeSetupPrompter{
 		selectPick:  pickProviderThenFirst("deepseek"),
 		secretQueue: []string{"  ", "", "sk-test-key"},

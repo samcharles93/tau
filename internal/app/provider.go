@@ -34,6 +34,10 @@ type ProviderLoginOptions struct {
 	EnterpriseDomain string
 	Prompter         SetupPrompter
 	Stdout           io.Writer
+	// Insecure skips TLS certificate verification on the live API-key
+	// validation call, mirroring RunSetup's --insecure flag for users
+	// behind a TLS-intercepting proxy.
+	Insecure bool
 
 	loginOAuth oauthLoginFunc
 }
@@ -134,7 +138,7 @@ func RunProviderLogin(ctx context.Context, opts ProviderLoginOptions) (ProviderL
 			return ProviderLoginResult{}, err
 		}
 	case providers.AuthAPIKey:
-		if err := authenticateProviderAPIKey(ctx, RunSetupOptions{Prompter: opts.Prompter, Stdout: stdout}, manage, entry); err != nil {
+		if err := authenticateProviderAPIKey(ctx, RunSetupOptions{Prompter: opts.Prompter, Stdout: stdout, Insecure: opts.Insecure}, manage, entry); err != nil {
 			return ProviderLoginResult{}, err
 		}
 	default:
