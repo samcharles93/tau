@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.26.0](https://github.com/samcharles93/tau/compare/v0.25.0...v0.26.0) (2026-07-19)
+
+
+### Features
+
+* **tui2:** formalize state taxonomy for turn/overlay/child-agent state ([b95e5d3](https://github.com/samcharles93/tau/commit/b95e5d3794320156bc9add8edfc9ee6b6233a306))
+
+
+### Bug Fixes
+
+* **tui2:** remove dead completionsOverlay adapter from overlay registry ([382c05c](https://github.com/samcharles93/tau/commit/382c05c7c09c74ea7504ec76ba87fa4b16df8837))
+
 ## [0.25.0](https://github.com/samcharles93/tau/compare/v0.24.0...v0.25.0) (2026-07-19)
 
 
