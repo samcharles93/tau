@@ -115,4 +115,18 @@ function resume(id: string) {
 function shortId(id: string): string {
   return id.length > 12 ? id.slice(0, 12) : id
 }
+
+function agentLabel(s: SessionSummary): string {
+  if (!s.agent_instance_id) return ''
+  let name = s.agent_spec_name ?? ''
+  if (!name) {
+    const idx = s.agent_instance_id.indexOf('#')
+    if (idx >= 0) name = s.agent_instance_id.slice(0, idx)
+    else name = s.agent_instance_id
+  }
+  const suffix = s.agent_instance_id.includes('#')
+    ? s.agent_instance_id.split('#')[1]
+    : s.agent_instance_id
+  return `agent ${name} · ${suffix}`
+}
 </script>
