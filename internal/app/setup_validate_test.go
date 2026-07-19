@@ -56,6 +56,23 @@ func TestLiveValidateAPIKeyOpenAICompatibleForbiddenIsRejected(t *testing.T) {
 	require.Equal(t, apiKeyRejected, result.outcome)
 }
 
+// TestLiveValidateAPIKeyBadRequestIsRejected guards against a real bug:
+// Gemini's OpenAI-compat endpoint responds 400 INVALID_ARGUMENT for a
+// missing/malformed key, not 401/403, and the status switch used to fall
+// that through to the "inconclusive, might still be valid" branch instead
+// of the confident rejection it actually is.
+func TestLiveValidateAPIKeyBadRequestIsRejected(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusBadRequest)
+	}))
+	defer srv.Close()
+
+	entry := providers.CatalogEntry{ID: "gemini", DisplayName: "Google Gemini", BaseURL: srv.URL, Auth: providers.AuthAPIKey}
+	result := liveValidateAPIKey(context.Background(), entry, "bad-key", false)
+
+	require.Equal(t, apiKeyRejected, result.outcome)
+}
+
 func TestLiveValidateAPIKeyAnthropicUsesNativeAuthHeaders(t *testing.T) {
 	var gotPath, gotKeyHeader, gotVersion, gotAuth string
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

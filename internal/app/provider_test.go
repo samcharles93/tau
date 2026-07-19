@@ -62,6 +62,32 @@ func TestRunProviderLoginStoresAPIKey(t *testing.T) {
 	assert.Equal(t, "sk-test-key", key)
 }
 
+// TestRunProviderLoginPassesInsecureToValidation guards against a real bug:
+// ProviderLoginOptions.Insecure was silently dropped on its way into the
+// live API-key validation call, so `tau provider login --insecure` behind a
+// TLS-intercepting proxy behaved identically to a plain `tau provider
+// login` and always validated with insecure=false.
+func TestRunProviderLoginPassesInsecureToValidation(t *testing.T) {
+	sandboxConfigDir(t)
+	var gotInsecure bool
+	orig := validateAPIKey
+	validateAPIKey = func(_ context.Context, _ providers.CatalogEntry, _ string, insecure bool) apiKeyValidationResult {
+		gotInsecure = insecure
+		return apiKeyValidationResult{outcome: apiKeyValid}
+	}
+	t.Cleanup(func() { validateAPIKey = orig })
+	prompter := &fakeSetupPrompter{secretQueue: []string{"", "sk-test-key"}}
+
+	_, err := RunProviderLogin(context.Background(), ProviderLoginOptions{
+		ProviderID: "deepseek",
+		Prompter:   prompter,
+		Stdout:     io.Discard,
+		Insecure:   true,
+	})
+	require.NoError(t, err)
+	assert.True(t, gotInsecure, "RunProviderLogin should pass Insecure through to the live validation call")
+}
+
 func TestRunProviderLoginCompletesOAuthDeviceFlow(t *testing.T) {
 	sandboxConfigDir(t)
 	var output bytes.Buffer

@@ -363,6 +363,35 @@ func TestRunSetupAPIKeyProviderPersists(t *testing.T) {
 	assert.Equal(t, "deepseek", cfg.DefaultProvider)
 }
 
+// TestRunSetupAPIKeyTrimsWhitespaceBeforeValidatingAndStoring guards against
+// a real bug: only manage.StoreAPIKey trimmed the key before persisting it,
+// while validateAPIKey saw the raw, untrimmed value. A key with trailing
+// whitespace/newline (common from a clipboard paste) could fail live
+// validation even though the trimmed value that actually got stored would
+// have worked fine.
+func TestRunSetupAPIKeyTrimsWhitespaceBeforeValidatingAndStoring(t *testing.T) {
+	sandboxConfigDir(t)
+	var validatedKey string
+	stubAPIKeyValidation(t, func(key string) apiKeyValidationResult {
+		validatedKey = key
+		return apiKeyValidationResult{outcome: apiKeyValid}
+	})
+	prompter := &fakeSetupPrompter{
+		selectPick:  pickProviderThenFirst("deepseek"),
+		secretQueue: []string{"  sk-test-key\n"},
+	}
+
+	_, err := RunSetup(context.Background(), RunSetupOptions{Prompter: prompter})
+	require.NoError(t, err)
+	assert.Equal(t, "sk-test-key", validatedKey, "validateAPIKey should see the trimmed key, not the raw clipboard paste")
+
+	state, err := providers.LoadState()
+	require.NoError(t, err)
+	key, ok := state.APIKeyFor("deepseek")
+	require.True(t, ok)
+	assert.Equal(t, "sk-test-key", key)
+}
+
 func TestRunSetupAPIKeyEmptyEntryReprompts(t *testing.T) {
 	sandboxConfigDir(t)
 	stubAPIKeyValidation(t, alwaysValid)
