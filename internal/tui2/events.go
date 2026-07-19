@@ -505,6 +505,25 @@ func (m *model) applySnapshot(e tauchat.ChatSessionSnapshotEvent) {
 	}
 	flushPendingTools()
 	m.viewport.SetContentLines(m.renderedLines)
+
+	// Store copy-safe canonical message history for /copy session / /copy N.
+	m.canonicalMessages = canonicalMessages(state.Messages)
+}
+
+// canonicalMessages returns the user and assistant messages from a message list,
+// filtering out system prompts, tool protocol messages, and any message with
+// empty content (internal events). The returned slice preserves time order.
+func canonicalMessages(messages []tauchat.ChatMessage) []tauchat.ChatMessage {
+	out := make([]tauchat.ChatMessage, 0, len(messages))
+	for _, msg := range messages {
+		switch msg.Role {
+		case tauchat.ChatRoleUser, tauchat.ChatRoleAssistant:
+			if msg.Content != "" {
+				out = append(out, msg)
+			}
+		}
+	}
+	return out
 }
 
 // renderChildTranscriptLines renders a finished child agent's full message

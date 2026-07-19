@@ -140,6 +140,13 @@ type model struct {
 	// doesn't work).
 	lastAssistantText string
 
+	// canonicalMessages is the filtered, copy-safe history of user and
+	// assistant messages from the most recent ChatSessionSnapshotEvent,
+	// stored in time order. System prompts, reasoning, tool protocol, and
+	// internal events are excluded — this is exactly what /copy session and
+	// /copy N format into a transcript.
+	canonicalMessages []tauchat.ChatMessage
+
 	// Status / transient.
 	statusText        string       // one-line status bar (model @ provider only)
 	notification      string       // transient notification banner, shown above the input area
