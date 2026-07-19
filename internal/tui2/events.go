@@ -28,7 +28,6 @@ func (m *model) handleChatEvent(evt tauchat.ChatEvent) tea.Cmd {
 		m.reasoning = ""
 		m.tools = nil
 		m.toolGroupCollapsed = m.toolCallsDefaultCollapsed
-		m.inResponse = true
 		m.spinnerFrame = 0
 		m.agentState = agentThinking
 		return spinTick()
@@ -151,7 +150,6 @@ func (m *model) handleChatEvent(evt tauchat.ChatEvent) tea.Cmd {
 
 	case tauchat.ChatResponseCancelledEvent:
 		m.flushInterruptedTurn("chat request cancelled")
-		m.inResponse = false
 		m.steering = false
 		m.agentState = agentCancelled
 		return m.drainTurnQueue()
@@ -160,7 +158,7 @@ func (m *model) handleChatEvent(evt tauchat.ChatEvent) tea.Cmd {
 		// A failed background session-list prefetch (see
 		// maybePrefetchSessions) must not leave sessionsFetchInFlight stuck
 		// true forever with no retry - harmless no-op otherwise.
-		m.sessionsFetchInFlight = false
+		m.finishSessionsFetch()
 		// A failed child-transcript load is not a failed chat turn - it must
 		// not fall through into the turn-interruption logic below. Close the
 		// stuck "Loading…" overlay (if this error matches it) and notify,
@@ -183,7 +181,6 @@ func (m *model) handleChatEvent(evt tauchat.ChatEvent) tea.Cmd {
 		hadLoneTool := len(m.tools) == 1
 		m.flushInterruptedTurn(e.Message)
 		m.steering = false
-		m.inResponse = false
 		// Shown via the notification banner (above the input area) at error
 		// level, auto-clearing after notificationClearDelay like any other
 		// notification - the scrollback line below is the permanent record,
@@ -205,7 +202,7 @@ func (m *model) handleChatEvent(evt tauchat.ChatEvent) tea.Cmd {
 		// Covers the "session persistence unavailable" path a background
 		// session-list prefetch can hit - see the ChatRuntimeErrorEvent case
 		// above for why this reset matters.
-		m.sessionsFetchInFlight = false
+		m.finishSessionsFetch()
 		msg := truncateErrorText(e.Message)
 		cmd := m.setNotificationWithLevel(msg, notifyLevelFromChat(e.Level), notifyDurationFromChat(e.Level))
 		if e.Level == tauchat.ChatNotificationError {
@@ -219,7 +216,7 @@ func (m *model) handleChatEvent(evt tauchat.ChatEvent) tea.Cmd {
 	// Session events.
 	case tauchat.SessionsListedEvent:
 		m.sessionSummaries = e.Sessions
-		m.sessionsFetchInFlight = false
+		m.finishSessionsFetch()
 		if e.Silent {
 			// A background cache-refresh for the /session and /resume
 			// argument-completion dropdowns (see maybePrefetchSessions) -
@@ -651,7 +648,6 @@ func (m *model) finalizeResponse(id string) string {
 	m.viewport.SetContentLines(m.renderedLines)
 	m.streaming = ""
 	m.reasoning = ""
-	m.inResponse = false
 	return content
 }
 

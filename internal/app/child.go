@@ -237,10 +237,10 @@ func RunChild(ctx context.Context, opts ChatOptions) error {
 				}
 				status := childStatus(lastError)
 				if e.BudgetExhausted {
-					status = "budget_exhausted"
+					status = string(tauchat.ChildAgentBudgetExhausted)
 				}
 				if e.TimedOut {
-					status = "timed_out"
+					status = string(tauchat.ChildAgentTimedOut)
 				}
 				// Always persist before sending result.
 				if sessionMgr != nil {
@@ -269,7 +269,7 @@ func RunChild(ctx context.Context, opts ChatOptions) error {
 				}
 				_ = stdout.WriteEnvelope("agent.result", bridge.AgentResult{
 					TaskID:    assign.TaskID,
-					Status:    "failed",
+					Status:    string(tauchat.ChildAgentFailed),
 					FinalText: finalText.String(),
 					SessionID: assign.SessionID,
 					Error:     e.Message,
@@ -287,7 +287,7 @@ func RunChild(ctx context.Context, opts ChatOptions) error {
 				}
 				_ = stdout.WriteEnvelope("agent.result", bridge.AgentResult{
 					TaskID:    assign.TaskID,
-					Status:    "cancelled",
+					Status:    string(tauchat.ChildAgentCancelled),
 					FinalText: finalText.String(),
 					SessionID: assign.SessionID,
 					Usage: bridge.AgentResultUsage{
@@ -305,9 +305,9 @@ func RunChild(ctx context.Context, opts ChatOptions) error {
 
 func childStatus(err string) string {
 	if err == "" {
-		return "completed"
+		return string(tauchat.ChildAgentCompleted)
 	}
-	return "failed"
+	return string(tauchat.ChildAgentFailed)
 }
 
 // ExitChild processes the error from RunChild and calls os.Exit with the

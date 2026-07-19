@@ -16,7 +16,7 @@ import (
 func TestStreamCursorAppearsWhileStreaming(t *testing.T) {
 	m := newTestModel(&fakeRuntime{}, nil)
 	m.width = 80
-	m.inResponse = true
+	m.agentState = agentThinking
 	m.streaming = "the response so far"
 
 	view := m.viewportLinesForView(false)
@@ -32,7 +32,7 @@ func TestStreamCursorAppearsWhileStreaming(t *testing.T) {
 func TestStreamCursorAbsentBeforeStreamingStarts(t *testing.T) {
 	m := newTestModel(&fakeRuntime{}, nil)
 	m.width = 80
-	m.inResponse = true
+	m.agentState = agentThinking
 	m.streaming = ""
 
 	view := m.viewportLinesForView(false)
@@ -48,7 +48,7 @@ func TestStreamCursorAbsentBeforeStreamingStarts(t *testing.T) {
 func TestStreamCursorAbsentOnCompletedMessage(t *testing.T) {
 	m := newTestModel(&fakeRuntime{}, nil)
 	m.width = 80
-	m.inResponse = true
+	m.agentState = agentThinking
 	m.streaming = "the finished response"
 	m.finalizeResponse("msg-1")
 
@@ -70,7 +70,7 @@ func TestStreamCursorAbsentOnCompletedMessage(t *testing.T) {
 func TestStreamCursorIsPresentationOnly(t *testing.T) {
 	m := newTestModel(&fakeRuntime{}, nil)
 	m.width = 80
-	m.inResponse = true
+	m.agentState = agentThinking
 	m.streaming = "plain text response"
 
 	// While actively streaming, the raw buffer itself must stay untouched -
@@ -94,7 +94,7 @@ func TestStreamCursorIsPresentationOnly(t *testing.T) {
 func TestStreamCursorClearsOnCancelAndError(t *testing.T) {
 	m := newTestModel(&fakeRuntime{}, nil)
 	m.width = 80
-	m.inResponse = true
+	m.agentState = agentThinking
 	m.streaming = "an in-flight response"
 
 	m.flushInterruptedTurn("chat request cancelled")
@@ -198,7 +198,7 @@ func TestSubmitInputEmpty(t *testing.T) {
 func TestSubmitInputDuringResponseQueuesByDefault(t *testing.T) {
 	rt := &fakeRuntime{}
 	m := newTestModel(rt, nil)
-	m.inResponse = true
+	m.agentState = agentThinking
 	m.input = "hello"
 
 	drainCmd(m.submitInput())
@@ -223,7 +223,7 @@ func TestSubmitInputDuringResponseQueuesByDefault(t *testing.T) {
 func TestSubmitInputDuringResponseSlashCommandRunsImmediately(t *testing.T) {
 	rt := &fakeRuntime{}
 	m := newTestModel(rt, nil)
-	m.inResponse = true
+	m.agentState = agentThinking
 	m.input = "/session list"
 
 	drainCmd(m.submitInput())
@@ -308,7 +308,7 @@ func TestSubmitInputDebounce(t *testing.T) {
 
 func TestSubmitInputRecordsHistory(t *testing.T) {
 	m := newTestModel(&fakeRuntime{}, nil)
-	m.inResponse = false
+	m.agentState = agentReady
 	m.input = "hello world"
 
 	m.submitInput()
@@ -338,7 +338,7 @@ func TestSubmitInputClearsInput(t *testing.T) {
 
 func TestStartOrQueueTurnQueuesBehindRunning(t *testing.T) {
 	m := newTestModel(&fakeRuntime{}, nil)
-	m.inResponse = true
+	m.agentState = agentThinking
 
 	m.startOrQueueTurn("queued text")
 
@@ -350,7 +350,7 @@ func TestStartOrQueueTurnQueuesBehindRunning(t *testing.T) {
 func TestStartOrQueueTurnSendsWhenIdle(t *testing.T) {
 	rt := &fakeRuntime{}
 	m := newTestModel(rt, nil)
-	m.inResponse = false
+	m.agentState = agentReady
 
 	cmd := m.startOrQueueTurn("send me")
 	if cmd == nil {
@@ -358,7 +358,7 @@ func TestStartOrQueueTurnSendsWhenIdle(t *testing.T) {
 	}
 	drainCmd(cmd)
 
-	if !m.inResponse {
+	if !m.inResponse() {
 		t.Fatal("inResponse should be true after starting a turn")
 	}
 	if len(rt.sent) != 1 {
@@ -399,7 +399,7 @@ func TestStartOrQueueTurnClearsPriorTerminalState(t *testing.T) {
 
 func TestStartOrQueueTurnAppendsUserMessage(t *testing.T) {
 	m := newTestModel(&fakeRuntime{}, nil)
-	m.inResponse = false
+	m.agentState = agentReady
 
 	drainCmd(m.startOrQueueTurn("show this"))
 

@@ -581,6 +581,28 @@ func TestEnqueuePromptClosesOpenContextMenu(t *testing.T) {
 	}
 }
 
+// TestEnqueuePromptClosesOtherExclusiveOverlays covers the tightened
+// mutual exclusion introduced by closeOtherExclusiveOverlays
+// (docs/specs/state-taxonomy.md, Category 2): previously each open site only
+// remembered to clear whichever sibling had caused a problem before (usually
+// just contextMenu) - a prompt arriving while a diff viewer or help overlay
+// was open left them both set, merely shadowed by activePrompt's higher
+// dispatch precedence rather than actually closed.
+func TestEnqueuePromptClosesOtherExclusiveOverlays(t *testing.T) {
+	m := newTestModel(&fakeRuntime{}, nil)
+	m.diffViewer = &diffViewerState{title: "a.go"}
+	m.helpOverlay = &helpOverlayState{expanded: map[helpRowKey]bool{}}
+
+	m.enqueuePrompt(tauchat.InteractivePromptRequestedEvent{Kind: "confirm", Title: "t", Message: "m"})
+
+	if m.diffViewer != nil {
+		t.Fatal("expected a newly enqueued prompt to close an open diff viewer")
+	}
+	if m.helpOverlay != nil {
+		t.Fatal("expected a newly enqueued prompt to close an open help overlay")
+	}
+}
+
 func TestCompletionsDoNotConsumeKeysWhileContextMenuOpen(t *testing.T) {
 	m := newTestModel(&fakeRuntime{}, nil)
 	m.tools = []toolState{{id: "t1", name: "read", status: "done", result: "alpha"}}

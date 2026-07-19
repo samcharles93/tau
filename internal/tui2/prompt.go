@@ -104,10 +104,10 @@ func (m *model) presentLocalPrompt(title, message, placeholder string, onAnswer 
 // presentPrompt shows p immediately if no prompt is active, or queues it
 // behind the current one. Shared by enqueuePrompt and presentLocalPrompt.
 func (m *model) presentPrompt(p *formPrompt) tea.Cmd {
-	// A prompt represents a blocking round-trip and must win over a UI
-	// affordance the user can freely re-open - close any open context menu
-	// so it can't linger swallowing keys the prompt needs.
-	m.contextMenu = nil
+	// A prompt represents a blocking round-trip and must win over any other
+	// modal UI affordance the user can freely re-open, so it can't linger
+	// swallowing keys the prompt needs.
+	m.closeOtherExclusiveOverlays(overlayPrompt)
 	if m.activePrompt != nil {
 		m.promptQueue = append(m.promptQueue, p)
 		return m.setNotification("prompt queued")

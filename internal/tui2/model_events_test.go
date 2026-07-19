@@ -44,7 +44,7 @@ func TestHandleChatEventResponseStartedClearsState(t *testing.T) {
 	m.streaming = "old"
 	m.reasoning = "old"
 	m.tools = []toolState{{id: "t1"}}
-	m.inResponse = false
+	m.agentState = agentReady
 
 	m.handleChatEvent(tauchat.ChatResponseStartedEvent{})
 
@@ -57,8 +57,8 @@ func TestHandleChatEventResponseStartedClearsState(t *testing.T) {
 	if len(m.tools) != 0 {
 		t.Fatal("tools should be cleared on start")
 	}
-	if !m.inResponse {
-		t.Fatal("inResponse should be true on start")
+	if !m.inResponse() {
+		t.Fatal("inResponse() should be true on start")
 	}
 }
 
@@ -77,7 +77,7 @@ func TestHandleChatEventResponseCompleted(t *testing.T) {
 	m := newTestModel(&fakeRuntime{}, nil)
 	m.streaming = "final answer"
 	m.tools = []toolState{{id: "t1", name: "read", status: "done"}}
-	m.inResponse = true
+	m.agentState = agentThinking
 	m.focused = false // looked away - expect a desktop-notify Cmd
 
 	cmd := m.handleChatEvent(tauchat.ChatResponseCompletedEvent{})
@@ -85,7 +85,7 @@ func TestHandleChatEventResponseCompleted(t *testing.T) {
 		t.Fatal("expected a Cmd from response completed")
 	}
 
-	if m.inResponse {
+	if m.inResponse() {
 		t.Fatal("inResponse should be false after completion")
 	}
 	if len(m.renderedLines) == 0 {
@@ -201,7 +201,7 @@ func TestHandleChatEventResponseCancelled(t *testing.T) {
 		status:    "running",
 		startedAt: time.Now().Add(-time.Second),
 	}}
-	m.inResponse = true
+	m.agentState = agentThinking
 	m.steering = true
 
 	m.handleChatEvent(tauchat.ChatResponseCancelledEvent{})
@@ -215,7 +215,7 @@ func TestHandleChatEventResponseCancelled(t *testing.T) {
 	if len(m.tools) != 0 {
 		t.Fatal("tools should be cleared on cancel")
 	}
-	if m.inResponse {
+	if m.inResponse() {
 		t.Fatal("inResponse should be false on cancel")
 	}
 	if m.steering {
@@ -231,7 +231,7 @@ func TestHandleChatEventResponseCancelled(t *testing.T) {
 
 func TestHandleChatEventRuntimeError(t *testing.T) {
 	m := newTestModel(&fakeRuntime{}, nil)
-	m.inResponse = true
+	m.agentState = agentThinking
 	m.steering = true
 	m.streaming = "partial"
 	m.reasoning = "thinking"
@@ -242,7 +242,7 @@ func TestHandleChatEventRuntimeError(t *testing.T) {
 
 	m.handleChatEvent(tauchat.ChatRuntimeErrorEvent{Message: "API error"})
 
-	if m.inResponse {
+	if m.inResponse() {
 		t.Fatal("inResponse should be false after runtime error")
 	}
 	if m.steering {

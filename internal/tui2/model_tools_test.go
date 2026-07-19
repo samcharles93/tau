@@ -246,7 +246,7 @@ func TestHandleChatEventResponseCompletedToolOnly(t *testing.T) {
 	m := newTestModel(&fakeRuntime{}, nil)
 	m.streaming = ""
 	m.tools = []toolState{{id: "t1", name: "search", status: "done"}}
-	m.inResponse = true
+	m.agentState = agentThinking
 
 	m.handleChatEvent(tauchat.ChatResponseCompletedEvent{})
 
@@ -267,7 +267,7 @@ func TestHandleChatEventResponseCompletedToolOnly(t *testing.T) {
 
 func TestPendingToolCallsFailWhenInferenceEnds(t *testing.T) {
 	m := newTestModel(&fakeRuntime{}, nil)
-	m.inResponse = true
+	m.agentState = agentThinking
 	m.tools = []toolState{{id: "t1", name: "docs", status: "pending"}}
 
 	m.handleChatEvent(tauchat.ChatResponseCompletedEvent{})
@@ -483,7 +483,7 @@ func TestCommittedSingleToolOpensAndCloses(t *testing.T) {
 func TestStreamCursorClearsOnToolTransition(t *testing.T) {
 	m := newTestModel(&fakeRuntime{}, nil)
 	m.width = 80
-	m.inResponse = true
+	m.agentState = agentThinking
 	m.streaming = "text before the tool call"
 
 	m.upsertToolCall("call-1", "read", `{"path":"a.go"}`, "")
@@ -501,13 +501,13 @@ func TestHandleChatEventResponseCompletedNoContentNoTools(t *testing.T) {
 	m := newTestModel(&fakeRuntime{}, nil)
 	m.streaming = ""
 	m.tools = nil
-	m.inResponse = true
+	m.agentState = agentThinking
 
 	cmd := m.handleChatEvent(tauchat.ChatResponseCompletedEvent{})
 	if cmd == nil {
 		t.Fatal("expected a Cmd even with empty response")
 	}
-	if m.inResponse {
+	if m.inResponse() {
 		t.Fatal("inResponse should be false")
 	}
 }
@@ -523,7 +523,7 @@ func TestHandleChatEventResponseCompletedNoContentNoTools(t *testing.T) {
 // unaffected - this only removes the redundant middle copy.
 func TestHandleChatEventRuntimeErrorSkipsRedundantEchoForLoneTool(t *testing.T) {
 	m := newTestModel(&fakeRuntime{}, nil)
-	m.inResponse = true
+	m.agentState = agentThinking
 	m.tools = []toolState{
 		{id: "fc1", name: "shell", status: "pending", startedAt: time.Now()},
 	}
@@ -617,15 +617,16 @@ func TestFinalizeResponseEmptyWithNoTools(t *testing.T) {
 	m.streaming = ""
 	m.tools = nil
 	m.reasoning = ""
-	m.inResponse = true
+	m.agentState = agentThinking
 
+	// finalizeResponse only resets streaming/reasoning content - the
+	// agentState transition back to agentReady (and so inResponse()) is the
+	// caller's responsibility (see handleChatEvent's ChatResponseCompletedEvent
+	// case), same as ChatResponseCancelledEvent/ChatRuntimeErrorEvent.
 	content := m.finalizeResponse("")
 
 	if content != "" {
 		t.Fatalf("content = %q, want empty", content)
-	}
-	if m.inResponse {
-		t.Fatal("inResponse should be false")
 	}
 }
 

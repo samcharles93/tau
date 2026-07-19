@@ -248,7 +248,7 @@ func executeSpawn(ctx context.Context, args agentToolArgs, cfg AgentToolConfig) 
 		// a session to run it never will (see spawnChildProcess) - close
 		// it now rather than leaving it "started" forever (G3).
 		if cfg.Store != nil {
-			_ = cfg.Store.CloseAgentInstance(context.WithoutCancel(ctx), instResult.InstanceID, "failed", "", fmt.Sprintf("seed child session: %v", err))
+			_ = cfg.Store.CloseAgentInstance(context.WithoutCancel(ctx), instResult.InstanceID, string(tauchat.ChildAgentFailed), "", fmt.Sprintf("seed child session: %v", err))
 		}
 		return Result{Content: fmt.Sprintf("seed child session: %v", err), IsError: true, ErrorKind: "instantiation_failed"}, nil
 	}
@@ -458,7 +458,7 @@ func spawnChildProcess(ctx context.Context, args agentToolArgs, cfg AgentToolCon
 	instanceClosed := false
 	defer func() {
 		if !instanceClosed && cfg.Store != nil {
-			_ = cfg.Store.CloseAgentInstance(context.WithoutCancel(ctx), instResult.InstanceID, "failed", "", "spawn did not reach completion")
+			_ = cfg.Store.CloseAgentInstance(context.WithoutCancel(ctx), instResult.InstanceID, string(tauchat.ChildAgentFailed), "", "spawn did not reach completion")
 		}
 	}()
 
@@ -474,7 +474,7 @@ func spawnChildProcess(ctx context.Context, args agentToolArgs, cfg AgentToolCon
 		var rej *spawnRejected
 		if errors.As(admitErr, &rej) {
 			detailsJSON, _ := json.Marshal(map[string]any{
-				"status":         "failed",
+				"status":         string(tauchat.ChildAgentFailed),
 				"failure_reason": rej.reason,
 				"queued":         rej.queued,
 			})
@@ -674,8 +674,8 @@ func spawnChildProcess(ctx context.Context, args agentToolArgs, cfg AgentToolCon
 	// as failed - the child exited abnormally after sending its result,
 	// which means the result may be incomplete.
 	exitErr := cmd.Wait()
-	if exitErr != nil && resultEnv.Status == "completed" {
-		resultEnv.Status = "failed"
+	if exitErr != nil && resultEnv.Status == string(tauchat.ChildAgentCompleted) {
+		resultEnv.Status = string(tauchat.ChildAgentFailed)
 		resultEnv.Error = fmt.Sprintf("child exited abnormally: %v", exitErr)
 		resultEnv.Partial = true
 	}
@@ -692,7 +692,7 @@ func spawnChildProcess(ctx context.Context, args agentToolArgs, cfg AgentToolCon
 	// (docs/specs/agents/02-spawning-and-lifecycle.md).
 	elapsed := time.Since(startedAt)
 	content := finalText
-	if resultEnv.Status != "completed" {
+	if resultEnv.Status != string(tauchat.ChildAgentCompleted) {
 		content = assembleStatusLine(finalText, resultEnv.Status, resultEnv.Usage.Turns, instResult.InstanceID, elapsed)
 	}
 
@@ -713,7 +713,7 @@ func spawnChildProcess(ctx context.Context, args agentToolArgs, cfg AgentToolCon
 	return Result{
 		Content: content,
 		Details: detailsJSON,
-		IsError: resultEnv.Status == "failed",
+		IsError: resultEnv.Status == string(tauchat.ChildAgentFailed),
 	}, nil
 }
 
@@ -1110,7 +1110,7 @@ func readChildResult(ctx context.Context, reader *stdio.Reader, instanceID, call
 	startedAt := time.Now()
 
 	// emitState publishes a ChildAgentStateEvent on the parent bus.
-	emitState := func(status string) {
+	emitState := func(status tauchat.ChildAgentStatus) {
 		if childPub == nil || !childPub.ShouldPublish() {
 			return
 		}
@@ -1138,15 +1138,15 @@ func readChildResult(ctx context.Context, reader *stdio.Reader, instanceID, call
 			// "cancelled", not "failed" (docs/specs/agents/
 			// 02-spawning-and-lifecycle.md, Phase 3: Forced kill). Otherwise
 			// the child crashed unexpectedly.
-			status := "failed"
+			status := tauchat.ChildAgentFailed
 			errDetail := fmt.Sprintf("child exited without result: %v", err)
 			if ctx.Err() != nil {
-				status = "cancelled"
+				status = tauchat.ChildAgentCancelled
 				errDetail = ""
 			}
 			return finalText.String(), &bridge.AgentResult{
 				TaskID:    instanceID,
-				Status:    status,
+				Status:    string(status),
 				FinalText: finalText.String(),
 				Partial:   true,
 				Error:     errDetail,
@@ -1183,7 +1183,7 @@ func readChildResult(ctx context.Context, reader *stdio.Reader, instanceID, call
 			if activity == "" {
 				activity = extractChildActivity(payload)
 			}
-			emitState("working")
+			emitState(tauchat.ChildAgentWorking)
 		case "agent.usage":
 			var usage bridge.AgentResultUsage
 			if err := json.Unmarshal(payload, &usage); err != nil {
@@ -1192,7 +1192,7 @@ func readChildResult(ctx context.Context, reader *stdio.Reader, instanceID, call
 			if usage.Turns > usageAcc.Turns {
 				usageAcc = usage
 			}
-			emitState("working")
+			emitState(tauchat.ChildAgentWorking)
 		case "agent.result":
 			var result bridge.AgentResult
 			if err := json.Unmarshal(payload, &result); err != nil {
@@ -1218,12 +1218,12 @@ func agentToolError(stage string, err error) Result {
 // the partial text (if any) plus a compact harness-appended status line.
 // See docs/specs/agents/02-spawning-and-lifecycle.md (Completion contract).
 func assembleStatusLine(finalText, status string, turns int, instanceID string, elapsed time.Duration) string {
-	if status == "completed" {
+	if status == string(tauchat.ChildAgentCompleted) {
 		return finalText
 	}
 	dur := formatDuration(elapsed)
 	partial := ""
-	if status != "completed" && finalText != "" {
+	if status != string(tauchat.ChildAgentCompleted) && finalText != "" {
 		partial = "; partial output above"
 	}
 	line := fmt.Sprintf("[agent %s ended: %s after %s, %d turns%s]",

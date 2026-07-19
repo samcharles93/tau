@@ -34,51 +34,14 @@ func (m *model) syncCompletionSelection() {
 	}
 }
 
+// dispatchKey routes msg by precedence: an active exclusive overlay
+// (prompt > help > diff > child transcript > session tree > context menu,
+// per overlayPrecedence in overlay.go) always wins outright; otherwise a
+// pending input-selection clear runs, then the soft completions dropdown
+// gets first refusal, and only then do normal keybindings apply.
 func (m *model) dispatchKey(msg tea.KeyPressMsg) tea.Cmd {
-	// Interactive prompt active: route keys to prompt handler.
-	if m.activePrompt != nil {
-		return m.handlePromptKey(msg)
-	}
-
-	// /help overlay open: any key closes it (see handleHelpOverlayKey) - it's
-	// a reference card, not something you type into, so there's no reason to
-	// route specific keys anywhere else while it's up.
-	if m.helpOverlay != nil {
-		return m.handleHelpOverlayKey(msg)
-	}
-
-	// Diff viewer open: route keys to it, above the context menu - opening
-	// the viewer always closes the menu that spawned it, so the two are
-	// mutually exclusive, but this ordering keeps that invariant explicit.
-	if m.diffViewer != nil {
-		return m.handleDiffViewerKey(msg)
-	}
-
-	// Child transcript viewer open: same exclusivity story as diffViewer -
-	// opening either overlay closes the other (see openChildTranscriptViewer).
-	if m.childTranscriptViewer != nil {
-		return m.handleChildTranscriptViewerKey(msg)
-	}
-
-	// Session navigator (Ctrl+O) open: route keys to it, same "opening a
-	// modal always wins" precedence as diffViewer/childTranscriptViewer
-	// above. (Ctrl+P's command palette and Ctrl+L's model picker have no
-	// separate modal state of their own - see openCommandPalette/
-	// openModelPalette in palette.go - so there's nothing to route to here
-	// for those; they're handled by the completions dropdown further down,
-	// same as any other "/" input.)
-	if m.sessionTreeOverlay != nil {
-		return m.handleSessionTreeKey(msg)
-	}
-
-	// Context menu open: route keys to the menu, above the completions
-	// dropdown (both use up/down/enter/esc and completions can legitimately
-	// be visible at the same time - input still has a "/slash" token while
-	// right-clicking a tool box - so completions would otherwise eat every
-	// menu keystroke), below activePrompt (a blocking host-service
-	// round-trip must win over a UI affordance the user can re-open).
-	if m.contextMenu != nil {
-		return m.handleContextMenuKey(msg)
+	if cmd, ok := m.dispatchExclusiveOverlayKey(msg); ok {
+		return cmd
 	}
 
 	// Pure cursor-movement keys don't edit the buffer, so they'd otherwise
@@ -276,11 +239,11 @@ func (m *model) dispatchKey(msg tea.KeyPressMsg) tea.Cmd {
 
 	case "enter":
 		// Phase 1: toggle tool expansion when a tool is focused.
-		if m.focusedTool >= 0 && m.input == "" && !m.inResponse && m.activePrompt == nil {
+		if m.focusedTool >= 0 && m.input == "" && !m.inResponse() && m.activePrompt == nil {
 			return m.toggleToolExpansion()
 		}
 		// Drill down into a focused finished child agent's transcript.
-		if m.focusedChild >= 0 && m.input == "" && !m.inResponse && m.activePrompt == nil {
+		if m.focusedChild >= 0 && m.input == "" && !m.inResponse() && m.activePrompt == nil {
 			return m.openChildTranscriptViewer(m.childAgentOrder[m.focusedChild])
 		}
 		return m.submitInput()
@@ -288,7 +251,7 @@ func (m *model) dispatchKey(msg tea.KeyPressMsg) tea.Cmd {
 	case "space":
 		// Space also toggles expansion on a focused tool; otherwise it's a
 		// normal printable character handled by the default case below.
-		if m.focusedTool >= 0 && m.input == "" && !m.inResponse && m.activePrompt == nil {
+		if m.focusedTool >= 0 && m.input == "" && !m.inResponse() && m.activePrompt == nil {
 			return m.toggleToolExpansion()
 		}
 		m.insertAtCursor(" ")
@@ -321,7 +284,7 @@ func (m *model) dispatchKey(msg tea.KeyPressMsg) tea.Cmd {
 func (m *model) handleSteer() tea.Cmd {
 	text := strings.TrimSpace(m.input)
 
-	if !m.inResponse {
+	if !m.inResponse() {
 		if text == "" {
 			return nil
 		}
@@ -402,7 +365,7 @@ const quitConfirmWindow = 800 * time.Millisecond
 // so an accidental Ctrl+C during generation never silently kills the
 // program.
 func (m *model) handleCtrlC() tea.Cmd {
-	if m.inResponse {
+	if m.inResponse() {
 		return m.cancelTurn()
 	}
 	if m.bashRunning {
@@ -421,8 +384,8 @@ func (m *model) handleCtrlC() tea.Cmd {
 }
 
 // cancelTurn sends a CancelChatRequestCommand to stop the current
-// generation. m.inResponse is cleared asynchronously by the resulting
-// ChatResponseCancelledEvent, not here.
+// generation. m.agentState (and so m.inResponse()) is cleared asynchronously
+// by the resulting ChatResponseCancelledEvent, not here.
 func (m *model) cancelTurn() tea.Cmd {
 	m.steering = false
 	return sendCommand(m.runtime, tauchat.CancelChatRequestCommand{

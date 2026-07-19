@@ -425,7 +425,7 @@ func (m *model) inputModeTitle() string {
 }
 
 func (m *model) cycleInputMode() {
-	if m.inResponse || m.activePrompt != nil || m.bashRunning {
+	if m.inResponse() || m.activePrompt != nil || m.bashRunning {
 		return
 	}
 	m.inputSel.clear()
@@ -684,7 +684,7 @@ func (m *model) submitInput() tea.Cmd {
 
 // startOrQueueTurn sends a prompt, queueing it behind a running turn.
 func (m *model) startOrQueueTurn(text string) tea.Cmd {
-	if m.inResponse {
+	if m.inResponse() {
 		m.turnQueue = append(m.turnQueue, text)
 		return m.setNotification("queued - will send after current response")
 	}
@@ -693,7 +693,6 @@ func (m *model) startOrQueueTurn(text string) tea.Cmd {
 	// prompt always means "show me what happens next" - resume following.
 	m.autoFollow = true
 	m.appendMessage("user", text)
-	m.inResponse = true
 	m.steering = false
 	// Error and cancellation describe the prior turn, not the session. Clear
 	// either terminal label as soon as the user starts the next turn instead

@@ -22,10 +22,10 @@ const (
 )
 
 // openDiffViewer builds and opens the "View diff" overlay for t, which must
-// satisfy toolSupportsDiffView. Replaces any currently open context menu,
+// satisfy toolSupportsDiffView. Replaces any other open exclusive overlay,
 // since activating a menu item always closes the menu it came from.
 func (m *model) openDiffViewer(t toolState) tea.Cmd {
-	m.contextMenu = nil
+	m.closeOtherExclusiveOverlays(overlayDiff)
 
 	details, ok := t.details.(tools.DiffDetails)
 	if !ok {

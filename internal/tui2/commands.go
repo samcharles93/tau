@@ -282,10 +282,10 @@ func (m *model) cmdClear(_ string) tea.Cmd {
 // handleHelpOverlayKey/handleHelpOverlayClick), and clicking a row inside it
 // expands that row's description in place, same as before. Slash commands
 // live in the "/" completions dropdown and are deliberately not repeated
-// here. Opening it also closes any context menu, matching openDiffViewer's
-// same "opening a modal always wins" convention.
+// here. Opening it also closes any other open exclusive overlay, matching
+// openDiffViewer's same "opening a modal always wins" convention.
 func (m *model) cmdHelp(_ string) tea.Cmd {
-	m.contextMenu = nil
+	m.closeOtherExclusiveOverlays(overlayHelp)
 	m.helpOverlay = &helpOverlayState{expanded: map[helpRowKey]bool{}}
 	return nil
 }

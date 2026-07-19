@@ -101,7 +101,7 @@ func TestDispatchCtrlDWithInputClears(t *testing.T) {
 
 func TestDispatchCtrlSWithActiveResponse(t *testing.T) {
 	m := newTestModel(&fakeRuntime{}, nil)
-	m.inResponse = true
+	m.agentState = agentThinking
 
 	m.dispatchKey(key('s', tea.ModCtrl))
 	// Should toggle steering mode - no Cmd needed, since the status bar
@@ -113,7 +113,7 @@ func TestDispatchCtrlSWithActiveResponse(t *testing.T) {
 
 func TestDispatchCtrlSWithoutActiveResponseAndNoInputIsNoop(t *testing.T) {
 	m := newTestModel(&fakeRuntime{}, nil)
-	m.inResponse = false
+	m.agentState = agentReady
 
 	cmd := m.dispatchKey(key('s', tea.ModCtrl))
 	// Matches legacy: Ctrl+S with nothing typed and nothing in flight is a
@@ -198,7 +198,7 @@ func TestDispatchPrintableUnicode(t *testing.T) {
 // looking at the working/idle state).
 func TestHandleSteerNoActiveResponseWithEmptyInputIsNoop(t *testing.T) {
 	m := newTestModel(&fakeRuntime{}, nil)
-	m.inResponse = false
+	m.agentState = agentReady
 	m.input = ""
 
 	cmd := m.handleSteer()
@@ -217,7 +217,7 @@ func TestHandleSteerNoActiveResponseWithEmptyInputIsNoop(t *testing.T) {
 func TestHandleSteerIdleWithTextSubmitsInstead(t *testing.T) {
 	rt := &fakeRuntime{}
 	m := newTestModel(rt, nil)
-	m.inResponse = false
+	m.agentState = agentReady
 	m.input = "hello while idle"
 
 	drainCmd(m.handleSteer())
@@ -239,7 +239,7 @@ func TestHandleSteerIdleWithTextSubmitsInstead(t *testing.T) {
 
 func TestHandleSteerWithEmptyTextToggles(t *testing.T) {
 	m := newTestModel(&fakeRuntime{}, nil)
-	m.inResponse = true
+	m.agentState = agentThinking
 	m.input = ""
 	m.steering = false
 
@@ -255,7 +255,7 @@ func TestHandleSteerWithEmptyTextToggles(t *testing.T) {
 func TestHandleSteerWithText(t *testing.T) {
 	rt := &fakeRuntime{}
 	m := newTestModel(rt, nil)
-	m.inResponse = true
+	m.agentState = agentThinking
 	m.input = "change direction"
 
 	cmd := m.handleSteer()
@@ -422,7 +422,7 @@ func TestCancelBashSendsCommand(t *testing.T) {
 func TestHandleCtrlCCancelsTurnWhenGenerating(t *testing.T) {
 	rt := &fakeRuntime{}
 	m := newTestModel(rt, nil)
-	m.inResponse = true
+	m.agentState = agentThinking
 	m.steering = true
 
 	cmd := m.handleCtrlC()

@@ -9,6 +9,7 @@ import (
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
 
+	tauchat "github.com/samcharles93/tau/internal/chat"
 	"github.com/samcharles93/tau/internal/theme"
 	"github.com/samcharles93/tau/pkg/taui/termkit"
 )
@@ -88,7 +89,7 @@ func committedGroupKey(tools []toolState) string {
 type childAgentResult struct {
 	instanceID string // e.g. "research#k3v9qp"
 	specName   string // e.g. "research"
-	status     string // completed, failed, cancelled, budget_exhausted, timed_out, working
+	status     tauchat.ChildAgentStatus
 	activity   string // tool verb or "thinking" (only for working state)
 	turns      int
 	tokens     int // total tokens
@@ -97,31 +98,19 @@ type childAgentResult struct {
 	sessionID  string // child's own session ID, set once known - empty until then
 }
 
-// isChildTerminal reports whether status is one of childAgentResult's
-// terminal states (as opposed to "working"/live). Only terminal children
-// can be drilled into, since their transcript is fully persisted.
-func isChildTerminal(status string) bool {
-	switch status {
-	case "completed", "failed", "cancelled", "budget_exhausted", "timed_out":
-		return true
-	default:
-		return false
-	}
-}
-
 // renderChildAgentLine renders the compact terminal summary line.
 func renderChildAgentLine(c childAgentResult) string {
 	statusStyle := termkit.FgOnly
 	statusColour := theme.SuccessColor
 	switch c.status {
-	case "failed", "timed_out":
+	case tauchat.ChildAgentFailed, tauchat.ChildAgentTimedOut:
 		statusColour = theme.ErrorColor
-	case "cancelled":
+	case tauchat.ChildAgentCancelled:
 		statusColour = theme.AccentColor
-	case "budget_exhausted":
+	case tauchat.ChildAgentBudgetExhausted:
 		statusColour = theme.AccentColor
 	}
-	status := statusStyle(strings.ReplaceAll(c.status, "_", " "), statusColour)
+	status := statusStyle(strings.ReplaceAll(string(c.status), "_", " "), statusColour)
 	durStr := formatDurationCompact(c.durationMs)
 	return termkit.FgOnly(fmt.Sprintf("  agent %s  %s  turn %d · %dt · %s",
 		c.instanceID, status, c.turns, c.tokens, durStr), theme.ToneMuted)
@@ -131,7 +120,7 @@ func renderChildAgentLine(c childAgentResult) string {
 // status element inside the tool box. Working state shows activity,
 // turns, tokens, and elapsed; terminal states show the summary line.
 func renderChildStateBlock(c childAgentResult, width int) string {
-	if isChildTerminal(c.status) {
+	if c.status.IsTerminal() {
 		return renderChildAgentLine(c)
 	}
 
@@ -480,7 +469,7 @@ func (m *model) commitToolGroup(tools []toolState, restore map[string]*committed
 // shouldNavigateTools returns true when tool focus navigation is appropriate:
 // not in a running response, no active prompt, and input is empty (Phase 1).
 func (m *model) shouldNavigateTools() bool {
-	return !m.inResponse && m.activePrompt == nil && m.input == ""
+	return !m.inResponse() && m.activePrompt == nil && m.input == ""
 }
 
 // focusNextTool moves focusedTool to the next (delta=1) or previous (delta=-1)
@@ -532,7 +521,7 @@ func (m *model) recordChildAgentOrder(callID string) {
 func (m *model) focusNextChild(delta int) {
 	var eligible []int
 	for i, id := range m.childAgentOrder {
-		if isChildTerminal(m.childAgents[id].status) {
+		if m.childAgents[id].status.IsTerminal() {
 			eligible = append(eligible, i)
 		}
 	}
@@ -1162,9 +1151,10 @@ func extractChildAgentResult(details any) (childAgentResult, bool) {
 	if id == "" {
 		return childAgentResult{}, false
 	}
-	status, _ := d["status"].(string)
+	statusStr, _ := d["status"].(string)
+	status := tauchat.ChildAgentStatus(statusStr)
 	if status == "" {
-		status = "completed"
+		status = tauchat.ChildAgentCompleted
 	}
 	var turns int
 	var tokens int
