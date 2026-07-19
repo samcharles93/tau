@@ -1,14 +1,16 @@
 #!/usr/bin/env bash
-# Tests for install.sh's checksum verification (CAT-114).
+# Tests for install.sh's prerequisite, checksum, archive, and
+# temporary-binary validation (CAT-114, CAT-113).
 #
 # Usage: ./install_test.sh
 #
 # Part 1 sources install.sh in test mode (TAU_INSTALL_TEST_MODE=1) to unit
-# test verify_checksum/sha256_of directly, without touching the network.
-# Part 2 runs the real run_install end to end against a local static file
-# server standing in for GitHub releases, to prove that a failed
-# verification leaves any existing installed binary untouched and exits
-# nonzero, while a valid one installs cleanly.
+# test check_prerequisites/verify_checksum/sha256_of/extract_binary/
+# verify_binary_runs directly, without touching the network. Part 2 runs
+# the real run_install end to end against a local static file server
+# standing in for GitHub releases, to prove that a failed verification
+# leaves any existing installed binary untouched and exits nonzero, while
+# a valid one installs cleanly.
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -82,6 +84,97 @@ assert_failure "tampered archive is rejected (mismatch)" \
 assert_failure "missing checksums.txt file is rejected" \
   verify_checksum "$archive_path" "$archive_name" "$unit_tmp/does-not-exist.txt"
 
+# ---------- Part 1b: unit tests for check_prerequisites ----------
+
+no_curl_dir="$unit_tmp/no-curl"
+mkdir -p "$no_curl_dir"
+cat >"$no_curl_dir/tar" <<'EOF'
+#!/usr/bin/env bash
+exit 0
+EOF
+chmod +x "$no_curl_dir/tar"
+
+assert_failure "missing curl is rejected" \
+  bash -c "PATH='$no_curl_dir'; source '$SCRIPT_DIR/install.sh'; check_prerequisites"
+
+no_tar_dir="$unit_tmp/no-tar"
+mkdir -p "$no_tar_dir"
+cat >"$no_tar_dir/curl" <<'EOF'
+#!/usr/bin/env bash
+exit 0
+EOF
+chmod +x "$no_tar_dir/curl"
+
+assert_failure "missing tar is rejected" \
+  bash -c "PATH='$no_tar_dir'; source '$SCRIPT_DIR/install.sh'; check_prerequisites"
+
+have_both_dir="$unit_tmp/have-both"
+mkdir -p "$have_both_dir"
+for cmd in curl tar; do
+  cat >"$have_both_dir/$cmd" <<'EOF'
+#!/usr/bin/env bash
+exit 0
+EOF
+  chmod +x "$have_both_dir/$cmd"
+done
+
+assert_success "curl and tar present is accepted" \
+  bash -c "PATH='$have_both_dir'; source '$SCRIPT_DIR/install.sh'; check_prerequisites"
+
+# ---------- Part 1c: unit tests for extract_binary / verify_binary_runs ----------
+
+extract_tmp="$unit_tmp/extract-good"
+mkdir -p "$extract_tmp"
+good_bin_src="$unit_tmp/good-src"
+mkdir -p "$good_bin_src"
+printf '#!/usr/bin/env bash\nif [ "$1" = "--version" ]; then\n  echo "tau version 9.9.9 (fixture)"\n  exit 0\nfi\nexit 1\n' >"$good_bin_src/tau"
+chmod +x "$good_bin_src/tau"
+good_archive="$unit_tmp/good.tar.gz"
+tar -czf "$good_archive" -C "$good_bin_src" tau
+
+assert_success "extract_binary accepts an archive containing exactly 'tau'" \
+  extract_binary "$good_archive" "$extract_tmp" tau
+
+assert_success "verify_binary_runs accepts a binary that exits 0 on --version" \
+  verify_binary_runs "$extract_tmp/tau"
+
+symlink_bin_src="$unit_tmp/symlink-src"
+mkdir -p "$symlink_bin_src"
+printf '#!/usr/bin/env bash\necho "not the real tau"\n' >"$unit_tmp/symlink-target"
+chmod +x "$unit_tmp/symlink-target"
+ln -s "$unit_tmp/symlink-target" "$symlink_bin_src/tau"
+symlink_archive="$unit_tmp/symlink.tar.gz"
+tar -czf "$symlink_archive" -C "$symlink_bin_src" tau
+symlink_extract_tmp="$unit_tmp/extract-symlink"
+mkdir -p "$symlink_extract_tmp"
+
+assert_failure "extract_binary rejects an archive where 'tau' is a symlink, not a regular file" \
+  extract_binary "$symlink_archive" "$symlink_extract_tmp" tau
+
+no_binary_src="$unit_tmp/no-binary-src"
+mkdir -p "$no_binary_src"
+printf 'not a binary' >"$no_binary_src/readme.txt"
+no_binary_archive="$unit_tmp/no-binary.tar.gz"
+tar -czf "$no_binary_archive" -C "$no_binary_src" readme.txt
+
+assert_failure "extract_binary rejects an archive lacking 'tau'" \
+  extract_binary "$no_binary_archive" "$unit_tmp/extract-missing" tau
+
+bad_bin_src="$unit_tmp/bad-src"
+mkdir -p "$bad_bin_src"
+printf '#!/usr/bin/env bash\nexit 1\n' >"$bad_bin_src/tau"
+chmod +x "$bad_bin_src/tau"
+bad_extract_tmp="$unit_tmp/extract-bad"
+mkdir -p "$bad_extract_tmp"
+bad_archive="$unit_tmp/bad.tar.gz"
+tar -czf "$bad_archive" -C "$bad_bin_src" tau
+
+assert_success "extract_binary accepts an archive whose 'tau' fails --version (extraction only checks presence)" \
+  extract_binary "$bad_archive" "$bad_extract_tmp" tau
+
+assert_failure "verify_binary_runs rejects a binary that exits nonzero on --version" \
+  verify_binary_runs "$bad_extract_tmp/tau"
+
 # ---------- Part 2: end-to-end run_install against a local file server ----------
 
 e2e_root=$(mktemp -d)
@@ -111,7 +204,8 @@ build_release_fixture() {
 }
 
 mkdir -p "$fixtures"
-sum=$(build_release_fixture "$fixtures" "real release binary")
+good_release_binary=$'#!/usr/bin/env bash\nif [ "$1" = "--version" ]; then\n  echo "tau version 9.9.9 (fixture)"\n  exit 0\nfi\nexit 1\n'
+sum=$(build_release_fixture "$fixtures" "$good_release_binary")
 printf '%s  %s\n' "$sum" "$archive_name" >"$fixtures/download/$version/checksums.txt"
 
 port=$((20000 + RANDOM % 20000))
@@ -211,6 +305,74 @@ if [ "$before_hash" = "$after_hash" ]; then
   ok "existing binary is preserved after a missing-checksum-entry install attempt"
 else
   not_ok "existing binary is preserved after a missing-checksum-entry install attempt"
+fi
+
+# Case D: archive lacking the tau binary is rejected; existing binary preserved.
+no_binary_version="v9.9.6"
+mkdir -p "$fixtures/download/$no_binary_version"
+no_binary_work=$(mktemp -d)
+printf 'not a binary' >"$no_binary_work/readme.txt"
+tar -czf "$fixtures/download/$no_binary_version/$archive_name" -C "$no_binary_work" readme.txt
+rm -rf "$no_binary_work"
+no_binary_sum=$(sha256_of "$fixtures/download/$no_binary_version/$archive_name")
+printf '%s  %s\n' "$no_binary_sum" "$archive_name" >"$fixtures/download/$no_binary_version/checksums.txt"
+
+before_hash=$(sha256_of "$run_case_install_dir/tau")
+set +e
+TAU_INSTALL_TEST_MODE=0 \
+  TAU_BASE_URL="http://127.0.0.1:$port" \
+  TAU_VERSION="$no_binary_version" \
+  TAU_INSTALL_DIR="$run_case_install_dir" \
+  bash "$SCRIPT_DIR/install.sh" >/dev/null 2>&1
+no_binary_exit=$?
+set -e
+after_hash=$(sha256_of "$run_case_install_dir/tau")
+
+if [ "$no_binary_exit" -ne 0 ]; then
+  ok "archive lacking tau binary install exits nonzero"
+else
+  not_ok "archive lacking tau binary install exits nonzero"
+fi
+
+if [ "$before_hash" = "$after_hash" ]; then
+  ok "existing binary is preserved after an archive-lacking-tau-binary install attempt"
+else
+  not_ok "existing binary is preserved after an archive-lacking-tau-binary install attempt"
+fi
+
+# Case E: a temporary binary that fails --version is rejected; existing
+# binary preserved.
+bad_version_version="v9.9.5"
+mkdir -p "$fixtures/download/$bad_version_version"
+bad_version_work=$(mktemp -d)
+printf '#!/usr/bin/env bash\nexit 1\n' >"$bad_version_work/tau"
+chmod +x "$bad_version_work/tau"
+tar -czf "$fixtures/download/$bad_version_version/$archive_name" -C "$bad_version_work" tau
+rm -rf "$bad_version_work"
+bad_version_sum=$(sha256_of "$fixtures/download/$bad_version_version/$archive_name")
+printf '%s  %s\n' "$bad_version_sum" "$archive_name" >"$fixtures/download/$bad_version_version/checksums.txt"
+
+before_hash=$(sha256_of "$run_case_install_dir/tau")
+set +e
+TAU_INSTALL_TEST_MODE=0 \
+  TAU_BASE_URL="http://127.0.0.1:$port" \
+  TAU_VERSION="$bad_version_version" \
+  TAU_INSTALL_DIR="$run_case_install_dir" \
+  bash "$SCRIPT_DIR/install.sh" >/dev/null 2>&1
+bad_version_exit=$?
+set -e
+after_hash=$(sha256_of "$run_case_install_dir/tau")
+
+if [ "$bad_version_exit" -ne 0 ]; then
+  ok "temporary binary failing --version install exits nonzero"
+else
+  not_ok "temporary binary failing --version install exits nonzero"
+fi
+
+if [ "$before_hash" = "$after_hash" ]; then
+  ok "existing binary is preserved after a failing-version-check install attempt"
+else
+  not_ok "existing binary is preserved after a failing-version-check install attempt"
 fi
 
 kill "$server_pid" 2>/dev/null || true
