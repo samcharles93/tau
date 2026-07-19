@@ -15,8 +15,11 @@ package main
 
 import (
 	"bufio"
+	"crypto/sha256"
+	"encoding/hex"
 	"flag"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -53,13 +56,24 @@ func run(distDir, tag string) error {
 			return fmt.Errorf("target %s/%s: %w", target.OS, target.Arch, err)
 		}
 
-		if _, err := os.Stat(filepath.Join(distDir, name)); err != nil {
+		archivePath := filepath.Join(distDir, name)
+		if _, err := os.Stat(archivePath); err != nil {
 			problems = append(problems, fmt.Sprintf("%s: archive not found in %s", name, distDir))
 			continue
 		}
 
-		if _, ok := checksums[name]; !ok {
+		expected, ok := checksums[name]
+		if !ok {
 			problems = append(problems, fmt.Sprintf("%s: no checksums.txt entry", name))
+			continue
+		}
+
+		actual, err := sha256Hex(archivePath)
+		if err != nil {
+			return fmt.Errorf("%s: %w", name, err)
+		}
+		if !strings.EqualFold(actual, expected) {
+			problems = append(problems, fmt.Sprintf("%s: checksum mismatch (checksums.txt says %s, archive hashes to %s)", name, expected, actual))
 		}
 	}
 
@@ -67,6 +81,21 @@ func run(distDir, tag string) error {
 		return fmt.Errorf("release asset matrix incomplete:\n  - %s", strings.Join(problems, "\n  - "))
 	}
 	return nil
+}
+
+// sha256Hex returns the lowercase hex SHA-256 digest of the file at path.
+func sha256Hex(path string) (string, error) {
+	f, err := os.Open(path)
+	if err != nil {
+		return "", fmt.Errorf("read archive: %w", err)
+	}
+	defer f.Close()
+
+	h := sha256.New()
+	if _, err := io.Copy(h, f); err != nil {
+		return "", fmt.Errorf("hash archive: %w", err)
+	}
+	return hex.EncodeToString(h.Sum(nil)), nil
 }
 
 // parseChecksums reads a goreleaser checksums.txt ("<sha256>  <filename>" per

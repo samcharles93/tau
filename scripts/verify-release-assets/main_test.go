@@ -1,6 +1,9 @@
 package main
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -10,7 +13,9 @@ import (
 )
 
 // writeCompleteMatrix populates dir with an archive for every supported
-// target plus a checksums.txt entry for each, all at the given tag.
+// target plus a checksums.txt entry recording that archive's real SHA-256,
+// all at the given tag. Real hashes (not placeholders) so tests exercise
+// run()'s actual hash-comparison path, not just presence checks.
 func writeCompleteMatrix(t *testing.T, dir, tag string) {
 	t.Helper()
 
@@ -20,10 +25,12 @@ func writeCompleteMatrix(t *testing.T, dir, tag string) {
 		if err != nil {
 			t.Fatalf("ArchiveName(%s, %s, %s): %v", tag, target.OS, target.Arch, err)
 		}
-		if err := os.WriteFile(filepath.Join(dir, name), []byte("fake archive"), 0o644); err != nil {
+		content := []byte("fake archive for " + name)
+		if err := os.WriteFile(filepath.Join(dir, name), content, 0o644); err != nil {
 			t.Fatalf("write archive %s: %v", name, err)
 		}
-		checksums.WriteString(strings.Repeat("a", 64) + "  " + name + "\n")
+		sum := sha256.Sum256(content)
+		fmt.Fprintf(&checksums, "%s  %s\n", hex.EncodeToString(sum[:]), name)
 	}
 	if err := os.WriteFile(filepath.Join(dir, "checksums.txt"), []byte(checksums.String()), 0o644); err != nil {
 		t.Fatalf("write checksums.txt: %v", err)
@@ -94,6 +101,33 @@ func TestRunFailsWhenChecksumEntryMissing(t *testing.T) {
 	err = run(dir, "v1.2.3")
 	if err == nil {
 		t.Fatal("run() = nil, want error for missing checksum entry")
+	}
+	if !strings.Contains(err.Error(), name) {
+		t.Fatalf("run() error = %q, want it to name %q", err, name)
+	}
+}
+
+// TestRunFailsWhenArchiveContentDoesNotMatchChecksum guards against a real
+// bug: run() used to only check that a checksums.txt entry existed for a
+// filename, never that the recorded hash matched the archive's actual
+// bytes, so a corrupted or stale-checksum archive passed silently.
+func TestRunFailsWhenArchiveContentDoesNotMatchChecksum(t *testing.T) {
+	dir := t.TempDir()
+	writeCompleteMatrix(t, dir, "v1.2.3")
+
+	name, err := updater.ArchiveName("v1.2.3", "linux", "amd64")
+	if err != nil {
+		t.Fatalf("ArchiveName: %v", err)
+	}
+	// Overwrite the archive after writeCompleteMatrix recorded its checksum,
+	// simulating a corrupted upload or a stale checksums.txt entry.
+	if err := os.WriteFile(filepath.Join(dir, name), []byte("corrupted contents"), 0o644); err != nil {
+		t.Fatalf("corrupt archive %s: %v", name, err)
+	}
+
+	err = run(dir, "v1.2.3")
+	if err == nil {
+		t.Fatal("run() = nil, want error for a checksum/content mismatch")
 	}
 	if !strings.Contains(err.Error(), name) {
 		t.Fatalf("run() error = %q, want it to name %q", err, name)

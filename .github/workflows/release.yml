@@ -63,7 +63,9 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Verify release asset matrix
-        run: go run ./scripts/verify-release-assets --dist dist --tag "${{ needs.release-please.outputs.tag_name }}"
+        env:
+          TAG_NAME: ${{ needs.release-please.outputs.tag_name }}
+        run: go run ./scripts/verify-release-assets --dist dist --tag "$TAG_NAME"
 
       - uses: goreleaser/goreleaser-action@v6
         with:
