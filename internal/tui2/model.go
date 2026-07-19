@@ -40,17 +40,16 @@ type model struct {
 	maxViewportHeight int
 
 	// Conversation state - stored as raw content string fed to the viewport.
-	viewport   viewport.Model
-	streaming  string // current streaming text delta
-	reasoning  string // current reasoning delta
-	inResponse bool   // true while a response is in progress
+	viewport  viewport.Model
+	streaming string // current streaming text delta
+	reasoning string // current reasoning delta
 
 	// agentState is the explicit, typed state driving the status bar (see
-	// statusbar.go) - set at each transition point in handleChatEvent rather
-	// than re-derived by sniffing m.notification text or combining
-	// inResponse/streaming/tools ad hoc at render time. Zero value
-	// (agentReady) is correct for a freshly constructed model with no turn
-	// yet in flight. streamStartedAt marks when the active response's
+	// statusbar.go) and turn-in-flight gating (see inResponse) - set at each
+	// transition point in handleChatEvent rather than re-derived by sniffing
+	// m.notification text or combining ad hoc flags at render time. Zero
+	// value (agentReady) is correct for a freshly constructed model with no
+	// turn yet in flight. streamStartedAt marks when the active response's
 	// streaming phase began (set the moment agentState first becomes
 	// agentStreaming for a turn), used to derive a live tokens/sec estimate.
 	agentState      agentState
@@ -177,7 +176,8 @@ type model struct {
 	// sessionsFetchInFlight guards maybePrefetchSessions against firing a
 	// second silent ListSessionsCommand while one is already outstanding -
 	// without it, every keystroke while typing "/session " with an empty
-	// cache would fire a fresh request.
+	// cache would fire a fresh request. Set via startSessionsFetch, cleared
+	// via finishSessionsFetch - see docs/specs/state-taxonomy.md, Category 5.
 	sessionsFetchInFlight bool
 
 	// Turn management.
@@ -490,7 +490,7 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case sendResultMsg:
 		if msg.err != nil {
-			m.inResponse = false
+			m.agentState = agentReady
 			m.notification = fmt.Sprintf("send failed: %v", msg.err)
 		}
 		return m, nil
@@ -564,7 +564,7 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.tools[i].spinnerIdx++
 			}
 		}
-		if m.inResponse {
+		if m.inResponse() {
 			return m, spinTick()
 		}
 		return m, nil
@@ -594,6 +594,15 @@ func (m *model) View() tea.View {
 	sb.WriteString("\n")
 	sb.WriteString(geom.chromeStr)
 
+	// This sequence is deliberately NOT driven by overlayPrecedence
+	// (overlay.go): that list declares dispatch precedence (which overlay
+	// wins key routing), a different concern from paint/Z-order here. Since
+	// closeOtherExclusiveOverlays keeps at most one of these five mutually
+	// exclusive, their relative order below never actually matters at
+	// runtime - only completions (soft) can legitimately be visible
+	// alongside one of them, which is why it's composited after all five.
+	// activePrompt has no entry here at all: it renders as flow content via
+	// computeLayout/renderPrompt above, not as a floating compositor layer.
 	base := sb.String()
 	if m.contextMenu != nil {
 		base = m.compositeContextMenu(base)
@@ -629,6 +638,16 @@ func (m *model) View() tea.View {
 	v.MouseMode = tea.MouseModeCellMotion
 	return v
 }
+
+// startSessionsFetch and finishSessionsFetch centralize the
+// sessionsFetchInFlight guard (see its field comment) so every failure path
+// clears it through one grep-able name instead of a bare bool assignment
+// repeated at each call site - see docs/specs/state-taxonomy.md, Category 5.
+// A new failure path added later still has to remember to call
+// finishSessionsFetch, same as before, but there is now one name to find
+// every existing call site by.
+func (m *model) startSessionsFetch()  { m.sessionsFetchInFlight = true }
+func (m *model) finishSessionsFetch() { m.sessionsFetchInFlight = false }
 
 // computeLayout renders every non-viewport UI region, decides how much
 // vertical space the viewport gets, and records the on-screen row range of

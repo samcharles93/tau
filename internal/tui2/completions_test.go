@@ -532,7 +532,7 @@ func TestRawCandidateGroupsEmptyInput(t *testing.T) {
 func TestRawCandidateGroupsInResponseReturnsNil(t *testing.T) {
 	m := newTestModel(&fakeRuntime{}, nil)
 	m.input = "/model"
-	m.inResponse = true
+	m.agentState = agentThinking
 
 	rows, _ := m.completionRows()
 	if rows != nil {

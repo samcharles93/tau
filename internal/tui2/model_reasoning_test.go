@@ -31,7 +31,7 @@ func TestHandleChatEventResponseCompletedReasoningOnly(t *testing.T) {
 	m := newTestModel(&fakeRuntime{}, nil)
 	m.streaming = ""
 	m.reasoning = "I think..."
-	m.inResponse = true
+	m.agentState = agentThinking
 
 	m.handleChatEvent(tauchat.ChatResponseCompletedEvent{})
 
@@ -61,7 +61,7 @@ func TestReasoningStyleDistinctFromFinalAnswer(t *testing.T) {
 	m.width = 20 // narrow enough to force reasoning across multiple lines
 	m.streaming = "the final answer"
 	m.reasoning = "weighing several possible options carefully"
-	m.inResponse = true
+	m.agentState = agentThinking
 
 	m.finalizeResponse("")
 
@@ -161,7 +161,7 @@ func TestReasoningBlockContentPreservedAcrossCollapse(t *testing.T) {
 	m.width = 80
 	m.streaming = "the final answer"
 	m.reasoning = "the original reasoning text"
-	m.inResponse = true
+	m.agentState = agentThinking
 	m.finalizeResponse("msg-1")
 
 	if len(m.committedReasoning) != 1 {
@@ -214,7 +214,7 @@ func TestCtrlRTogglesLastReasoningBlock(t *testing.T) {
 
 	m.streaming = "the final answer"
 	m.reasoning = "weighing the options"
-	m.inResponse = true
+	m.agentState = agentThinking
 	m.finalizeResponse("msg-1")
 
 	if !m.committedReasoning[0].collapsed {
@@ -254,7 +254,7 @@ func TestStreamingReasoningRemainsVisibleWhileActive(t *testing.T) {
 	// A prior, completed turn: auto-collapses since it has a trailing answer.
 	m.streaming = "prior answer"
 	m.reasoning = "prior reasoning"
-	m.inResponse = true
+	m.agentState = agentThinking
 	m.finalizeResponse("msg-1")
 	if !m.committedReasoning[0].collapsed {
 		t.Fatal("expected the prior turn's reasoning to auto-collapse")
@@ -262,7 +262,7 @@ func TestStreamingReasoningRemainsVisibleWhileActive(t *testing.T) {
 
 	// A new turn starts streaming reasoning - must render in full, live,
 	// regardless of the previous block's collapsed state.
-	m.inResponse = true
+	m.agentState = agentThinking
 	m.reasoning = "currently streaming reasoning"
 	m.streaming = ""
 

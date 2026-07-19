@@ -37,10 +37,10 @@ type sessionTreeState struct {
 // so the overlay picks up the fresh list on its next render with no
 // additional event-handling code.
 func (m *model) openSessionTree() tea.Cmd {
-	m.contextMenu = nil
+	m.closeOtherExclusiveOverlays(overlaySessionTree)
 	m.sessionTreeOverlay = &sessionTreeState{}
 	if len(m.sessionSummaries) == 0 && !m.sessionsFetchInFlight {
-		m.sessionsFetchInFlight = true
+		m.startSessionsFetch()
 		return sendCommand(m.runtime, tauchat.ListSessionsCommand{Silent: true})
 	}
 	return nil

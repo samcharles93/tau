@@ -35,6 +35,18 @@ const (
 	agentError
 )
 
+// inResponse reports whether a turn is in flight - derived from agentState
+// rather than tracked as a second, independent field, so the two can never
+// drift apart (see docs/specs/state-taxonomy.md, Category 1: Turn State).
+func (m *model) inResponse() bool {
+	switch m.agentState {
+	case agentThinking, agentProcessing, agentRunningTool, agentStreaming:
+		return true
+	default: // agentReady, agentCancelled, agentError
+		return false
+	}
+}
+
 // --- status bar segments ---------------------------------------------------
 
 // statusSeg is one widget in the status bar. text is the PLAIN string used

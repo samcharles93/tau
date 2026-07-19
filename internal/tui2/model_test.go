@@ -220,7 +220,7 @@ func TestMessageRangesShiftAfterCommittedGroupToggle(t *testing.T) {
 
 // TestScrollUpDuringResponseIsNotUndoneByRender guards against a real bug:
 // computeLayout forced the viewport back to the bottom on every render while
-// m.inResponse was true, so a manual scroll-up made during a live turn got
+// m.inResponse() was true, so a manual scroll-up made during a live turn got
 // stomped by the very next tick-driven re-render - the user couldn't scroll
 // at all while the agent was working.
 func TestScrollUpDuringResponseIsNotUndoneByRender(t *testing.T) {
@@ -229,7 +229,7 @@ func TestScrollUpDuringResponseIsNotUndoneByRender(t *testing.T) {
 	for i := 1; i <= 60; i++ {
 		m.appendMessage("user", fmt.Sprintf("line %02d", i))
 	}
-	m.inResponse = true
+	m.agentState = agentThinking
 	m.View()
 
 	m.Update(tea.MouseWheelMsg{Button: tea.MouseWheelUp, X: 5, Y: 5})
@@ -277,14 +277,21 @@ func drainCmdMsg(cmd tea.Cmd) tea.Msg {
 	return cmd()
 }
 
+// TestUpdateSendResultMsgError guards against a real bug: this path used to
+// reset m.inResponse but not m.agentState, leaving agentState stuck at
+// agentThinking (see docs/specs/state-taxonomy.md) until the next turn
+// overwrote it.
 func TestUpdateSendResultMsgError(t *testing.T) {
 	m := newTestModel(&fakeRuntime{}, nil)
-	m.inResponse = true
+	m.agentState = agentThinking
 
 	m.Update(sendResultMsg{err: errIntentional})
 
-	if m.inResponse {
-		t.Fatal("inResponse should be false after send failure")
+	if m.inResponse() {
+		t.Fatal("inResponse() should be false after send failure")
+	}
+	if m.agentState != agentReady {
+		t.Fatalf("agentState = %v, want agentReady after send failure", m.agentState)
 	}
 }
 
@@ -363,7 +370,7 @@ func TestViewKeepsCompletedResponseAtStreamingPosition(t *testing.T) {
 	m := newTestModel(&fakeRuntime{}, nil)
 	m.Update(tea.WindowSizeMsg{Width: 100, Height: 40})
 	m.mdCache = nil
-	m.inResponse = true
+	m.agentState = agentThinking
 	m.streaming = "hello world"
 
 	streamingLines := strings.Split(m.View().Content, "\n")
@@ -387,7 +394,7 @@ func TestViewStreamsOverflowLikeBottomFollowingScroll(t *testing.T) {
 	m := newTestModel(&fakeRuntime{}, nil)
 	m.Update(tea.WindowSizeMsg{Width: 100, Height: 40})
 	m.mdCache = nil
-	m.inResponse = true
+	m.agentState = agentThinking
 
 	var streamed strings.Builder
 	for i := 1; i <= 60; i++ {

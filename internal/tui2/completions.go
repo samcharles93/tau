@@ -156,7 +156,7 @@ func (m *model) completionToken() string {
 // handleCompletionKey (navigation/accept) use, so what's shown is always
 // exactly what's selectable.
 func (m *model) completionRows() ([]compRow, string) {
-	if m.inResponse || m.bashRunning {
+	if m.inResponse() || m.bashRunning {
 		return nil, ""
 	}
 	groups := m.rawCandidateGroups()
@@ -346,7 +346,7 @@ func (m *model) maybePrefetchSessions() tea.Cmd {
 	}
 	for _, g := range m.rawCandidateGroups() {
 		if g.Title == "Sessions" && len(g.Matches) == 0 {
-			m.sessionsFetchInFlight = true
+			m.startSessionsFetch()
 			return sendCommand(m.runtime, tauchat.ListSessionsCommand{Silent: true})
 		}
 	}

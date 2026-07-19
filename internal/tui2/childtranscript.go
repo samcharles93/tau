@@ -35,8 +35,7 @@ func (m *model) openChildTranscriptViewer(callID string) tea.Cmd {
 		return m.setNotification("agent not found")
 	}
 
-	m.contextMenu = nil
-	m.diffViewer = nil
+	m.closeOtherExclusiveOverlays(overlayChildTranscript)
 
 	boxW := max(20, int(float64(m.width)*diffViewerWidthFrac))
 	boxH := max(10, int(float64(m.height)*diffViewerHeightFrac))
@@ -45,7 +44,7 @@ func (m *model) openChildTranscriptViewer(callID string) tea.Cmd {
 
 	vp := viewport.New(viewport.WithWidth(innerWidth), viewport.WithHeight(innerHeight))
 
-	if isChildTerminal(child.status) {
+	if child.status.IsTerminal() {
 		// Finished child: load from persisted session.
 		if child.sessionID == "" {
 			return m.setNotification("agent " + child.instanceID + " has no recorded session to open")

@@ -143,7 +143,7 @@ func TestShiftEnterInsertsNewlineInsteadOfSubmitting(t *testing.T) {
 	if len(rt.sent) != 0 {
 		t.Error("shift+enter must not submit - nothing should be sent to the runtime")
 	}
-	if m.inResponse {
+	if m.inResponse() {
 		t.Error("shift+enter must not start a turn")
 	}
 }
