@@ -1,5 +1,26 @@
 # Changelog
 
+## [0.25.0](https://github.com/samcharles93/tau/compare/v0.24.0...v0.25.0) (2026-07-19)
+
+
+### Features
+
+* **app:** validate provider API key with a live call before persisting ([4519433](https://github.com/samcharles93/tau/commit/45194335509a7105210d8a29f1e894de09a2a9e5))
+* **tui:** add copy command for messages and transcripts (CAT-170) ([ba6c559](https://github.com/samcharles93/tau/commit/ba6c55959c1099bab5671671950ea62a73919d5c))
+* **tui:** add copy command for messages and transcripts (CAT-170) ([7d840cb](https://github.com/samcharles93/tau/commit/7d840cb8f0990036de8433939f99b8cf88d88830))
+
+
+### Bug Fixes
+
+* **app:** honor --insecure, trim keys, and treat 400 as rejected in validation ([55fcb89](https://github.com/samcharles93/tau/commit/55fcb897fa90c4f05f125b0ef85f87188e9e3b3f))
+* **app:** honor --insecure, trim keys, and treat 400 as rejected in validation ([9ff14af](https://github.com/samcharles93/tau/commit/9ff14af0034c566b566486400890c1b5fecfa97f))
+* **app:** probe OpenRouter's /auth/key, not /models, for live validation ([1b04641](https://github.com/samcharles93/tau/commit/1b046412643e49c0f1aefbd38a1786ad8766ccb1))
+* **ci:** verify release archive hashes, avoid unquoted tag interpolation ([fc3c688](https://github.com/samcharles93/tau/commit/fc3c688eb219e928e2a76b534531ecbcb429f09e))
+* **installer:** add prerequisite, archive, and temporary-binary validation ([b8007a8](https://github.com/samcharles93/tau/commit/b8007a82751d63c560012c9a504c1ef61a70165f))
+* **installer:** bound the --version sanity check with a timeout ([a9cbeeb](https://github.com/samcharles93/tau/commit/a9cbeeb1f506f6e51c327021438160f2782cd852))
+* **installer:** bound the --version sanity check with a timeout ([16ef271](https://github.com/samcharles93/tau/commit/16ef271aefc983c807971f62fc9a0d75e7d10eb6))
+* **installer:** reject symlinked archive entries, use unpredictable temp path ([4b20ae9](https://github.com/samcharles93/tau/commit/4b20ae98e1bf8b8e3b4521453a0fd43806b90090))
+
 ## [0.24.0](https://github.com/samcharles93/tau/compare/v0.23.0...v0.24.0) (2026-07-17)
 
 
