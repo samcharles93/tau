@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.28.0](https://github.com/samcharles93/tau/compare/v0.27.0...v0.28.0) (2026-07-20)
+
+
+### Features
+
+* cache expanded tool box body to avoid re-rendering on each frame ([d5500a8](https://github.com/samcharles93/tau/commit/d5500a8e2a3f7db3b66422d4158e42327ce686d6))
+
 ## [0.27.0](https://github.com/samcharles93/tau/compare/v0.26.0...v0.27.0) (2026-07-20)
 
 
