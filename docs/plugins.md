@@ -934,7 +934,7 @@ use `HostService.GetConfig()`.
 
 Bundled plugins live in `plugins/` with their own `go.mod`:
 
-```
+```mod
 module github.com/samcharles93/plugins/hello
 
 go 1.26.4
@@ -945,10 +945,11 @@ require (
     github.com/samcharles93/tau v0.0.0-20260602000000-000000000000
 )
 
-replace github.com/samcharles93/tau => ../../../
+replace github.com/samcharles93/tau => ../../
 ```
 
-The `replace` directive points to the tau repo root so you compile against the local checkout. Build with:
+The `replace` directive points to the tau repo root so Go resolves `github.com/samcharles93/tau` to the local checkout.
+Build with:
 
 ```bash
 cd plugins/tau-plugin-hello
@@ -979,7 +980,7 @@ Tau scans this directory at startup. Use `/reload` in the TUI or Web UI to redis
 
 Every plugin needs at minimum:
 
-```
+```mod
 require (
     github.com/hashicorp/go-hclog v1.6.3
     github.com/hashicorp/go-plugin v1.8.0
