@@ -1,5 +1,18 @@
 # Changelog
 
+## [0.30.0](https://github.com/samcharles93/tau/compare/v0.29.0...v0.30.0) (2026-07-20)
+
+
+### Features
+
+* add Moonshot AI and Kimi providers ([9b26136](https://github.com/samcharles93/tau/commit/9b26136e78da398b300389bb8603a76b4277294f))
+* replace inline slash-command scaffolds with palette selectors for /model and /provider ([317a48d](https://github.com/samcharles93/tau/commit/317a48d9ee69949118d8c1f7bdab54c29067a06d))
+
+
+### Bug Fixes
+
+* update the go mod replace directive to point to the correct location ([b49bc93](https://github.com/samcharles93/tau/commit/b49bc93c15a24cf4e8df719fdea7811106707d73))
+
 ## [0.29.0](https://github.com/samcharles93/tau/compare/v0.28.0...v0.29.0) (2026-07-20)
 
 
