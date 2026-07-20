@@ -258,6 +258,18 @@ func TestToolLoopBreakerAllowsJustifiedOverride(t *testing.T) {
 		}
 	}
 
+	// Drain any metrics still in flight after the turn completed.
+	drainDeadline := time.After(100 * time.Millisecond)
+drain:
+	for {
+		select {
+		case ev := <-metricsSub.Events():
+			metricCounts[ev.Name]++
+		case <-drainDeadline:
+			break drain
+		}
+	}
+
 	require.False(t, sawRuntimeError, "turn should complete normally, not hard-stop, when justification is provided")
 	require.True(t, sawCompleted)
 	// Calls 1-3 run for real (under threshold); call 4 (unjustified, past
