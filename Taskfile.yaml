@@ -99,7 +99,7 @@ tasks:
     desc: Build all example plugins into their directories
     cmds:
       - for: [hello]
-        cmd: cd examples/plugins/{{.ITEM}} && go mod tidy && go build -o tau-plugin-{{.ITEM}} .
+        cmd: cd plugins/tau-plugin-{{.ITEM}} && go mod tidy && go build -o tau-plugin-{{.ITEM}} .
 
   plugins:install:
     desc: Build all example plugins and copy them to the plugins directory
@@ -108,7 +108,7 @@ tasks:
     cmds:
       - mkdir -p $(go run ./cmd/tau config-dir)/plugins
       - for: [hello]
-        cmd: cp examples/plugins/{{.ITEM}}/tau-plugin-{{.ITEM}} $(go run ./cmd/tau config-dir)/plugins/
+        cmd: cp plugins/tau-plugin-{{.ITEM}}/tau-plugin-{{.ITEM}} $(go run ./cmd/tau config-dir)/plugins/
 
   deadcode:
     desc: Detect dead code in production packages (exclude *_test.go)
@@ -139,7 +139,7 @@ tasks:
       - go fix ./...
       - gofumpt -w .
       - golangci-lint run ./...
-      - go test -race ./... ./tools/... ./plugins/mcp/... ./examples/plugins/hello/...
+      - go test -race ./... ./tools/... ./plugins/tau-plugin-mcp/... ./plugins/tau-plugin-hello/...
 
   clean:
     desc: Remove build artifacts

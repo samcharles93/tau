@@ -15,5 +15,5 @@ Minimal example plugin demonstrating the go-plugin extension API: slash commands
 
 ## Source
 
-See `examples/plugins/hello/main.go` in the tau repo for the full implementation, including how it exposes this file via
+See `plugins/tau-plugin-hello/main.go` in the tau repo for the full implementation, including how it exposes this file via
 `Docs()`.

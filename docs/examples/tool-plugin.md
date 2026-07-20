@@ -1,6 +1,6 @@
 # Example: Building a Custom Tool Plugin
 
-The [hello plugin](https://github.com/samcharles93/tau/blob/main/examples/plugins/hello/main.go) covered in
+The [hello plugin](https://github.com/samcharles93/tau/blob/main/plugins/tau-plugin-hello/main.go) covered in
 [Quick Start](/plugins#quick-start) shows the minimum shape of a tool. This page builds a more realistic one - a
 `weather` plugin that wraps a third-party HTTP API, reads an API key from tau's config, and caches results via
 `HostService.SetConfig` - the pattern you'd actually use for "call some external API" plugins.

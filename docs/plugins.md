@@ -1,13 +1,11 @@
 # Tau Plugin SDK
 
-Tau's plugin system lets you extend the chat runtime with custom tools, slash
-commands, and lifecycle event hooks. Plugins are self-contained Go binaries
-that communicate with Tau over gRPC using [HashiCorp
-go-plugin](https://github.com/hashicorp/go-plugin).
+Tau's plugin system lets you extend the chat runtime with custom tools, slash commands, and lifecycle event hooks.
+Plugins are self-contained Go binaries that communicate with Tau over gRPC using
+[HashiCorp go-plugin](https://github.com/hashicorp/go-plugin).
 
-Plugins live in `~/.config/tau/plugins/` (or the directory configured via the
-`PluginsDir` option). Tau discovers and launches them automatically at startup.
-Use `/reload` to rediscover plugins without restarting Tau.
+Plugins live in `~/.config/tau/plugins/` (or the directory configured via the `PluginsDir` option). Tau discovers and
+launches them automatically at startup. Use `/reload` to rediscover plugins without restarting Tau.
 
 ---
 
@@ -22,9 +20,9 @@ Use `/reload` to rediscover plugins without restarting Tau.
 7. [Tools (Agent-Callable Functions)](#tools-agent-callable-functions)
 8. [Slash Commands (User-Callable)](#slash-commands-user-callable)
 9. [Lifecycle Events](#lifecycle-events)
-10. [EventResponse - Modifying Runtime Behaviour](#eventresponse--modifying-runtime-behaviour)
-11. [HostService - Calling Back Into Tau](#hostservice--calling-back-into-tau)
-12. [Panels and Views - Rendering Structured UI](#panels-and-views-rendering-structured-ui)
+10. [EventResponse - Modifying Runtime Behaviour](#eventresponse---modifying-runtime-behaviour)
+11. [HostService - Calling Back Into Tau](#hostservice---calling-back-into-tau)
+12. [Panels and Views - Rendering Structured UI](#panels-and-views---rendering-structured-ui)
 13. [Plugin Configuration](#plugin-configuration)
 14. [Building, Installing, and go.mod](#building-installing-and-gomod)
 15. [Complete Working Example](#complete-working-example)
@@ -36,11 +34,11 @@ Use `/reload` to rediscover plugins without restarting Tau.
 ## Quick Start
 
 The fastest way to understand the API is to read and run the
-[hello plugin](https://github.com/samcharles93/tau/blob/main/examples/plugins/hello/main.go).
+[hello plugin](https://github.com/samcharles93/tau/blob/main/plugins/tau-plugin-hello/main.go).
 
 ```bash
 # Build the example plugin
-cd examples/plugins/hello
+cd plugins/tau-plugin-hello
 go build -o tau-plugin-hello .
 
 # Install it
@@ -53,36 +51,33 @@ tau
 
 Inside Tau, type `/hello world` or ask the agent to call the `hello_greet` tool:
 
-```
+```plaintext
 Greet me using the hello plugin
 ```
 
-The hello plugin also demonstrates panels: `/hello panel` renders a one-shot
-view, and `/hello watch` opens a live panel you can re-run to update in place
-(`/hello close` closes it). See
-[Panels and Views](#panels-and-views-rendering-structured-ui).
+The hello plugin also demonstrates panels: `/hello panel` renders a one-shot view, and `/hello watch` opens a live panel
+you can re-run to update in place (`/hello close` closes it). See
+[Panels and Views](#panels-and-views---rendering-structured-ui).
 
 ---
 
 ## Plugin Lifecycle
 
 1. **Discovery** - Tau scans `~/.config/tau/plugins/` for executable files.
-2. **Launch** - Each plugin binary is started as a subprocess. Communication
-   happens over gRPC with a negotiated handshake.
-3. **Capability check** - Tau calls `GetCapabilities()` to learn what the
-   plugin provides. Plugins that don't implement the optional `Capable`
-   interface default to the full legacy surface (commands + tools + events).
-4. **Init** - Tau calls `Init()` and hands the plugin a broker ID so it can
-   dial the host's `HostService` for config, session state, and notifications.
-5. **Metadata** - Tau calls `Metadata()` to learn the plugin's name and slash
-   commands. Commands are registered in the TUI/Web UI command palette.
-6. **Tool discovery** - If the plugin advertises `CapabilityTools`, Tau calls
-   `Tools()` and registers each tool in the agent tool registry as
-   `plugin:<plugin-name>:<tool-name>`. The agent sees only `<tool-name>`.
-7. **Runtime** - Tau forwards slash commands and tool calls to the plugin, and
-   dispatches lifecycle events via `DispatchEvent()`.
-8. **Unload** - On shutdown or `/reload`, Tau calls `client.Kill()` on the
-   go-plugin process and unregisters all tools belonging to the plugin.
+2. **Launch** - Each plugin binary is started as a subprocess. Communication happens over gRPC with a negotiated
+   handshake.
+3. **Capability check** - Tau calls `GetCapabilities()` to learn what the plugin provides. Plugins that don't implement
+   the optional `Capable` interface default to the full legacy surface (commands + tools + events).
+4. **Init** - Tau calls `Init()` and hands the plugin a broker ID so it can dial the host's `HostService` for config,
+   session state, and notifications.
+5. **Metadata** - Tau calls `Metadata()` to learn the plugin's name and slash commands. Commands are registered in the
+   TUI/Web UI command palette.
+6. **Tool discovery** - If the plugin advertises `CapabilityTools`, Tau calls `Tools()` and registers each tool in the
+   agent tool registry as `plugin:<plugin-name>:<tool-name>`. The agent sees only `<tool-name>`.
+7. **Runtime** - Tau forwards slash commands and tool calls to the plugin, and dispatches lifecycle events via
+   `DispatchEvent()`.
+8. **Unload** - On shutdown or `/reload`, Tau calls `client.Kill()` on the go-plugin process and unregisters all tools
+   belonging to the plugin.
 
 ---
 
@@ -101,28 +96,26 @@ type Extension interface {
 }
 ```
 
-All six methods are required. Return empty slices / nil / `""` for
-capabilities your plugin does not support. `RunCommand`'s `view` return is
-optional - see [Panels and Views](#panels-and-views-rendering-structured-ui)
-for what it does and when to use it instead of, or alongside, `output`.
+All six methods are required. Return empty slices / nil / `""` for capabilities your plugin does not support.
+`RunCommand`'s `view` return is optional - see [Panels and Views](#panels-and-views---rendering-structured-ui) for what
+it does and when to use it instead of, or alongside, `output`.
 
 ### Method Reference
 
-| Method | Called when | Must return |
-|--------|-------------|-------------|
-| `Metadata()` | On plugin load and after `/reload` | `(pluginName, []*Command)` |
-| `RunCommand(ctx, name, args)` | User invokes a slash command | `(output, view, error)` |
-| `Reload(ctx)` | On `/reload` | `(diagnostics, updatedCommands, error)` |
-| `Tools(ctx)` | On plugin load (if `CapabilityTools`) | `([]*ToolDefinition, error)` |
-| `ExecuteTool(ctx, toolName, args)` | Agent calls a tool | `(content, isError, error)` |
-| `DispatchEvent(ctx, event, sessionID, payload)` | Lifecycle event occurs | `*EventResponse` (or nil) |
+| Method                                          | Called when                           | Must return                             |
+| ----------------------------------------------- | ------------------------------------- | --------------------------------------- |
+| `Metadata()`                                    | On plugin load and after `/reload`    | `(pluginName, []*Command)`              |
+| `RunCommand(ctx, name, args)`                   | User invokes a slash command          | `(output, view, error)`                 |
+| `Reload(ctx)`                                   | On `/reload`                          | `(diagnostics, updatedCommands, error)` |
+| `Tools(ctx)`                                    | On plugin load (if `CapabilityTools`) | `([]*ToolDefinition, error)`            |
+| `ExecuteTool(ctx, toolName, args)`              | Agent calls a tool                    | `(content, isError, error)`             |
+| `DispatchEvent(ctx, event, sessionID, payload)` | Lifecycle event occurs                | `*EventResponse` (or nil)               |
 
 ---
 
 ## Handshake & Bootstrap
 
-Every plugin binary must serve itself with this exact configuration so Tau
-recognises it during the handshake:
+Every plugin binary must serve itself with this exact configuration so Tau recognises it during the handshake:
 
 ```go
 package main
@@ -167,15 +160,13 @@ func main() {
 - `GRPCServer` MUST be `plugin.DefaultGRPCServer`.
 - The `ExtensionPlugin` contains your `Impl` (your `Extension` implementation).
 
-If any of these values differ, Tau will reject the plugin with a handshake
-error logged to `~/.config/tau/tau.log`.
+If any of these values differ, Tau will reject the plugin with a handshake error logged to `~/.config/tau/tau.log`.
 
 ---
 
 ## Declaring Capabilities (Optional)
 
-Plugins can optionally advertise which capabilities they provide by
-implementing the `Capable` interface:
+Plugins can optionally advertise which capabilities they provide by implementing the `Capable` interface:
 
 ```go
 type Capable interface {
@@ -185,19 +176,17 @@ type Capable interface {
 
 Capability constants:
 
-| Constant | Value | Meaning |
-|----------|-------|---------|
-| `api.CapabilityCommands` | `"commands"` | Plugin provides slash commands |
-| `api.CapabilityTools` | `"tools"` | Plugin provides agent tools |
-| `api.CapabilityEvents` | `"events"` | Plugin handles lifecycle events |
-| `api.CapabilityViews` | `"views"` | Plugin renders panels (see [Panels and Views](#panels-and-views-rendering-structured-ui)) |
+| Constant                 | Value        | Meaning                                                                                     |
+| ------------------------ | ------------ | ------------------------------------------------------------------------------------------- |
+| `api.CapabilityCommands` | `"commands"` | Plugin provides slash commands                                                              |
+| `api.CapabilityTools`    | `"tools"`    | Plugin provides agent tools                                                                 |
+| `api.CapabilityEvents`   | `"events"`   | Plugin handles lifecycle events                                                             |
+| `api.CapabilityViews`    | `"views"`    | Plugin renders panels (see [Panels and Views](#panels-and-views---rendering-structured-ui)) |
 
-Plugins that do NOT implement `Capable` are assumed to support the full legacy
-surface (commands + tools + events). Tau skips unsupported calls at runtime,
-which avoids unnecessary gRPC round-trips. `CapabilityViews` is the one
-exception to this default: since rendering UI is a net-new surface, it is
-**never** assumed for plugins that don't implement `Capable` - you must
-declare it explicitly to use panels.
+Plugins that do NOT implement `Capable` are assumed to support the full legacy surface (commands + tools + events). Tau
+skips unsupported calls at runtime, which avoids unnecessary gRPC round-trips. `CapabilityViews` is the one exception to
+this default: since rendering UI is a net-new surface, it is **never** assumed for plugins that don't implement
+`Capable` - you must declare it explicitly to use panels.
 
 Example:
 
@@ -212,13 +201,10 @@ func (p *MyPlugin) Capabilities() []string {
 
 ## Exposing Documentation (Optional)
 
-Tau's built-in `docs` tool (the one the agent calls when a user asks "how do
-I configure X") only knows about the documentation shipped inside tau
-itself - it has no visibility into a plugin's source tree, whether the
-plugin is one of tau's own examples or a third-party binary someone
-installed. A plugin that wants its own configuration/usage docs to be
-answerable through that tool must say so explicitly, by implementing
-`Documented`:
+Tau's built-in `docs` tool (the one the agent calls when a user asks "how do I configure X") only knows about the
+documentation shipped inside tau itself - it has no visibility into a plugin's source tree, whether the plugin is one of
+tau's own examples or a third-party binary someone installed. A plugin that wants its own configuration/usage docs to be
+answerable through that tool must say so explicitly, by implementing `Documented`:
 
 ```go
 type Documented interface {
@@ -226,8 +212,8 @@ type Documented interface {
 }
 ```
 
-`Docs()` is called once per load (alongside `Metadata()`) and should return
-markdown content - typically a file the plugin embeds with `go:embed`:
+`Docs()` is called once per load (alongside `Metadata()`) and should return markdown content - typically a file the
+plugin embeds with `go:embed`:
 
 ```go
 //go:embed docs.md
@@ -242,19 +228,17 @@ func (p *MyPlugin) Docs() string {
 }
 ```
 
-Tau merges the returned content into the docs tool under the virtual path
-`plugins/<plugin-name>.md`, so it shows up in listings, full-text search, and
-direct reads exactly like tau's own docs. Plugins that don't implement
-`Documented` are simply invisible to the docs tool - no error, no fallback.
-See the [hello plugin](https://github.com/samcharles93/tau/blob/main/examples/plugins/hello/main.go)
-for a working example.
+Tau merges the returned content into the docs tool under the virtual path `plugins/<plugin-name>.md`, so it shows up in
+listings, full-text search, and direct reads exactly like tau's own docs. Plugins that don't implement `Documented` are
+simply invisible to the docs tool - no error, no fallback. See the
+[hello plugin](https://github.com/samcharles93/tau/blob/main/plugins/tau-plugin-hello/main.go) for a working example.
 
 ---
 
 ## Tools (Agent-Callable Functions)
 
-Tools are functions the LLM agent can call during a turn. They are advertised
-by `Tools()` and executed by `ExecuteTool()`.
+Tools are functions the LLM agent can call during a turn. They are advertised by `Tools()` and executed by
+`ExecuteTool()`.
 
 ### Declaring a Tool
 
@@ -286,19 +270,21 @@ func (p *MyPlugin) Tools(ctx context.Context) ([]*pluginapi.ToolDefinition, erro
 
 ### ToolDefinition Fields
 
-| Field | Type | Description |
-|-------|------|-------------|
-| `Name` | `string` | Tool identifier. Must be unique within the plugin. The agent sees `plugin:<pluginName>.<Name>` internally but the model uses just `<Name>`. |
-| `Description` | `string` | Human-readable description. Sent to the LLM - write it for the model, not the user. Include return format, side effects, and constraints. |
-| `InputSchema` | `string` | JSON Schema object serialised as a string. Describes the parameters the LLM must provide. Must be valid JSON. |
+| Field         | Type     | Description                                                                                                                                 |
+| ------------- | -------- | ------------------------------------------------------------------------------------------------------------------------------------------- |
+| `Name`        | `string` | Tool identifier. Must be unique within the plugin. The agent sees `plugin:<pluginName>.<Name>` internally but the model uses just `<Name>`. |
+| `Description` | `string` | Human-readable description. Sent to the LLM - write it for the model, not the user. Include return format, side effects, and constraints.   |
+| `InputSchema` | `string` | JSON Schema object serialised as a string. Describes the parameters the LLM must provide. Must be valid JSON.                               |
 
 ### Tool Naming and Registration
 
 When Tau registers your tool, the internal name becomes `plugin:<pluginName>.<toolName>`:
 
-- If your plugin's `Metadata()` returns name `"github"` and `Tools()` returns a tool named `"list_issues"`, the registered name is `plugin:github.list_issues`.
+- If your plugin's `Metadata()` returns name `"github"` and `Tools()` returns a tool named `"list_issues"`, the
+  registered name is `plugin:github.list_issues`.
 - The model sees `list_issues` in the function-calling request (the prefix is stripped).
-- Tool execution is routed back to your plugin's `ExecuteTool()` with `toolName` as `"list_issues"` (prefix already stripped).
+- Tool execution is routed back to your plugin's `ExecuteTool()` with `toolName` as `"list_issues"` (prefix already
+  stripped).
 
 ### Tool InputSchema Best Practices
 
@@ -347,25 +333,22 @@ func (p *MyPlugin) ExecuteTool(ctx context.Context, toolName, arguments string) 
 
 ### ExecuteTool Return Values
 
-| Value | Meaning |
-|-------|---------|
-| `content` | Tool result string sent to the agent. For structured data, use JSON. For text, use plain text. |
-| `isError` | `true` if the tool failed. Tau renders this as a failed tool call with an error icon. |
-| `err` | Non-nil only for gRPC transport errors. `isError: true` is the correct way to signal tool failure. |
+| Value     | Meaning                                                                                            |
+| --------- | -------------------------------------------------------------------------------------------------- |
+| `content` | Tool result string sent to the agent. For structured data, use JSON. For text, use plain text.     |
+| `isError` | `true` if the tool failed. Tau renders this as a failed tool call with an error icon.              |
+| `err`     | Non-nil only for gRPC transport errors. `isError: true` is the correct way to signal tool failure. |
 
 ### Timeout
 
-Plugin tool execution has a configurable timeout (default: 30 seconds). The
-`context.Context` passed to `ExecuteTool` is cancelled when the timeout is
-reached. Tools performing network calls or heavy I/O should respect context
-cancellation.
+Plugin tool execution has a configurable timeout (default: 30 seconds). The `context.Context` passed to `ExecuteTool` is
+cancelled when the timeout is reached. Tools performing network calls or heavy I/O should respect context cancellation.
 
 ---
 
 ## Slash Commands (User-Callable)
 
-Slash commands appear in the TUI's `/`-triggered autocomplete menu and the
-Web UI's command palette.
+Slash commands appear in the TUI's `/`-triggered autocomplete menu and the Web UI's command palette.
 
 ### Declaring Commands
 
@@ -388,11 +371,11 @@ func (p *MyPlugin) Metadata() (string, []*pluginapi.Command) {
 
 ### Command Fields
 
-| Field | Type | Description |
-|-------|------|-------------|
-| `Name` | `string` | Command name **without** the leading `/` (the TUI strips it before matching). Convention: `<verb>`, e.g. `status`, not `/status`. |
-| `Description` | `string` | Shown in the command palette. Include usage hints (with the `/`). |
-| `ExtensionName` | `string` | Must match the plugin name returned by `Metadata()`. |
+| Field           | Type     | Description                                                                                                                       |
+| --------------- | -------- | --------------------------------------------------------------------------------------------------------------------------------- |
+| `Name`          | `string` | Command name **without** the leading `/` (the TUI strips it before matching). Convention: `<verb>`, e.g. `status`, not `/status`. |
+| `Description`   | `string` | Shown in the command palette. Include usage hints (with the `/`).                                                                 |
+| `ExtensionName` | `string` | Must match the plugin name returned by `Metadata()`.                                                                              |
 
 ### Executing Commands
 
@@ -422,25 +405,25 @@ func (p *MyPlugin) RunCommand(ctx context.Context, name, args string) (string, *
 
 ## Lifecycle Events
 
-Tau dispatches lifecycle events to plugins via `DispatchEvent()`. Each event
-carries a typed payload in the `EventPayload` oneof.
+Tau dispatches lifecycle events to plugins via `DispatchEvent()`. Each event carries a typed payload in the
+`EventPayload` oneof.
 
 ### Event Table
 
-| Event String | When | Payload Field | `EventPayload` Getter |
-|-------------|------|---------------|----------------------|
-| `"session_start"` | A chat session starts | `Session` | `payload.GetSession()` |
-| `"context"` | Before every LLM turn (full message list) | `Context` | `payload.GetContext()` |
-| `"before_llm_call"` | Right before the HTTP request is sent to the LLM | `BeforeLlmCall` | `payload.GetBeforeLlmCall()` |
-| `"after_llm_call"` | After the LLM response finishes | `AfterLlmCall` | `payload.GetAfterLlmCall()` |
-| `"before_tool_exec"` | Before a tool is executed | `BeforeToolExec` | `payload.GetBeforeToolExec()` |
-| `"after_tool_exec"` | After a tool finishes | `AfterToolExec` | `payload.GetAfterToolExec()` |
-| `"message_delta"` | On each streamed token | `MessageDelta` | `payload.GetMessageDelta()` |
-| `"turn_start"` | At the beginning of a turn | `Turn` | `payload.GetTurn()` |
-| `"turn_end"` | At the end of a turn | `Turn` | `payload.GetTurn()` |
-| `"compaction_before"` | Before context compaction | `Compaction` | `payload.GetCompaction()` |
-| `"compaction_after"` | After context compaction | `Compaction` | `payload.GetCompaction()` |
-| `"schedule"` | Periodically (requires `TAU_SCHEDULE_INTERVAL`) | none | `nil` |
+| Event String          | When                                             | Payload Field    | `EventPayload` Getter         |
+| --------------------- | ------------------------------------------------ | ---------------- | ----------------------------- |
+| `"session_start"`     | A chat session starts                            | `Session`        | `payload.GetSession()`        |
+| `"context"`           | Before every LLM turn (full message list)        | `Context`        | `payload.GetContext()`        |
+| `"before_llm_call"`   | Right before the HTTP request is sent to the LLM | `BeforeLlmCall`  | `payload.GetBeforeLlmCall()`  |
+| `"after_llm_call"`    | After the LLM response finishes                  | `AfterLlmCall`   | `payload.GetAfterLlmCall()`   |
+| `"before_tool_exec"`  | Before a tool is executed                        | `BeforeToolExec` | `payload.GetBeforeToolExec()` |
+| `"after_tool_exec"`   | After a tool finishes                            | `AfterToolExec`  | `payload.GetAfterToolExec()`  |
+| `"message_delta"`     | On each streamed token                           | `MessageDelta`   | `payload.GetMessageDelta()`   |
+| `"turn_start"`        | At the beginning of a turn                       | `Turn`           | `payload.GetTurn()`           |
+| `"turn_end"`          | At the end of a turn                             | `Turn`           | `payload.GetTurn()`           |
+| `"compaction_before"` | Before context compaction                        | `Compaction`     | `payload.GetCompaction()`     |
+| `"compaction_after"`  | After context compaction                         | `Compaction`     | `payload.GetCompaction()`     |
+| `"schedule"`          | Periodically (requires `TAU_SCHEDULE_INTERVAL`)  | none             | `nil`                         |
 
 ### Payload Type Reference
 
@@ -462,8 +445,7 @@ type ContextPayload struct {
 }
 ```
 
-Each element in `Messages` is a JSON string. Unmarshal with
-`json.Unmarshal([]byte(msg), &chat.ChatMessage{})`.
+Each element in `Messages` is a JSON string. Unmarshal with `json.Unmarshal([]byte(msg), &chat.ChatMessage{})`.
 
 #### BeforeLLMCallPayload (event: `"before_llm_call"`)
 
@@ -477,6 +459,7 @@ type BeforeLLMCallPayload struct {
 ```
 
 This is the most powerful event for modifying LLM behaviour. You can:
+
 - Inject or remove messages from context via `EventResponse.InjectMessages` / `RemoveMessageIndices`.
 - Add HTTP headers via `EventResponse.AddHeaders`.
 - Override the model ID via `EventResponse.ModifiedModelId`.
@@ -502,8 +485,8 @@ type ToolCallPayload struct {
 }
 ```
 
-You can block tool execution via `EventResponse.BlockToolExecution = true` and
-rewrite arguments via `EventResponse.ModifiedToolArguments`.
+You can block tool execution via `EventResponse.BlockToolExecution = true` and rewrite arguments via
+`EventResponse.ModifiedToolArguments`.
 
 #### ToolResultPayload (events: `"after_tool_exec"`)
 
@@ -608,15 +591,14 @@ func (p *MyPlugin) DispatchEvent(ctx context.Context, event, sessionID string, p
 ### Event Delivery
 
 - Events are dispatched to all loaded plugins **in plugin load order**.
-- Each plugin has a per-event timeout (default: 10 seconds). If a plugin
-  takes longer, its dispatch is cancelled and a warning is logged.
+- Each plugin has a per-event timeout (default: 10 seconds). If a plugin takes longer, its dispatch is cancelled and a
+  warning is logged.
 - Responses from multiple plugins are **merged**:
   - `InjectMessages`, `RemoveMessageIndices`, `Diagnostics` are concatenated.
   - `InjectSystemPrompt` is joined with newlines.
   - `AddHeaders` maps are merged (later plugins win on key collision).
   - `BlockToolExecution` is OR'd (first plugin to block wins).
-  - `ModifiedToolArguments` / `ModifiedToolResult` from the last responding
-    plugin wins.
+  - `ModifiedToolArguments` / `ModifiedToolResult` from the last responding plugin wins.
   - `SuppressDefault` is OR'd.
 - Plugins that do not advertise `CapabilityEvents` are never called.
 
@@ -624,8 +606,7 @@ func (p *MyPlugin) DispatchEvent(ctx context.Context, event, sessionID string, p
 
 ## EventResponse - Modifying Runtime Behaviour
 
-The `EventResponse` struct is the primary mechanism for plugins to influence
-the coordinator at runtime.
+The `EventResponse` struct is the primary mechanism for plugins to influence the coordinator at runtime.
 
 ```go
 type EventResponse struct {
@@ -672,28 +653,28 @@ type EventResponse struct {
 
 ### Event → Response Field Compatibility
 
-Not every response field is valid for every event. The coordinator checks
-the event type and only applies relevant fields:
+Not every response field is valid for every event. The coordinator checks the event type and only applies relevant
+fields:
 
-| Response Field | Valid Events |
-|---------------|--------------|
-| `InjectMessages` | `context`, `before_llm_call` |
-| `RemoveMessageIndices` | `context`, `before_llm_call` |
-| `InjectSystemPrompt` | `context`, `before_llm_call` |
-| `AddHeaders` | `before_llm_call` |
-| `ModifiedModelId` | `before_llm_call` |
-| `BlockToolExecution` / `BlockReason` | `before_tool_exec` |
-| `ModifiedToolArguments` | `before_tool_exec` |
-| `ModifiedToolResult` | `after_tool_exec` |
-| `Diagnostics` | Any event |
-| `SuppressDefault` | Any event |
+| Response Field                       | Valid Events                 |
+| ------------------------------------ | ---------------------------- |
+| `InjectMessages`                     | `context`, `before_llm_call` |
+| `RemoveMessageIndices`               | `context`, `before_llm_call` |
+| `InjectSystemPrompt`                 | `context`, `before_llm_call` |
+| `AddHeaders`                         | `before_llm_call`            |
+| `ModifiedModelId`                    | `before_llm_call`            |
+| `BlockToolExecution` / `BlockReason` | `before_tool_exec`           |
+| `ModifiedToolArguments`              | `before_tool_exec`           |
+| `ModifiedToolResult`                 | `after_tool_exec`            |
+| `Diagnostics`                        | Any event                    |
+| `SuppressDefault`                    | Any event                    |
 
 ---
 
 ## HostService - Calling Back Into Tau
 
-Plugins can call back into the Tau host process via the `HostService` gRPC
-service. Implement the `HostAware` interface to receive a `Host` handle:
+Plugins can call back into the Tau host process via the `HostService` gRPC service. Implement the `HostAware` interface
+to receive a `Host` handle:
 
 ```go
 type HostAware interface {
@@ -770,45 +751,39 @@ func (p *MyPlugin) ExecuteTool(ctx context.Context, toolName, arguments string) 
 
 ### HostService Details
 
-- `SetHost()` is called by the gRPC adapter during `Init()`. It is called
-  **once**, before any command or tool execution.
+- `SetHost()` is called by the gRPC adapter during `Init()`. It is called **once**, before any command or tool
+  execution.
 - If your plugin does not implement `HostAware`, `SetHost()` is never called.
-- `GetConfig()` / `SetConfig()` are scoped to the plugin's name. The host reads
-  from the `plugins.<pluginName>` block in `config.yaml`. `SetConfig()`
-  persists to `~/.config/tau/plugin-state.json`.
-- `GetSessionState()` with an empty `sessionID` targets the currently active
-  session. The returned JSON matches `chat.ChatSessionState`.
-- `Notify()` pushes transient notifications to both the TUI (via the notify
-  queue) and the Web UI (via toast container). Valid levels: `"info"`,
-  `"warn"`, `"error"`.
-- `Log()` forwards to tau's structured logger (`slog`). Use this instead of
-  writing to stdout/stderr for log messages that should appear in the host's
-  log output.
-- `RenderView()` / `CloseView()` push structured panels to the TUI outside of
-  a command invocation. See [Panels and Views](#panels-and-views-rendering-structured-ui).
+- `GetConfig()` / `SetConfig()` are scoped to the plugin's name. The host reads from the `plugins.<pluginName>` block in
+  `config.yaml`. `SetConfig()` persists to `~/.config/tau/plugin-state.json`.
+- `GetSessionState()` with an empty `sessionID` targets the currently active session. The returned JSON matches
+  `chat.ChatSessionState`.
+- `Notify()` pushes transient notifications to both the TUI (via the notify queue) and the Web UI (via toast container).
+  Valid levels: `"info"`, `"warn"`, `"error"`.
+- `Log()` forwards to tau's structured logger (`slog`). Use this instead of writing to stdout/stderr for log messages
+  that should appear in the host's log output.
+- `RenderView()` / `CloseView()` push structured panels to the TUI outside of a command invocation. See
+  [Panels and Views](#panels-and-views---rendering-structured-ui).
 
 ---
 
 ## Panels and Views - Rendering Structured UI
 
-Beyond plain-text command output, notifications, and tool results, plugins
-can render structured panels - key/value summaries, tables, lists, progress
-bars - directly into the TUI. A panel is a `View`: a tree of `Widget`s
-identified by an `Id` that's scoped to your plugin.
+Beyond plain-text command output, notifications, and tool results, plugins can render structured panels - key/value
+summaries, tables, lists, progress bars - directly into the TUI. A panel is a `View`: a tree of `Widget`s identified by
+an `Id` that's scoped to your plugin.
 
 There are two ways to deliver a `View`:
 
-1. **Sync** - return it from `RunCommand`. It renders once, in place of (or
-   alongside) the plain-text `output`, when that command completes.
-2. **Async** - push it any time via `Host.RenderView`, independent of command
-   invocation. Useful for live-updating panels (a dashboard, a log tail).
-   Re-sending a `View` with the same `Id` replaces its content in place; call
-   `Host.CloseView` to remove it. Async panels persist until closed, until
-   your plugin is unloaded/reloaded (Tau closes them for you), or until Tau
-   exits - there's no cross-restart persistence.
+1. **Sync** - return it from `RunCommand`. It renders once, in place of (or alongside) the plain-text `output`, when
+   that command completes.
+2. **Async** - push it any time via `Host.RenderView`, independent of command invocation. Useful for live-updating
+   panels (a dashboard, a log tail). Re-sending a `View` with the same `Id` replaces its content in place; call
+   `Host.CloseView` to remove it. Async panels persist until closed, until your plugin is unloaded/reloaded (Tau closes
+   them for you), or until Tau exits - there's no cross-restart persistence.
 
-Panels are opt-in: declare `api.CapabilityViews` in `Capabilities()` before
-using either path (see [Declaring Capabilities](#declaring-capabilities-optional)).
+Panels are opt-in: declare `api.CapabilityViews` in `Capabilities()` before using either path (see
+[Declaring Capabilities](#declaring-capabilities-optional)).
 
 ### The View and Widget Types
 
@@ -833,22 +808,22 @@ type Widget struct {
 }
 ```
 
-| Widget | Fields | Renders as |
-|--------|--------|------------|
-| `TextWidget` | `Text string`, `Style *Style` | A styled text line |
-| `StackWidget` | `Direction` (`VERTICAL`/`HORIZONTAL`), `Children []*Widget`, `Gap int32` | Nested layout |
-| `KeyValueWidget` | `Entries []*Entry{Key, Value, ValueStyle}` | Aligned `key: value` lines |
-| `ListWidget` | `Items []string`, `Ordered bool`, `Style *Style` | Bulleted or numbered list |
-| `TableWidget` | `Headers []string`, `Rows []*Row{Cells}` | A column-aligned table |
-| `ProgressWidget` | `Label string`, `Fraction float64`, `Style *Style` | A progress bar (negative fraction = indeterminate) |
-| `DividerWidget` | `Label string` | A horizontal rule, optionally labeled |
-| `StatusWidget` | `State` (`RUNNING`/`SUCCESS`/`FAILED`/`NEUTRAL`), `Label`, `Detail` | A status line with glyph |
+| Widget           | Fields                                                                   | Renders as                                         |
+| ---------------- | ------------------------------------------------------------------------ | -------------------------------------------------- |
+| `TextWidget`     | `Text string`, `Style *Style`                                            | A styled text line                                 |
+| `StackWidget`    | `Direction` (`VERTICAL`/`HORIZONTAL`), `Children []*Widget`, `Gap int32` | Nested layout                                      |
+| `KeyValueWidget` | `Entries []*Entry{Key, Value, ValueStyle}`                               | Aligned `key: value` lines                         |
+| `ListWidget`     | `Items []string`, `Ordered bool`, `Style *Style`                         | Bulleted or numbered list                          |
+| `TableWidget`    | `Headers []string`, `Rows []*Row{Cells}`                                 | A column-aligned table                             |
+| `ProgressWidget` | `Label string`, `Fraction float64`, `Style *Style`                       | A progress bar (negative fraction = indeterminate) |
+| `DividerWidget`  | `Label string`                                                           | A horizontal rule, optionally labeled              |
+| `StatusWidget`   | `State` (`RUNNING`/`SUCCESS`/`FAILED`/`NEUTRAL`), `Label`, `Detail`      | A status line with glyph                           |
 
-`Style` (used at the panel, widget, and entry level) carries a semantic
-`Tone` - `TONE_INFO`, `TONE_SUCCESS`, `TONE_WARN`, `TONE_ERROR`, `TONE_MUTED`
-- resolved against Tau's theme palette, so your panel's colors stay
-consistent as the user's theme changes. `FgHex`/`BgHex` are an escape hatch
-for when a specific color matters more than theme consistency. Prefer `Tone`.
+`Style` (used at the panel, widget, and entry level) carries a semantic `Tone` - `TONE_INFO`, `TONE_SUCCESS`,
+`TONE_WARN`, `TONE_ERROR`, `TONE_MUTED`
+
+- resolved against Tau's theme palette, so your panel's colors stay consistent as the user's theme changes.
+  `FgHex`/`BgHex` are an escape hatch for when a specific color matters more than theme consistency. Prefer `Tone`.
 
 ### Example: Sync and Async Panels
 
@@ -899,21 +874,19 @@ func (p *MyPlugin) RunCommand(ctx context.Context, name, args string) (string, *
 
 ### Panel Limits and Cleanup
 
-- Each plugin may have at most `MaxViewsPerPlugin` (default 5) distinct
-  **open** async views at once. Updating an already-open view's content never
-  counts against this limit - only opening a new `Id` does. Exceeding the
-  limit returns an error from `RenderView`.
-- A plugin cannot close another plugin's view, even if it guesses the exact
-  `Id` - Tau namespaces every view internally by plugin name.
-- On unload or `/reload`, Tau closes every view your plugin left open, so a
-  killed or restarted plugin process never leaves a stale panel on screen.
+- Each plugin may have at most `MaxViewsPerPlugin` (default 5) distinct **open** async views at once. Updating an
+  already-open view's content never counts against this limit - only opening a new `Id` does. Exceeding the limit
+  returns an error from `RenderView`.
+- A plugin cannot close another plugin's view, even if it guesses the exact `Id` - Tau namespaces every view internally
+  by plugin name.
+- On unload or `/reload`, Tau closes every view your plugin left open, so a killed or restarted plugin process never
+  leaves a stale panel on screen.
 
 ---
 
 ## Plugin Configuration
 
-Plugins receive their configuration from tau's `config.yaml` under the
-`plugins:` section:
+Plugins receive their configuration from tau's `config.yaml` under the `plugins:` section:
 
 ```yaml
 # ~/.config/tau/config.yaml
@@ -924,22 +897,19 @@ plugins:
     retries: 3
 ```
 
-The entire `my-plugin` block is passed to the plugin as a JSON-encoded string
-when it calls `host.GetConfig(ctx, "")`. Individual keys are retrieved with
-`host.GetConfig(ctx, "endpoint")`.
+The entire `my-plugin` block is passed to the plugin as a JSON-encoded string when it calls `host.GetConfig(ctx, "")`.
+Individual keys are retrieved with `host.GetConfig(ctx, "endpoint")`.
 
 ### Persisting State
 
-`host.SetConfig(ctx, key, value)` persists plugin state to
-`~/.config/tau/plugin-state.json`. This file survives plugin reloads and tau
-restarts. Use it for:
+`host.SetConfig(ctx, key, value)` persists plugin state to `~/.config/tau/plugin-state.json`. This file survives plugin
+reloads and tau restarts. Use it for:
 
 - Cached data (API responses, indexes)
 - Plugin preferences set at runtime
 - OAuth tokens (store the access token here after the flow completes)
 
-State is keyed by `pluginName.key`. Empty key writes to a `""` key (entire
-block replacement).
+State is keyed by `pluginName.key`. Empty key writes to a `""` key (entire block replacement).
 
 ### Reading Tau Config Directly
 
@@ -953,8 +923,8 @@ cfg, err := tauconfig.LoadConfig()
 // Access cfg.Providers, cfg.DefaultModel, etc.
 ```
 
-Note: this only works when the plugin is built inside the tau repo (with a
-`replace` directive). For standalone plugins, use `HostService.GetConfig()`.
+Note: this only works when the plugin is built inside the tau repo (with a `replace` directive). For standalone plugins,
+use `HostService.GetConfig()`.
 
 ---
 
@@ -962,7 +932,7 @@ Note: this only works when the plugin is built inside the tau repo (with a
 
 ### Inside the Tau Repo (Development)
 
-Each example plugin in `examples/plugins/` has its own `go.mod`:
+Bundled plugins live in `plugins/` with their own `go.mod`:
 
 ```
 module github.com/samcharles93/plugins/hello
@@ -975,14 +945,13 @@ require (
     github.com/samcharles93/tau v0.0.0-20260602000000-000000000000
 )
 
-replace github.com/samcharles93/tau => ../../
+replace github.com/samcharles93/tau => ../../../
 ```
 
-The `replace` directive points to the tau repo root so you compile against
-the local checkout. Build with:
+The `replace` directive points to the tau repo root so you compile against the local checkout. Build with:
 
 ```bash
-cd examples/plugins/hello
+cd plugins/tau-plugin-hello
 go build -o tau-plugin-hello .
 ```
 
@@ -1004,8 +973,7 @@ cp tau-plugin-myplugin ~/.config/tau/plugins/
 chmod +x ~/.config/tau/plugins/tau-plugin-myplugin
 ```
 
-Tau scans this directory at startup. Use `/reload` in the TUI or Web UI to
-rediscover plugins without restarting Tau.
+Tau scans this directory at startup. Use `/reload` in the TUI or Web UI to rediscover plugins without restarting Tau.
 
 ### Required Dependencies
 
@@ -1019,16 +987,14 @@ require (
 )
 ```
 
-No other dependencies are required for basic plugins. Add your own as needed
-for HTTP clients, database drivers, etc.
+No other dependencies are required for basic plugins. Add your own as needed for HTTP clients, database drivers, etc.
 
 ---
 
 ## Complete Working Example
 
-Below is a complete plugin that demonstrates tools, commands, lifecycle
-events, and HostService callbacks. This is the canonical reference for
-plugin authors.
+Below is a complete plugin that demonstrates tools, commands, lifecycle events, and HostService callbacks. This is the
+canonical reference for plugin authors.
 
 ```go
 package main
@@ -1232,32 +1198,32 @@ func (p *CounterPlugin) DispatchEvent(ctx context.Context, event, sessionID stri
 
 ### Go Packages
 
-| Package | Import Path | Contents |
-|---------|------------|----------|
-| Plugin API | `github.com/samcharles93/tau/pkg/plugin/api` | `Extension`, `ExtensionPlugin`, `Command`, `Diagnostic`, `ToolDefinition`, `EventPayload`, `EventResponse`, `View`, `Widget`, `Style`, `Host`, `HostAware`, `Capable`, `Documented` |
-| Chat Types | `github.com/samcharles93/tau/internal/chat` | `ChatMessage`, `ChatRole`, `ChatUsage`, `ChatParameters`, `ChatSessionState`, `ChatModelRef` |
-| Config | `github.com/samcharles93/tau/internal/config` | `LoadConfig()`, `Config`, `ProviderConfig` |
+| Package    | Import Path                                   | Contents                                                                                                                                                                            |
+| ---------- | --------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Plugin API | `github.com/samcharles93/tau/pkg/plugin/api`  | `Extension`, `ExtensionPlugin`, `Command`, `Diagnostic`, `ToolDefinition`, `EventPayload`, `EventResponse`, `View`, `Widget`, `Style`, `Host`, `HostAware`, `Capable`, `Documented` |
+| Chat Types | `github.com/samcharles93/tau/internal/chat`   | `ChatMessage`, `ChatRole`, `ChatUsage`, `ChatParameters`, `ChatSessionState`, `ChatModelRef`                                                                                        |
+| Config     | `github.com/samcharles93/tau/internal/config` | `LoadConfig()`, `Config`, `ProviderConfig`                                                                                                                                          |
 
 ### gRPC Contract
 
 The full `.proto` definition is at
-[`proto/tau/plugin/v1/extension.proto`](https://github.com/samcharles93/tau/blob/main/proto/tau/plugin/v1/extension.proto). The
-generated Go code is in
+[`proto/tau/plugin/v1/extension.proto`](https://github.com/samcharles93/tau/blob/main/proto/tau/plugin/v1/extension.proto).
+The generated Go code is in
 [`pkg/plugin/api/extension.pb.go`](https://github.com/samcharles93/tau/blob/main/pkg/plugin/api/extension.pb.go) and
 [`pkg/plugin/api/extension_grpc.pb.go`](https://github.com/samcharles93/tau/blob/main/pkg/plugin/api/extension_grpc.pb.go).
 
 ### Core Types
 
-| Type | Package | Description |
-|------|---------|-------------|
-| `Command` | `api` | Slash command definition (`Name`, `Description`, `ExtensionName`) |
-| `Diagnostic` | `api` | Warning/error reported to the host (`Severity`, `Message`, `Path`) |
-| `ToolDefinition` | `api` | Tool declaration (`Name`, `Description`, `InputSchema`) |
-| `EventPayload` | `api` | Oneof carrying typed event data |
-| `EventResponse` | `api` | Plugin's modifications to runtime behaviour |
-| `View` | `api` | A structured panel (`Id`, `Title`, `Widgets`, `Style`) |
-| `Widget` | `api` | One renderable element of a `View` (oneof of 8 kinds) |
-| `ExtensionPlugin` | `api` | go-plugin shim wrapping an `Extension` |
+| Type              | Package | Description                                                        |
+| ----------------- | ------- | ------------------------------------------------------------------ |
+| `Command`         | `api`   | Slash command definition (`Name`, `Description`, `ExtensionName`)  |
+| `Diagnostic`      | `api`   | Warning/error reported to the host (`Severity`, `Message`, `Path`) |
+| `ToolDefinition`  | `api`   | Tool declaration (`Name`, `Description`, `InputSchema`)            |
+| `EventPayload`    | `api`   | Oneof carrying typed event data                                    |
+| `EventResponse`   | `api`   | Plugin's modifications to runtime behaviour                        |
+| `View`            | `api`   | A structured panel (`Id`, `Title`, `Widgets`, `Style`)             |
+| `Widget`          | `api`   | One renderable element of a `View` (oneof of 8 kinds)              |
+| `ExtensionPlugin` | `api`   | go-plugin shim wrapping an `Extension`                             |
 
 ---
 
@@ -1275,39 +1241,36 @@ generated Go code is in
 
 - Ensure `Tools()` returns the tool and `InputSchema` is valid JSON.
 - Check that `InputSchema` is a proper JSON Schema object (starts with `{`).
-- The tool is registered as `plugin:<name>.<tool>`. Use `/debug` in the TUI to
-  see registered tools.
+- The tool is registered as `plugin:<name>.<tool>`. Use `/debug` in the TUI to see registered tools.
 - If using `Capable`, verify `CapabilityTools` is in the list.
 
 ### Plugin process stays around after Tau exits
 
-- go-plugin normally kills child processes on client disconnect. If your
-  plugin spawns its own children, handle `SIGTERM` in the plugin and clean
-  them up.
+- go-plugin normally kills child processes on client disconnect. If your plugin spawns its own children, handle
+  `SIGTERM` in the plugin and clean them up.
 - Check for orphaned processes with `ps aux | grep tau-plugin`.
 
 ### Plugin panics are swallowed
 
-- go-plugin isolates plugin crashes. Panics in `ExecuteTool` or
-  `DispatchEvent` are caught by the gRPC server and returned as errors.
+- go-plugin isolates plugin crashes. Panics in `ExecuteTool` or `DispatchEvent` are caught by the gRPC server and
+  returned as errors.
 - Check `stderr` of the plugin or Tau's log for stack traces.
 
 ### DispatchEvent is never called
 
-- Verify the plugin advertises `CapabilityEvents` (or doesn't implement
-  `Capable` at all, which defaults to full capability).
+- Verify the plugin advertises `CapabilityEvents` (or doesn't implement `Capable` at all, which defaults to full
+  capability).
 - Check that the event name string matches exactly (case-sensitive).
 
 ### HostService calls return errors
 
 - `SetHost()` must have been called before you can use `p.host`.
 - If `SetHost()` is never called, verify your plugin implements `HostAware`.
-- `GetConfig()` returns `found: false` if no config block exists for your
-  plugin in `config.yaml`. Add a `plugins.<name>:` block.
+- `GetConfig()` returns `found: false` if no config block exists for your plugin in `config.yaml`. Add a
+  `plugins.<name>:` block.
 
 ### gRPC connection errors
 
 - Ensure `go.sum` includes the correct versions of `go-plugin` and `grpc`.
 - Run `go mod tidy` in your plugin directory to resolve dependencies.
-- If building inside the tau repo, verify the `replace` directive points to
-  the correct relative path.
+- If building inside the tau repo, verify the `replace` directive points to the correct relative path.
