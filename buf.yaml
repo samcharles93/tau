@@ -1,0 +1,16 @@
+version: v2
+modules:
+  - path: proto
+lint:
+  use:
+    - STANDARD
+  except:
+    # Zero values are meaningful defaults in this contract (TONE_DEFAULT,
+    # DIRECTION_VERTICAL, STATE_NEUTRAL) rather than *_UNSPECIFIED sentinels.
+    - ENUM_ZERO_VALUE_SUFFIX
+    # ExtensionService.Log and HostService.Log deliberately share
+    # LogRequest/LogResponse: same shape, both directions.
+    - RPC_REQUEST_RESPONSE_UNIQUE
+breaking:
+  use:
+    - WIRE_JSON

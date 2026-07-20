@@ -200,6 +200,7 @@ export interface ChatToolExecutionCompletedEvent {
 export interface ChildAgentResultDetails {
   status: ChildAgentStatus
   instance_id: string
+  spec_name?: string
   session_id?: string
   usage?: {
     turns: number
@@ -265,6 +266,9 @@ export interface InteractivePromptRequestedEvent {
 
 export type ChildAgentStatus = 'working' | 'completed' | 'failed' | 'cancelled' | 'budget_exhausted' | 'timed_out'
 
+// Keep in sync with ChildAgentStatus.IsTerminal() in internal/chat/types.go.
+// New status values added to the Go enum must be mirrored here, otherwise
+// ToolCard.vue renders the live/working layout forever for that status.
 export function isChildTerminal(status: ChildAgentStatus): boolean {
   switch (status) {
     case 'completed':

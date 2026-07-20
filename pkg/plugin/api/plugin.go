@@ -10,6 +10,23 @@ import (
 	"google.golang.org/grpc"
 )
 
+// Handshake is the go-plugin handshake shared by the tau host and every
+// plugin binary. ProtocolVersion gates wire compatibility: bump it whenever
+// the proto contract changes incompatibly (package rename, field type change,
+// enum renumbering) so stale plugin binaries fail cleanly at handshake
+// instead of misbehaving mid-call.
+//
+// Version history:
+//
+//	1: original contract (proto package "proto")
+//	2: proto package tau.plugin.v1; StackWidget.Direction/StatusWidget.State
+//	   values renamed and State renumbered; dead fields removed
+var Handshake = plugin.HandshakeConfig{
+	ProtocolVersion:  2,
+	MagicCookieKey:   "TAU_PLUGIN",
+	MagicCookieValue: "tau",
+}
+
 // Capability identifiers a plugin may advertise via GetCapabilities. The set is
 // open: the host ignores unknown values, so new capability types can be added
 // without breaking existing plugins.

@@ -75,11 +75,7 @@ func main() {
 	}
 
 	plugin.Serve(&plugin.ServeConfig{
-		HandshakeConfig: plugin.HandshakeConfig{
-			ProtocolVersion:  1,
-			MagicCookieKey:   "TAU_PLUGIN",
-			MagicCookieValue: "tau",
-		},
+		HandshakeConfig: pluginapi.Handshake,
 		Plugins: map[string]plugin.Plugin{
 			"extension": &pluginapi.ExtensionPlugin{Impl: p},
 		},

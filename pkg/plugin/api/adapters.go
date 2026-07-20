@@ -235,7 +235,7 @@ func ProtoWidgetToChat(w *Widget) chat.Widget {
 			children = append(children, ProtoWidgetToChat(c))
 		}
 		direction := chat.StackVertical
-		if k.Stack.GetDirection() == StackWidget_HORIZONTAL {
+		if k.Stack.GetDirection() == StackWidget_DIRECTION_HORIZONTAL {
 			direction = chat.StackHorizontal
 		}
 		return chat.Widget{
@@ -286,14 +286,14 @@ func ProtoWidgetToChat(w *Widget) chat.Widget {
 	case *Widget_Divider:
 		return chat.Widget{Kind: chat.WidgetKindDivider, Divider: &chat.DividerWidget{Label: k.Divider.GetLabel()}}
 	case *Widget_Status:
-		state := chat.StatusRunning
+		state := chat.StatusNeutral
 		switch k.Status.GetState() {
-		case StatusWidget_SUCCESS:
+		case StatusWidget_STATE_RUNNING:
+			state = chat.StatusRunning
+		case StatusWidget_STATE_SUCCESS:
 			state = chat.StatusSuccess
-		case StatusWidget_FAILED:
+		case StatusWidget_STATE_FAILED:
 			state = chat.StatusFailed
-		case StatusWidget_NEUTRAL:
-			state = chat.StatusNeutral
 		}
 		return chat.Widget{
 			Kind: chat.WidgetKindStatus,

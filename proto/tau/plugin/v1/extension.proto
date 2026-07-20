@@ -1,6 +1,25 @@
+// tau plugin wire contract.
+//
+// This file is the source of truth for the host<->plugin protocol. Both the
+// tau host and every plugin binary compile against the Go code generated from
+// it (pkg/plugin/api). Regenerate with `task proto`.
+//
+// Compatibility policy:
+//   - Field, enum, and oneof numbers are append-only: never renumber or reuse
+//     one. When removing a field, reserve its number and name.
+//   - Evolve additively. Hosts skip unknown Widget/EventPayload kinds and
+//     ignore unknown capability strings; plugins must tolerate absent fields
+//     and Unimplemented host RPCs.
+//   - A deliberate breaking change (package rename, field type change, enum
+//     renumbering) must bump ProtocolVersion in api.Handshake so stale plugin
+//     binaries are rejected at handshake instead of failing mid-call.
 syntax = "proto3";
-package proto;
-option go_package = "github.com/samcharles93/tau/pkg/plugin/api";
+
+package tau.plugin.v1;
+
+option go_package = "github.com/samcharles93/tau/pkg/plugin/api;api";
+
+// --- Shared types ---
 
 // Command represents an extension slash command. Commands may declare nested
 // sub-actions (subcommands), e.g. `/mcp list`, so a plugin can group related
@@ -17,13 +36,8 @@ message Command {
 message Diagnostic {
   string path = 1;
   string extension_name = 2;
-  string severity = 3;
+  string severity = 3;  // "info", "warn", or "error"
   string message = 4;
-}
-
-// EventContext carries session/event metadata to extensions.
-message EventContext {
-  map<string, string> fields = 1;
 }
 
 // --- Metadata ---
@@ -39,6 +53,8 @@ message GetMetadataResponse {
 
 message RunCommandRequest {
   string name = 1;
+  // The raw argument text following the command name, unsplit. The plugin is
+  // responsible for its own tokenising and quoting rules.
   string args = 2;
 }
 message RunCommandResponse {
@@ -56,8 +72,26 @@ message ReloadResponse {
 
 // --- Events ---
 
+// DispatchEventRequest delivers one runtime event to a plugin. `event` is the
+// authoritative discriminator; `payload` carries the matching typed data.
+//
+// Request-response events (the host applies the returned EventResponse):
+//   "context"          -> ContextPayload
+//   "before_llm_call"  -> BeforeLLMCallPayload
+//   "before_tool_exec" -> ToolCallPayload
+//   "after_tool_exec"  -> ToolResultPayload
+//
+// Fire-and-forget lifecycle events (any returned EventResponse is ignored):
+//   "session_start", "session_shutdown"          -> SessionEventPayload
+//   "turn_start", "turn_end"                     -> TurnPayload
+//   "after_llm_call"                             -> AfterLLMCallPayload
+//   "tool_execution_start"                       -> ToolCallPayload
+//   "tool_execution_end"                         -> ToolResultPayload
+//
+// New event names may be added at any time; plugins must ignore events they
+// do not recognise.
 message DispatchEventRequest {
-  string event = 1;           // "session_start", "context", "before_tool_exec", etc.
+  string event = 1;
   string session_id = 2;
   EventPayload payload = 3;
 }
@@ -66,8 +100,15 @@ message DispatchEventResponse {
   EventResponse response = 1;
 }
 
-// EventPayload carries typed data for each event kind.
+// EventPayload carries typed data for each event kind. Unknown kinds are
+// skipped, so new payload types can be added additively.
 message EventPayload {
+  // 7 was message_delta, 9 was compaction: declared but never dispatched by
+  // any host; removed 2026-07. Re-add only alongside a host that dispatches
+  // them.
+  reserved 7, 9;
+  reserved "message_delta", "compaction";
+
   oneof kind {
     SessionEventPayload session = 1;
     ContextPayload context = 2;
@@ -75,21 +116,36 @@ message EventPayload {
     AfterLLMCallPayload after_llm_call = 4;
     ToolCallPayload before_tool_exec = 5;
     ToolResultPayload after_tool_exec = 6;
-    MessageDeltaPayload message_delta = 7;
     TurnPayload turn = 8;
-    CompactionPayload compaction = 9;
   }
 }
 
-// EventResponse is what plugins can return to modify behavior.
+// EventResponse is what plugins return from request-response events to modify
+// host behaviour. Responses from multiple plugins are merged in plugin load
+// order: repeated fields append, add_headers map-merges (later plugins win on
+// key conflicts), inject_system_prompt values are newline-joined, boolean
+// flags OR together (the first blocking plugin's block_reason is kept), and
+// for the modified_* fields the last plugin to set a non-empty value wins.
+//
+// The modified_* fields use the empty string as "no change"; modifying a
+// value to empty is not expressible.
 message EventResponse {
-  repeated string inject_messages = 1;       // JSON-encoded ChatMessage to inject
-  repeated int32 remove_message_indices = 2;  // indices to remove from context
-  string inject_system_prompt = 3;            // appended to system prompt
+  // 12 was modified_cwd: never honoured by the host; removed 2026-07.
+  reserved 12;
+  reserved "modified_cwd";
+
+  // JSON-encoded chat.ChatMessage values appended to the context ("context").
+  repeated string inject_messages = 1;
+  // 0-based indices into the message list carried by this event's payload,
+  // identifying messages to remove ("context"). The host applies removals in
+  // descending index order; duplicate indices across plugins are undefined
+  // behaviour.
+  repeated int32 remove_message_indices = 2;
+  string inject_system_prompt = 3;            // appended to the system prompt
   string modified_tool_arguments = 4;         // JSON, for before_tool_exec
-  bool block_tool_execution = 5;
+  bool block_tool_execution = 5;              // for before_tool_exec
   string block_reason = 6;
-  string modified_tool_result = 7;           // JSON, for after_tool_exec
+  string modified_tool_result = 7;            // JSON, for after_tool_exec
   map<string, string> add_headers = 8;        // for before_llm_call
   string modified_model_id = 9;               // for before_llm_call
   repeated Diagnostic diagnostics = 10;
@@ -104,21 +160,26 @@ message SessionEventPayload {
   string provider = 3;
 }
 
+// ContextPayload carries the full conversation so far. The whole history is
+// serialised into every dispatch, so this payload (and BeforeLLMCallPayload)
+// can approach gRPC's 4 MB default message limit in long sessions; when that
+// happens the host logs the dispatch failure and skips the event for that
+// plugin.
 message ContextPayload {
-  repeated string messages = 1;  // JSON-encoded ChatMessage list
+  repeated string messages = 1;  // JSON-encoded chat.ChatMessage list
 }
 
 message BeforeLLMCallPayload {
   string model_id = 1;
-  repeated string messages = 2;  // JSON-encoded ChatMessage list
+  repeated string messages = 2;  // JSON-encoded chat.ChatMessage list
   map<string, string> headers = 3;
-  string parameters = 4;         // JSON-encoded ChatParameters
+  string parameters = 4;         // JSON-encoded chat.ChatParameters
 }
 
 message AfterLLMCallPayload {
   string model_id = 1;
   string finish_reason = 2;
-  string usage = 3;              // JSON-encoded ChatUsage
+  string usage = 3;              // JSON-encoded chat.ChatUsage
 }
 
 message ToolCallPayload {
@@ -128,29 +189,20 @@ message ToolCallPayload {
 }
 
 message ToolResultPayload {
+  // 6 was duration: never populated by the host; removed 2026-07.
+  reserved 6;
+  reserved "duration";
+
   string tool_name = 1;
   string arguments = 2;          // JSON
   string result = 3;             // JSON
   bool is_error = 4;
   string call_id = 5;
-  string duration = 6;
-}
-
-message MessageDeltaPayload {
-  string role = 1;             // "assistant"
-  string delta = 2;            // the token text
-  string snapshot = 3;         // full text so far
 }
 
 message TurnPayload {
   string direction = 1;        // "start" or "end"
   int32 turn_number = 2;
-}
-
-message CompactionPayload {
-  string direction = 1;        // "before" or "after"
-  int32 message_count_before = 2;
-  int32 message_count_after = 3;
 }
 
 // --- Tools ---
@@ -174,6 +226,33 @@ message ExecuteToolResponse {
   string content = 1;   // JSON string (tool result content)
   bool is_error = 2;
 }
+
+// --- Capabilities ---
+
+message GetCapabilitiesRequest {}
+
+// The canonical capability strings are "commands", "tools", "events",
+// "interactive", and "views" (mirrored by the Capability* Go constants in
+// this package). The set is open: the host ignores unknown values, so new
+// capabilities can be added without breaking older hosts.
+//
+// An empty list is treated by the host as the full legacy surface (commands,
+// tools, events) for backward compatibility; a plugin cannot advertise zero
+// capabilities. "views" is never assumed and must be opted into explicitly.
+message GetCapabilitiesResponse {
+  repeated string capabilities = 1;
+}
+
+// --- Init ---
+
+// InitRequest hands the plugin the broker id of the host's HostService so the
+// plugin can dial back. Sent once by the host right after handshake, before
+// any command or tool runs.
+message InitRequest {
+  uint32 host_broker_id = 1;  // go-plugin broker id for the host HostService
+  string plugin_name = 2;     // the plugin's registered name
+}
+message InitResponse {}
 
 // --- Views / Panels ---
 
@@ -234,8 +313,10 @@ message TextWidget {
 
 message StackWidget {
   enum Direction {
-    VERTICAL = 0;
-    HORIZONTAL = 1;
+    // Vertical is the deliberate zero value: an unset direction stacks
+    // children top-to-bottom.
+    DIRECTION_VERTICAL = 0;
+    DIRECTION_HORIZONTAL = 1;
   }
   Direction direction = 1;
   repeated Widget children = 2;
@@ -277,10 +358,12 @@ message DividerWidget {
 
 message StatusWidget {
   enum State {
-    RUNNING = 0;
-    SUCCESS = 1;
-    FAILED = 2;
-    NEUTRAL = 3;
+    // Neutral is the zero value so a default-constructed widget renders
+    // inert rather than as a running spinner.
+    STATE_NEUTRAL = 0;
+    STATE_RUNNING = 1;
+    STATE_SUCCESS = 2;
+    STATE_FAILED = 3;
   }
   State state = 1;
   string label = 2;
@@ -288,13 +371,16 @@ message StatusWidget {
 }
 
 message RenderViewRequest {
-  string plugin_name = 1; // populated by hostClient, not the plugin author
+  // The calling plugin's registered name. The SDK's hostClient fills this in
+  // automatically. The host currently trusts it as sent, so it scopes view
+  // ownership but is NOT a security boundary between plugins.
+  string plugin_name = 1;
   View view = 2;
 }
 message RenderViewResponse {}
 
 message CloseViewRequest {
-  string plugin_name = 1;
+  string plugin_name = 1;  // same trust caveat as RenderViewRequest
   string view_id = 2;
 }
 message CloseViewResponse {}
@@ -312,53 +398,13 @@ message LogRequest {
 }
 message LogResponse {}
 
-// --- Config ---
-
-message ConfigSchema {
-  message Field {
-    string type = 1;
-    string default = 2;
-    bool required = 3;
-  }
-  map<string, Field> fields = 1;
-}
-
-// --- Service ---
-
-service ExtensionService {
-  rpc GetMetadata(GetMetadataRequest) returns (GetMetadataResponse);
-  rpc RunCommand(RunCommandRequest) returns (RunCommandResponse);
-  rpc Reload(ReloadRequest) returns (ReloadResponse);
-  rpc DispatchEvent(DispatchEventRequest) returns (DispatchEventResponse);
-  rpc GetTools(GetToolsRequest) returns (GetToolsResponse);
-  rpc ExecuteTool(ExecuteToolRequest) returns (ExecuteToolResponse);
-  rpc Log(LogRequest) returns (LogResponse);
-
-  // Init hands the plugin the broker id of the host's HostService so the
-  // plugin can dial back. Called once by the host right after handshake.
-  rpc Init(InitRequest) returns (InitResponse);
-
-  // GetCapabilities reports which capability types the plugin provides so the
-  // host can skip unsupported calls and evolve the protocol additively.
-  rpc GetCapabilities(GetCapabilitiesRequest) returns (GetCapabilitiesResponse);
-}
-
-message GetCapabilitiesRequest {}
-message GetCapabilitiesResponse {
-  // e.g. "commands", "tools", "events". Unknown values are ignored by the host.
-  repeated string capabilities = 1;
-}
-
-// --- Host services (plugin -> host reverse RPCs) ---
-
-message InitRequest {
-  uint32 host_broker_id = 1;  // go-plugin broker id for the host HostService
-  string plugin_name = 2;     // the plugin's registered name
-}
-message InitResponse {}
+// --- Host service messages (plugin -> host reverse RPCs) ---
 
 message GetConfigRequest {
-  string plugin_name = 1;  // which plugin's config block to read
+  // Which plugin's `plugins.<name>` config block to read. Filled in by the
+  // SDK's hostClient with the caller's own name; the host currently trusts
+  // it as sent (see RenderViewRequest.plugin_name).
+  string plugin_name = 1;
   string key = 2;          // optional dotted key; empty returns the whole block
 }
 message GetConfigResponse {
@@ -367,7 +413,7 @@ message GetConfigResponse {
 }
 
 message SetConfigRequest {
-  string plugin_name = 1;
+  string plugin_name = 1;  // same trust caveat as GetConfigRequest
   string key = 2;
   string value = 3;  // JSON-encoded value
 }
@@ -410,6 +456,26 @@ message InputRequest {
 message InputResponse {
   string value = 1;
   bool canceled = 2;
+}
+
+// --- Services ---
+
+service ExtensionService {
+  rpc GetMetadata(GetMetadataRequest) returns (GetMetadataResponse);
+  rpc RunCommand(RunCommandRequest) returns (RunCommandResponse);
+  rpc Reload(ReloadRequest) returns (ReloadResponse);
+  rpc DispatchEvent(DispatchEventRequest) returns (DispatchEventResponse);
+  rpc GetTools(GetToolsRequest) returns (GetToolsResponse);
+  rpc ExecuteTool(ExecuteToolRequest) returns (ExecuteToolResponse);
+  rpc Log(LogRequest) returns (LogResponse);
+
+  // Init hands the plugin the broker id of the host's HostService so the
+  // plugin can dial back. Called once by the host right after handshake.
+  rpc Init(InitRequest) returns (InitResponse);
+
+  // GetCapabilities reports which capability types the plugin provides so the
+  // host can skip unsupported calls and evolve the protocol additively.
+  rpc GetCapabilities(GetCapabilitiesRequest) returns (GetCapabilitiesResponse);
 }
 
 // HostService is served by the tau host and called by plugins via the

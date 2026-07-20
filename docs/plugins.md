@@ -1241,7 +1241,7 @@ func (p *CounterPlugin) DispatchEvent(ctx context.Context, event, sessionID stri
 ### gRPC Contract
 
 The full `.proto` definition is at
-[`pkg/plugin/api/extension.proto`](https://github.com/samcharles93/tau/blob/main/pkg/plugin/api/extension.proto). The
+[`proto/tau/plugin/v1/extension.proto`](https://github.com/samcharles93/tau/blob/main/proto/tau/plugin/v1/extension.proto). The
 generated Go code is in
 [`pkg/plugin/api/extension.pb.go`](https://github.com/samcharles93/tau/blob/main/pkg/plugin/api/extension.pb.go) and
 [`pkg/plugin/api/extension_grpc.pb.go`](https://github.com/samcharles93/tau/blob/main/pkg/plugin/api/extension_grpc.pb.go).

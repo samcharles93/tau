@@ -244,6 +244,7 @@ export const useSessionStore = defineStore('session', () => {
       case 'SessionLoadedEvent': {
         // A different session was loaded: rebuild the stream from scratch.
         messages.value = []
+        childAgents.value = new Map()
         absorbState((msg.payload as { state: ChatSessionState }).state)
         break
       }
@@ -319,16 +320,20 @@ export const useSessionStore = defineStore('session', () => {
           t.resultSummary = ev.result_summary
         }
         // Extract child agent result from agent tool details.
-        if (ev.tool_name === 'agent' && ev.details) {
+        // Skip spawn-rejected entries that carry no instance_id (the
+        // concurrency admission gate sends details with only status +
+        // failure_reason + queued). Matches tui2's extractChildAgentResult
+        // which returns false when instance_id is empty.
+        if (ev.tool_name === 'agent' && ev.details?.instance_id) {
           const prev = childAgents.value.get(ev.call_id)
           const d = ev.details
           childAgents.value.set(ev.call_id, {
             instance_id: d.instance_id ?? prev?.instance_id ?? '',
-            spec_name: prev?.spec_name ?? '',
+            spec_name: d.spec_name ?? prev?.spec_name ?? '',
             status: d.status ?? prev?.status ?? 'completed',
             activity: prev?.activity ?? '',
             turns: d.usage?.turns ?? prev?.turns ?? 0,
-            tokens: ((d.usage?.input_tokens ?? 0) + (d.usage?.output_tokens ?? 0)) || (prev?.tokens ?? 0),
+            tokens: (d.usage?.input_tokens ?? 0) + (d.usage?.output_tokens ?? 0),
             duration_ms: d.duration_ms ?? prev?.duration_ms ?? 0,
             error_msg: d.error ?? prev?.error_msg,
             session_id: d.session_id ?? prev?.session_id,
@@ -364,6 +369,14 @@ export const useSessionStore = defineStore('session', () => {
         const a = messages.value[messages.value.length - 1]
         if (a && a.role === 'assistant' && a.streaming) {
           a.streaming = false
+          // Mark still-running tools as interrupted so they don't render a
+          // permanently-pulsing "running" badge — no completion event will
+          // ever arrive for them.
+          for (const p of a.parts) {
+            if (p.kind === 'tool' && p.tool.status === 'running') {
+              p.tool.status = 'error'
+            }
+          }
         }
         if (ev.state) absorbState(ev.state)
         streaming.value = false

@@ -119,14 +119,14 @@ function shortId(id: string): string {
 function agentLabel(s: SessionSummary): string {
   if (!s.agent_instance_id) return ''
   let name = s.agent_spec_name ?? ''
-  if (!name) {
-    const idx = s.agent_instance_id.indexOf('#')
-    if (idx >= 0) name = s.agent_instance_id.slice(0, idx)
-    else name = s.agent_instance_id
+  let suffix = ''
+  const idx = s.agent_instance_id.indexOf('#')
+  if (idx >= 0) {
+    if (!name) name = s.agent_instance_id.slice(0, idx)
+    suffix = s.agent_instance_id.slice(idx + 1)
+  } else {
+    if (!name) name = s.agent_instance_id
   }
-  const suffix = s.agent_instance_id.includes('#')
-    ? s.agent_instance_id.split('#')[1]
-    : s.agent_instance_id
-  return `agent ${name} · ${suffix}`
+  return suffix ? `agent ${name} · ${suffix}` : `agent ${name}`
 }
 </script>
