@@ -92,6 +92,9 @@ var catalog = []CatalogEntry{
 	// is the host without /v1 - the anthropic client appends /v1/messages.
 	{ID: "anthropic", DisplayName: "Anthropic (Claude)", BaseURL: "https://api.anthropic.com", EnvVars: []string{"ANTHROPIC_API_KEY"}, Auth: AuthAPIKey, Class: "anthropic"},
 
+	{ID: "moonshotai", DisplayName: "Moonshot AI (Kimi)", BaseURL: "https://api.moonshot.ai/v1", EnvVars: []string{"MOONSHOT_API_KEY"}, Auth: AuthAPIKey},
+	{ID: "kimi-for-coding", DisplayName: "Kimi For Coding", BaseURL: "https://api.kimi.com/coding", EnvVars: []string{"KIMI_API_KEY"}, Auth: AuthAPIKey, Class: "anthropic"},
+
 	{ID: "github-copilot", DisplayName: "GitHub Copilot", BaseURL: "https://api.githubcopilot.com", Auth: AuthOAuth, OAuthHandler: "github-copilot", CatalogID: "github-copilot", Headers: map[string]string{
 		"Copilot-Integration-Id": "tau",
 		"Editor-Plugin-Version":  "tau/1.0",
