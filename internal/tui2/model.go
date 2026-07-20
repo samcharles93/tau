@@ -193,6 +193,11 @@ type model struct {
 	// streaming - mid-token markdown re-parsing is unsafe.
 	mdCache map[int]*glamour.TermRenderer
 
+	// expandedToolCache stores fully styled bodies for expanded tool boxes.
+	// The small live title is still rendered on every frame; see tools.go.
+	expandedToolCache      map[string]expandedToolCacheEntry
+	expandedToolCacheOrder []string
+
 	// pendingQuit is the time of the last unanswered Ctrl+C (idle, nothing to
 	// cancel) - a second Ctrl+C within quitConfirmWindow confirms the quit,
 	// mirroring internal/tui/inline_chat.go's double-tap guard.
@@ -355,6 +360,7 @@ func newModel(
 		childAgents:               make(map[string]childAgentResult),
 		childMessages:             make(map[string][]tauchat.ChatMessage),
 		mdCache:                   mdCache,
+		expandedToolCache:         make(map[string]expandedToolCacheEntry),
 	}
 }
 

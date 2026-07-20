@@ -47,6 +47,21 @@ type toolState struct {
 	details any
 }
 
+const expandedToolCacheLimit = 32
+
+// expandedToolCacheEntry contains the expensive, stable portion of an
+// expanded tool box after glamour and both lipgloss box styles have run.
+// bodySuffix starts immediately after the placeholder title row and includes
+// the remaining rows plus the bottom border. The live title is spliced in on
+// each frame so spinner, status, and elapsed time remain current.
+type expandedToolCacheEntry struct {
+	source     string
+	childBlock string
+	width      int
+	focused    bool
+	bodySuffix string
+}
+
 // committedToolGroup is a multi-tool-call batch already committed to
 // permanent scrollback (see commitToolGroup) that can still be
 // unfolded/refolded and drilled into afterward, mirroring the live group's
@@ -935,18 +950,24 @@ func (m *model) renderToolBox(t toolState, expanded bool, _ int, width int) stri
 	}
 	boxStyle = boxStyle.Width(width).Padding(0, 1)
 
-	// Build body lines.
-	var bodyLines []string
-
 	// For agent tools, render the live child state block while running
 	// or the terminal summary once complete.
+	childBlock := ""
 	if t.name == "agent" {
 		if child, ok := m.childAgents[t.id]; ok && child.instanceID != "" {
-			bodyLines = append(bodyLines, renderChildStateBlock(child, width-4))
+			childBlock = renderChildStateBlock(child, width-4)
 		}
 	}
 
 	if expanded {
+		if cached, ok := m.cachedExpandedTool(t, width, focused, childBlock); ok {
+			return renderExpandedToolHeader(boxStyle, title, cached.bodySuffix)
+		}
+
+		var bodyLines []string
+		if childBlock != "" {
+			bodyLines = append(bodyLines, childBlock)
+		}
 		// Expanded mode: show full result content in an inner box.
 		// When the output looks like markdown (code blocks, lists,
 		// tables), render it through glamour for syntax highlight.
@@ -985,8 +1006,7 @@ func (m *model) renderToolBox(t toolState, expanded bool, _ int, width int) stri
 					for line := range strings.SplitSeq(innerRendered, "\n") {
 						bodyLines = append(bodyLines, line)
 					}
-					content := title + "\n" + strings.Join(bodyLines, "\n")
-					return boxStyle.Render(content)
+					return m.cacheAndRenderExpandedTool(t, width, focused, childBlock, boxStyle, title, bodyLines)
 				}
 			}
 			// Fall through to plain-text rendering if glamour failed.
@@ -1002,7 +1022,12 @@ func (m *model) renderToolBox(t toolState, expanded bool, _ int, width int) stri
 		for line := range strings.SplitSeq(innerRendered, "\n") {
 			bodyLines = append(bodyLines, line)
 		}
+		return m.cacheAndRenderExpandedTool(t, width, focused, childBlock, boxStyle, title, bodyLines)
 	} else {
+		var bodyLines []string
+		if childBlock != "" {
+			bodyLines = append(bodyLines, childBlock)
+		}
 		// Compact mode: show first tail line if any, otherwise truncated result summary.
 		detail := ""
 		if len(t.tailLines) > 0 && (t.status == "pending" || t.status == "running") {
@@ -1018,14 +1043,95 @@ func (m *model) renderToolBox(t toolState, expanded bool, _ int, width int) stri
 		if detail != "" {
 			bodyLines = append(bodyLines, detail)
 		}
+		// Build compact content: title on first line, body on subsequent lines.
+		content := title
+		if len(bodyLines) > 0 {
+			content += "\n" + strings.Join(bodyLines, "\n")
+		}
+		return boxStyle.Render(content)
 	}
+}
 
-	// Build content: title on first line, body on subsequent lines.
-	content := title
+func (m *model) cachedExpandedTool(t toolState, width int, focused bool, childBlock string) (expandedToolCacheEntry, bool) {
+	if t.id == "" {
+		return expandedToolCacheEntry{}, false
+	}
+	cached, ok := m.expandedToolCache[t.id]
+	if !ok || cached.source != t.result || cached.childBlock != childBlock || cached.width != width || cached.focused != focused {
+		return expandedToolCacheEntry{}, false
+	}
+	return cached, true
+}
+
+func (m *model) cacheAndRenderExpandedTool(
+	t toolState,
+	width int,
+	focused bool,
+	childBlock string,
+	boxStyle lipgloss.Style,
+	title string,
+	bodyLines []string,
+) string {
+	content := " "
 	if len(bodyLines) > 0 {
 		content += "\n" + strings.Join(bodyLines, "\n")
 	}
-	return boxStyle.Render(content)
+	placeholderBox := boxStyle.Render(content)
+	bodySuffix := expandedToolBodySuffix(placeholderBox)
+	if bodySuffix == "" {
+		return boxStyle.Render(title + strings.TrimPrefix(content, " "))
+	}
+
+	if t.id != "" {
+		m.storeExpandedToolCache(t.id, expandedToolCacheEntry{
+			source:     t.result,
+			childBlock: childBlock,
+			width:      width,
+			focused:    focused,
+			bodySuffix: bodySuffix,
+		})
+	}
+	return renderExpandedToolHeader(boxStyle, title, bodySuffix)
+}
+
+// expandedToolBodySuffix drops the top border and placeholder title row from
+// a fully rendered box, retaining the newline before the first body row.
+func expandedToolBodySuffix(rendered string) string {
+	first := strings.IndexByte(rendered, '\n')
+	if first < 0 {
+		return ""
+	}
+	secondRel := strings.IndexByte(rendered[first+1:], '\n')
+	if secondRel < 0 {
+		return ""
+	}
+	return rendered[first+1+secondRel:]
+}
+
+// renderExpandedToolHeader renders only the small changing title, removes
+// its temporary bottom border, then joins it to the cached body and real
+// bottom border.
+func renderExpandedToolHeader(boxStyle lipgloss.Style, title, bodySuffix string) string {
+	header := boxStyle.Render(title)
+	if last := strings.LastIndexByte(header, '\n'); last >= 0 {
+		header = header[:last]
+	}
+	return header + bodySuffix
+}
+
+func (m *model) storeExpandedToolCache(id string, entry expandedToolCacheEntry) {
+	if m.expandedToolCache == nil {
+		m.expandedToolCache = make(map[string]expandedToolCacheEntry)
+	}
+	if _, exists := m.expandedToolCache[id]; !exists {
+		if len(m.expandedToolCacheOrder) >= expandedToolCacheLimit {
+			oldest := m.expandedToolCacheOrder[0]
+			m.expandedToolCacheOrder = m.expandedToolCacheOrder[1:]
+			delete(m.expandedToolCache, oldest)
+		}
+		m.expandedToolCacheOrder = append(m.expandedToolCacheOrder, id)
+	}
+	m.expandedToolCache[id] = entry
 }
 
 // looksLikeMarkdown reports whether content contains markdown syntax markers

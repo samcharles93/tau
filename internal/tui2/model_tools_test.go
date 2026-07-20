@@ -681,6 +681,83 @@ func TestExpandedToolBoxPopulatesMarkdownCacheAtInnerWidth(t *testing.T) {
 	}
 }
 
+func TestExpandedToolBoxCachesStableBodyAndKeepsLiveTitle(t *testing.T) {
+	m := newTestModel(&fakeRuntime{}, nil)
+	m.Update(tea.WindowSizeMsg{Width: 80, Height: 24})
+	tool := toolState{
+		id:        "t1",
+		name:      "read",
+		status:    "running",
+		result:    "# Heading\n\nSome body text.",
+		startedAt: time.Now(),
+	}
+
+	first := m.renderToolBox(tool, true, 0, m.width)
+	cached, ok := m.expandedToolCache[tool.id]
+	if !ok || cached.bodySuffix == "" {
+		t.Fatal("expected expanded tool body to be cached")
+	}
+
+	tool.spinnerIdx++
+	second := m.renderToolBox(tool, true, 0, m.width)
+	if first == second {
+		t.Fatal("cached expanded tool box did not refresh its live spinner title")
+	}
+	if got := m.expandedToolCache[tool.id].bodySuffix; got != cached.bodySuffix {
+		t.Fatal("spinner-only update rebuilt the cached expanded tool body")
+	}
+}
+
+func TestExpandedToolBoxCacheInvalidatesWithRenderInputs(t *testing.T) {
+	m := newTestModel(&fakeRuntime{}, nil)
+	m.Update(tea.WindowSizeMsg{Width: 80, Height: 24})
+	tool := toolState{id: "t1", name: "read", status: "done", result: "# First"}
+
+	m.renderToolBox(tool, true, 0, m.width)
+	tool.result = "# Changed"
+	changed := stripANSI(m.renderToolBox(tool, true, 0, m.width))
+	if !strings.Contains(changed, "Changed") {
+		t.Fatalf("expanded output did not update after result change: %q", changed)
+	}
+	if got := m.expandedToolCache[tool.id].source; got != tool.result {
+		t.Fatalf("cached source = %q, want %q", got, tool.result)
+	}
+
+	m.renderToolBox(tool, true, 0, 100)
+	if got := m.expandedToolCache[tool.id].width; got != 100 {
+		t.Fatalf("cached width = %d, want 100 after resize", got)
+	}
+
+	m.tools = []toolState{tool}
+	m.focusedTool = 0
+	m.renderToolBox(tool, true, 0, 100)
+	if !m.expandedToolCache[tool.id].focused {
+		t.Fatal("focused style did not invalidate expanded tool cache")
+	}
+}
+
+func TestExpandedToolBoxCacheIsBounded(t *testing.T) {
+	m := newTestModel(&fakeRuntime{}, nil)
+	m.Update(tea.WindowSizeMsg{Width: 80, Height: 24})
+
+	for i := range expandedToolCacheLimit + 1 {
+		tool := toolState{
+			id:     fmt.Sprintf("tool-%d", i),
+			name:   "read",
+			status: "done",
+			result: "# Heading",
+		}
+		m.renderToolBox(tool, true, 0, m.width)
+	}
+
+	if got := len(m.expandedToolCache); got != expandedToolCacheLimit {
+		t.Fatalf("expanded tool cache size = %d, want %d", got, expandedToolCacheLimit)
+	}
+	if _, ok := m.expandedToolCache["tool-0"]; ok {
+		t.Fatal("oldest expanded tool cache entry was not evicted")
+	}
+}
+
 func TestSpaceTogglesToolExpansion(t *testing.T) {
 	m := newTestModel(&fakeRuntime{}, nil)
 	m.tools = []toolState{{id: "t1", name: "read", status: "done"}}
