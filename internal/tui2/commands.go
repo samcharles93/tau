@@ -340,12 +340,7 @@ func (m *model) cmdEffort(args string) tea.Cmd {
 func (m *model) cmdModel(modelID string) tea.Cmd {
 	modelID = strings.TrimSpace(modelID)
 	if modelID == "" {
-		if len(m.availableModels) == 0 {
-			return m.setNotification("no models available - try /refresh")
-		}
-		// Prefill input for completion picker.
-		m.input = "/model "
-		return nil
+		return m.openModelPalette()
 	}
 
 	var ref tauchat.ChatModelRef
@@ -519,16 +514,21 @@ func formatCopyTranscript(msgs []tauchat.ChatMessage) string {
 func (m *model) cmdProvider(args string) tea.Cmd {
 	args = strings.TrimSpace(args)
 	if args == "" {
-		m.appendMessage("system", providerMenuText(m.ctx))
-		return nil
+		return m.openProviderPalette("")
 	}
 
 	fields := strings.Fields(args)
 	rest := strings.TrimSpace(strings.TrimPrefix(args, fields[0]))
 	switch strings.ToLower(fields[0]) {
 	case "login":
+		if rest == "" {
+			return m.openProviderPalette("login")
+		}
 		return m.providerLogin(rest)
 	case "logout":
+		if rest == "" {
+			return m.openProviderPalette("logout")
+		}
 		return m.providerLogout(rest)
 	default:
 		return m.providerToggle(fields[0])
@@ -706,33 +706,6 @@ func providerCfg(ctx context.Context) config.Config {
 func providerState() providers.State {
 	s, _ := providers.LoadState()
 	return s
-}
-
-// providerMenuText renders the catalog with each provider's current state -
-// mirrors internal/tui/inline_providers.go's printProviderMenu.
-func providerMenuText(ctx context.Context) string {
-	menu := providers.Menu(providerCfg(ctx), providerState(), nil)
-	var b strings.Builder
-	b.WriteString("Providers (use /provider <name> to toggle, /provider login <name> for OAuth):")
-	for _, e := range menu {
-		mark := "○"
-		if e.Enabled {
-			mark = "●"
-		}
-		note := ""
-		switch {
-		case e.Auth == providers.AuthOAuth:
-			note = "login required"
-		case e.FromConfig:
-			note = "from config"
-		case e.Available:
-			note = "key detected"
-		case e.EnvVar != "":
-			note = "set $" + e.EnvVar
-		}
-		fmt.Fprintf(&b, "\n  %s %-14s %s", mark, e.ID, note)
-	}
-	return b.String()
 }
 
 func (m *model) cmdSkills(args string) tea.Cmd {

@@ -67,8 +67,9 @@ func TestPaletteTypingNarrowsRowsWithoutEditingComposer(t *testing.T) {
 	}
 }
 
-func TestPaletteAcceptRequiredCommandMovesToComposer(t *testing.T) {
+func TestPaletteAcceptModelCommandOpensModelSelector(t *testing.T) {
 	m := newTestModel(&fakeRuntime{}, nil)
+	m.availableModels = []tauchat.ChatModelRef{{ID: "gpt-4", Provider: "openai"}}
 	m.dispatchKey(key('p', tea.ModCtrl))
 	for _, r := range "model" {
 		m.dispatchKey(charKey(r))
@@ -76,11 +77,66 @@ func TestPaletteAcceptRequiredCommandMovesToComposer(t *testing.T) {
 
 	m.dispatchKey(key(tea.KeyEnter, 0))
 
-	if m.palette != nil {
-		t.Fatal("expected palette to close after selection")
+	if m.palette == nil || m.palette.kind != paletteModels {
+		t.Fatal("expected command palette to transition to model selector")
 	}
-	if m.input != "/model " {
-		t.Fatalf("input = %q, want %q", m.input, "/model ")
+	if m.input != "" {
+		t.Fatalf("input = %q, want composer untouched", m.input)
+	}
+}
+
+func TestTypingPickerBackedCommandPromotesToSelector(t *testing.T) {
+	m := newTestModel(&fakeRuntime{}, nil)
+	m.availableModels = []tauchat.ChatModelRef{{ID: "gpt-4", Provider: "openai"}}
+	m.input = "/model"
+	m.inputCursor = len([]rune(m.input))
+
+	m.handleKey(charKey(' '))
+
+	if m.palette == nil || m.palette.kind != paletteModels {
+		t.Fatal("expected trailing space to open model selector")
+	}
+	if m.input != "" {
+		t.Fatalf("input = %q, want command scaffold removed", m.input)
+	}
+}
+
+func TestProviderSelectorUsesSharedPickerAndSupportsActions(t *testing.T) {
+	m := newTestModel(&fakeRuntime{}, nil)
+	m.openProviderPalette("")
+
+	rows := m.paletteRows()
+	login := -1
+	for i, row := range rows {
+		if row.Word == "login" {
+			login = i
+			break
+		}
+	}
+	if login < 0 {
+		t.Fatalf("provider rows = %+v, want login action", rows)
+	}
+	m.palette.picker.selected = login
+	m.handlePaletteKey(key(tea.KeyEnter, 0))
+
+	if m.palette == nil || m.palette.kind != paletteProviders || m.palette.providerAction != "login" {
+		t.Fatal("expected login action to transition to provider login selector")
+	}
+	if title := m.palette.picker.title; title != "Provider Login" {
+		t.Fatalf("title = %q, want Provider Login", title)
+	}
+}
+
+func TestBareProviderCommandOpensSharedSelector(t *testing.T) {
+	m := newTestModel(&fakeRuntime{}, nil)
+
+	m.cmdProvider("")
+
+	if m.palette == nil || m.palette.kind != paletteProviders {
+		t.Fatal("expected bare /provider to open provider selector")
+	}
+	if out := stripANSI(m.renderPaletteOverlay()); !strings.Contains(out, "Search") {
+		t.Fatalf("provider selector missing shared search field:\n%s", out)
 	}
 }
 

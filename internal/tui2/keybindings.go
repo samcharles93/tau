@@ -21,6 +21,9 @@ import (
 func (m *model) handleKey(msg tea.KeyPressMsg) tea.Cmd {
 	cmd := m.dispatchKey(msg)
 	m.syncCompletionSelection()
+	if paletteCmd, opened := m.maybeOpenInputPalette(); opened {
+		return tea.Batch(cmd, paletteCmd)
+	}
 	return tea.Batch(cmd, m.maybePrefetchSessions())
 }
 

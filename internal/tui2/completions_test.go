@@ -240,13 +240,14 @@ func TestCompletionEnterOnNoArgCommandSubmitsImmediately(t *testing.T) {
 	}
 }
 
-// TestCompletionEnterOnRequiredArgCommandDoesNotSubmit is the flip side:
-// /model requires an argument (usage "<id>"), so accepting the bare command
-// name must NOT submit - the command would just be rejected - it should
-// leave the line open for the argument's own completion to follow.
-func TestCompletionEnterOnRequiredArgCommandDoesNotSubmit(t *testing.T) {
+// TestCompletionEnterOnPickerBackedCommandOpensPalette is the flip side:
+// /model requires an argument, so accepting its bare command name routes into
+// the same independent selector as Ctrl+L instead of exposing inline argument
+// completion in the composer.
+func TestCompletionEnterOnPickerBackedCommandOpensPalette(t *testing.T) {
 	rt := &fakeRuntime{}
 	m := newTestModel(rt, nil)
+	m.availableModels = []tauchat.ChatModelRef{{ID: "gpt-4", Provider: "openai"}}
 	m.input = "/model"
 	m.inputCursor = utf8.RuneCountInString(m.input)
 
@@ -256,8 +257,11 @@ func TestCompletionEnterOnRequiredArgCommandDoesNotSubmit(t *testing.T) {
 
 	m.handleKey(key(tea.KeyEnter, 0))
 
-	if m.input != "/model " {
-		t.Fatalf("input = %q, want %q - a required-argument command must not submit bare", m.input, "/model ")
+	if m.input != "" {
+		t.Fatalf("input = %q, want cleared after selector opens", m.input)
+	}
+	if m.palette == nil || m.palette.kind != paletteModels {
+		t.Fatal("expected model selector to open")
 	}
 	if len(rt.sent) != 0 {
 		t.Errorf("expected nothing sent yet, got %#v", rt.sent)
@@ -1153,7 +1157,7 @@ func TestEffortCompletionsGoAwayAfterAccept(t *testing.T) {
 // "/provider" leads into the provider picker, but Enter used to fire the
 // command immediately with no argument). ----------------------------------
 
-func TestHandleCompletionKeyEnterOnProviderDoesNotAutoSubmit(t *testing.T) {
+func TestHandleCompletionKeyEnterOnProviderOpensSelector(t *testing.T) {
 	rt := &fakeRuntime{}
 	m := newTestModel(rt, nil)
 	m.input = "/provider"
@@ -1170,15 +1174,12 @@ func TestHandleCompletionKeyEnterOnProviderDoesNotAutoSubmit(t *testing.T) {
 	}
 	m.compSelected = idx
 
-	cmd, handled := m.handleCompletionKey(key(tea.KeyEnter, 0))
-	if !handled {
-		t.Fatal("expected Enter to be consumed by the completions dropdown")
+	m.handleKey(key(tea.KeyEnter, 0))
+	if m.input != "" {
+		t.Fatalf("input = %q, want cleared after selector opens", m.input)
 	}
-	if cmd != nil {
-		t.Fatal("expected no Cmd - accepting the bare '/provider' name must not auto-submit")
-	}
-	if m.input != "/provider " {
-		t.Fatalf("input = %q, want %q (accepted, not submitted)", m.input, "/provider ")
+	if m.palette == nil || m.palette.kind != paletteProviders {
+		t.Fatal("expected provider selector to open")
 	}
 	if len(rt.sent) != 0 {
 		t.Fatalf("expected nothing sent to the runtime yet, got %+v", rt.sent)

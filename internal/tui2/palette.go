@@ -23,14 +23,16 @@ type paletteKind int
 const (
 	paletteCommands paletteKind = iota
 	paletteModels
+	paletteProviders
 )
 
 // paletteState owns the floating picker's input and selection. Keeping this
 // separate from model.input is what lets the palette present a real search
 // field instead of masquerading as a slash command in the main prompt.
 type paletteState struct {
-	kind   paletteKind
-	picker listPicker
+	kind           paletteKind
+	picker         listPicker
+	providerAction string
 }
 
 func (m *model) openCommandPalette() tea.Cmd {
@@ -60,6 +62,26 @@ func (m *model) openModelPalette() tea.Cmd {
 	return nil
 }
 
+func (m *model) openProviderPalette(action string) tea.Cmd {
+	if m.inResponse() || m.bashRunning {
+		return nil
+	}
+	m.closeOtherExclusiveOverlays(overlayPalette)
+	title := "Provider Selector"
+	switch action {
+	case "login":
+		title = "Provider Login"
+	case "logout":
+		title = "Provider Logout"
+	}
+	m.palette = &paletteState{
+		kind:           paletteProviders,
+		picker:         newListPicker(title),
+		providerAction: action,
+	}
+	return nil
+}
+
 func (m *model) paletteRows() []compRow {
 	if m.palette == nil {
 		return nil
@@ -78,6 +100,14 @@ func (m *model) paletteRows() []compRow {
 		}
 	case paletteModels:
 		groups = m.modelCompletions(0)
+	case paletteProviders:
+		fields := []string{"/provider"}
+		argsBefore := 0
+		if action := m.palette.providerAction; action != "" {
+			fields = append(fields, action)
+			argsBefore = 1
+		}
+		groups = m.providerCompletions(fields, argsBefore)
 	}
 	return filterAndRankRows(groups, m.palette.picker.Query())
 }
@@ -115,17 +145,29 @@ func (m *model) handlePaletteKey(msg tea.KeyPressMsg) tea.Cmd {
 
 func (m *model) acceptPaletteRow(row compRow) tea.Cmd {
 	kind := m.palette.kind
+	providerAction := m.palette.providerAction
 	m.palette = nil
 
 	switch kind {
 	case paletteModels:
-		m.input = "/model " + row.Word
-		m.inputCursor = utf8.RuneCountInString(m.input)
-		return m.submitInput()
+		return m.cmdModel(row.Word)
+	case paletteProviders:
+		if providerAction == "" && (row.Word == "login" || row.Word == "logout") {
+			return m.openProviderPalette(row.Word)
+		}
+		return m.cmdProvider(strings.TrimSpace(providerAction + " " + row.Word))
 	case paletteCommands:
-		if entry, ok := slashIndex[row.Word]; ok && entry.isAgent && entry.modeSwitch {
-			m.inputModeCommand = entry.name
-			return nil
+		if entry, ok := slashIndex[row.Word]; ok {
+			switch entry.name {
+			case "model":
+				return m.openModelPalette()
+			case "provider":
+				return m.openProviderPalette("")
+			}
+			if entry.isAgent && entry.modeSwitch {
+				m.inputModeCommand = entry.name
+				return nil
+			}
 		}
 		m.input = "/" + row.Word + " "
 		m.inputCursor = utf8.RuneCountInString(m.input)
@@ -138,6 +180,34 @@ func (m *model) acceptPaletteRow(row compRow) tea.Cmd {
 	default:
 		return nil
 	}
+}
+
+// maybeOpenInputPalette promotes picker-backed slash-command scaffolds into
+// the same independent overlay used by their keyboard shortcuts. It runs
+// after input editing, so typing or completing the trailing space never
+// exposes a second argument-selection UI.
+func (m *model) maybeOpenInputPalette() (tea.Cmd, bool) {
+	if m.palette != nil || m.inResponse() || m.bashRunning ||
+		m.inputCursor != utf8.RuneCountInString(m.input) || !strings.HasSuffix(m.input, " ") {
+		return nil, false
+	}
+
+	var open func() tea.Cmd
+	switch strings.TrimSpace(m.input) {
+	case "/model":
+		open = m.openModelPalette
+	case "/provider":
+		open = func() tea.Cmd { return m.openProviderPalette("") }
+	case "/provider login":
+		open = func() tea.Cmd { return m.openProviderPalette("login") }
+	case "/provider logout":
+		open = func() tea.Cmd { return m.openProviderPalette("logout") }
+	default:
+		return nil, false
+	}
+
+	m.clearInput()
+	return open(), true
 }
 
 // paletteOverlayWidth returns the box width for floating list overlays and
