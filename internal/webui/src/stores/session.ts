@@ -6,9 +6,12 @@ import {
   type ChatModelRef,
   type ChatParameters,
   type ChatReasoningDeltaEvent,
+  type ChatResponseCancelledEvent,
   type ChatSessionPatch,
   type ChatSessionState,
   type ChatUsage,
+  type ChildAgentResult,
+  type ChildAgentStateEvent,
   type CommandRef,
   type CommandsChangedEvent,
   type ExtensionCommand,
@@ -126,6 +129,9 @@ export const useSessionStore = defineStore('session', () => {
   const activePrompt = ref<InteractivePrompt | null>(null)
   const skills = ref<SkillInfo[]>([])
   const sessions = ref<SessionSummary[]>([])
+  // Child agent state keyed by spawning tool call id, mirroring
+  // internal/tui2's childAgents map and docs/specs/state-taxonomy.md (Category 4).
+  const childAgents = ref<Map<string, ChildAgentResult>>(new Map())
   // Token usage and pricing for the current model, surfaced in the input bar.
   const usage = ref<ChatUsage>({})
   const contextWindow = ref(0)
@@ -238,6 +244,7 @@ export const useSessionStore = defineStore('session', () => {
       case 'SessionLoadedEvent': {
         // A different session was loaded: rebuild the stream from scratch.
         messages.value = []
+        childAgents.value = new Map()
         absorbState((msg.payload as { state: ChatSessionState }).state)
         break
       }
@@ -287,12 +294,50 @@ export const useSessionStore = defineStore('session', () => {
         if (t) t.output += ev.chunk
         break
       }
+      case 'ChildAgentStateEvent': {
+        const ev = msg.payload as ChildAgentStateEvent
+        const prev = childAgents.value.get(ev.call_id)
+        childAgents.value.set(ev.call_id, {
+          instance_id: ev.instance_id,
+          spec_name: ev.spec_name,
+          status: ev.status,
+          activity: ev.activity,
+          turns: ev.turns,
+          tokens: ev.input_tokens + ev.output_tokens,
+          duration_ms: ev.elapsed_ms,
+          error_msg: ev.error,
+          // ChildAgentStateEvent never carries a session_id; preserve any
+          // already recorded from a prior ChatToolExecutionCompletedEvent.
+          session_id: prev?.session_id,
+        })
+        break
+      }
       case 'ChatToolExecutionCompletedEvent': {
         const ev = msg.payload as ChatToolExecutionCompletedEvent
         const t = findTool(ev.call_id)
         if (t) {
           t.status = ev.is_error ? 'error' : 'ok'
           t.resultSummary = ev.result_summary
+        }
+        // Extract child agent result from agent tool details.
+        // Skip spawn-rejected entries that carry no instance_id (the
+        // concurrency admission gate sends details with only status +
+        // failure_reason + queued). Matches tui2's extractChildAgentResult
+        // which returns false when instance_id is empty.
+        if (ev.tool_name === 'agent' && ev.details?.instance_id) {
+          const prev = childAgents.value.get(ev.call_id)
+          const d = ev.details
+          childAgents.value.set(ev.call_id, {
+            instance_id: d.instance_id ?? prev?.instance_id ?? '',
+            spec_name: d.spec_name ?? prev?.spec_name ?? '',
+            status: d.status ?? prev?.status ?? 'completed',
+            activity: prev?.activity ?? '',
+            turns: d.usage?.turns ?? prev?.turns ?? 0,
+            tokens: (d.usage?.input_tokens ?? 0) + (d.usage?.output_tokens ?? 0),
+            duration_ms: d.duration_ms ?? prev?.duration_ms ?? 0,
+            error_msg: d.error ?? prev?.error_msg,
+            session_id: d.session_id ?? prev?.session_id,
+          })
         }
         break
       }
@@ -319,6 +364,25 @@ export const useSessionStore = defineStore('session', () => {
         streaming.value = false
         break
       }
+      case 'ChatResponseCancelledEvent': {
+        const ev = msg.payload as ChatResponseCancelledEvent
+        const a = messages.value[messages.value.length - 1]
+        if (a && a.role === 'assistant' && a.streaming) {
+          a.streaming = false
+          // Mark still-running tools as interrupted so they don't render a
+          // permanently-pulsing "running" badge — no completion event will
+          // ever arrive for them.
+          for (const p of a.parts) {
+            if (p.kind === 'tool' && p.tool.status === 'running') {
+              p.tool.status = 'error'
+            }
+          }
+        }
+        if (ev.state) absorbState(ev.state)
+        streaming.value = false
+        activeRequestId.value = ''
+        break
+      }
       case 'ChatNotificationEvent': {
         const ev = msg.payload as ChatNotificationEvent
         pushNotice(ev.level, ev.message)
@@ -340,7 +404,6 @@ export const useSessionStore = defineStore('session', () => {
       }
       case 'SessionDeletedEvent': {
         const ev = msg.payload as SessionDeletedEvent
-        // Remove the session from the list if it exists.
         sessions.value = sessions.value.filter((s) => s.id !== ev.session_id)
         break
       }
@@ -611,6 +674,7 @@ export const useSessionStore = defineStore('session', () => {
     activePrompt,
     activeRequestId,
     sessions,
+    childAgents,
     usage,
     contextWindow,
     cost,

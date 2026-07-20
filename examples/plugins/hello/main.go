@@ -87,11 +87,7 @@ func main() {
 	}
 
 	plugin.Serve(&plugin.ServeConfig{
-		HandshakeConfig: plugin.HandshakeConfig{
-			ProtocolVersion:  1,
-			MagicCookieKey:   "TAU_PLUGIN",
-			MagicCookieValue: "tau",
-		},
+		HandshakeConfig: pluginapi.Handshake,
 		Plugins: map[string]plugin.Plugin{
 			"extension": &pluginapi.ExtensionPlugin{Impl: p},
 		},
@@ -232,7 +228,7 @@ func livePanel() *pluginapi.View {
 				},
 			}}},
 			{Kind: &pluginapi.Widget_Status{Status: &pluginapi.StatusWidget{
-				State:  pluginapi.StatusWidget_RUNNING,
+				State:  pluginapi.StatusWidget_STATE_RUNNING,
 				Label:  "hello plugin",
 				Detail: "live panel auto-refreshing",
 			}}},
@@ -252,7 +248,7 @@ func demoPanel(id, kind string) *pluginapi.View {
 				},
 			}}},
 			{Kind: &pluginapi.Widget_Status{Status: &pluginapi.StatusWidget{
-				State:  pluginapi.StatusWidget_SUCCESS,
+				State:  pluginapi.StatusWidget_STATE_SUCCESS,
 				Label:  "hello plugin",
 				Detail: "panel rendering works",
 			}}},

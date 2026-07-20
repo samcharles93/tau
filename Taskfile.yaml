@@ -133,6 +133,7 @@ tasks:
     desc: Run all quality checks (format, lint, vet, fix, test) for all platforms
     deps:
       - check:windows
+      - check:webui
     cmds:
       - go vet ./...
       - go fix ./...

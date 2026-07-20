@@ -1055,10 +1055,6 @@ func pluginPayloadKind(payload *api.EventPayload) string {
 		return "before_tool_exec"
 	case *api.EventPayload_AfterToolExec:
 		return "after_tool_exec"
-	case *api.EventPayload_MessageDelta:
-		return "message_delta"
-	case *api.EventPayload_Compaction:
-		return "compaction"
 	default:
 		return shortTypeName(payload.GetKind())
 	}

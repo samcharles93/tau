@@ -379,6 +379,7 @@ func executeResume(ctx context.Context, args agentToolArgs, cfg AgentToolConfig)
 	// id on startup - see internal/app.RunChild.
 	instResult := &instantiateResult{
 		InstanceID:       newInstance.ID,
+		SpecName:         orig.SpecName,
 		SessionID:        args.Resume,
 		ResolvedProvider: resolvedProvider,
 		ResolvedModel:    resolvedModel,
@@ -699,6 +700,7 @@ func spawnChildProcess(ctx context.Context, args agentToolArgs, cfg AgentToolCon
 	detailsJSON, _ := json.Marshal(map[string]any{
 		"status":      resultEnv.Status,
 		"instance_id": instResult.InstanceID,
+		"spec_name":   instResult.SpecName,
 		"session_id":  instResult.SessionID,
 		"usage": map[string]any{
 			"turns":         resultEnv.Usage.Turns,
@@ -706,8 +708,9 @@ func spawnChildProcess(ctx context.Context, args agentToolArgs, cfg AgentToolCon
 			"output_tokens": resultEnv.Usage.OutputTokens,
 			"cost":          resultEnv.Usage.Cost,
 		},
-		"error":   resultEnv.Error,
-		"partial": resultEnv.Partial,
+		"duration_ms": elapsed.Milliseconds(),
+		"error":       resultEnv.Error,
+		"partial":     resultEnv.Partial,
 	})
 
 	return Result{
@@ -739,6 +742,7 @@ type instantiateConfig struct {
 type instantiateResult struct {
 	InstanceID       string
 	SessionID        string
+	SpecName         string
 	ResolvedProvider string
 	ResolvedModel    string
 	EffectiveTools   []string
@@ -804,6 +808,7 @@ func instantiateChild(ctx context.Context, cfg instantiateConfig) (*instantiateR
 
 	return &instantiateResult{
 		InstanceID:       instanceID,
+		SpecName:         def.Name,
 		SessionID:        sessionID,
 		ResolvedProvider: resolvedProvider,
 		ResolvedModel:    resolvedModel,

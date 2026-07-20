@@ -471,11 +471,7 @@ func (m *Manager) startPlugin(ctx context.Context, pluginPath string) (*goplugin
 	})
 
 	client := goplugin.NewClient(&goplugin.ClientConfig{
-		HandshakeConfig: goplugin.HandshakeConfig{
-			ProtocolVersion:  1,
-			MagicCookieKey:   "TAU_PLUGIN",
-			MagicCookieValue: "tau",
-		},
+		HandshakeConfig: api.Handshake,
 		Plugins: map[string]goplugin.Plugin{
 			"extension": &api.ExtensionPlugin{Impl: nil, HostImpl: m.host},
 		},

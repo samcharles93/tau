@@ -45,7 +45,7 @@ func TestProtoWidgetToChatText(t *testing.T) {
 
 func TestProtoWidgetToChatStackVerticalAndHorizontal(t *testing.T) {
 	vertical := ProtoWidgetToChat(&Widget{Kind: &Widget_Stack{Stack: &StackWidget{
-		Direction: StackWidget_VERTICAL,
+		Direction: StackWidget_DIRECTION_VERTICAL,
 		Gap:       2,
 		Children: []*Widget{
 			{Kind: &Widget_Text{Text: &TextWidget{Text: "a"}}},
@@ -60,7 +60,7 @@ func TestProtoWidgetToChatStackVerticalAndHorizontal(t *testing.T) {
 	require.Equal(t, "b", vertical.Stack.Children[1].Text.Text)
 
 	horizontal := ProtoWidgetToChat(&Widget{Kind: &Widget_Stack{Stack: &StackWidget{
-		Direction: StackWidget_HORIZONTAL,
+		Direction: StackWidget_DIRECTION_HORIZONTAL,
 	}}})
 	require.Equal(t, chat.StackHorizontal, horizontal.Stack.Direction)
 }
@@ -131,10 +131,10 @@ func TestProtoWidgetToChatStatusStates(t *testing.T) {
 		proto StatusWidget_State
 		want  chat.StatusState
 	}{
-		{StatusWidget_RUNNING, chat.StatusRunning},
-		{StatusWidget_SUCCESS, chat.StatusSuccess},
-		{StatusWidget_FAILED, chat.StatusFailed},
-		{StatusWidget_NEUTRAL, chat.StatusNeutral},
+		{StatusWidget_STATE_RUNNING, chat.StatusRunning},
+		{StatusWidget_STATE_SUCCESS, chat.StatusSuccess},
+		{StatusWidget_STATE_FAILED, chat.StatusFailed},
+		{StatusWidget_STATE_NEUTRAL, chat.StatusNeutral},
 	}
 	for _, tc := range cases {
 		w := &Widget{Kind: &Widget_Status{Status: &StatusWidget{

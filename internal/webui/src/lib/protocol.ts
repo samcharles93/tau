@@ -188,9 +188,29 @@ export interface ChatToolExecutionCompletedEvent {
   call_id: string
   tool_name: string
   status: string
+  duration: number
   result_summary: string
   is_error: boolean
+  truncated: boolean
   completed_at: string
+  /** Tool-specific structured data (e.g. child agent result for agent tools). */
+  details?: ChildAgentResultDetails
+}
+
+export interface ChildAgentResultDetails {
+  status: ChildAgentStatus
+  instance_id: string
+  spec_name?: string
+  session_id?: string
+  usage?: {
+    turns: number
+    input_tokens: number
+    output_tokens: number
+    cost?: number
+  }
+  error?: string
+  partial?: boolean
+  duration_ms?: number
 }
 
 export interface ChatRuntimeErrorEvent {
@@ -205,6 +225,12 @@ export interface ChatNotificationEvent {
   message: string
   level: 'info' | 'warn' | 'error'
   occurred_at: string
+}
+
+export interface ChatResponseCancelledEvent {
+  state: ChatSessionState
+  request_id: string
+  cancelled_at: string
 }
 
 export interface ChatToolCallDeltaEvent {
@@ -234,6 +260,55 @@ export interface InteractivePromptRequestedEvent {
   title: string
   message: string
   requested_at: string
+}
+
+// ── Child agent events ────────────────────────────────────────────────────
+
+export type ChildAgentStatus = 'working' | 'completed' | 'failed' | 'cancelled' | 'budget_exhausted' | 'timed_out'
+
+// Keep in sync with ChildAgentStatus.IsTerminal() in internal/chat/types.go.
+// New status values added to the Go enum must be mirrored here, otherwise
+// ToolCard.vue renders the live/working layout forever for that status.
+export function isChildTerminal(status: ChildAgentStatus): boolean {
+  switch (status) {
+    case 'completed':
+    case 'failed':
+    case 'cancelled':
+    case 'budget_exhausted':
+    case 'timed_out':
+      return true
+    default:
+      return false
+  }
+}
+
+export interface ChildAgentStateEvent {
+  instance_id: string
+  call_id: string
+  spec_name: string
+  activity: string
+  turns: number
+  input_tokens: number
+  output_tokens: number
+  elapsed_ms: number
+  status: ChildAgentStatus
+  error?: string
+  partial?: boolean
+  occurred_at: string
+}
+
+// ChildAgentResult mirrors the child agent state stored in the session
+// store alongside tool calls.
+export interface ChildAgentResult {
+  instance_id: string
+  spec_name: string
+  status: ChildAgentStatus
+  activity: string
+  turns: number
+  tokens: number
+  duration_ms: number
+  error_msg?: string
+  session_id?: string
 }
 
 export interface SessionSummary {
