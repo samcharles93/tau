@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.29.0](https://github.com/samcharles93/tau/compare/v0.28.0...v0.29.0) (2026-07-20)
+
+
+### Features
+
+* add independent command palette and model picker overlays ([9eb2027](https://github.com/samcharles93/tau/commit/9eb2027fd793282a348d25523a2ded90afde56b6))
+
 ## [0.28.0](https://github.com/samcharles93/tau/compare/v0.27.0...v0.28.0) (2026-07-20)
 
 
