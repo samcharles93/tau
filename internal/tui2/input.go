@@ -17,6 +17,7 @@ import (
 func (m *model) clearInput() {
 	m.input = ""
 	m.inputCursor = 0
+	m.inputModeCommand = ""
 	m.inputSel.clear()
 	m.compDismissed = false
 	m.compDismissedToken = ""
@@ -385,6 +386,11 @@ func wrapInputLine(ln []rune, maxWidth int) []inputLineChunk {
 }
 
 func (m *model) inputModePlaceholder() string {
+	if m.inputModeCommand != "" && strings.TrimSpace(m.input) == "" {
+		if entry, ok := slashIndex[m.inputModeCommand]; ok && entry.isAgent {
+			return entry.description
+		}
+	}
 	text := m.input
 	if !strings.HasPrefix(text, "/") || !strings.HasSuffix(text, " ") {
 		return ""
@@ -403,6 +409,11 @@ func (m *model) inputModePlaceholder() string {
 func (m *model) inputModeTitle() string {
 	if m.steering {
 		return "steer"
+	}
+	if m.inputModeCommand != "" {
+		if entry, ok := slashIndex[m.inputModeCommand]; ok && entry.isAgent {
+			return entry.modeLabel()
+		}
 	}
 	text := strings.TrimSpace(m.input)
 	switch {
@@ -434,32 +445,18 @@ func (m *model) cycleInputMode() {
 		return
 	}
 
-	current, args := m.currentInputModeIndex(modes)
+	current := m.currentInputModeIndex(modes)
 	next := (current + 1) % len(modes)
-	mode := modes[next]
-
-	if mode.command == "" {
-		m.input = args
-	} else if args == "" {
-		m.input = "/" + mode.command + " "
-	} else {
-		m.input = "/" + mode.command + " " + args
-	}
-	m.inputCursor = utf8.RuneCountInString(m.input)
+	m.inputModeCommand = modes[next].command
 }
 
-func (m *model) currentInputModeIndex(modes []inputMode) (int, string) {
-	text := strings.TrimSpace(m.input)
-	if strings.HasPrefix(text, "/") {
-		name, args := slashNameAndArgs(text)
-		for i, mode := range modes {
-			if mode.command == name {
-				return i, args
-			}
+func (m *model) currentInputModeIndex(modes []inputMode) int {
+	for i, mode := range modes {
+		if mode.command == m.inputModeCommand {
+			return i
 		}
-		return 0, strings.TrimSpace(strings.TrimPrefix(text, "/"))
 	}
-	return 0, text
+	return 0
 }
 
 // inputBoxHeightFrac caps how much of the terminal height the input box may
@@ -648,14 +645,23 @@ func (m *model) submitInput() tea.Cmd {
 	}
 
 	text := strings.TrimSpace(m.input)
+	modeCommand := m.inputModeCommand
+	if text == "" {
+		// Empty Enter is a no-op and keeps the selected agent mode active.
+		return nil
+	}
+	if modeCommand != "" && !strings.HasPrefix(text, "/") && !strings.HasPrefix(text, "!") {
+		entry, ok := slashIndex[modeCommand]
+		if !ok || !entry.isAgent || !entry.modeSwitch {
+			// Preserve the draft and selected mode when validation fails; the
+			// user can recover by cycling back to chat or another valid mode.
+			return m.setNotification("agent mode unavailable: " + modeCommand)
+		}
+	}
 	m.clearInput()
 	m.historyIdx = -1  // reset history navigation
 	m.compSelected = 0 // reset completion dropdown selection
 	m.compToken = ""
-	if text == "" {
-		return nil
-	}
-
 	// Record in history - every submitted line is recallable via up-arrow,
 	// slash commands and bash commands included, not just LLM prompts.
 	m.history = append(m.history, text)
@@ -670,6 +676,13 @@ func (m *model) submitInput() tea.Cmd {
 	// bang-stripping on the full text, not just a single "!".
 	if strings.HasPrefix(text, "!") {
 		return m.handleBashCommand(text)
+	}
+
+	// Agent modes are control state, not input scaffolding. Apply the mode
+	// only at submission so the composer contains exactly what the user
+	// typed and copied/history text never leaks a synthetic "/plan" prefix.
+	if modeCommand != "" {
+		return m.runAgentCommand(modeCommand, text)
 	}
 
 	// Debounce guard: 300ms between submits (P2 #27).

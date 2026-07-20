@@ -21,6 +21,63 @@ func TestHandleChatEventReasoningDelta(t *testing.T) {
 	}
 }
 
+func TestToolCallCommitsReasoningAtContentBoundary(t *testing.T) {
+	m := newTestModel(&fakeRuntime{}, nil)
+	m.showReasoning = true
+	m.reasoning = "reasoning before tool"
+
+	m.handleChatEvent(tauchat.ChatToolCallDeltaEvent{
+		CallID:   "tool-1",
+		ToolName: "read",
+	})
+
+	if m.reasoning != "" {
+		t.Fatalf("reasoning = %q, want cleared after commit", m.reasoning)
+	}
+	if len(m.committedReasoning) != 1 {
+		t.Fatalf("committed reasoning blocks = %d, want 1", len(m.committedReasoning))
+	}
+	if got := m.committedReasoning[0].text; got != "reasoning before tool" {
+		t.Fatalf("committed reasoning = %q, want %q", got, "reasoning before tool")
+	}
+	if got := stripANSI(strings.Join(m.renderedLines, "\n")); !strings.Contains(got, "reasoning before tool") {
+		t.Fatalf("rendered lines dropped pre-tool reasoning: %q", got)
+	}
+}
+
+func TestToolCallCommitsReasoningBeforeStreamingText(t *testing.T) {
+	m := newTestModel(&fakeRuntime{}, nil)
+	m.showReasoning = true
+	m.reasoning = "reasoning before answer"
+	m.streaming = "answer before tool"
+
+	m.handleChatEvent(tauchat.ChatToolCallDeltaEvent{
+		CallID:   "tool-1",
+		ToolName: "read",
+	})
+
+	if len(m.committedReasoning) != 1 {
+		t.Fatalf("committed reasoning blocks = %d, want 1", len(m.committedReasoning))
+	}
+	block := m.committedReasoning[0]
+	if block.text != "reasoning before answer" {
+		t.Fatalf("committed reasoning = %q, want %q", block.text, "reasoning before answer")
+	}
+	if block.lineIdx != 0 {
+		t.Fatalf("reasoning line index = %d, want 0 before streamed answer", block.lineIdx)
+	}
+	answerLine := -1
+	for i, line := range m.renderedLines {
+		if strings.Contains(stripANSI(line), "answer before tool") {
+			answerLine = i
+			break
+		}
+	}
+	if answerLine < block.lineIdx+block.lineCount {
+		t.Fatalf("answer line = %d, want after reasoning block ending at %d", answerLine, block.lineIdx+block.lineCount)
+	}
+}
+
 // TestHandleChatEventResponseCompletedReasoningOnly guards against a
 // regression where a reasoning-only turn (no trailing answer text) was
 // rendered as a literal "[reasoning only]" placeholder instead of the real

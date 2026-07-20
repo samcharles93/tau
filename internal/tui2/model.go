@@ -95,9 +95,13 @@ type model struct {
 	// pkg/taui/lineinput.go so both frontends behave identically.
 	input       string
 	inputCursor int
-	history     []string // submitted inputs for up/down recall
-	historyIdx  int      // -1 = not navigating; 0..len(history) = navigating
-	draftInput  string   // stashed input on first history recall; restored at idx == len(history)
+	// inputModeCommand is the active agent-mode command selected with
+	// Shift+Tab or the command palette. It is presentation/control state,
+	// never part of the editable input buffer.
+	inputModeCommand string
+	history          []string // submitted inputs for up/down recall
+	historyIdx       int      // -1 = not navigating; 0..len(history) = navigating
+	draftInput       string   // stashed input on first history recall; restored at idx == len(history)
 
 	// focused reports whether the terminal window currently has focus,
 	// tracked via tea.FocusMsg/tea.BlurMsg (requires View.ReportFocus).
@@ -118,6 +122,10 @@ type model struct {
 	compToken          string
 	compDismissed      bool
 	compDismissedToken string
+
+	// palette is the shared Ctrl+P command picker / Ctrl+L model picker.
+	// Its search query is intentionally independent from the chat input.
+	palette *paletteState
 
 	// Viewport content - rendered lines, built incrementally.
 	renderedLines []string
@@ -621,6 +629,9 @@ func (m *model) View() tea.View {
 	}
 	if m.helpOverlay != nil {
 		base = m.compositeHelpOverlay(base)
+	}
+	if m.palette != nil {
+		base = m.compositePaletteOverlay(base)
 	}
 	if rows, token, ok := m.completionsVisible(); ok {
 		base = m.compositeCompletionsOverlay(base, rows, token)

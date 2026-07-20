@@ -8,99 +8,157 @@ import (
 	"charm.land/lipgloss/v2"
 )
 
-// paletteWidthFrac/paletteMinWidth/paletteMaxWidth size the floating
-// completions overlay (Ctrl+P command palette, Ctrl+L model picker, and
-// every "/"-triggered completion) - narrower than /help's (helpOverlayWidthFrac
-// etc, help.go), since a short ranked list needs far less room than a
-// two-column keybinding reference.
+// paletteWidthFrac/paletteMinWidth/paletteMaxWidth size the shared Ctrl+P
+// command palette and Ctrl+L model picker. The Ctrl+O session tree reuses the
+// width helper, but remains a separate component with its own state and
+// rendering.
 const (
 	paletteWidthFrac = 0.6
 	paletteMinWidth  = 40
 	paletteMaxWidth  = 70
 )
 
-// openCommandPalette handles Ctrl+P. There is no separate "palette" state -
-// Ctrl+P just ensures m.input starts with "/" (so the existing completions
-// system - completionRows/handleCompletionKey/completionsVisible - has
-// something to show) and un-dismisses it. Rendering that dropdown as a
-// floating overlay instead of flow-laid chrome (compositeCompletionsOverlay)
-// is a pure presentation change: navigation, fuzzy matching, and every input-
-// editing key (Ctrl+Backspace, Ctrl+Left/Right, Home/End, ...) keep working
-// exactly as they did for the inline "/" dropdown, since they're the same
-// code path operating on the same m.input/m.inputCursor.
+type paletteKind int
+
+const (
+	paletteCommands paletteKind = iota
+	paletteModels
+)
+
+// paletteState owns the floating picker's input and selection. Keeping this
+// separate from model.input is what lets the palette present a real search
+// field instead of masquerading as a slash command in the main prompt.
+type paletteState struct {
+	kind   paletteKind
+	picker listPicker
+}
+
 func (m *model) openCommandPalette() tea.Cmd {
-	if !strings.HasPrefix(m.input, "/") {
-		m.input = "/"
-		m.inputCursor = 1
+	if m.inResponse() || m.bashRunning {
+		return nil
 	}
-	m.compDismissed = false
-	m.compSelected = 0
+	m.closeOtherExclusiveOverlays(overlayPalette)
+	query := ""
+	if strings.HasPrefix(m.input, "/") && !strings.ContainsAny(m.input, " \n") {
+		query = strings.TrimPrefix(m.input, "/")
+	}
+	picker := newListPicker("Command Palette")
+	picker.SetQuery(query)
+	m.palette = &paletteState{kind: paletteCommands, picker: picker}
 	return nil
 }
 
-// openModelPalette handles Ctrl+L: prefills "/model " so the same completions
-// system shows exactly what /model's argument completer already offers
-// (modelCompletions), floated the same way Ctrl+P's is. Accepting a row goes
-// through the normal accept-and-submit path (acceptCompletionRow +
-// submitInput -> handleSlashCommand -> cmdModel), so picking a model here
-// does exactly what typing "/model <id>" does.
 func (m *model) openModelPalette() tea.Cmd {
 	if len(m.availableModels) == 0 {
 		return m.setNotification("no models available - try /refresh")
 	}
-	m.input = "/model "
-	m.inputCursor = utf8.RuneCountInString(m.input)
-	m.compDismissed = false
-	m.compSelected = 0
+	if m.inResponse() || m.bashRunning {
+		return nil
+	}
+	m.closeOtherExclusiveOverlays(overlayPalette)
+	m.palette = &paletteState{kind: paletteModels, picker: newListPicker("Model Selector")}
 	return nil
 }
 
-// paletteOverlayWidth returns the box width for the floating completions
-// overlay, given the terminal width - mirrors helpOverlayWidth's clamp shape
-// (help.go).
-func paletteOverlayWidth(termWidth int) int {
-	w := int(float64(termWidth) * paletteWidthFrac)
-	return max(paletteMinWidth, min(w, paletteMaxWidth))
-}
-
-// completionsOverlayTitle titles the floating box from what's actually being
-// browsed: the single shared group name when every visible row belongs to
-// one (e.g. "Models" mid /model, "Sessions" mid /session) - otherwise (the
-// top-level Commands/Agents/Extensions mix) "Commands".
-func completionsOverlayTitle(rows []compRow) string {
-	if len(rows) == 0 {
-		return "Commands"
+func (m *model) paletteRows() []compRow {
+	if m.palette == nil {
+		return nil
 	}
-	group := rows[0].group
-	for _, r := range rows[1:] {
-		if r.group != group {
-			return "Commands"
+
+	var groups []compGroup
+	switch m.palette.kind {
+	case paletteCommands:
+		// commandGroups still owns discovery, aliases, grouping, and argument
+		// metadata. Only the palette-facing labels lose their slash prefix.
+		groups = m.commandGroups(m.palette.picker.Query())
+		for gi := range groups {
+			for mi := range groups[gi].Matches {
+				groups[gi].Matches[mi].Word = strings.TrimPrefix(groups[gi].Matches[mi].Word, "/")
+			}
 		}
+	case paletteModels:
+		groups = m.modelCompletions(0)
 	}
-	return group
+	return filterAndRankRows(groups, m.palette.picker.Query())
 }
 
-// renderCompletionsOverlay renders the completions dropdown's rows (the same
-// renderCompletions body the old inline chrome used) inside a titled box -
-// the floating presentation Ctrl+P/Ctrl+L/typing "/" all share.
-func (m *model) renderCompletionsOverlay(rows []compRow) string {
+// handlePaletteKey owns every key while the palette is open so search input
+// never leaks into the chat composer behind it.
+func (m *model) handlePaletteKey(msg tea.KeyPressMsg) tea.Cmd {
+	if m.palette == nil {
+		return nil
+	}
+
+	switch msg.String() {
+	case "ctrl+p":
+		// Repeating the active shortcut intentionally resets its query;
+		// switching shortcuts replaces it with a fresh picker of the other kind.
+		// Esc is the close gesture for both palettes.
+		return m.openCommandPalette()
+	case "ctrl+l":
+		return m.openModelPalette()
+	}
+
+	rows := m.paletteRows()
+	action, handled := m.palette.picker.HandleKey(msg, len(rows))
+	if !handled {
+		return nil
+	}
+	switch action {
+	case pickerActionClose:
+		m.palette = nil
+	case pickerActionSelect:
+		return m.acceptPaletteRow(rows[m.palette.picker.ClampSelection(len(rows))])
+	}
+	return nil
+}
+
+func (m *model) acceptPaletteRow(row compRow) tea.Cmd {
+	kind := m.palette.kind
+	m.palette = nil
+
+	switch kind {
+	case paletteModels:
+		m.input = "/model " + row.Word
+		m.inputCursor = utf8.RuneCountInString(m.input)
+		return m.submitInput()
+	case paletteCommands:
+		if entry, ok := slashIndex[row.Word]; ok && entry.isAgent && entry.modeSwitch {
+			m.inputModeCommand = entry.name
+			return nil
+		}
+		m.input = "/" + row.Word + " "
+		m.inputCursor = utf8.RuneCountInString(m.input)
+		if row.RequiresArg {
+			m.compDismissed = false
+			m.compSelected = 0
+			return nil
+		}
+		return m.submitInput()
+	default:
+		return nil
+	}
+}
+
+// paletteOverlayWidth returns the box width for floating list overlays and
+// clamps it to the terminal so narrow windows do not render off-screen.
+func paletteOverlayWidth(termWidth int) int {
+	if termWidth <= 0 {
+		return paletteMinWidth
+	}
+	w := int(float64(termWidth) * paletteWidthFrac)
+	w = max(paletteMinWidth, min(w, paletteMaxWidth))
+	return min(w, max(termWidth-2, 4))
+}
+
+func (m *model) renderPaletteOverlay() string {
 	width := paletteOverlayWidth(m.width)
-	innerWidth := max(width-4, 20)
-
-	selected := m.compSelected
-	if selected < 0 || selected >= len(rows) {
-		selected = 0
-	}
-	body := strings.Split(renderCompletions(rows, selected, innerWidth), "\n")
-	return renderBoxAround(width, completionsOverlayTitle(rows), body)
+	rows := m.paletteRows()
+	return m.palette.picker.Render(rows, width)
 }
 
-// compositeCompletionsOverlay overlays the completions dropdown centered on
-// top of base, following compositeHelpOverlay's lipgloss.Compositor shape
-// (see compositeContextMenu's doc comment for why a bare Layer.Draw isn't
-// enough).
-func (m *model) compositeCompletionsOverlay(base string, rows []compRow, _ string) string {
-	rendered := m.renderCompletionsOverlay(rows)
+func (m *model) compositePaletteOverlay(base string) string {
+	rendered := m.renderPaletteOverlay()
 	bx, by := centerRect(m.width, m.height, lipgloss.Width(rendered), lipgloss.Height(rendered))
 
 	compositor := lipgloss.NewCompositor(

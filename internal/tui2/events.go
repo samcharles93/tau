@@ -723,12 +723,23 @@ func (m *model) renderMarkdown(content string, width int) string {
 // without ending the turn. Called right before a new tool call starts: that
 // text was authored before the call, so it must land in history now -
 // otherwise the tool call/group that commits later (flushToolGroup) would
-// render ahead of text that chronologically came first. Reasoning is
-// discarded rather than persisted, matching finalizeResponse.
+// render ahead of content that chronologically came first. Reasoning is
+// committed before response text, matching the order in which both were
+// authored and finalizeResponse's persistence behavior.
 func (m *model) flushStreamingText() {
+	changed := false
+	if m.reasoning != "" && m.showReasoning {
+		m.reasoningKeySeq++
+		key := committedReasoningKey("", m.reasoningKeySeq)
+		m.commitReasoningBlock(m.reasoning, key, m.streaming != "", nil)
+		changed = true
+	}
 	if m.streaming != "" {
 		rendered := m.renderMarkdown(m.streaming, m.width)
 		m.renderedLines = append(m.renderedLines, strings.Split(rendered, "\n")...)
+		changed = true
+	}
+	if changed {
 		m.viewport.SetContentLines(m.renderedLines)
 	}
 	m.streaming = ""

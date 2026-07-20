@@ -54,17 +54,19 @@ var (
 	inputCursorStyle = lipgloss.NewStyle().Background(themeHex(theme.ToneMuted))
 
 	// Prompt / completion styles.
-	promptTitleStyle     = lipgloss.NewStyle().Bold(true).Foreground(themeHex(theme.ShimmerHighlight))
-	promptTextStyle      = lipgloss.NewStyle().Foreground(themeHex(theme.TonePrimary))
-	promptHintStyle      = lipgloss.NewStyle().Faint(true).Italic(true)
-	promptHighlightStyle = lipgloss.NewStyle().Bold(true).Underline(true)
-	compTitleStyle       = lipgloss.NewStyle().Faint(true).Bold(true)
-	compItemStyle        = lipgloss.NewStyle().Foreground(themeHex(theme.ToneBody))
-	compSelectedStyle    = lipgloss.NewStyle().Foreground(themeHex(theme.AccentColor)).Bold(true)
-	compHighlightStyle   = lipgloss.NewStyle().Foreground(themeHex(theme.TonePrimary)).Bold(true).Underline(true)
-	compDescStyle        = lipgloss.NewStyle().Faint(true)
-	compMoreStyle        = lipgloss.NewStyle().Faint(true).Italic(true)
-	panelStyle           = lipgloss.NewStyle().Foreground(themeHex(theme.AccentColor))
+	promptTitleStyle        = lipgloss.NewStyle().Bold(true).Foreground(themeHex(theme.ShimmerHighlight))
+	promptTextStyle         = lipgloss.NewStyle().Foreground(themeHex(theme.TonePrimary))
+	promptHintStyle         = lipgloss.NewStyle().Faint(true).Italic(true)
+	promptHighlightStyle    = lipgloss.NewStyle().Bold(true).Underline(true)
+	compTitleStyle          = lipgloss.NewStyle().Faint(true).Bold(true)
+	compItemStyle           = lipgloss.NewStyle().Foreground(themeHex(theme.ToneBody))
+	compSelectedStyle       = lipgloss.NewStyle().Foreground(themeHex(theme.AccentColor)).Bold(true)
+	compHighlightStyle      = lipgloss.NewStyle().Foreground(themeHex(theme.TonePrimary)).Bold(true).Underline(true)
+	compDescStyle           = lipgloss.NewStyle().Faint(true)
+	compMoreStyle           = lipgloss.NewStyle().Faint(true).Italic(true)
+	paletteSearchLabelStyle = lipgloss.NewStyle().Foreground(themeHex(theme.AccentColor)).Bold(true)
+	paletteDividerStyle     = lipgloss.NewStyle().Foreground(themeHex(theme.SecondaryColor)).Faint(true)
+	panelStyle              = lipgloss.NewStyle().Foreground(themeHex(theme.AccentColor))
 
 	// streamCursorStyle marks the live streaming cursor - Warm Ochre, the
 	// same marker color already used for every other small interactive

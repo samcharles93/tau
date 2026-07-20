@@ -155,11 +155,11 @@ func TestShiftTabCyclesInputModeAndPreservesDraft(t *testing.T) {
 
 	m.handleKey(key(tea.KeyTab, tea.ModShift))
 
-	if !strings.HasPrefix(m.input, "/") {
-		t.Fatalf("input = %q, want an agent command prefix", m.input)
+	if m.inputModeCommand == "" {
+		t.Fatal("expected an active agent mode")
 	}
-	if !strings.Contains(m.input, "add auth flow") {
-		t.Fatalf("input = %q, want draft text preserved", m.input)
+	if m.input != "add auth flow" {
+		t.Fatalf("input = %q, want draft unchanged", m.input)
 	}
 	if m.inputCursor != len([]rune(m.input)) {
 		t.Fatalf("cursor = %d, want end %d", m.inputCursor, len([]rune(m.input)))
@@ -185,13 +185,13 @@ func TestInputModesExcludeAgentsHiddenFromModeSwitcher(t *testing.T) {
 
 func TestShiftTabCyclesAgentModeBackToChat(t *testing.T) {
 	m := newTestModel(&fakeRuntime{}, nil)
-
-	m.input = "/plan add auth flow"
+	m.input = "add auth flow"
 	m.inputCursor = len([]rune(m.input))
+	m.inputModeCommand = "plan"
 
 	for range len(inputModes()) {
 		m.handleKey(key(tea.KeyTab, tea.ModShift))
-		if !strings.HasPrefix(m.input, "/") {
+		if m.inputModeCommand == "" {
 			break
 		}
 	}
@@ -204,8 +204,9 @@ func TestShiftTabCyclesAgentModeBackToChat(t *testing.T) {
 func TestInputAreaTitleReflectsAgentMode(t *testing.T) {
 	m := newTestModel(&fakeRuntime{}, nil)
 	m.width = 60
-	m.input = "/plan add auth flow"
+	m.input = "add auth flow"
 	m.inputCursor = len([]rune(m.input))
+	m.inputModeCommand = "plan"
 
 	plain := stripANSI(m.renderInputArea())
 	if !strings.Contains(plain, "╭ Planning ") {
@@ -219,10 +220,9 @@ func TestInputAreaShowsModeDescriptionForEmptyAgentMode(t *testing.T) {
 
 	m.handleKey(key(tea.KeyTab, tea.ModShift))
 
-	name, args := slashNameAndArgs(m.input)
-	entry, ok := slashIndex[name]
-	if !ok || !entry.isAgent || args != "" {
-		t.Fatalf("input = %q, want empty agent mode scaffold", m.input)
+	entry, ok := slashIndex[m.inputModeCommand]
+	if !ok || !entry.isAgent || m.input != "" {
+		t.Fatalf("mode = %q input = %q, want empty agent mode", m.inputModeCommand, m.input)
 	}
 	plain := stripANSI(m.renderInputArea())
 	if !strings.Contains(plain, entry.description) {
@@ -233,6 +233,69 @@ func TestInputAreaShowsModeDescriptionForEmptyAgentMode(t *testing.T) {
 	plain = stripANSI(m.renderInputArea())
 	if strings.Contains(plain, entry.description) {
 		t.Fatalf("input area = %q, want description hidden after typing", plain)
+	}
+}
+
+func TestAgentModeSubmissionKeepsSyntheticCommandOutOfInputAndHistory(t *testing.T) {
+	rt := &fakeRuntime{}
+	m := newTestModel(rt, nil)
+	m.inputModeCommand = "plan"
+	m.input = "investigate the best approach"
+	m.inputCursor = len([]rune(m.input))
+
+	cmd := m.submitInput()
+	drainCmd(cmd)
+
+	if m.input != "" || m.inputModeCommand != "" {
+		t.Fatalf("input = %q mode = %q, want both reset after submit", m.input, m.inputModeCommand)
+	}
+	if len(m.history) != 1 || m.history[0] != "investigate the best approach" {
+		t.Fatalf("history = %q, want raw prompt without /plan", m.history)
+	}
+	if len(rt.sent) != 2 {
+		t.Fatalf("sent %d commands, want agent activation and prompt", len(rt.sent))
+	}
+	if got, ok := rt.sent[0].(tauchat.RunAgentCommand); !ok || got.Name != "plan" {
+		t.Fatalf("first command = %#v, want RunAgentCommand plan", rt.sent[0])
+	}
+	if got, ok := rt.sent[1].(tauchat.SubmitChatPromptCommand); !ok || got.Prompt != "investigate the best approach" {
+		t.Fatalf("second command = %#v, want raw prompt submission", rt.sent[1])
+	}
+}
+
+func TestEmptyAgentModeSubmissionKeepsModeSelected(t *testing.T) {
+	rt := &fakeRuntime{}
+	m := newTestModel(rt, nil)
+	m.inputModeCommand = "plan"
+
+	if cmd := m.submitInput(); cmd != nil {
+		t.Fatal("empty submission returned a command")
+	}
+	if m.inputModeCommand != "plan" {
+		t.Fatalf("mode = %q, want plan preserved", m.inputModeCommand)
+	}
+	if len(rt.sent) != 0 {
+		t.Fatalf("sent %d commands, want none", len(rt.sent))
+	}
+}
+
+func TestUnavailableAgentModePreservesDraft(t *testing.T) {
+	rt := &fakeRuntime{}
+	m := newTestModel(rt, nil)
+	m.inputModeCommand = "missing"
+	m.input = "keep this draft"
+	m.inputCursor = len([]rune(m.input))
+
+	drainCmd(m.submitInput())
+
+	if m.input != "keep this draft" || m.inputModeCommand != "missing" {
+		t.Fatalf("input = %q mode = %q, want invalid state preserved for recovery", m.input, m.inputModeCommand)
+	}
+	if m.notification != "agent mode unavailable: missing" {
+		t.Fatalf("notification = %q, want unavailable-mode error", m.notification)
+	}
+	if len(m.history) != 0 || len(rt.sent) != 0 {
+		t.Fatalf("history = %q sent = %d, want no submission side effects", m.history, len(rt.sent))
 	}
 }
 

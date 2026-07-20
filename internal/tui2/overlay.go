@@ -24,6 +24,7 @@ const (
 	overlayChildTranscript
 	overlaySessionTree
 	overlayContextMenu
+	overlayPalette
 	overlayCompletions // soft overlay — documented here, dispatched outside this registry
 )
 
@@ -69,6 +70,7 @@ func (m *model) overlayPrecedence() []overlaySlot {
 		{overlayChildTranscript, childTranscriptOverlay{m}, true},
 		{overlaySessionTree, sessionTreeOverlay{m}, true},
 		{overlayContextMenu, contextMenuOverlay{m}, true},
+		{overlayPalette, paletteOverlay{m}, true},
 	}
 }
 
@@ -164,3 +166,13 @@ func (o contextMenuOverlay) handleKey(m *model, msg tea.KeyPressMsg) (tea.Cmd, b
 }
 
 func (o contextMenuOverlay) close(m *model) { m.contextMenu = nil }
+
+type paletteOverlay struct{ m *model }
+
+func (o paletteOverlay) active() bool { return o.m.palette != nil }
+
+func (o paletteOverlay) handleKey(m *model, msg tea.KeyPressMsg) (tea.Cmd, bool) {
+	return m.handlePaletteKey(msg), true
+}
+
+func (o paletteOverlay) close(m *model) { m.palette = nil }

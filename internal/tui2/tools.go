@@ -51,15 +51,14 @@ const expandedToolCacheLimit = 32
 
 // expandedToolCacheEntry contains the expensive, stable portion of an
 // expanded tool box after glamour and both lipgloss box styles have run.
-// bodySuffix starts immediately after the placeholder title row and includes
-// the remaining rows plus the bottom border. The live title is spliced in on
-// each frame so spinner, status, and elapsed time remain current.
+// The live title is rendered separately on each frame so spinner, status,
+// and elapsed time remain current.
 type expandedToolCacheEntry struct {
 	source     string
 	childBlock string
 	width      int
 	focused    bool
-	bodySuffix string
+	body       string
 }
 
 // committedToolGroup is a multi-tool-call batch already committed to
@@ -961,7 +960,7 @@ func (m *model) renderToolBox(t toolState, expanded bool, _ int, width int) stri
 
 	if expanded {
 		if cached, ok := m.cachedExpandedTool(t, width, focused, childBlock); ok {
-			return renderExpandedToolHeader(boxStyle, title, cached.bodySuffix)
+			return renderExpandedToolHeader(boxStyle, title, cached.body)
 		}
 
 		var bodyLines []string
@@ -1072,15 +1071,7 @@ func (m *model) cacheAndRenderExpandedTool(
 	title string,
 	bodyLines []string,
 ) string {
-	content := " "
-	if len(bodyLines) > 0 {
-		content += "\n" + strings.Join(bodyLines, "\n")
-	}
-	placeholderBox := boxStyle.Render(content)
-	bodySuffix := expandedToolBodySuffix(placeholderBox)
-	if bodySuffix == "" {
-		return boxStyle.Render(title + strings.TrimPrefix(content, " "))
-	}
+	body := boxStyle.Render(strings.Join(bodyLines, "\n"))
 
 	if t.id != "" {
 		m.storeExpandedToolCache(t.id, expandedToolCacheEntry{
@@ -1088,35 +1079,18 @@ func (m *model) cacheAndRenderExpandedTool(
 			childBlock: childBlock,
 			width:      width,
 			focused:    focused,
-			bodySuffix: bodySuffix,
+			body:       body,
 		})
 	}
-	return renderExpandedToolHeader(boxStyle, title, bodySuffix)
+	return renderExpandedToolHeader(boxStyle, title, body)
 }
 
-// expandedToolBodySuffix drops the top border and placeholder title row from
-// a fully rendered box, retaining the newline before the first body row.
-func expandedToolBodySuffix(rendered string) string {
-	first := strings.IndexByte(rendered, '\n')
-	if first < 0 {
-		return ""
-	}
-	secondRel := strings.IndexByte(rendered[first+1:], '\n')
-	if secondRel < 0 {
-		return ""
-	}
-	return rendered[first+1+secondRel:]
-}
-
-// renderExpandedToolHeader renders only the small changing title, removes
-// its temporary bottom border, then joins it to the cached body and real
-// bottom border.
-func renderExpandedToolHeader(boxStyle lipgloss.Style, title, bodySuffix string) string {
-	header := boxStyle.Render(title)
-	if last := strings.LastIndexByte(header, '\n'); last >= 0 {
-		header = header[:last]
-	}
-	return header + bodySuffix
+// renderExpandedToolHeader renders only the small changing title and joins
+// it to the cached body. The caller supplies the same explicit width and
+// left-border-only style to both renders, making their composition equivalent
+// to styling the newline-joined content in one pass.
+func renderExpandedToolHeader(boxStyle lipgloss.Style, title, body string) string {
+	return boxStyle.Render(title) + "\n" + body
 }
 
 func (m *model) storeExpandedToolCache(id string, entry expandedToolCacheEntry) {

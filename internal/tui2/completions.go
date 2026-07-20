@@ -8,6 +8,7 @@ import (
 	"unicode/utf8"
 
 	tea "charm.land/bubbletea/v2"
+	"charm.land/lipgloss/v2"
 
 	tauchat "github.com/samcharles93/tau/internal/chat"
 	"github.com/samcharles93/tau/internal/providers"
@@ -440,6 +441,46 @@ func (m *model) completionsVisible() (rows []compRow, token string, ok bool) {
 		return nil, "", false
 	}
 	return rows, token, true
+}
+
+// completionsOverlayTitle derives the inline slash-completion title from its
+// visible groups. Ctrl+P and Ctrl+L use the independent listPicker component
+// in picker.go; this remains solely for completions opened by typing "/".
+func completionsOverlayTitle(rows []compRow) string {
+	if len(rows) == 0 {
+		return "Commands"
+	}
+	group := rows[0].group
+	for _, row := range rows[1:] {
+		if row.group != group {
+			return "Commands"
+		}
+	}
+	return group
+}
+
+func (m *model) renderCompletionsOverlay(rows []compRow) string {
+	width := paletteOverlayWidth(m.width)
+	innerWidth := max(width-4, 1)
+	selected := m.compSelected
+	if selected < 0 || selected >= len(rows) {
+		selected = 0
+	}
+	body := strings.Split(renderCompletions(rows, selected, innerWidth), "\n")
+	return renderBoxAround(width, completionsOverlayTitle(rows), body)
+}
+
+func (m *model) compositeCompletionsOverlay(base string, rows []compRow, _ string) string {
+	rendered := m.renderCompletionsOverlay(rows)
+	bx, by := centerRect(m.width, m.height, lipgloss.Width(rendered), lipgloss.Height(rendered))
+
+	compositor := lipgloss.NewCompositor(
+		lipgloss.NewLayer(base).X(0).Y(0),
+		lipgloss.NewLayer(rendered).X(bx).Y(by).Z(1),
+	)
+	canvas := lipgloss.NewCanvas(m.width, m.height)
+	canvas.Compose(compositor)
+	return canvas.Render()
 }
 
 // handleCompletionKey gives the completions dropdown first refusal on a

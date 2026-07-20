@@ -7,6 +7,7 @@ import (
 	"time"
 
 	tea "charm.land/bubbletea/v2"
+	"charm.land/lipgloss/v2"
 
 	tauchat "github.com/samcharles93/tau/internal/chat"
 )
@@ -694,7 +695,7 @@ func TestExpandedToolBoxCachesStableBodyAndKeepsLiveTitle(t *testing.T) {
 
 	first := m.renderToolBox(tool, true, 0, m.width)
 	cached, ok := m.expandedToolCache[tool.id]
-	if !ok || cached.bodySuffix == "" {
+	if !ok || cached.body == "" {
 		t.Fatal("expected expanded tool body to be cached")
 	}
 
@@ -703,8 +704,27 @@ func TestExpandedToolBoxCachesStableBodyAndKeepsLiveTitle(t *testing.T) {
 	if first == second {
 		t.Fatal("cached expanded tool box did not refresh its live spinner title")
 	}
-	if got := m.expandedToolCache[tool.id].bodySuffix; got != cached.bodySuffix {
+	if got := m.expandedToolCache[tool.id].body; got != cached.body {
 		t.Fatal("spinner-only update rebuilt the cached expanded tool body")
+	}
+}
+
+func TestExpandedToolBoxCachedCompositionMatchesDirectRender(t *testing.T) {
+	title := toolRunningStyle.Render("⠋ read running")
+	bodyContent := "\n" + lipgloss.NewStyle().Bold(true).Render("first line") + "\nsecond line"
+	// renderToolBox applies this exact Width/Padding combination before
+	// cacheAndRenderExpandedTool receives the style. The explicit width is
+	// load-bearing: without it, independently rendered header/body blocks
+	// size themselves to different content widths.
+	style := toolBoxExpandedStyle.Width(80).Padding(0, 1)
+
+	direct := style.Render(title + "\n" + bodyContent)
+	cached := renderExpandedToolHeader(style, title, style.Render(bodyContent))
+	if cached != direct {
+		t.Fatalf("cached composition changed ANSI output:\n direct: %q\n cached: %q", direct, cached)
+	}
+	if stripANSI(cached) != stripANSI(direct) {
+		t.Fatalf("cached composition changed visible layout:\n direct: %q\n cached: %q", stripANSI(direct), stripANSI(cached))
 	}
 }
 
