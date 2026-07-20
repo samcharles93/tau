@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.27.0](https://github.com/samcharles93/tau/compare/v0.26.0...v0.27.0) (2026-07-20)
+
+
+### Features
+
+* state taxonomy spec, plugin proto restructure, and webui child-agent bug fixes ([#70](https://github.com/samcharles93/tau/issues/70)) ([d250cc5](https://github.com/samcharles93/tau/commit/d250cc51dbaae6b0e420246484922fcd87a011ba))
+
 ## [0.26.0](https://github.com/samcharles93/tau/compare/v0.25.0...v0.26.0) (2026-07-19)
 
 
