@@ -559,6 +559,11 @@ func spawnChildProcess(ctx context.Context, args agentToolArgs, cfg AgentToolCon
 	}
 	_ = ready // PID is available if needed.
 
+	// Reset transport error counters now that handshake succeeded.
+	// Errors during handshake (e.g. stray library output before
+	// agent.ready) should not deplete the WORKING-phase budget.
+	childReader.ResetErrorCounters()
+
 	// Build limits from the resolved spec (structural caps). For resume,
 	// these come from the original snapshot, not a freshly resolved spec.
 	limits := bridge.AgentLimits{MaxTurns: instResult.MaxTurns}
@@ -1108,11 +1113,26 @@ func superviseCancellation(ctx context.Context, cmd *exec.Cmd, w *stdio.Writer, 
 // the result envelope, accumulated usage, and any error. Does not call
 // cmd.Wait() - the caller owns the single authoritative Wait() call (see
 // spawnChildProcess).
+
+// readChildResult streams envelopes from the child via the stdio reader,
+// forwarding events to the parent bus and accumulating usage until the
+// child sends agent.result or the stream is interrupted (EOF, cancel, or
+// protocol violation). It enforces wire-protocol frame rules from
+// docs/specs/agents/03-wire-protocol.md: duplicate result detection,
+// post-result message rejection, instance-ID validation, and authority
+// violation counting (pipe close after 3 violations, per G4).
+//
+// maxAuthorityViolations is the authority-violation threshold from
+// 03-wire-protocol.md. After this many violations the child pipe is closed
+// and the child is treated as crashed.
+const maxAuthorityViolations = 3
+
 func readChildResult(ctx context.Context, reader *stdio.Reader, instanceID, callID, parentSessionID string, childPub *eventbus.Publisher[tauchat.ChatEvent]) (string, *bridge.AgentResult, *bridge.AgentResultUsage, error) {
 	var finalText strings.Builder
 	var usageAcc bridge.AgentResultUsage
 	var activity string
 	startedAt := time.Now()
+	violations := 0
 
 	// emitState publishes a ChildAgentStateEvent on the parent bus.
 	emitState := func(status tauchat.ChildAgentStatus) {
@@ -1132,6 +1152,19 @@ func readChildResult(ctx context.Context, reader *stdio.Reader, instanceID, call
 			Status:       status,
 			OccurredAt:   time.Now(),
 		})
+	}
+
+	// validateInstance returns true only on strict match with the expected
+	// instanceID per the spec's pipe-binding rules. An empty or missing
+	// instance field is a violation (G4 authority validation).
+	validateInstance := func(payload json.RawMessage) bool {
+		var obj struct {
+			Instance string `json:"instance"`
+		}
+		if err := json.Unmarshal(payload, &obj); err != nil {
+			return false
+		}
+		return obj.Instance == instanceID
 	}
 
 	for {
@@ -1164,10 +1197,42 @@ func readChildResult(ctx context.Context, reader *stdio.Reader, instanceID, call
 			}, &usageAcc, nil
 		}
 
+		// Instance-ID validation and message-type gating runs BEFORE
+		// type dispatch so authority violations are counted for ALL
+		// messages, including post-result ones. Per 03-wire-protocol.md:
+		// agent.event/agent.usage must carry a matching instance field;
+		// unknown types count as authority violations; duplicate
+		// agent.result is discarded silently (not fatal).
+		switch typ {
+		case "agent.event", "agent.usage":
+			if !validateInstance(payload) {
+				violations++
+				if violations >= maxAuthorityViolations {
+					return finalText.String(), nil, &usageAcc,
+						fmt.Errorf("protocol violation: %d authority violations, closing pipe", violations)
+				}
+				continue
+			}
+		case "agent.result":
+			// First result is processed normally below. A second result
+			// (duplicate) is discarded silently per spec — the pipe is
+			// already closing after the first.
+			// We mark resultReceived in the type switch below.
+		default:
+			// Unknown message types counted as authority violations
+			// per 03-wire-protocol.md (discarded, WARN, counter).
+			// Malformed JSON is caught by ReadEnvelope; this handles
+			// valid-but-unrecognised types.
+			violations++
+			if violations >= maxAuthorityViolations {
+				return finalText.String(), nil, &usageAcc,
+					fmt.Errorf("protocol violation: %d authority violations (unknown type %q), closing pipe", violations, typ)
+			}
+			continue
+		}
+
 		switch typ {
 		case "agent.event":
-			// Forward raw event as a ChatToolOutputEvent (backwards compat)
-			// and extract activity from tool-execution-started events.
 			if childPub != nil {
 				childPub.Publish(tauchat.ChatToolOutputEvent{
 					SessionID:  parentSessionID,
@@ -1184,7 +1249,6 @@ func readChildResult(ctx context.Context, reader *stdio.Reader, instanceID, call
 					})
 				}
 			}
-			// Try to extract the inner event type for activity tracking.
 			if activity == "" {
 				activity = extractChildActivity(payload)
 			}
@@ -1204,8 +1268,6 @@ func readChildResult(ctx context.Context, reader *stdio.Reader, instanceID, call
 				return finalText.String(), nil, &usageAcc, fmt.Errorf("unmarshal agent.result: %w", err)
 			}
 			return finalText.String(), &result, &usageAcc, nil
-		default:
-			_ = typ // ignore unknown envelopes
 		}
 	}
 }

@@ -187,3 +187,45 @@ func TestParse_AllNewFieldsTogether(t *testing.T) {
 	require.Equal(t, 25, def.MaxTurns)
 	require.Equal(t, 15*time.Minute, def.Timeout)
 }
+
+// TestSnapshotLimits_Valid verifies SnapshotLimits extracts max_turns and
+// timeout from a valid snapshot JSON (Gap A2).
+func TestSnapshotLimits_Valid(t *testing.T) {
+	snap := `{"max_turns":15,"timeout":"5m","name":"test"}`
+	turns, timeout := SnapshotLimits(snap)
+	require.Equal(t, 15, turns)
+	require.Equal(t, 5*time.Minute, timeout)
+}
+
+// TestSnapshotLimits_MalformedJSON verifies SnapshotLimits returns zero
+// values for unparseable input per spec: "silent fallback to defaults"
+// (Gap A2).
+func TestSnapshotLimits_MalformedJSON(t *testing.T) {
+	turns, timeout := SnapshotLimits(`{not json`)
+	require.Equal(t, 0, turns)
+	require.Equal(t, time.Duration(0), timeout)
+}
+
+// TestSnapshotLimits_EmptyJSON verifies SnapshotLimits returns zero
+// values for empty/zero input.
+func TestSnapshotLimits_EmptyJSON(t *testing.T) {
+	turns, timeout := SnapshotLimits(`{}`)
+	require.Equal(t, 0, turns)
+	require.Equal(t, time.Duration(0), timeout)
+}
+
+// TestSnapshotLimits_MissingFields verifies SnapshotLimits returns zero
+// values when fields are absent from the snapshot.
+func TestSnapshotLimits_MissingFields(t *testing.T) {
+	turns, timeout := SnapshotLimits(`{"name":"test"}`)
+	require.Equal(t, 0, turns)
+	require.Equal(t, time.Duration(0), timeout)
+}
+
+// TestSnapshotLimits_InvalidTimeout verifies SnapshotLimits handles
+// an invalid duration string gracefully (zero timeout, not panic).
+func TestSnapshotLimits_InvalidTimeout(t *testing.T) {
+	turns, timeout := SnapshotLimits(`{"timeout":"not-a-duration"}`)
+	require.Equal(t, 0, turns)
+	require.Equal(t, time.Duration(0), timeout)
+}

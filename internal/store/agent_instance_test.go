@@ -203,3 +203,46 @@ func TestSQLiteStore_ResumeSession_ConcurrentRaceYieldsOneOwner(t *testing.T) {
 	}
 	require.Equal(t, 1, successes, "exactly one racer should win")
 }
+
+// TestSQLiteStore_ListOpenAgentInstances verifies the orphan-sweep helper
+// returns only instances with ended_at IS NULL (Gap A6).
+func TestSQLiteStore_ListOpenAgentInstances(t *testing.T) {
+	s := newTestStore(t)
+	ctx := context.Background()
+
+	for i, open := range []bool{true, false, true} {
+		id := "open" + string(rune('a'+i)) + "#aaaaaa"
+		inst := store.AgentInstance{
+			ID: id, SpecName: "open", SpecHash: "h", StartedAt: time.Now().UTC(),
+		}
+		require.NoError(t, s.SaveAgentInstance(ctx, inst))
+		if !open {
+			require.NoError(t, s.CloseAgentInstance(ctx, id, "completed", "", ""))
+		}
+	}
+
+	open, err := s.ListOpenAgentInstances(ctx)
+	require.NoError(t, err)
+	require.Len(t, open, 2, "expected 2 open instances")
+	for _, inst := range open {
+		require.True(t, inst.EndedAt.IsZero(), "open instance should have zero EndedAt")
+	}
+}
+
+// TestSQLiteStore_SetAgentInstancePID_RoundTrip verifies PID + process_start_ns
+// survive a Get round-trip (Gap A7).
+func TestSQLiteStore_SetAgentInstancePID_RoundTrip(t *testing.T) {
+	s := newTestStore(t)
+	ctx := context.Background()
+
+	id := "pidt#aaaaaa"
+	require.NoError(t, s.SaveAgentInstance(ctx, store.AgentInstance{
+		ID: id, SpecName: "pidt", SpecHash: "h", StartedAt: time.Now().UTC(),
+	}))
+	require.NoError(t, s.SetAgentInstancePID(ctx, id, 12345, 67890123456))
+
+	got, err := s.GetAgentInstance(ctx, id)
+	require.NoError(t, err)
+	require.Equal(t, 12345, got.PID)
+	require.Equal(t, int64(67890123456), got.ProcessStartNS)
+}

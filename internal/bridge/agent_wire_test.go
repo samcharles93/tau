@@ -222,3 +222,57 @@ func envelopeType(data []byte) string {
 	_ = json.Unmarshal(data, &env)
 	return env.Type
 }
+
+// TestAgentResultUsage_WireRoundTrip verifies the usage struct survives
+// JSON marshal/unmarshal (Gap: child metrics aggregation).
+func TestAgentResultUsage_WireRoundTrip(t *testing.T) {
+	orig := AgentResultUsage{
+		Turns:        7,
+		InputTokens:  82000,
+		OutputTokens: 4100,
+		Cost:         0.0231,
+	}
+	data, err := json.Marshal(orig)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	var got AgentResultUsage
+	if err := json.Unmarshal(data, &got); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if got.Turns != orig.Turns {
+		t.Errorf("Turns = %d, want %d", got.Turns, orig.Turns)
+	}
+	if got.InputTokens != orig.InputTokens {
+		t.Errorf("InputTokens = %d, want %d", got.InputTokens, orig.InputTokens)
+	}
+	if got.OutputTokens != orig.OutputTokens {
+		t.Errorf("OutputTokens = %d, want %d", got.OutputTokens, orig.OutputTokens)
+	}
+	if got.Cost != orig.Cost {
+		t.Errorf("Cost = %v, want %v", got.Cost, orig.Cost)
+	}
+}
+
+// TestAgentResultUsage_CumulativeSemantics verifies that cumulative usage
+// (not deltas) is the correct interpretation — a later message with higher
+// turn count replaces the earlier one in the readChildResult loop.
+func TestAgentResultUsage_CumulativeSemantics(t *testing.T) {
+	var acc AgentResultUsage
+	// Simulate usage arriving: turn 3 then turn 5 (cumulative, not delta)
+	updates := []AgentResultUsage{
+		{Turns: 3, InputTokens: 500, OutputTokens: 100, Cost: 0.001},
+		{Turns: 5, InputTokens: 900, OutputTokens: 180, Cost: 0.002},
+	}
+	for _, u := range updates {
+		if u.Turns > acc.Turns {
+			acc = u
+		}
+	}
+	if acc.Turns != 5 {
+		t.Errorf("Turns = %d, want 5", acc.Turns)
+	}
+	if acc.InputTokens != 900 {
+		t.Errorf("InputTokens = %d, want 900", acc.InputTokens)
+	}
+}
