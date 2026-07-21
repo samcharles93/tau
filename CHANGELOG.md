@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.30.1](https://github.com/samcharles93/tau/compare/v0.30.0...v0.30.1) (2026-07-21)
+
+
+### Bug Fixes
+
+* **agent:** add metric drain loop to TestToolLoopBreakerAllowsJustifiedOverride ([6d93500](https://github.com/samcharles93/tau/commit/6d93500960e4d80ea8cd497c41bb3edfdcba93cb))
+* **agent:** add metric drain loop to TestToolLoopBreakerAllowsJustifiedOverride ([7a5c6aa](https://github.com/samcharles93/tau/commit/7a5c6aac4cba83b9434dcfbff499e92df49a9247))
+
 ## [0.30.0](https://github.com/samcharles93/tau/compare/v0.29.0...v0.30.0) (2026-07-20)
 
 
