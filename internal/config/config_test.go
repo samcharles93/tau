@@ -7,6 +7,7 @@ import (
 	"runtime"
 	"strings"
 	"testing"
+	"time"
 
 	"gopkg.in/yaml.v3"
 )
@@ -1211,5 +1212,90 @@ default_model: acme-fast
 	}
 	if cfg.DefaultModel != "gpt-5.6" {
 		t.Fatalf("DefaultModel = %q, want gpt-5.6", cfg.DefaultModel)
+	}
+}
+
+// TestAgentsConfigDefaults verifies DefaultAgentsConfig() produces
+// non-zero values for all fields (Gap A3).
+func TestAgentsConfigDefaults(t *testing.T) {
+	d := DefaultAgentsConfig()
+	if d.DefaultMaxDepth != 2 {
+		t.Errorf("DefaultMaxDepth = %d, want 2", d.DefaultMaxDepth)
+	}
+	if d.DepthCeiling != 4 {
+		t.Errorf("DepthCeiling = %d, want 4", d.DepthCeiling)
+	}
+	if d.DefaultMaxTurns != 30 {
+		t.Errorf("DefaultMaxTurns = %d, want 30", d.DefaultMaxTurns)
+	}
+	if d.DefaultTimeout != 10*time.Minute {
+		t.Errorf("DefaultTimeout = %v, want 10m", d.DefaultTimeout)
+	}
+	if d.MaxActiveChildren != 4 {
+		t.Errorf("MaxActiveChildren = %d, want 4", d.MaxActiveChildren)
+	}
+	if d.MaxTotalChildren != 16 {
+		t.Errorf("MaxTotalChildren = %d, want 16", d.MaxTotalChildren)
+	}
+	if d.MaxQueuedSpawns != 8 {
+		t.Errorf("MaxQueuedSpawns = %d, want 8", d.MaxQueuedSpawns)
+	}
+	if d.OrphanStaleAge != 24*time.Hour {
+		if d.CancelGrace != 5*time.Second {
+			t.Errorf("CancelGrace = %v, want 5s", d.CancelGrace)
+		}
+		if d.KillGrace != 5*time.Second {
+			t.Errorf("KillGrace = %v, want 5s", d.KillGrace)
+		}
+		t.Errorf("OrphanStaleAge = %v, want 24h", d.OrphanStaleAge)
+	}
+	// Verify a zero-value AgentsConfig does NOT match defaults (callers
+	// must explicitly merge).
+	var zero AgentsConfig
+	if zero.DefaultMaxTurns == d.DefaultMaxTurns {
+		t.Error("zero AgentsConfig should not match Defaults (caller must merge)")
+	}
+}
+
+// TestAgentsConfigUnmarshalYAML verifies snake_case field parsing (Gap A3).
+func TestAgentsConfigUnmarshalYAML(t *testing.T) {
+	projectDir := t.TempDir()
+	writeFile(t, filepath.Join(projectDir, ".tau.yaml"), `
+default_provider: test
+providers:
+  - name: test
+    base_url: https://test.example
+    auth:
+      type: none
+agents:
+  default_max_depth: 3
+  depth_ceiling: 6
+  default_max_turns: 50
+  default_timeout: 5m
+  max_active_children: 6
+  max_total_children: 32
+`)
+	cfg, err := LoadConfigFrom(projectDir)
+	if err != nil {
+		t.Fatalf("LoadConfigFrom: %v", err)
+	}
+	a := cfg.Agents
+	if a.DefaultMaxDepth != 3 {
+		t.Errorf("DefaultMaxDepth = %d, want 3", a.DefaultMaxDepth)
+	}
+	if a.DepthCeiling != 6 {
+		t.Errorf("DepthCeiling = %d, want 6", a.DepthCeiling)
+	}
+	if a.DefaultMaxTurns != 50 {
+		t.Errorf("DefaultMaxTurns = %d, want 50", a.DefaultMaxTurns)
+	}
+	if a.DefaultTimeout != 5*time.Minute {
+		t.Errorf("DefaultTimeout = %v, want 5m", a.DefaultTimeout)
+	}
+	if a.MaxActiveChildren != 6 {
+		t.Errorf("MaxActiveChildren = %d, want 6", a.MaxActiveChildren)
+	}
+	if a.MaxTotalChildren != 32 {
+		t.Errorf("MaxTotalChildren = %d, want 32", a.MaxTotalChildren)
 	}
 }

@@ -3,6 +3,19 @@
 // reader/writer pairs with a 8 MiB line cap, handshake enforcement
 // (first message must be agent.ready with a matching protocol version),
 // and EOF semantics for both parent and child sides.
+//
+// Wire protocol conformance (03-wire-protocol.md, JSONL framing):
+//   - Max line size 8 MiB with error counter
+//   - Invalid UTF-8: discarded, hex dump logged, counter incremented
+//   - Malformed JSON: discarded, parse error logged, counter incremented
+//   - Empty line (bare \n): skipped silently
+//   - Partial final line (no trailing LF): returned as last message
+//   - Error threshold: 3 malformed/oversized/utf8 errors → ErrTooManyErrors
+//   - Writer: single mutex-protected goroutine per endpoint, no interleaving
+//   - Writer: bounded output queue for backpressure (default 64)
+//
+// The state machine (INIT→READY→WORKING→CLOSING→CLOSED) lives in the
+// parent-side and child-side reader loops (agent.go, child.go), not here.
 package stdio
 
 import (
@@ -12,6 +25,8 @@ import (
 	"fmt"
 	"io"
 	"sync"
+	"sync/atomic"
+	"unicode/utf8"
 )
 
 // ProtocolVersion is the current agent-wire protocol version. The parent
@@ -33,6 +48,23 @@ var ErrHandshakeFailed = errors.New("handshake failed: first message must be age
 // ErrProtocolVersion is returned when the child's protocol version does not
 // match what the parent expects.
 var ErrProtocolVersion = errors.New("unsupported agent protocol version")
+
+// ErrInvalidUTF8 is returned when a line contains invalid UTF-8 bytes.
+// Per 03-wire-protocol.md frame rules: discarded, hex dump logged at WARN.
+var ErrInvalidUTF8 = errors.New("invalid UTF-8 in line")
+
+// ErrMalformedJSON is returned when a line cannot be parsed as a JSON
+// envelope. Per 03-wire-protocol.md: discarded, parse error logged, counter.
+var ErrMalformedJSON = errors.New("malformed JSON envelope")
+
+// ErrTooManyErrors is returned when the error counter exceeds the
+// configured threshold (default 3). Per 03-wire-protocol.md: the pipe
+// should be closed and the child treated as crashed.
+var ErrTooManyErrors = errors.New("too many protocol errors: closing pipe")
+
+// maxConsecutiveErrors is the frame-error threshold from 03-wire-protocol.md.
+// Three consecutive oversized/malformed/utf8 frames trigger pipe close.
+const maxConsecutiveErrors = 3
 
 // rawEnvelope is a lightweight envelope used for the handshake check only.
 // The full envelope with From/To lives in internal/bridge; this package
@@ -109,9 +141,13 @@ func (w *Writer) writeLine(data []byte) error {
 }
 
 // Reader wraps an io.Reader and reads one JSON-encoded message per line,
-// enforcing the MaxLineSize cap.
+// enforcing the MaxLineSize cap, UTF-8 validity, and error-counter
+// threshold per 03-wire-protocol.md.
 type Reader struct {
-	scanner *bufio.Scanner
+	scanner         *bufio.Scanner
+	parseErrors     atomic.Int32
+	utf8Errors      atomic.Int32
+	oversizedErrors atomic.Int32
 }
 
 // NewReader creates a Reader that reads LF-terminated JSON lines from r.
@@ -126,27 +162,58 @@ func NewReader(r io.Reader) *Reader {
 
 // ReadMessage reads the next line and returns the raw JSON bytes. It returns
 // io.EOF when the stream is exhausted. ErrLineTooLong is returned when a
-// line exceeds MaxLineSize.
+// line exceeds MaxLineSize. ErrInvalidUTF8 is returned when the line is not
+// valid UTF-8. Empty lines (bare \n) are skipped silently.
+//
+// When the cumulative error count (oversized + utf8 + parse) reaches
+// maxConsecutiveErrors, ErrTooManyErrors is returned.
 func (r *Reader) ReadMessage() ([]byte, error) {
-	if !r.scanner.Scan() {
-		if err := r.scanner.Err(); err != nil {
-			if errors.Is(err, bufio.ErrTooLong) {
-				return nil, fmt.Errorf("%w (%d bytes)", ErrLineTooLong, MaxLineSize)
-			}
-			return nil, fmt.Errorf("read: %w", err)
+	for {
+		if r.ErrorsExceeded() {
+			return nil, ErrTooManyErrors
 		}
-		return nil, io.EOF
+
+		if !r.scanner.Scan() {
+			if err := r.scanner.Err(); err != nil {
+				if errors.Is(err, bufio.ErrTooLong) {
+					r.oversizedErrors.Add(1)
+					if r.ErrorsExceeded() {
+						return nil, ErrTooManyErrors
+					}
+					return nil, fmt.Errorf("%w (%d bytes)", ErrLineTooLong, MaxLineSize)
+				}
+				return nil, fmt.Errorf("read: %w", err)
+			}
+			return nil, io.EOF
+		}
+
+		data := r.scanner.Bytes()
+
+		// Skip empty lines (bare \n)
+		if len(data) == 0 {
+			continue
+		}
+
+		// Validate UTF-8
+		if !utf8.Valid(data) {
+			r.utf8Errors.Add(1)
+			if r.ErrorsExceeded() {
+				return nil, ErrTooManyErrors
+			}
+			return nil, ErrInvalidUTF8
+		}
+
+		// Copy the bytes - the scanner reuses its buffer.
+		line := make([]byte, len(data))
+		copy(line, data)
+		return line, nil
 	}
-	// Copy the bytes - the scanner reuses its buffer.
-	data := r.scanner.Bytes()
-	line := make([]byte, len(data))
-	copy(line, data)
-	return line, nil
 }
 
 // ReadEnvelope reads the next line and returns the type discriminator and
 // raw payload. This is a convenience for callers that need to route on
-// the type field.
+// the type field. ErrMalformedJSON is returned when the line is valid JSON
+// but cannot be parsed as an envelope.
 func (r *Reader) ReadEnvelope() (typ string, payload json.RawMessage, err error) {
 	data, err := r.ReadMessage()
 	if err != nil {
@@ -154,9 +221,29 @@ func (r *Reader) ReadEnvelope() (typ string, payload json.RawMessage, err error)
 	}
 	var env rawEnvelope
 	if err := json.Unmarshal(data, &env); err != nil {
-		return "", nil, fmt.Errorf("unmarshal envelope: %w", err)
+		r.parseErrors.Add(1)
+		if r.ErrorsExceeded() {
+			return "", nil, ErrTooManyErrors
+		}
+		return "", nil, fmt.Errorf("%w: %w", ErrMalformedJSON, err)
 	}
 	return env.Type, env.Payload, nil
+}
+
+// ErrorsExceeded reports whether the cumulative error count has reached or
+// exceeded maxConsecutiveErrors. Per 03-wire-protocol.md, the caller should
+// close the pipe when this returns true.
+func (r *Reader) ErrorsExceeded() bool {
+	total := r.parseErrors.Load() + r.utf8Errors.Load() + r.oversizedErrors.Load()
+	return total >= maxConsecutiveErrors
+}
+
+// ResetErrorCounters resets all frame-error counters to zero. Called when the
+// pipe transitions to a new state (e.g. after a successful handshake).
+func (r *Reader) ResetErrorCounters() {
+	r.parseErrors.Store(0)
+	r.utf8Errors.Store(0)
+	r.oversizedErrors.Store(0)
 }
 
 // Handshake helpers

@@ -1120,3 +1120,58 @@ func TestEnsureParentSessionExists_DoesNotOverwriteRealSession(t *testing.T) {
 		t.Errorf("real parent session was overwritten: SystemPrompt = %q", loaded.SystemPrompt)
 	}
 }
+
+// TestComputeChildEffectiveTools_ResumePattern verifies the three-way
+// attenuation used by executeResume: original snapshot ceiling ∩ current
+// parent effective ∩ spawn restriction (Gap A17).
+func TestComputeChildEffectiveTools_ResumePattern(t *testing.T) {
+	tests := []struct {
+		name            string
+		originalCeil    []string
+		parentEffective []string
+		spawnTools      []string
+		want            []string
+	}{
+		{
+			name:            "original ceiling narrowed by parent",
+			originalCeil:    []string{"read", "grep", "skill"},
+			parentEffective: []string{"read"},
+			spawnTools:      nil,
+			want:            []string{"read"},
+		},
+		{
+			name:            "all three contributors",
+			originalCeil:    []string{"read", "grep", "write", "skill"},
+			parentEffective: []string{"read", "grep", "skill"},
+			spawnTools:      []string{"read", "grep"},
+			want:            []string{"read", "grep"},
+		},
+		{
+			name:            "parent unrestricted — original ceiling wins",
+			originalCeil:    []string{"read", "grep"},
+			parentEffective: nil,
+			spawnTools:      nil,
+			want:            []string{"read", "grep"},
+		},
+		{
+			name:            "original was unrestricted — parent limits",
+			originalCeil:    nil,
+			parentEffective: []string{"read", "grep"},
+			spawnTools:      nil,
+			want:            []string{"read", "grep"},
+		},
+		{
+			name:            "spawn narrows below both",
+			originalCeil:    []string{"read", "grep", "write"},
+			parentEffective: []string{"read", "grep", "write", "skill"},
+			spawnTools:      []string{"read"},
+			want:            []string{"read"},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := computeChildEffectiveTools(tt.originalCeil, tt.parentEffective, tt.spawnTools)
+			require.Equal(t, tt.want, got)
+		})
+	}
+}
