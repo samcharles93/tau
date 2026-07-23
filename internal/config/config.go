@@ -229,6 +229,10 @@ type RegistryConfig struct {
 	Token string `yaml:"token" json:"token,omitempty"`
 }
 
+// DO NOT add exported YAML-tagged fields to Config without also
+// adding them to rawConfig AND to the YAML literal in
+// TestConfigStructParityRoundTrip (config_parity_test.go).
+// Skipping either step will cause the parity test to fail.
 func (c *Config) UnmarshalYAML(value *yaml.Node) error {
 	type rawConfig struct {
 		DefaultProvider string                    `yaml:"default_provider"`
