@@ -44,9 +44,9 @@ var (
 	streamStyle         = lipgloss.NewStyle()
 	inputStyle          = lipgloss.NewStyle().Foreground(inputColor)
 
-	userContinuationStyle      = lipgloss.NewStyle().PaddingLeft(6)
-	assistantContinuationStyle = lipgloss.NewStyle().PaddingLeft(6)
-	continuationStyle          = lipgloss.NewStyle().Faint(true).PaddingLeft(6)
+	userContinuationStyle      = lipgloss.NewStyle().PaddingLeft(contentPadLeft)
+	assistantContinuationStyle = lipgloss.NewStyle().PaddingLeft(contentPadLeft)
+	continuationStyle          = lipgloss.NewStyle().Faint(true).PaddingLeft(contentPadLeft)
 
 	// inputCursorStyle is the block-cursor background - matches the default
 	// mid-grey pkg/taui/lineinput.go uses (\x1b[48;2;128;134;150m).
@@ -107,33 +107,33 @@ var (
 				Border(lipgloss.RoundedBorder()).
 				BorderForeground(themeHex(theme.ToolRunning.FG)).
 				Foreground(themeHex(theme.ToolRunning.FG)).
-				Padding(0, 1)
+				Padding(toolBoxPadTopBottom, toolBoxPadLeftRight)
 	toolBoxSuccessStyle = lipgloss.NewStyle().
 				Border(lipgloss.RoundedBorder()).
 				BorderForeground(themeHex(theme.SuccessColor)).
 				Foreground(themeHex(theme.SuccessColor)).
-				Padding(0, 1)
+				Padding(toolBoxPadTopBottom, toolBoxPadLeftRight)
 	toolBoxErrorStyle = lipgloss.NewStyle().
 				Border(lipgloss.RoundedBorder()).
 				BorderForeground(themeHex(theme.ErrorColor)).
 				Foreground(themeHex(theme.ErrorColor)).
-				Padding(0, 1)
+				Padding(toolBoxPadTopBottom, toolBoxPadLeftRight)
 	// Skill tool gets lilac variants.
 	toolBoxSkillRunningStyle = lipgloss.NewStyle().
 					Border(lipgloss.RoundedBorder()).
 					BorderForeground(themeHex(theme.SkillRunning.FG)).
 					Foreground(themeHex(theme.SkillRunning.FG)).
-					Padding(0, 1)
+					Padding(toolBoxPadTopBottom, toolBoxPadLeftRight)
 	toolBoxSkillSuccessStyle = lipgloss.NewStyle().
 					Border(lipgloss.RoundedBorder()).
 					BorderForeground(themeHex(theme.SkillSuccess.FG)).
 					Foreground(themeHex(theme.SkillSuccess.FG)).
-					Padding(0, 1)
+					Padding(toolBoxPadTopBottom, toolBoxPadLeftRight)
 	toolBoxSkillFailedStyle = lipgloss.NewStyle().
 				Border(lipgloss.RoundedBorder()).
 				BorderForeground(themeHex(theme.SkillFailed.FG)).
 				Foreground(themeHex(theme.SkillFailed.FG)).
-				Padding(0, 1)
+				Padding(toolBoxPadTopBottom, toolBoxPadLeftRight)
 
 	// Context menu - a floating overlay composited on top of arbitrary
 	// already-rendered content (see compositeContextMenu). No Background():
@@ -146,7 +146,7 @@ var (
 				Border(lipgloss.RoundedBorder()).
 				BorderForeground(themeHex(theme.SecondaryColor)).
 				Foreground(themeHex(theme.ToneBody)).
-				Padding(0, 1)
+				Padding(toolBoxPadTopBottom, toolBoxPadLeftRight)
 	// Selected-item highlight follows the completions dropdown's convention:
 	// foreground color + bold, no background swap.
 	contextMenuSelectedStyle = lipgloss.NewStyle().Foreground(themeHex(theme.AccentColor)).Bold(true)
@@ -155,7 +155,7 @@ var (
 	toolBoxExpandedStyle = lipgloss.NewStyle().
 				Border(lipgloss.RoundedBorder(), false, false, false, true).
 				BorderForeground(themeHex(theme.SecondaryColor)).
-				Padding(0, 1)
+				Padding(toolBoxPadTopBottom, toolBoxPadLeftRight)
 
 	// toolGroupBoxStyle wraps a live multi-tool-call batch (renderToolGroup)
 	// - neutral (not status-colored, since it holds a mix of statuses).
