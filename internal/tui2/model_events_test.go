@@ -930,6 +930,7 @@ func TestAgentStateRuntimeErrorTransitionsToError(t *testing.T) {
 // so restating it here would just be a third copy of the same text.
 func TestAgentStateRuntimeErrorStatusBarIsJustTheState(t *testing.T) {
 	m := newTestModel(&fakeRuntime{}, nil)
+	m.width = 80
 	longMsg := strings.Repeat("x", 200) + "\nsecond line should never appear"
 	m.handleChatEvent(tauchat.ChatRuntimeErrorEvent{Message: longMsg})
 

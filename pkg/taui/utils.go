@@ -42,6 +42,9 @@ func runeWidth(r rune) int {
 	return uniseg.StringWidth(string(r))
 }
 
+// StripANSI removes ANSI/OSC escape sequences from a string.
+func StripANSI(s string) string { return stripANSI(s) }
+
 // stripANSI removes ANSI/OSC escape sequences from a string.
 func stripANSI(s string) string {
 	var b strings.Builder
