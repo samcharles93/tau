@@ -745,6 +745,18 @@ func (m *model) computeLayout() layoutGeometry {
 		sepWidth = 80
 	}
 	sepStr := separatorStyle.Render(strings.Repeat("─", sepWidth))
+	// Apply separator margins (both zero today; self-documenting).
+	if separatorMarginTop > 0 || separatorMarginBottom > 0 {
+		var sb strings.Builder
+		for range separatorMarginTop {
+			sb.WriteString("\n")
+		}
+		sb.WriteString(sepStr)
+		for range separatorMarginBottom {
+			sb.WriteString("\n")
+		}
+		sepStr = sb.String()
+	}
 	inputStr := m.renderInputArea()
 
 	// 8. Status bar.

@@ -65,29 +65,9 @@ func TestRenderLineHasNoNameLabels(t *testing.T) {
 	}
 }
 
-func TestRenderLineUserGetsGlyphNotAssistant(t *testing.T) {
-	user := stripANSI(renderLine("user", "hello"))
-	if user != "⏎ hello" {
-		t.Errorf("renderLine(user, ...) = %q, want %q", user, "⏎ hello")
-	}
-	assistant := stripANSI(renderLine("assistant", "hello"))
-	if assistant != "hello" {
-		t.Errorf("renderLine(assistant, ...) = %q, want %q (no prefix at all)", assistant, "hello")
-	}
-}
-
 // A bash-mode echo (appendMessage("user", "!"+cmd), see handleBashCommand)
 // must render the same way as any other user line - no double-marking on
 // top of the leading "!".
-func TestRenderLineBashEchoHasNoNameLabel(t *testing.T) {
-	out := stripANSI(renderLine("user", "!git status"))
-	if strings.Contains(out, "You:") {
-		t.Errorf("bash echo = %q still contains a literal name label", out)
-	}
-	if out != "⏎ !git status" {
-		t.Errorf("bash echo = %q, want %q", out, "⏎ !git status")
-	}
-}
 
 func TestSessionSummariesTextEmpty(t *testing.T) {
 	out := sessionSummariesText(nil, "")

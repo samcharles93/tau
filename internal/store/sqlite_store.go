@@ -190,8 +190,14 @@ func (s *SQLiteStore) Load(ctx context.Context, id string) (chat.ChatSessionStat
 		return chat.ChatSessionState{}, fmt.Errorf("store: load session: %w", err)
 	}
 
-	createdAt, _ := time.Parse(time.RFC3339, row.createdStr)
-	updatedAt, _ := time.Parse(time.RFC3339, row.updatedStr)
+	createdAt, err := parseStoredTime("session created_at", row.createdStr)
+	if err != nil {
+		return chat.ChatSessionState{}, err
+	}
+	updatedAt, err := parseStoredTime("session updated_at", row.updatedStr)
+	if err != nil {
+		return chat.ChatSessionState{}, err
+	}
 
 	msgRows, err := s.db.QueryContext(ctx, `
 		SELECT seq, role, content, reasoning_content, tool_calls, tool_call_id, created_at, client_id, tool_result
@@ -205,14 +211,17 @@ func (s *SQLiteStore) Load(ctx context.Context, id string) (chat.ChatSessionStat
 	var messages []chat.ChatMessage
 	for msgRows.Next() {
 		var (
-			seq                                                            int
-			role, content, reasoning                                       string
-			toolCallsJSON, toolCallID, createdAt, clientID, toolResultJSON string
+			seq                                                             int
+			role, content, reasoning                                        string
+			toolCallsJSON, toolCallID, createdStr, clientID, toolResultJSON string
 		)
-		if err := msgRows.Scan(&seq, &role, &content, &reasoning, &toolCallsJSON, &toolCallID, &createdAt, &clientID, &toolResultJSON); err != nil {
+		if err := msgRows.Scan(&seq, &role, &content, &reasoning, &toolCallsJSON, &toolCallID, &createdStr, &clientID, &toolResultJSON); err != nil {
 			return chat.ChatSessionState{}, fmt.Errorf("store: scan message: %w", err)
 		}
-		msgCreatedAt, _ := time.Parse(time.RFC3339, createdAt)
+		msgCreatedAt, err := parseStoredTime(fmt.Sprintf("message %d created_at", seq), createdStr)
+		if err != nil {
+			return chat.ChatSessionState{}, err
+		}
 		msg := chat.ChatMessage{
 			ID:               clientID,
 			Role:             chat.ChatRole(role),
@@ -242,6 +251,14 @@ func (s *SQLiteStore) Load(ctx context.Context, id string) (chat.ChatSessionStat
 		CreatedAt:       createdAt,
 		UpdatedAt:       updatedAt,
 	}, nil
+}
+
+func parseStoredTime(field, value string) (time.Time, error) {
+	parsed, err := time.Parse(time.RFC3339, value)
+	if err != nil {
+		return time.Time{}, fmt.Errorf("store: parse %s %q: %w", field, value, err)
+	}
+	return parsed, nil
 }
 
 // List returns paginated session summaries, newest first. The cursor is a
