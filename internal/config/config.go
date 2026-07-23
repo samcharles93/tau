@@ -229,10 +229,12 @@ type RegistryConfig struct {
 	Token string `yaml:"token" json:"token,omitempty"`
 }
 
-// DO NOT add exported YAML-tagged fields to Config without also
-// adding them to rawConfig AND to the YAML literal in
-// TestConfigStructParityRoundTrip (config_parity_test.go).
-// Skipping either step will cause the parity test to fail.
+// DO NOT add exported YAML-tagged fields to Config without also adding them
+// to rawConfig. TestConfigStructParityRoundTrip (config_parity_test.go)
+// decodes a YAML literal and then walks Config via reflection to assert
+// every exported YAML-tagged field is non-zero; a field missing from
+// rawConfig decodes to its zero value and the test catches that directly,
+// with no separate checklist to keep in sync.
 func (c *Config) UnmarshalYAML(value *yaml.Node) error {
 	type rawConfig struct {
 		DefaultProvider string                    `yaml:"default_provider"`
@@ -444,6 +446,8 @@ func (m *ModelConfig) UnmarshalYAML(value *yaml.Node) error {
 		Reasoning                                        bool              `yaml:"reasoning"`
 		CanReason                                        bool              `yaml:"can_reason"`
 		CanReasonCamel                                   bool              `yaml:"canReason"`
+		ReasoningEfforts                                 []string          `yaml:"reasoning_efforts"`
+		ReasoningEffortsCamel                            []string          `yaml:"reasoningEfforts"`
 		Thinking                                         ThinkingConfig    `yaml:"thinking"`
 		ReasoningEffort                                  string            `yaml:"reasoning_effort"`
 		ReasoningEffortCamel                             string            `yaml:"reasoningEffort"`
@@ -478,6 +482,9 @@ func (m *ModelConfig) UnmarshalYAML(value *yaml.Node) error {
 	m.MaxTokens = firstNonZero(raw.MaxTokens, raw.MaxTokensCamel)
 	m.Input = append([]string(nil), raw.Input...)
 	m.Reasoning = raw.Reasoning || raw.CanReason || raw.CanReasonCamel
+	if efforts := firstNonEmptyStringSlice(raw.ReasoningEfforts, raw.ReasoningEffortsCamel); efforts != nil {
+		m.ReasoningEfforts = append([]string(nil), efforts...)
+	}
 	m.Thinking = raw.Thinking
 	m.ReasoningEffort = firstNonEmpty(raw.ReasoningEffort, raw.ReasoningEffortCamel)
 	m.Cost = raw.Cost
@@ -1046,6 +1053,15 @@ func firstNonZeroFloat(values ...float64) float64 {
 func firstNonNilBool(values ...*bool) *bool {
 	for _, value := range values {
 		if value != nil {
+			return value
+		}
+	}
+	return nil
+}
+
+func firstNonEmptyStringSlice(values ...[]string) []string {
+	for _, value := range values {
+		if len(value) > 0 {
 			return value
 		}
 	}

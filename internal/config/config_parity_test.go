@@ -18,15 +18,14 @@ import (
 //  2. Add the corresponding field to rawConfig inside UnmarshalYAML.
 //  3. Add a non-zero value for it in the YAML literal below AND an assertion.
 //
-// Skipping step 2 or 3 will make this test fail - fields that aren't in
-// rawConfig decode to zero, and the assertion below will catch it.
+// Skipping step 2 will make this test fail on its own: the automated check
+// at the end of this test walks Config via reflection and asserts every
+// exported YAML-tagged field is non-zero after decode, so a field that never
+// makes it out of rawConfig is caught without needing step 3. Step 3 (an
+// explicit assertion) is still worth adding for anything with
+// alias/merge/error-path behavior worth pinning down, but isn't required for
+// the parity guarantee itself.
 func TestConfigStructParityRoundTrip(t *testing.T) {
-	// AUTOMATIC PARITY CHECK: every exported YAML field on Config must be
-	// verified non-zero after unmarshal. This catches fields added to the
-	// struct but not to the YAML literal or rawConfig.
-	configType := reflect.TypeOf(Config{})
-	fieldNames := collectExportedYAMLFieldNames(configType)
-
 	var cfg Config
 	err := yaml.Unmarshal([]byte(`
 default_provider: test-provider
@@ -143,18 +142,9 @@ auto_compact:
 	checkIntEq(t, "agents.max_queued_spawns", a.MaxQueuedSpawns, 4)
 	checkDurEq(t, "agents.orphan_stale_age", a.OrphanStaleAge, 12*time.Hour)
 
-	// Automated parity: verify every exported YAML field was checked.
-	checked := map[string]bool{
-		"agents": true, "auto_compact": true, "debug": true, "default_model": true,
-		"default_provider": true, "disabled_skills": true, "metrics": true,
-		"model_modes": true, "plugins": true, "providers": true, "registry": true,
-		"skill_paths": true, "ui": true,
-	}
-	for _, name := range fieldNames {
-		if !checked[name] {
-			t.Errorf("exported YAML field %q on Config is not verified in this test - add it to the YAML literal, rawConfig, and assertions above", name)
-		}
-	}
+	// Automated parity check: every exported YAML-tagged field on Config
+	// must hold a non-zero value after this round-trip.
+	assertAllExportedYAMLFieldsNonZero(t, cfg)
 }
 
 // TestAgentsConfigParityRoundTrip tests AgentsConfig decoder parity.
@@ -186,19 +176,7 @@ orphan_stale_age: 48h
 	checkIntEq(t, "max_queued_spawns", a.MaxQueuedSpawns, 12)
 	checkDurEq(t, "orphan_stale_age", a.OrphanStaleAge, 48*time.Hour)
 
-	// Ensure all exported YAML fields on AgentsConfig are covered.
-	agentFields := collectExportedYAMLFieldNames(reflect.TypeOf(AgentsConfig{}))
-	checked := map[string]bool{
-		"cancel_grace": true, "default_max_depth": true, "default_max_turns": true,
-		"default_timeout": true, "depth_ceiling": true, "kill_grace": true,
-		"max_active_children": true, "max_queued_spawns": true, "max_total_children": true,
-		"orphan_stale_age": true,
-	}
-	for _, name := range agentFields {
-		if !checked[name] {
-			t.Errorf("exported YAML field %q on AgentsConfig is not verified - add it to the YAML literal and assertions above", name)
-		}
-	}
+	assertAllExportedYAMLFieldsNonZero(t, a)
 }
 
 // TestAgentsConfigCamelCaseAliases verifies camelCase aliases work.
@@ -257,6 +235,7 @@ tool_calls_default_collapsed: true
 	}
 	checkTrue(t, "show_reasoning", ui.ShowReasoning)
 	checkTrue(t, "tool_calls_default_collapsed", ui.ToolCallsDefaultCollapsed)
+	assertAllExportedYAMLFieldsNonZero(t, ui)
 
 	// Verify explicit false isn't treated as "unset" (distinct from zero-value default).
 	var ui2 UIConfig
@@ -293,6 +272,7 @@ model: compact-model
 	if !ac.enabledSet {
 		t.Error("enabledSet should be true after explicit YAML enabled: true")
 	}
+	assertAllExportedYAMLFieldsNonZero(t, ac)
 }
 
 // TestProviderConfigParityRoundTrip tests ProviderConfig decoder parity.
@@ -326,6 +306,7 @@ models:
 	if len(p.Models) != 1 || p.Models[0].ID != "model-1" {
 		t.Fatalf("models = %v, want [{id: model-1}]", p.Models)
 	}
+	assertAllExportedYAMLFieldsNonZero(t, p)
 
 	// CamelCase alias for base_url.
 	var p2 ProviderConfig
@@ -342,6 +323,7 @@ func TestAuthConfigParityRoundTrip(t *testing.T) {
 	err := yaml.Unmarshal([]byte(`
 type: oauth
 api_key_env: MY_KEY
+api_key: literal-secret
 authorize_url: https://auth.example
 token_url: https://token.example
 client_id: my-client
@@ -353,11 +335,13 @@ token_auth_method: client_secret_post
 	}
 	checkStr(t, "type", a.Type, "oauth")
 	checkStr(t, "api_key_env", a.APIKeyEnv, "MY_KEY")
+	checkStr(t, "api_key", a.APIKey, "literal-secret")
 	checkStr(t, "authorize_url", a.AuthorizeURL, "https://auth.example")
 	checkStr(t, "token_url", a.TokenURL, "https://token.example")
 	checkStr(t, "client_id", a.ClientID, "my-client")
 	checkStr(t, "idp", a.IDP, "github")
 	checkStr(t, "token_auth_method", a.TokenAuthMethod, "client_secret_post")
+	assertAllExportedYAMLFieldsNonZero(t, a)
 }
 
 // TestModelConfigParityRoundTrip tests ModelConfig decoder parity.
@@ -374,6 +358,9 @@ input:
   - text
 reasoning: true
 reasoning_effort: high
+reasoning_efforts:
+  - low
+  - high
 thinking:
   min_level: low
   max_level: high
@@ -402,6 +389,9 @@ compat:
 	}
 	checkTrue(t, "reasoning", m.Reasoning)
 	checkStr(t, "reasoning_effort", m.ReasoningEffort, "high")
+	if len(m.ReasoningEfforts) != 2 || m.ReasoningEfforts[0] != "low" || m.ReasoningEfforts[1] != "high" {
+		t.Fatalf("reasoning_efforts = %v, want [low high]", m.ReasoningEfforts)
+	}
 	checkStr(t, "thinking.min_level", m.Thinking.MinLevel, "low")
 	checkStr(t, "thinking.max_level", m.Thinking.MaxLevel, "high")
 	checkStr(t, "thinking.mode", m.Thinking.Mode, "auto")
@@ -416,6 +406,7 @@ compat:
 		t.Error("compat.supports_developer_role should be true")
 	}
 	checkTrue(t, "compat.requires_assistant_content_for_tool_calls", m.Compat.RequiresAssistantContentForToolCalls)
+	assertAllExportedYAMLFieldsNonZero(t, m)
 }
 
 // TestThinkingConfigParityRoundTrip tests ThinkingConfig decoder parity.
@@ -432,6 +423,7 @@ mode: auto
 	checkStr(t, "min_level", tc.MinLevel, "low")
 	checkStr(t, "max_level", tc.MaxLevel, "high")
 	checkStr(t, "mode", tc.Mode, "auto")
+	assertAllExportedYAMLFieldsNonZero(t, tc)
 
 	// CamelCase aliases.
 	var tc2 ThinkingConfig
@@ -459,6 +451,7 @@ cache_write: 5.0
 	checkFloatEq(t, "output", c.Output, 10.0)
 	checkFloatEq(t, "cache_read", c.CacheRead, 1.25)
 	checkFloatEq(t, "cache_write", c.CacheWrite, 5.0)
+	assertAllExportedYAMLFieldsNonZero(t, c)
 
 	// CamelCase aliases for cache fields.
 	var c2 CostConfig
@@ -509,17 +502,30 @@ extra_body:
 	if c.ExtraBody == nil || c.ExtraBody["custom_param"] != "value" {
 		t.Fatalf("extra_body = %v, want {custom_param: value}", c.ExtraBody)
 	}
+	assertAllExportedYAMLFieldsNonZero(t, c)
 }
 
 // --- helpers ---
 
-// collectExportedYAMLFieldNames returns the yaml tag names (excluding
-// ",omitempty" and similar suffixes) of all exported fields on the given
-// type. Fields tagged yaml:"-" are skipped.
-func collectExportedYAMLFieldNames(t reflect.Type) []string {
-	var names []string
-	for i := 0; i < t.NumField(); i++ {
-		f := t.Field(i)
+// assertAllExportedYAMLFieldsNonZero is the automated half of the parity
+// guard. It walks v (a decoded struct value, not pointer) via reflection and
+// fails the test if any exported, YAML-tagged field is still at its zero
+// value. This is a genuine behavioral check, not a checklist of field names:
+// a field that's declared on the struct and even mentioned in a test's YAML
+// literal, but never actually threaded through in the type's UnmarshalYAML,
+// still shows up as a failure here.
+//
+// It deliberately does not recurse into nested struct fields - nested
+// manually-decoded types (AgentsConfig, UIConfig, AuthConfig, ...) have
+// their own dedicated *ParityRoundTrip test covering their own fields in
+// full, and forcing every field of every nested type to be set here would
+// just duplicate that coverage with unrealistic YAML.
+func assertAllExportedYAMLFieldsNonZero(t *testing.T, v any) {
+	t.Helper()
+	rv := reflect.ValueOf(v)
+	rt := rv.Type()
+	for i := 0; i < rt.NumField(); i++ {
+		f := rt.Field(i)
 		if !f.IsExported() {
 			continue
 		}
@@ -531,9 +537,10 @@ func collectExportedYAMLFieldNames(t reflect.Type) []string {
 		if name == "-" {
 			continue
 		}
-		names = append(names, name)
+		if rv.Field(i).IsZero() {
+			t.Errorf("%s.%s (yaml %q) is zero after round-trip - value did not survive decode; check the raw shadow struct and UnmarshalYAML assignment", rt.Name(), f.Name, name)
+		}
 	}
-	return names
 }
 
 func checkStr(t *testing.T, label, got, want string) {
