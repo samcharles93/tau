@@ -495,12 +495,12 @@ func spawnChildProcess(ctx context.Context, args agentToolArgs, cfg AgentToolCon
 		tauPath, _ = exec.LookPath("tau") // Best effort - let exec fail if not found.
 	}
 
-	cmd := exec.CommandContext(ctx, tauPath, "--child")
-	// Disable exec.CommandContext's default cancellation behavior (an
-	// immediate Process.Kill() of just the direct process). Cancellation
-	// is instead handled by our own three-phase escalation (below), which
-	// signals the whole process group, not only the direct child.
-	cmd.Cancel = func() error { return nil }
+	// Use exec.Command, not exec.CommandContext: cancellation is handled
+	// by our own three-phase escalation (superviseCancellation) and
+	// readChildResult's context check. exec.CommandContext would cause
+	// Start() to return ctx.Err() when the context is already cancelled
+	// (e.g. under load), losing the structured cancellation result.
+	cmd := exec.Command(tauPath, "--child") //nolint:noctx // cancellation is handled by superviseCancellation, not ctx
 	cmd.Dir = cfg.CWD
 	cmd.Env = nil // inherit
 	setProcessGroup(cmd)
