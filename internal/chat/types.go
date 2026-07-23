@@ -639,6 +639,14 @@ type ChatResponseCompletedEvent struct {
 	// Partial is true when the response contains best-effort partial output
 	// from a limit-breached turn.
 	Partial bool `json:"partial,omitempty"`
+	// TurnIterations is the number of model iterations executed in this
+	// turn (the tool-call loop count). 1 means no tools were called.
+	TurnIterations int `json:"turn_iterations"`
+	// CumulativeUsage carries aggregate token usage across all iterations
+	// within this turn, not just the last model call.
+	CumulativeUsage ChatUsage `json:"cumulative_usage"`
+	// CumulativeCost is the total USD cost of all iterations in this turn.
+	CumulativeCost float64 `json:"cumulative_cost"`
 }
 
 func (ChatResponseCompletedEvent) IsChatEvent() {}

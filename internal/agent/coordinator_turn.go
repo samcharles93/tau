@@ -53,6 +53,10 @@ func (c *Coordinator) runTurn(ctx context.Context, state chat.ChatSessionState) 
 		"model", state.Model.ID,
 	)
 
+	// Cumulative usage across all model iterations within this turn.
+	var turnIterations int
+	var cumulativeUsage chat.ChatUsage
+
 	// The turn loop: call LLM, if tool_calls → execute → append → repeat.
 	for iteration := 0; ; iteration++ {
 		if err := ctx.Err(); err != nil {
@@ -63,7 +67,7 @@ func (c *Coordinator) runTurn(ctx context.Context, state chat.ChatSessionState) 
 		// Check budget/limit enforcement.
 		c.turnCount++
 		if status, partial := c.checkLimits(sessionID, requestID); status != "" {
-			c.budgetExhausted(sessionID, requestID, status, partial, time.Now().UTC())
+			c.budgetExhausted(sessionID, requestID, status, partial, turnIterations, cumulativeUsage, time.Now().UTC())
 			return
 		}
 
@@ -229,12 +233,15 @@ func (c *Coordinator) runTurn(ctx context.Context, state chat.ChatSessionState) 
 			"tool_calls", len(result.ToolCalls),
 		)
 
-		// Accumulate token usage for budget enforcement.
+		// Accumulate token usage for budget enforcement and
+		// per-turn cumulative accounting.
 		c.cumulativeTokens += result.Usage.TotalTokens
+		cumulativeUsage = addUsage(cumulativeUsage, result.Usage)
+		turnIterations++
 
 		// No tool calls → final response. Complete the turn.
 		if len(result.ToolCalls) == 0 {
-			c.completeTurn(sessionID, requestID, result, time.Now().UTC())
+			c.completeTurn(sessionID, requestID, result, turnIterations, cumulativeUsage, time.Now().UTC())
 			return
 		}
 
@@ -992,6 +999,19 @@ func isSuccessFinish(reason string) bool {
 	return reason == "stop" || reason == "tool_calls"
 }
 
+// addUsage returns the sum of two ChatUsage values, used for accumulating
+// per-turn cumulative usage across model iterations.
+func addUsage(a, b chat.ChatUsage) chat.ChatUsage {
+	return chat.ChatUsage{
+		PromptTokens:        a.PromptTokens + b.PromptTokens,
+		CompletionTokens:    a.CompletionTokens + b.CompletionTokens,
+		OutputTokens:        a.OutputTokens + b.OutputTokens,
+		TotalTokens:         a.TotalTokens + b.TotalTokens,
+		CachedTokens:        a.CachedTokens + b.CachedTokens,
+		CacheCreationTokens: a.CacheCreationTokens + b.CacheCreationTokens,
+	}
+}
+
 // computeCost calculates the USD cost of a completion from model pricing
 // and usage data. Returns 0 when pricing is not configured.
 func computeCost(costCfg tauconfig.CostConfig, usage chat.ChatUsage) float64 {
@@ -1124,7 +1144,7 @@ func (c *Coordinator) getSessionState(sessionID string) chat.ChatSessionState {
 	return chat.CloneChatSessionState(session.state)
 }
 
-func (c *Coordinator) completeTurn(sessionID, requestID string, result chat.CompletionResult, at time.Time) {
+func (c *Coordinator) completeTurn(sessionID, requestID string, result chat.CompletionResult, turnIterations int, cumulativeUsage chat.ChatUsage, at time.Time) {
 	c.mu.Lock()
 	session, ok := c.sessions[sessionID]
 	if !ok || session.state.ActiveRequestID != requestID {
@@ -1208,11 +1228,14 @@ func (c *Coordinator) completeTurn(sessionID, requestID string, result chat.Comp
 	}
 
 	c.emit(chat.ChatResponseCompletedEvent{
-		State:        snapshot,
-		RequestID:    requestID,
-		FinishReason: result.FinishReason,
-		Usage:        result.Usage,
-		CompletedAt:  at,
+		State:           snapshot,
+		RequestID:       requestID,
+		FinishReason:    result.FinishReason,
+		Usage:           result.Usage,
+		CompletedAt:     at,
+		TurnIterations:  turnIterations,
+		CumulativeUsage: cumulativeUsage,
+		CumulativeCost:  computeCost(snapshot.Model.Config.Cost, cumulativeUsage),
 	})
 
 	c.publishPluginLifecycleEvent("turn_end", sessionID, &api.EventPayload{
@@ -1379,7 +1402,7 @@ func (c *Coordinator) checkLimits(sessionID, requestID string) (status string, p
 // budgetExhausted emits a ChatResponseCompletedEvent with a budget/timed_out
 // status and the partial output flag set. It leaves the session in a
 // completed state so the caller (child entry) can persist and report result.
-func (c *Coordinator) budgetExhausted(sessionID, requestID, status string, partialOutput bool, at time.Time) {
+func (c *Coordinator) budgetExhausted(sessionID, requestID, status string, partialOutput bool, turnIterations int, cumulativeUsage chat.ChatUsage, at time.Time) {
 	c.mu.Lock()
 	session, ok := c.sessions[sessionID]
 	if !ok || session.state.ActiveRequestID != requestID {
@@ -1414,6 +1437,9 @@ func (c *Coordinator) budgetExhausted(sessionID, requestID, status string, parti
 		BudgetExhausted: status == "budget_exhausted",
 		TimedOut:        status == "timed_out",
 		Partial:         partialOutput,
+		TurnIterations:  turnIterations,
+		CumulativeUsage: cumulativeUsage,
+		CumulativeCost:  computeCost(snapshot.Model.Config.Cost, cumulativeUsage),
 	}
 	c.emit(event)
 }

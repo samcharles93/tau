@@ -144,7 +144,14 @@ func RunChild(ctx context.Context, opts ChatOptions) error {
 		coordinator.SetAllowedTools(assign.Tools)
 	}
 
-	// Step 5: Start session, load persisted history, submit prompt.
+	// Step 5: Subscribe to ChatEvent BEFORE sending any commands.
+	// Events published between command dispatch and subscription would
+	// be lost because the bus only routes to subscribers registered at
+	// publish time (tau-43m).
+	chatSub := eventbus.Subscribe[tauchat.ChatEvent](bus.Client("child"))
+	defer chatSub.Close()
+
+	// Step 6: Start session, load persisted history, submit prompt.
 	cfg := buildSessionConfig(opts, model, "")
 	if err := coordinator.Send(tauchat.StartChatSessionCommand{
 		SessionID: assign.SessionID,
@@ -169,33 +176,44 @@ func RunChild(ctx context.Context, opts ChatOptions) error {
 		return fmt.Errorf("submit prompt: %w", err)
 	}
 
-	// Step 6: Monitor stdin for cancel/EOF in a background goroutine.
+	// Step 7: Monitor stdin for cancel/EOF in a background goroutine.
 	// The parent may send agent.cancel at any time, or close stdin
 	// (parent death / intentional shutdown). Both trigger cancellation.
-	cancelCh := make(chan struct{})
+	//
+	// We send CancelChatRequestCommand directly rather than closing a
+	// channel fed into the select. A closed channel is permanently
+	// readable in Go and would cause repeated cancellations (tau-43m).
 	go func() {
 		for {
 			typ, _, err := stdin.ReadEnvelope()
 			if err != nil {
 				// stdin EOF: parent died or closed the pipe.
-				// Treat as cancel-with-no-listener - persist and exit silently.
 				slog.Info("child: stdin closed, treating as cancel", "err", err)
-				close(cancelCh)
+				_ = coordinator.Send(tauchat.CancelChatRequestCommand{
+					SessionID: assign.SessionID,
+				})
 				return
 			}
 			if typ == "agent.cancel" {
 				slog.Info("child: received agent.cancel")
-				close(cancelCh)
+				_ = coordinator.Send(tauchat.CancelChatRequestCommand{
+					SessionID: assign.SessionID,
+				})
 				return
 			}
 		}
 	}()
 
-	// Step 7: Stream events until completion, cancellation, or error.
-	chatSub := eventbus.Subscribe[tauchat.ChatEvent](bus.Client("child"))
-	defer chatSub.Close()
-
-	turns := 0
+	// Step 8: Stream events until completion, cancellation, or error.
+	// Turns come from ChatResponseCompletedEvent.TurnIterations (the
+	// authoritative model-iteration count from the coordinator). Token
+	// totals use ChatResponseCompletedEvent.CumulativeUsage (aggregate
+	// across all iterations) rather than State.LastUsage (last call only).
+	// Both fixes address tau-47m / tau-47k.
+	var cumulativeTurns int
+	var totalInputTokens int
+	var totalOutputTokens int
+	var totalCost float64
 	var finalText strings.Builder
 	var lastError string
 
@@ -205,14 +223,6 @@ func RunChild(ctx context.Context, opts ChatOptions) error {
 			// Context cancelled - exit without writing result.
 			return fmt.Errorf("context cancelled: %w", ctx.Err())
 
-		case <-cancelCh:
-			// Parent cancelled or stdin EOF - cancel the active turn.
-			_ = coordinator.Send(tauchat.CancelChatRequestCommand{
-				SessionID: assign.SessionID,
-			})
-			// The Cancelled event handler below will persist and write result.
-			continue
-
 		case event, ok := <-chatSub.Events():
 			if !ok {
 				return errors.New("event stream closed unexpectedly")
@@ -221,11 +231,6 @@ func RunChild(ctx context.Context, opts ChatOptions) error {
 			case tauchat.ChatResponseDeltaEvent:
 				if e.SessionID == assign.SessionID {
 					finalText.WriteString(e.Delta)
-				}
-
-			case tauchat.ChatToolExecutionStartedEvent:
-				if e.SessionID == assign.SessionID {
-					turns++
 				}
 
 			case tauchat.ChatResponseCompletedEvent:
@@ -242,6 +247,22 @@ func RunChild(ctx context.Context, opts ChatOptions) error {
 				if e.TimedOut {
 					status = string(tauchat.ChildAgentTimedOut)
 				}
+
+				// Accumulate usage from the authoritative event fields.
+				cumulativeTurns += e.TurnIterations
+				totalInputTokens = e.CumulativeUsage.PromptTokens
+				totalOutputTokens = e.CumulativeUsage.CompletionTokens
+				totalCost = e.CumulativeCost
+
+				// Emit agent.usage with cumulative totals per wire spec.
+				_ = stdout.WriteEnvelope("agent.usage", bridge.AgentUsage{
+					Instance:     assign.InstanceID,
+					Turns:        cumulativeTurns,
+					InputTokens:  totalInputTokens,
+					OutputTokens: totalOutputTokens,
+					Cost:         totalCost,
+				})
+
 				// Always persist before sending result.
 				if sessionMgr != nil {
 					_ = sessionMgr.Save(ctx, e.State, 0)
@@ -252,9 +273,10 @@ func RunChild(ctx context.Context, opts ChatOptions) error {
 					FinalText: finalText.String(),
 					SessionID: assign.SessionID,
 					Usage: bridge.AgentResultUsage{
-						Turns:        turns,
-						InputTokens:  e.State.LastUsage.PromptTokens,
-						OutputTokens: e.State.LastUsage.CompletionTokens,
+						Turns:        cumulativeTurns,
+						InputTokens:  totalInputTokens,
+						OutputTokens: totalOutputTokens,
+						Cost:         totalCost,
 					},
 					Error:   lastError,
 					Partial: e.Partial,
@@ -291,9 +313,10 @@ func RunChild(ctx context.Context, opts ChatOptions) error {
 					FinalText: finalText.String(),
 					SessionID: assign.SessionID,
 					Usage: bridge.AgentResultUsage{
-						Turns:        turns,
-						InputTokens:  e.State.LastUsage.PromptTokens,
-						OutputTokens: e.State.LastUsage.CompletionTokens,
+						Turns:        cumulativeTurns,
+						InputTokens:  totalInputTokens,
+						OutputTokens: totalOutputTokens,
+						Cost:         totalCost,
 					},
 					Partial: true,
 				})
