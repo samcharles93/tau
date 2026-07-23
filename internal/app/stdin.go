@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/samcharles93/tau/internal/agent/tools"
+	"github.com/samcharles93/tau/internal/app/execute"
 
 	tauchat "github.com/samcharles93/tau/internal/chat"
 	"github.com/samcharles93/tau/internal/eventbus"
@@ -180,96 +181,8 @@ func RunStdIn(ctx context.Context, opts ChatOptions, prompt string) error {
 		return err
 	}
 
-	// Wait for completion, cancellation, or timeout.
-	for {
-		select {
-		case <-ctx.Done():
-			fmt.Fprintln(os.Stderr, "\ntimed out")
-			return ctx.Err()
-		case event, ok := <-chatSub.Events():
-			if !ok {
-				return nil
-			}
-			switch e := event.(type) {
-			case tauchat.ChatResponseDeltaEvent:
-				if e.SessionID == sessionID {
-					fmt.Print(e.Delta)
-				}
-			case tauchat.ChatResponseCompletedEvent:
-				if e.State.SessionID == sessionID {
-					fmt.Println()
-					if e.State.LastError != "" {
-						fmt.Fprintf(os.Stderr, "\nerror: %s\n", e.State.LastError)
-					}
-					if e.FinishReason == "length" {
-						fmt.Fprintln(os.Stderr, "\nwarning: response was truncated by max_tokens; rerun with --max-tokens N for a longer answer")
-					}
-					printStdinSummary(tracker, sessionID)
-					return nil
-				}
-			case tauchat.ChatRuntimeErrorEvent:
-				if e.SessionID == sessionID {
-					return fmt.Errorf("%s", e.Message)
-				}
-			case tauchat.ChatResponseCancelledEvent:
-				if e.State.SessionID == sessionID {
-					fmt.Fprintln(os.Stderr, "\ncancelled")
-					return nil
-				}
-			}
-		}
-	}
-}
-
-// printStdinSummary prints a compact metrics summary to stderr after a
-// completed headless turn.
-func printStdinSummary(tracker *metrics.UsageTracker, sessionID string) {
-	totals := tracker.Snapshot(sessionID)
-	if totals == nil {
-		return
-	}
-	var parts []string
-	if totals.PromptTokens > 0 || totals.CompletionTokens > 0 {
-		parts = append(parts, fmt.Sprintf("tokens: %s / %s",
-			stdinTokens(totals.PromptTokens), stdinTokens(totals.CompletionTokens)))
-	}
-	if totals.Cost > 0 {
-		parts = append(parts, fmt.Sprintf("cost: %s", stdinCost(totals.Cost)))
-	}
-	if totals.TurnDurationMs > 0 {
-		parts = append(parts, stdinDuration(totals.TurnDurationMs))
-	}
-	if len(parts) > 0 {
-		fmt.Fprintf(os.Stderr, "\n%s\n", strings.Join(parts, " | "))
-	}
-}
-
-func stdinTokens(n int) string {
-	switch {
-	case n < 1000:
-		return fmt.Sprintf("%d", n)
-	case n < 1_000_000:
-		return fmt.Sprintf("%.1fk", float64(n)/1000)
-	default:
-		return fmt.Sprintf("%.1fM", float64(n)/1_000_000)
-	}
-}
-
-func stdinCost(usd float64) string {
-	if usd < 1 {
-		return fmt.Sprintf("$%.4f", usd)
-	}
-	return fmt.Sprintf("$%.2f", usd)
-}
-
-func stdinDuration(ms int64) string {
-	d := time.Duration(ms) * time.Millisecond
-	switch {
-	case d < time.Second:
-		return fmt.Sprintf("%dms", ms)
-	case d < time.Minute:
-		return fmt.Sprintf("%.1fs", d.Seconds())
-	default:
-		return d.Round(time.Second).String()
-	}
+	// Drain events via the runner, using the plain renderer for -p output.
+	runner := execute.NewRunner()
+	renderer := execute.NewPlainRenderer()
+	return runner.Run(ctx, chatSub.Events(), renderer, sessionID, tracker)
 }
