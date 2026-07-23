@@ -71,8 +71,8 @@ func TestSplitProviderModel(t *testing.T) {
 }
 
 // buildTestCommand parses args against a command exposing the same
-// skip-setup/child/prompt flags root.go's Action reads, returning the
-// resulting *urfavecli.Command for shouldAutoSetup/shouldSkipSetupContinue
+// skip-setup/child/prompt/execute flags root.go's Action reads, returning
+// the resulting *urfavecli.Command for shouldAutoSetup/shouldSkipSetupContinue
 // to inspect - mirrors how those functions actually receive their cmd
 // argument in production, rather than hand-constructing flag state.
 func buildTestCommand(t *testing.T, args []string) *urfavecli.Command {
@@ -83,7 +83,8 @@ func buildTestCommand(t *testing.T, args []string) *urfavecli.Command {
 		Flags: []urfavecli.Flag{
 			&urfavecli.BoolFlag{Name: "skip-setup"},
 			&urfavecli.BoolFlag{Name: "child"},
-			&urfavecli.StringFlag{Name: "prompt"},
+			&urfavecli.BoolFlag{Name: "execute", Aliases: []string{"x"}},
+			&urfavecli.StringFlag{Name: "prompt", Aliases: []string{"p"}},
 		},
 		Action: func(ctx context.Context, c *urfavecli.Command) error {
 			captured = c
@@ -114,13 +115,21 @@ func TestShouldAutoSetupRejectsOneShotPrompt(t *testing.T) {
 	assert.False(t, shouldAutoSetup(errNoProviders, cmd))
 }
 
-// The "returns true" case (no providers, no skip-setup/child/prompt, TTY
-// stdin) isn't exercised here: term.IsTerminal(stdin) is always false under
-// `go test`, so this function can't distinguish that branch from the
+func TestShouldAutoSetupRejectsOneShotExecute(t *testing.T) {
+	cmd := buildTestCommand(t, []string{"tau", "--execute"})
+	assert.False(t, shouldAutoSetup(errNoProviders, cmd))
+}
+
+func TestShouldAutoSetupRejectsOneShotExecuteShort(t *testing.T) {
+	cmd := buildTestCommand(t, []string{"tau", "-x"})
+	assert.False(t, shouldAutoSetup(errNoProviders, cmd))
+}
+
+// The "returns true" case (no providers, no skip-setup/child/prompt/execute,
+// TTY stdin) isn't exercised here: term.IsTerminal(stdin) is always false
+// under `go test`, so this function can't distinguish that branch from the
 // rejection cases above in a unit test. Verified manually instead via tmux
-// (a real pty) during CAT-125 - see the ticket for the transcript: the
-// wizard fires, provider+model get picked, and the same process continues
-// into chat with the newly configured provider.
+// (a real pty) - see TAU-126.
 
 func TestShouldSkipSetupContinueRejectsWrongErrorType(t *testing.T) {
 	cmd := buildTestCommand(t, []string{"tau", "--skip-setup"})
@@ -145,4 +154,62 @@ func TestShouldSkipSetupContinueRejectsChildProcess(t *testing.T) {
 func TestShouldSkipSetupContinueRejectsOneShotPrompt(t *testing.T) {
 	cmd := buildTestCommand(t, []string{"tau", "--skip-setup", "--prompt", "hi"})
 	assert.False(t, shouldSkipSetupContinue(errNoProviders, cmd))
+}
+
+func TestShouldSkipSetupContinueRejectsOneShotExecute(t *testing.T) {
+	cmd := buildTestCommand(t, []string{"tau", "--skip-setup", "--execute"})
+	assert.False(t, shouldSkipSetupContinue(errNoProviders, cmd))
+}
+
+func TestIsOneShot_PromptOnly(t *testing.T) {
+	cmd := buildTestCommand(t, []string{"tau", "--prompt", "hi"})
+	assert.True(t, isOneShot(cmd))
+}
+
+func TestIsOneShot_ExecuteOnly(t *testing.T) {
+	cmd := buildTestCommand(t, []string{"tau", "-x"})
+	assert.True(t, isOneShot(cmd))
+}
+
+func TestIsOneShot_Neither(t *testing.T) {
+	cmd := buildTestCommand(t, []string{"tau"})
+	assert.False(t, isOneShot(cmd))
+}
+
+func TestExecuteFlagParsing_ShortFlag(t *testing.T) {
+	cmd := buildTestCommand(t, []string{"tau", "-x"})
+	assert.True(t, cmd.Bool("execute"))
+}
+
+func TestExecuteFlagParsing_LongFlag(t *testing.T) {
+	cmd := buildTestCommand(t, []string{"tau", "--execute"})
+	assert.True(t, cmd.Bool("execute"))
+}
+
+func TestExecuteFlagParsing_ArgsAfterFlag(t *testing.T) {
+	// Arguments after -x become positional args, not flag values.
+	cmd := buildTestCommand(t, []string{"tau", "-x", "hello", "world"})
+	assert.True(t, cmd.Bool("execute"))
+	assert.Equal(t, []string{"hello", "world"}, cmd.Args().Slice())
+}
+
+func TestResolveExecutePrompt_FromArgs(t *testing.T) {
+	cmd := buildTestCommand(t, []string{"tau", "-x", "hello", "world"})
+	prompt, err := resolveExecutePrompt(cmd)
+	require.NoError(t, err)
+	assert.Equal(t, "hello world", prompt)
+}
+
+func TestResolveExecutePrompt_FallsBackToPrompt(t *testing.T) {
+	cmd := buildTestCommand(t, []string{"tau", "--prompt", "from-prompt"})
+	prompt, err := resolveExecutePrompt(cmd)
+	require.NoError(t, err)
+	assert.Equal(t, "from-prompt", prompt)
+}
+
+func TestResolveExecutePrompt_PrefersExecuteOverPrompt(t *testing.T) {
+	cmd := buildTestCommand(t, []string{"tau", "-x", "from-execute", "--prompt", "from-prompt"})
+	prompt, err := resolveExecutePrompt(cmd)
+	require.NoError(t, err)
+	assert.Equal(t, "from-execute", prompt)
 }
