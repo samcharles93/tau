@@ -328,12 +328,17 @@ func InstallFromGitHub(ctx context.Context, owner, repo, plugin, version string)
 	return dest, nil
 }
 
+// githubAPIBase is the GitHub REST API root. It is a package variable (not
+// a hardcoded literal in fetchGitHubRelease) so tests can point it at a
+// local httptest server instead of making a real network call.
+var githubAPIBase = "https://api.github.com"
+
 func fetchGitHubRelease(ctx context.Context, owner, repo, version string) (*githubRelease, error) {
 	var url string
 	if version == "" || version == "latest" {
-		url = fmt.Sprintf("https://api.github.com/repos/%s/%s/releases/latest", owner, repo)
+		url = fmt.Sprintf("%s/repos/%s/%s/releases/latest", githubAPIBase, owner, repo)
 	} else {
-		url = fmt.Sprintf("https://api.github.com/repos/%s/%s/releases/tags/v%s", owner, repo, version)
+		url = fmt.Sprintf("%s/repos/%s/%s/releases/tags/%s", githubAPIBase, owner, repo, normalizeReleaseTag(version))
 	}
 
 	req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
@@ -415,6 +420,18 @@ func parseChecksumsManifest(r io.Reader, filename string) (string, error) {
 		}
 	}
 	return "", scanner.Err()
+}
+
+// normalizeReleaseTag maps a user-supplied version to the GitHub release
+// tag GitHub actually uses. The CLI documents and accepts both
+// "owner/repo:plugin@1.2.0" and "owner/repo:plugin@v1.2.0", but release
+// tags are conventionally v-prefixed, so the "v" must be applied exactly
+// once regardless of whether the caller already included it.
+func normalizeReleaseTag(version string) string {
+	if len(version) > 0 && (version[0] == 'v' || version[0] == 'V') {
+		return "v" + version[1:]
+	}
+	return "v" + version
 }
 
 func findPlatformAsset(assets []githubReleaseAsset, goos, goarch string) *githubReleaseAsset {

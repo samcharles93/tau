@@ -19,6 +19,7 @@ type PluginSourceSpec struct {
 // ParsePluginSourceSpec parses source specs such as:
 //   - owner/repo:plugin
 //   - owner/repo:plugin@v1.2.0
+//   - owner/repo:plugin@1.2.0 (the "v" release-tag prefix is optional)
 func ParsePluginSourceSpec(raw string) (PluginSourceSpec, error) {
 	spec := strings.TrimSpace(raw)
 	if spec == "" {

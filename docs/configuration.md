@@ -222,6 +222,7 @@ Tau's config directory is `~/.config/tau/`:
 ```
 ~/.config/tau/
 ├── config.yaml           # Global config
+├── auth.yaml             # Managed provider credentials (API keys, OAuth tokens)
 ├── models.json           # models.dev catalog cache
 ├── api.overrides.json    # Model metadata overrides (optional)
 ├── sessions.db           # SQLite session store
@@ -230,6 +231,11 @@ Tau's config directory is `~/.config/tau/`:
 ├── skills/               # User skills
 └── tau.log               # Application logs
 ```
+
+API keys entered via `tau setup` or `tau provider login` are stored in `auth.yaml`, not
+`config.yaml`, so hand-edited config never contains secrets. See
+[Providers > Credential Sources](providers.md#credential-sources) for details on managed keys vs
+env vars vs OAuth.
 
 ## Programmatic Access
 

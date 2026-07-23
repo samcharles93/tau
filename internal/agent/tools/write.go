@@ -3,6 +3,7 @@ package tools
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -58,56 +59,72 @@ func makeWriteExecutor(cwd string, mq *MutationQueue, rt *ReadTracker) Executor 
 			return Result{Content: fmt.Sprintf("content too large (%s > %s)", FormatSize(len(p.Content)), FormatSize(maxWriteBytes)), IsError: true}, nil
 		}
 
-		_, cancel := context.WithTimeout(ctx, DefaultToolTimeout)
-		defer cancel()
-
 		path := resolvePath(cwd, p.Path)
 
 		if !isConfined(cwd, path) {
 			return Result{Content: "path escapes working directory", IsError: true}, nil
 		}
 
-		// Check for accidental overwrite and enforce read-before-write.
-		// Both checks only apply when the file already exists; new files
-		// are always allowed.
-		var oldContent string
-		if info, err := os.Stat(path); err == nil && info.Mode().IsRegular() {
-			// Read-before-write: model must have read the file before mutating it.
-			if rt != nil {
-				if err := rt.CheckRead(cwd, p.Path); err != nil {
-					return Result{Content: err.Error(), IsError: true}, nil
+		writeCtx, cancel := context.WithTimeout(ctx, DefaultToolTimeout)
+		defer cancel()
+
+		var result Result
+		err := runWithContext(writeCtx, func() error {
+			// Check for accidental overwrite and enforce read-before-write.
+			// Both checks only apply when the file already exists; new files
+			// are always allowed.
+			var oldContent string
+			if info, err := os.Stat(path); err == nil && info.Mode().IsRegular() {
+				// Read-before-write: model must have read the file before mutating it.
+				if rt != nil {
+					if err := rt.CheckRead(cwd, p.Path); err != nil {
+						result = Result{Content: err.Error(), IsError: true}
+						return nil
+					}
+				}
+				// Overwrite protection: require explicit opt-in.
+				if !p.Overwrite {
+					result = Result{
+						Content: fmt.Sprintf(
+							"file %q already exists - set overwrite to true to replace it, or use the edit tool for partial changes",
+							path,
+						),
+						IsError: true,
+					}
+					return nil
+				}
+				if data, err := os.ReadFile(path); err == nil {
+					oldContent = string(data)
 				}
 			}
-			// Overwrite protection: require explicit opt-in.
-			if !p.Overwrite {
-				return Result{
-					Content: fmt.Sprintf(
-						"file %q already exists - set overwrite to true to replace it, or use the edit tool for partial changes",
-						path,
-					),
-					IsError: true,
-				}, nil
+
+			release := mq.Acquire(path)
+			defer release()
+
+			dir := filepath.Dir(path)
+			if err := os.MkdirAll(dir, 0o755); err != nil {
+				result = Result{Content: fmt.Sprintf("error creating directory: %v", err), IsError: true}
+				return nil
 			}
-			if data, err := os.ReadFile(path); err == nil {
-				oldContent = string(data)
+
+			if err := writeFileAtomic(path, []byte(p.Content), 0o644); err != nil {
+				result = Result{Content: fmt.Sprintf("error writing file: %v", err), IsError: true}
+				return nil
 			}
+
+			result = Result{
+				Content: fmt.Sprintf("wrote %d bytes to %s", len(p.Content), path),
+				Details: DiffDetails{Path: path, OldContent: oldContent, NewContent: p.Content},
+			}
+			return nil
+		})
+		if err != nil {
+			if errors.Is(err, context.DeadlineExceeded) {
+				return Result{Content: fmt.Sprintf("write timed out after %v", DefaultToolTimeout), IsError: true}, nil
+			}
+			return Result{Content: fmt.Sprintf("write failed: %v", err), IsError: true}, nil
 		}
 
-		release := mq.Acquire(path)
-		defer release()
-
-		dir := filepath.Dir(path)
-		if err := os.MkdirAll(dir, 0o755); err != nil {
-			return Result{Content: fmt.Sprintf("error creating directory: %v", err), IsError: true}, nil
-		}
-
-		if err := writeFileAtomic(path, []byte(p.Content), 0o644); err != nil {
-			return Result{Content: fmt.Sprintf("error writing file: %v", err), IsError: true}, nil
-		}
-
-		return Result{
-			Content: fmt.Sprintf("wrote %d bytes to %s", len(p.Content), path),
-			Details: DiffDetails{Path: path, OldContent: oldContent, NewContent: p.Content},
-		}, nil
+		return result, nil
 	}
 }
