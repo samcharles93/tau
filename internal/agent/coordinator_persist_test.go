@@ -19,12 +19,18 @@ import (
 // session store.
 func newTestSessionManager(t *testing.T) *sessions.Manager {
 	t.Helper()
+	mgr, _ := newTestSessionManagerAndStore(t)
+	return mgr
+}
+
+func newTestSessionManagerAndStore(t *testing.T) (*sessions.Manager, *store.SQLiteStore) {
+	t.Helper()
 	dir := t.TempDir()
 	rawStore, err := store.NewSQLiteStore(context.Background(), filepath.Join(dir, "sessions.db"), dir)
 	require.NoError(t, err)
 	mgr := sessions.NewManager(rawStore)
 	t.Cleanup(func() { _ = mgr.Close() })
-	return mgr
+	return mgr, rawStore
 }
 
 // startAndCloseTestSession starts a session and waits for its
@@ -109,6 +115,34 @@ func startSubmitAndCloseTestSession(t *testing.T, coordinator *Coordinator, sess
 			t.Fatal("timed out waiting for prompt completion")
 		}
 	}
+}
+
+type shutdownBlockingStreamer struct {
+	started   chan struct{}
+	cancelled chan struct{}
+	release   chan struct{}
+}
+
+func newShutdownBlockingStreamer() *shutdownBlockingStreamer {
+	return &shutdownBlockingStreamer{
+		started:   make(chan struct{}),
+		cancelled: make(chan struct{}),
+		release:   make(chan struct{}),
+	}
+}
+
+func (s *shutdownBlockingStreamer) StreamChatCompletionFull(
+	ctx context.Context,
+	_ chat.ChatSessionState,
+	_ string,
+	_ map[string]string,
+	_ chat.StreamCallbacks,
+) (chat.CompletionResult, error) {
+	close(s.started)
+	<-ctx.Done()
+	close(s.cancelled)
+	<-s.release
+	return chat.CompletionResult{}, ctx.Err()
 }
 
 // TestCoordinatorNoPersistSkipsSessionStore guards --ephemeral: with
@@ -256,4 +290,72 @@ func TestCoordinatorDoesNotDropMessageSentRightBeforeClose(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, loaded.Messages, 1, "the message sent right before Close() must survive to the persisted session")
 	require.Equal(t, "hello, are you there?", loaded.Messages[0].Content)
+}
+
+func TestCoordinatorShutdownPersistsCancelledTurnState(t *testing.T) {
+	bus := newTestBus(t)
+	mgr, rawStore := newTestSessionManagerAndStore(t)
+	streamer := newShutdownBlockingStreamer()
+
+	coordinator, err := NewCoordinator(context.Background(), CoordinatorConfig{
+		Bus: bus,
+		TokenSource: func(context.Context, config.ProviderConfig) (string, error) {
+			return "token", nil
+		},
+		Streamer:       streamer,
+		Registry:       tools.NewRegistry(),
+		SessionManager: mgr,
+	})
+	require.NoError(t, err)
+
+	startTestSession(t, coordinator)
+	require.NoError(t, coordinator.Send(chat.SubmitChatPromptCommand{
+		SessionID:   "session-1",
+		RequestID:   "request-1",
+		Prompt:      "persist this prompt",
+		SubmittedAt: time.Now().UTC(),
+	}))
+
+	select {
+	case <-streamer.started:
+	case <-time.After(time.Second):
+		t.Fatal("streamer never invoked")
+	}
+
+	closeDone := make(chan struct{})
+	go func() {
+		coordinator.Close()
+		close(closeDone)
+	}()
+
+	select {
+	case <-streamer.cancelled:
+	case <-time.After(time.Second):
+		t.Fatal("streamer context was not cancelled during shutdown")
+	}
+
+	var (
+		persisted chat.ChatSessionState
+		loadErr   error
+	)
+	deadline := time.Now().Add(time.Second)
+	for time.Now().Before(deadline) {
+		persisted, loadErr = rawStore.Load(context.Background(), "session-1")
+		if loadErr == nil {
+			break
+		}
+		time.Sleep(time.Millisecond)
+	}
+
+	close(streamer.release)
+	select {
+	case <-closeDone:
+	case <-time.After(time.Second):
+		t.Fatal("coordinator did not finish closing")
+	}
+
+	require.NoError(t, loadErr)
+	require.Equal(t, chat.ChatSessionIdle, persisted.Status)
+	require.Len(t, persisted.Messages, 1)
+	require.Equal(t, "persist this prompt", persisted.Messages[0].Content)
 }
