@@ -12,7 +12,14 @@ import (
 // in the background and its result is discarded - but the caller stops
 // waiting on it, so a hung filesystem can no longer block the tool executor
 // (and therefore the coordinator's turn loop) indefinitely.
+//
+// If the context is already done when runWithContext is called, fn is never
+// spawned. This avoids a goroutine leak that can race with test cleanup.
 func runWithContext(ctx context.Context, fn func() error) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+
 	done := make(chan error, 1)
 	go func() { done <- fn() }()
 	select {

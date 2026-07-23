@@ -170,8 +170,8 @@ The updater downloads the platform archive and `checksums.txt`, verifies the arc
 and applies it in place.
 
 By default, update checks only happen when you run `tau update` manually. Set
-`updates.mode: auto` in [configuration](configuration.md#updates) to enable
-automatic background update checks, or `updates.mode: off` to disable all update
+`updates.mode: warn` in [configuration](configuration.md#updates) to keep manual
+checks with update notifications, or `updates.mode: disabled` to disable all update
 checks including `tau update`. Dev builds (version `dev`) are always excluded
 from update checks — only release builds are eligible.
 

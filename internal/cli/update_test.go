@@ -19,6 +19,12 @@ func TestUpdateCmdHelpMentionsBackground(t *testing.T) {
 
 	require.Contains(t, cmd.Description, "auto",
 		"update command description should mention auto mode")
+
+	require.Contains(t, cmd.Description, "warn",
+		"update command description should mention warn mode")
+
+	require.Contains(t, cmd.Description, "disabled",
+		"update command description should mention disabled mode")
 }
 
 func TestUpdateCmdUsageDoesNotContainOnlyManualFlow(t *testing.T) {

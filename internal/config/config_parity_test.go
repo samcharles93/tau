@@ -74,7 +74,7 @@ auto_compact:
   target_ratio: 0.25
   model: compact-model
 updates:
-  mode: auto
+  mode: warn
 `), &cfg)
 	if err != nil {
 		t.Fatalf("Unmarshal() error = %v", err)
@@ -96,7 +96,7 @@ updates:
 	checkFloatEq(t, "auto_compact.threshold_ratio", cfg.AutoCompact.ThresholdRatio, 0.8)
 	checkFloatEq(t, "auto_compact.target_ratio", cfg.AutoCompact.TargetRatio, 0.25)
 	checkStr(t, "auto_compact.model", cfg.AutoCompact.Model, "compact-model")
-	checkStr(t, "updates.mode", cfg.Updates.Mode, "auto")
+	checkStr(t, "updates.mode", cfg.Updates.Mode, "warn")
 
 	// Providers
 	if len(cfg.Providers) != 1 {

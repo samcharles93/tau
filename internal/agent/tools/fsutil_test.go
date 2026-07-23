@@ -20,6 +20,34 @@ func TestRunWithContext_ReturnsFnResult(t *testing.T) {
 	}
 }
 
+// TestRunWithContext_ReturnsCtxErrOnAlreadyExpired verifies that when the
+// context is already done before runWithContext is called, no goroutine is
+// spawned and the context error is returned immediately.
+func TestRunWithContext_ReturnsCtxErrOnAlreadyExpired(t *testing.T) {
+	ctx, cancel := context.WithDeadline(context.Background(), time.Now().Add(-time.Second))
+	defer cancel()
+
+	spawned := make(chan struct{})
+	err := runWithContext(ctx, func() error {
+		close(spawned)
+		return nil
+	})
+
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("expected context.DeadlineExceeded, got %v", err)
+	}
+
+	// The goroutine must NOT have been spawned because the context
+	// was already expired. Give it a short grace period to prove the
+	// negative.
+	select {
+	case <-spawned:
+		t.Fatal("fn was spawned even though the context was already expired — goroutine leak")
+	case <-time.After(50 * time.Millisecond):
+		// Expected: fn was never called.
+	}
+}
+
 // TestRunWithContext_ReturnsCtxErrOnTimeout is the core regression coverage
 // for tau-6wa: fn blocks forever (simulating a hung filesystem call); the
 // caller must get control back once ctx expires rather than waiting for fn.
