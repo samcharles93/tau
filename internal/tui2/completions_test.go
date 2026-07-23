@@ -1211,3 +1211,71 @@ func TestHandleCompletionKeyEnterOnNoArgCommandAutoSubmits(t *testing.T) {
 		t.Fatal("expected a Cmd - a genuinely argument-less command should still auto-submit")
 	}
 }
+
+// --- $ skill prefix completion tests ---
+
+func TestRawCandidateGroupsDollarPrefixShowsSkills(t *testing.T) {
+	m := newTestModel(&fakeRuntime{}, nil)
+	m.skills = []tauchat.SkillInfo{
+		{Name: "python", Description: "Python helper"},
+		{Name: "go", Description: "Go expert"},
+	}
+	m.input = "$"
+
+	groups := m.rawCandidateGroups()
+	if len(groups) == 0 {
+		t.Fatal("expected skill completion groups for bare '$'")
+	}
+	if len(groups) != 1 || groups[0].Title != "Skills" {
+		t.Fatalf("expected 1 Skills group, got %+v", groups)
+	}
+	if len(groups[0].Matches) != 2 {
+		t.Fatalf("expected 2 skill matches, got %d", len(groups[0].Matches))
+	}
+}
+
+func TestRawCandidateGroupsDollarPrefixFiltersSkills(t *testing.T) {
+	m := newTestModel(&fakeRuntime{}, nil)
+	m.skills = []tauchat.SkillInfo{
+		{Name: "python", Description: "Python helper"},
+		{Name: "go", Description: "Go expert"},
+		{Name: "golang", Description: "Go tools"},
+	}
+	m.input = "$go"
+
+	rows, _ := m.completionRows()
+	if len(rows) != 2 {
+		t.Fatalf("expected 2 matching skills for '$go', got %d rows: %+v", len(rows), rows)
+	}
+}
+
+func TestRawCandidateGroupsDollarPrefixWithNoSkills(t *testing.T) {
+	m := newTestModel(&fakeRuntime{}, nil)
+	m.skills = nil
+	m.input = "$"
+
+	groups := m.rawCandidateGroups()
+	if groups != nil {
+		t.Fatalf("expected nil for $ with no skills loaded, got %d groups", len(groups))
+	}
+}
+
+func TestCompletionTokenDollarPrefix(t *testing.T) {
+	m := newTestModel(&fakeRuntime{}, nil)
+	m.input = "$py"
+
+	tok := m.completionToken()
+	if tok != "py" {
+		t.Fatalf("completionToken = %q, want py", tok)
+	}
+}
+
+func TestCompletionTokenBareDollar(t *testing.T) {
+	m := newTestModel(&fakeRuntime{}, nil)
+	m.input = "$"
+
+	tok := m.completionToken()
+	if tok != "" {
+		t.Fatalf("completionToken = %q, want empty for bare $", tok)
+	}
+}

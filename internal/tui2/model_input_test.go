@@ -950,3 +950,88 @@ func TestClearScreenWipesRenderedLinesNotSession(t *testing.T) {
 		t.Fatalf("sessionID = %q, want unchanged", m.sessionID)
 	}
 }
+
+// --- $ skill invocation tests ---
+
+func TestSubmitInputSkillDollarPrefix(t *testing.T) {
+	rt := &fakeRuntime{}
+	m := newTestModel(rt, nil)
+	m.skills = []tauchat.SkillInfo{{Name: "python", Description: "Python helper"}}
+	m.input = "$python"
+
+	drainCmd(m.submitInput())
+
+	sent, ok := rt.sent[0].(tauchat.RunSkillCommand)
+	if !ok {
+		t.Fatalf("expected RunSkillCommand, got %T", rt.sent[0])
+	}
+	if sent.SkillName != "python" {
+		t.Fatalf("SkillName = %q, want python", sent.SkillName)
+	}
+	if sent.Args != "" {
+		t.Fatalf("Args = %q, want empty", sent.Args)
+	}
+}
+
+func TestSubmitInputSkillDollarPrefixWithArgs(t *testing.T) {
+	rt := &fakeRuntime{}
+	m := newTestModel(rt, nil)
+	m.skills = []tauchat.SkillInfo{{Name: "python", Description: "Python helper"}}
+	m.input = "$python write a script that sorts files"
+
+	drainCmd(m.submitInput())
+
+	sent, ok := rt.sent[0].(tauchat.RunSkillCommand)
+	if !ok {
+		t.Fatalf("expected RunSkillCommand, got %T", rt.sent[0])
+	}
+	if sent.SkillName != "python" {
+		t.Fatalf("SkillName = %q, want python", sent.SkillName)
+	}
+	if sent.Args != "write a script that sorts files" {
+		t.Fatalf("Args = %q, want 'write a script that sorts files'", sent.Args)
+	}
+}
+
+func TestSubmitInputDollarPrefixNonexistentSkill(t *testing.T) {
+	rt := &fakeRuntime{}
+	m := newTestModel(rt, nil)
+	m.skills = nil
+	m.input = "$nope"
+
+	drainCmd(m.submitInput())
+
+	sent, ok := rt.sent[0].(tauchat.RunSkillCommand)
+	if !ok {
+		t.Fatalf("expected RunSkillCommand even for unknown skill, got %T", rt.sent[0])
+	}
+	if sent.SkillName != "nope" {
+		t.Fatalf("SkillName = %q, want nope", sent.SkillName)
+	}
+}
+
+func TestSubmitInputDollarPrefixDuringResponseRunsImmediately(t *testing.T) {
+	rt := &fakeRuntime{}
+	m := newTestModel(rt, nil)
+	m.skills = []tauchat.SkillInfo{{Name: "python", Description: "Python helper"}}
+	m.agentState = agentStreaming
+	m.input = "$python"
+
+	drainCmd(m.submitInput())
+
+	rt.mu.Lock()
+	defer rt.mu.Unlock()
+	if len(m.turnQueue) != 0 {
+		t.Fatalf("turnQueue = %v, want empty - $ skill invocations must not be queued", m.turnQueue)
+	}
+	if len(rt.sent) != 1 {
+		t.Fatalf("sent = %d commands, want 1 ($ skill ran immediately)", len(rt.sent))
+	}
+	sent, ok := rt.sent[0].(tauchat.RunSkillCommand)
+	if !ok {
+		t.Fatalf("expected RunSkillCommand, got %T", rt.sent[0])
+	}
+	if sent.SkillName != "python" {
+		t.Fatalf("SkillName = %q, want python", sent.SkillName)
+	}
+}

@@ -195,6 +195,21 @@ func (c *inlineChat) handleSlashCommand(text string) {
 	c.engine.PrintAbove("%s %s", c.grey("✗"), "unknown command: /"+name)
 }
 
+// handleSkillInvocation parses $skillname [args] and sends a RunSkillCommand.
+func (c *inlineChat) handleSkillInvocation(text string) {
+	rest := strings.TrimPrefix(text, "$")
+	if rest == "" {
+		return
+	}
+	skillName, args, _ := strings.Cut(rest, " ")
+	c.send(tauchat.RunSkillCommand{
+		SessionID:   c.sid(),
+		SkillName:   skillName,
+		Args:        strings.TrimSpace(args),
+		RequestedAt: time.Now().UTC(),
+	})
+}
+
 func (c *inlineChat) cmdClear(_ string) {
 	c.send(tauchat.ResetChatSessionCommand{SessionID: c.sid(), RequestedAt: time.Now().UTC()})
 	c.engine.Update(c.clearTurnLocked)

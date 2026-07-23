@@ -407,7 +407,7 @@ func (c *inlineChat) computeStatus() string {
 		}
 		if p := contextPct(totals.LastPromptTokens, ctxWindow); p >= 0 {
 			right = append(right, statusSeg{
-				text:  formatContextPct(totals.LastPromptTokens, ctxWindow),
+				text:  "ctx " + formatContextPct(totals.LastPromptTokens, ctxWindow),
 				style: contextStyle(p),
 				prio:  prioContext,
 			})
@@ -540,6 +540,12 @@ func (c *inlineChat) onSubmit(prompt string) {
 	if strings.HasPrefix(trimmed, "/") {
 		c.commit(inputEchoStyle(trimmed))
 		c.handleSlashCommand(trimmed)
+		return
+	}
+
+	if strings.HasPrefix(trimmed, "$") {
+		c.commit(inputEchoStyle(trimmed))
+		c.handleSkillInvocation(trimmed)
 		return
 	}
 

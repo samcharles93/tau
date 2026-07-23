@@ -671,6 +671,11 @@ func (m *model) submitInput() tea.Cmd {
 		return m.handleSlashCommand(text)
 	}
 
+	// Skill invocation: $skillname [args].
+	if strings.HasPrefix(text, "$") {
+		return m.handleSkillInvocation(text)
+	}
+
 	// Bash mode: !command (or !!command, excluded from what the model sees)
 	// runs outside the LLM turn loop. handleBashCommand does its own
 	// bang-stripping on the full text, not just a single "!".

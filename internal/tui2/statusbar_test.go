@@ -218,8 +218,8 @@ func TestFormatContextPct(t *testing.T) {
 	if got := formatContextPct(0, 8192); got != "" {
 		t.Fatalf("formatContextPct(0, 8192) = %q, want empty", got)
 	}
-	if got := formatContextPct(4096, 8192); got != "ctx 50%" {
-		t.Fatalf("formatContextPct(4096, 8192) = %q, want %q", got, "ctx 50%")
+	if got := formatContextPct(4096, 8192); got != "50%" {
+		t.Fatalf("formatContextPct(4096, 8192) = %q, want %q", got, "50%")
 	}
 }
 

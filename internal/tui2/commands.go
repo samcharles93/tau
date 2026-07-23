@@ -262,6 +262,25 @@ func (m *model) handleSlashCommand(text string) tea.Cmd {
 	return m.setNotification("unknown command: /" + name)
 }
 
+// handleSkillInvocation parses $skillname [args] input and sends a
+// RunSkillCommand. The $ prefix is the quick-invoke counterpart to
+// /skill:<name>.
+func (m *model) handleSkillInvocation(text string) tea.Cmd {
+	// Strip the $ prefix.
+	rest := strings.TrimPrefix(text, "$")
+	if rest == "" {
+		return nil
+	}
+	// Split into skill name and optional args.
+	skillName, args, _ := strings.Cut(rest, " ")
+	return sendCommand(m.runtime, tauchat.RunSkillCommand{
+		SessionID:   m.sessionID,
+		SkillName:   skillName,
+		Args:        strings.TrimSpace(args),
+		RequestedAt: time.Now().UTC(),
+	})
+}
+
 // --- command handlers ------------------------------------------------------
 
 func (m *model) cmdClear(_ string) tea.Cmd {

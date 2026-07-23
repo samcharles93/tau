@@ -303,6 +303,7 @@ func (m *model) handleChatEvent(evt tauchat.ChatEvent) tea.Cmd {
 	// indent instead of spilling into one unstyled blob - see
 	// skillsChangedText.
 	case tauchat.SkillsChangedEvent:
+		m.skills = e.Skills
 		rendered := m.renderMarkdown(skillsChangedText(e.Skills), m.width)
 		m.renderedLines = append(m.renderedLines, strings.Split(rendered, "\n")...)
 		m.viewport.SetContentLines(m.renderedLines)

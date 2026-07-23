@@ -176,14 +176,14 @@ func contextPct(promptTok, ctxWindow int) int {
 	return int(math.Round(float64(promptTok) / float64(ctxWindow) * 100))
 }
 
-// formatContextPct renders the context-window utilisation, e.g. "ctx 41%", or ""
+// formatContextPct renders the context-window utilisation, e.g. "41%", or ""
 // when it isn't computable.
 func formatContextPct(promptTok, ctxWindow int) string {
 	p := contextPct(promptTok, ctxWindow)
 	if p < 0 {
 		return ""
 	}
-	return fmt.Sprintf("ctx %d%%", p)
+	return fmt.Sprintf("%d%%", p)
 }
 
 // contextStyle picks a subtle severity colour for the context widget: grey below

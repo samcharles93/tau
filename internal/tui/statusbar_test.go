@@ -288,9 +288,9 @@ func TestFormatContextPct(t *testing.T) {
 		{0, 100, ""},  // no prompt tokens → not computable
 		{50, 0, ""},   // no window → not computable
 		{-1, 100, ""}, // negative guard
-		{41, 100, "ctx 41%"},
-		{50, 200, "ctx 25%"},
-		{200000, 200000, "ctx 100%"},
+		{41, 100, "41%"},
+		{50, 200, "25%"},
+		{200000, 200000, "100%"},
 	}
 	for _, tc := range cases {
 		if got := formatContextPct(tc.prompt, tc.window); got != tc.want {

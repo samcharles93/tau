@@ -64,6 +64,12 @@ var groupPriority = map[string]int{
 // actually been typed happens uniformly afterwards in completionRows.
 func (m *model) rawCandidateGroups() []compGroup {
 	text := m.input
+
+	// $ prefix: skill name completions.
+	if strings.HasPrefix(text, "$") {
+		return m.skillGroups(m.completionToken())
+	}
+
 	if !strings.HasPrefix(text, "/") {
 		return nil
 	}
@@ -136,6 +142,14 @@ func (m *model) completionToken() string {
 		return ""
 	}
 	token := fields[len(fields)-1]
+	// Strip leading $ from skill-prefix tokens - a bare "$" means no
+	// token typed yet (like bare "/"), and "$py" gives us "py".
+	if strings.HasPrefix(m.input, "$") {
+		if token == "$" {
+			return ""
+		}
+		return strings.TrimPrefix(token, "$")
+	}
 	if token == "/" {
 		// A bare "/" with nothing typed after it is the command-prefix
 		// marker, not a real query - treat it as no token at all. Otherwise
@@ -214,6 +228,21 @@ func filterAndRankRows(groups []compGroup, token string) []compRow {
 }
 
 // --- command name completions ----------------------------------------------
+
+// skillGroups returns skill name completions for the $ prefix.
+func (m *model) skillGroups(token string) []compGroup {
+	if len(m.skills) == 0 {
+		return nil
+	}
+	matches := make([]compMatch, 0, len(m.skills))
+	for _, sk := range m.skills {
+		matches = append(matches, compMatch{
+			Word:        sk.Name,
+			Description: sk.Description,
+		})
+	}
+	return []compGroup{{Title: "Skills", Matches: matches}}
+}
 
 // commandGroups returns the full, unfiltered command/agent/extension
 // candidate pool - completionRows applies fuzzy filtering against whatever

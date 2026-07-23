@@ -171,6 +171,9 @@ type model struct {
 	// Extension commands (populated from ExtensionCommandsChangedEvent).
 	extensionCommands map[string]tauchat.ExtensionCommand
 
+	// Skills from SkillsChangedEvent, used for $ prefix completions/invocation.
+	skills []tauchat.SkillInfo
+
 	// Usage tracking.
 	usage *metrics.UsageTracker
 
@@ -386,6 +389,9 @@ func spinTick() tea.Cmd {
 func (m *model) Init() tea.Cmd {
 	return tea.Batch(
 		readNextEvent(m.chatSub),
+		sendCommand(m.runtime, tauchat.ListSkillsCommand{
+			RequestedAt: time.Now().UTC(),
+		}),
 		func() tea.Msg { return startupMsg{m.sessionID, m.modelName, m.provider} },
 	)
 }

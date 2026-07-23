@@ -524,7 +524,7 @@ func contextPct(promptTok, ctxWindow int) int {
 	return int(math.Round(float64(promptTok) / float64(ctxWindow) * 100))
 }
 
-// formatContextPct renders "ctx N%", or "" when unavailable. Mirrors
+// formatContextPct renders "N%", or "" when unavailable. Mirrors
 // internal/tui/statusbar.go's function of the same name - used by /cost's
 // full breakdown (unlike contextStyle, which is status-bar-only).
 func formatContextPct(promptTok, ctxWindow int) string {
@@ -532,7 +532,7 @@ func formatContextPct(promptTok, ctxWindow int) string {
 	if p < 0 {
 		return ""
 	}
-	return fmt.Sprintf("ctx %d%%", p)
+	return fmt.Sprintf("%d%%", p)
 }
 
 func contextStyle(pct int) func(string) string {
