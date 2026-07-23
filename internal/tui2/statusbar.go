@@ -486,7 +486,7 @@ func (m *model) computeStatusBar() string {
 	// that's more important than any of the identity segments it might
 	// otherwise be dropped in favor of.
 	if m.steering {
-		dots := int(time.Now().UnixMilli()/300) % 4
+		dots := (m.spinnerFrame / 4) % 4
 		left = append(left, statusSeg{
 			text:  "steering" + strings.Repeat(".", dots),
 			style: func(s string) string { return termkit.FgOnly(s, theme.ToneWarn) },

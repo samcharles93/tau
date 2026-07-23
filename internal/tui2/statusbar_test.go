@@ -442,6 +442,31 @@ func TestComputeStatusBarBasic(t *testing.T) {
 	}
 }
 
+func TestComputeStatusBarProcessingState(t *testing.T) {
+	m := newTestModel(&fakeRuntime{}, nil)
+	m.modelName = "gpt-4"
+	m.provider = "openai"
+	m.width = 80
+	m.agentState = agentProcessing
+
+	plain := stripANSI(m.computeStatusBar())
+	if !strings.Contains(plain, "Processing") {
+		t.Fatalf("status bar = %q, want 'Processing'", plain)
+	}
+	if !strings.Contains(plain, "Ctrl+C Stop") {
+		t.Fatalf("status bar = %q, want interrupt hint", plain)
+	}
+	if !strings.Contains(plain, "gpt-4") {
+		t.Fatalf("status bar = %q, want model name on right side", plain)
+	}
+	if strings.Contains(plain, "openai") {
+		t.Fatalf("status bar = %q, Processing should NOT show provider", plain)
+	}
+	if strings.Contains(plain, "Ready") || strings.Contains(plain, "Thinking") {
+		t.Fatalf("status bar = %q, should only show Processing, not Ready or Thinking", plain)
+	}
+}
+
 func TestComputeStatusBarSteering(t *testing.T) {
 	m := newTestModel(&fakeRuntime{}, nil)
 	m.modelName = "gpt-4"
