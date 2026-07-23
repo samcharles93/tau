@@ -24,26 +24,18 @@ func NewPlainRenderer() *PlainRenderer {
 	return &PlainRenderer{stdout: os.Stdout, stderr: os.Stderr}
 }
 
-// OnDelta writes the delta to stdout.
-func (r *PlainRenderer) OnDelta(_ context.Context, _ string, delta string) {
-	_, _ = fmt.Fprint(r.stdout, delta)
+// OnDelta writes the delta text to stdout.
+func (r *PlainRenderer) OnDelta(_ context.Context, evt tauchat.ChatResponseDeltaEvent) {
+	_, _ = fmt.Fprint(r.stdout, evt.Delta)
 }
 
-// OnToolStart writes a tool-start line to stderr.
-func (r *PlainRenderer) OnToolStart(_ context.Context, evt tauchat.ChatToolExecutionStartedEvent) {
-	_, _ = fmt.Fprintf(r.stderr, "\n⚙️  %s", evt.ToolName)
-	if evt.Summary != "" {
-		_, _ = fmt.Fprintf(r.stderr, ": %s", evt.Summary)
-	}
+// OnToolStart is a no-op. The existing -p loop ignores tool lifecycle
+// events entirely, so printing them here would break baseline parity.
+func (r *PlainRenderer) OnToolStart(_ context.Context, _ tauchat.ChatToolExecutionStartedEvent) {
 }
 
-// OnToolComplete writes a tool-complete line to stderr.
-func (r *PlainRenderer) OnToolComplete(_ context.Context, evt tauchat.ChatToolExecutionCompletedEvent) {
-	status := "✓"
-	if evt.IsError {
-		status = "✗"
-	}
-	_, _ = fmt.Fprintf(r.stderr, "\n  %s %s (%s)", status, evt.ToolName, evt.Duration.Round(time.Millisecond))
+// OnToolComplete is a no-op. See OnToolStart.
+func (r *PlainRenderer) OnToolComplete(_ context.Context, _ tauchat.ChatToolExecutionCompletedEvent) {
 }
 
 // OnComplete writes a trailing newline, any error/warning, and the metrics
@@ -59,9 +51,9 @@ func (r *PlainRenderer) OnComplete(_ context.Context, evt tauchat.ChatResponseCo
 	printSummary(r.stderr, tracker, sessionID)
 }
 
-// OnError writes nothing (the caller propagates the error).
-func (r *PlainRenderer) OnError(_ context.Context, _ tauchat.ChatRuntimeErrorEvent) error {
-	return nil
+// OnError is a no-op for plain mode. The runner constructs and returns the
+// error itself, so this renderer need only avoid additional output.
+func (r *PlainRenderer) OnError(_ context.Context, _ tauchat.ChatRuntimeErrorEvent) {
 }
 
 // OnCancel writes the "cancelled" message to stderr.

@@ -42,7 +42,7 @@ func (r *Runner) Run(
 			switch e := event.(type) {
 			case tauchat.ChatResponseDeltaEvent:
 				if e.SessionID == sessionID {
-					renderer.OnDelta(ctx, sessionID, e.Delta)
+					renderer.OnDelta(ctx, e)
 				}
 			case tauchat.ChatToolExecutionStartedEvent:
 				if e.SessionID == sessionID {
@@ -59,7 +59,8 @@ func (r *Runner) Run(
 				}
 			case tauchat.ChatRuntimeErrorEvent:
 				if e.SessionID == sessionID {
-					return renderer.OnError(ctx, e)
+					renderer.OnError(ctx, e)
+					return Err(e)
 				}
 			case tauchat.ChatResponseCancelledEvent:
 				if e.State.SessionID == sessionID {

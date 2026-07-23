@@ -181,8 +181,13 @@ func RunStdIn(ctx context.Context, opts ChatOptions, prompt string) error {
 		return err
 	}
 
-	// Drain events via the runner, using the plain renderer for -p output.
+	// Drain events via the runner, using the selected renderer.
 	runner := execute.NewRunner()
-	renderer := execute.NewPlainRenderer()
+	var renderer execute.Renderer
+	if opts.OutputFormat == "jsonl" {
+		renderer = execute.NewJSONLRenderer()
+	} else {
+		renderer = execute.NewPlainRenderer()
+	}
 	return runner.Run(ctx, chatSub.Events(), renderer, sessionID, tracker)
 }

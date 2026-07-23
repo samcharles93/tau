@@ -1,11 +1,16 @@
 package execute
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
+	"strings"
 	"testing"
 	"time"
 
+	"github.com/samcharles93/tau/internal/agent/stdio"
+	"github.com/samcharles93/tau/internal/bridge"
 	tauchat "github.com/samcharles93/tau/internal/chat"
 	"github.com/samcharles93/tau/internal/metrics"
 )
@@ -21,8 +26,8 @@ type spyRenderer struct {
 	timeouts      int
 }
 
-func (s *spyRenderer) OnDelta(_ context.Context, _ string, delta string) {
-	s.deltas = append(s.deltas, delta)
+func (s *spyRenderer) OnDelta(_ context.Context, evt tauchat.ChatResponseDeltaEvent) {
+	s.deltas = append(s.deltas, evt.Delta)
 }
 
 func (s *spyRenderer) OnToolStart(_ context.Context, evt tauchat.ChatToolExecutionStartedEvent) {
@@ -37,9 +42,8 @@ func (s *spyRenderer) OnComplete(_ context.Context, evt tauchat.ChatResponseComp
 	s.completes = append(s.completes, evt)
 }
 
-func (s *spyRenderer) OnError(_ context.Context, evt tauchat.ChatRuntimeErrorEvent) error {
+func (s *spyRenderer) OnError(_ context.Context, evt tauchat.ChatRuntimeErrorEvent) {
 	s.errors = append(s.errors, evt)
-	return Err(evt)
 }
 
 func (s *spyRenderer) OnCancel(_ context.Context, evt tauchat.ChatResponseCancelledEvent) {
@@ -197,6 +201,42 @@ func TestRunner_ChannelClosed(t *testing.T) {
 	err := runner.Run(context.Background(), ch, spy, "s1", nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestRunner_WithJSONLRenderer_ProducesFrames(t *testing.T) {
+	var buf bytes.Buffer
+	runner := NewRunner()
+	j := &JSONLRenderer{w: stdio.NewWriter(&buf)}
+	ch := make(chan tauchat.ChatEvent, 4)
+	sid := "s1"
+
+	ch <- tauchat.ChatResponseDeltaEvent{SessionID: sid, Delta: "hello"}
+	ch <- tauchat.ChatResponseCompletedEvent{
+		State: tauchat.ChatSessionState{SessionID: sid},
+	}
+	close(ch)
+
+	err := runner.Run(context.Background(), ch, j, sid, nil)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	lines := strings.Split(strings.TrimSpace(buf.String()), "\n")
+	if len(lines) != 2 {
+		t.Fatalf("expected 2 JSONL lines, got %d: %q", len(lines), buf.String())
+	}
+	for i, line := range lines {
+		var env bridge.Envelope
+		if err := json.Unmarshal([]byte(line), &env); err != nil {
+			t.Fatalf("line %d: invalid JSON: %v", i, err)
+		}
+	}
+	if !strings.Contains(lines[0], "ChatResponseDeltaEvent") {
+		t.Errorf("expected delta event, got %q", lines[0])
+	}
+	if !strings.Contains(lines[1], "ChatResponseCompletedEvent") {
+		t.Errorf("expected completed event, got %q", lines[1])
 	}
 }
 

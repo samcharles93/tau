@@ -2,6 +2,7 @@ package execute
 
 import (
 	"context"
+	"log"
 	"os"
 
 	"github.com/samcharles93/tau/internal/agent/stdio"
@@ -22,12 +23,10 @@ func NewJSONLRenderer() *JSONLRenderer {
 	return &JSONLRenderer{w: stdio.NewWriter(os.Stdout)}
 }
 
-// OnDelta emits a ChatResponseDeltaEvent envelope.
-func (r *JSONLRenderer) OnDelta(_ context.Context, sessionID string, delta string) {
-	r.emit(tauchat.ChatResponseDeltaEvent{
-		SessionID: sessionID,
-		Delta:     delta,
-	})
+// OnDelta emits the full ChatResponseDeltaEvent envelope so no fields
+// (request ID, timestamps, etc.) are lost through reconstruction.
+func (r *JSONLRenderer) OnDelta(_ context.Context, evt tauchat.ChatResponseDeltaEvent) {
+	r.emit(evt)
 }
 
 // OnToolStart emits a ChatToolExecutionStartedEvent envelope.
@@ -45,10 +44,10 @@ func (r *JSONLRenderer) OnComplete(_ context.Context, evt tauchat.ChatResponseCo
 	r.emit(evt)
 }
 
-// OnError emits a ChatRuntimeErrorEvent envelope.
-func (r *JSONLRenderer) OnError(_ context.Context, evt tauchat.ChatRuntimeErrorEvent) error {
+// OnError emits a ChatRuntimeErrorEvent envelope. The runner constructs and
+// returns the error itself; this renderer only emits the JSONL frame.
+func (r *JSONLRenderer) OnError(_ context.Context, evt tauchat.ChatRuntimeErrorEvent) {
 	r.emit(evt)
-	return Err(evt)
 }
 
 // OnCancel emits a ChatResponseCancelledEvent envelope.
@@ -65,12 +64,15 @@ func (r *JSONLRenderer) OnTimeout(ctx context.Context) {
 }
 
 // emit marshals an event using bridge.MarshalEvent and writes it as a
-// framed JSONL line. MarshalEvent produces {"type":"...","payload":{...}}
-// which is the correct top-level shape for stdout JSONL.
+// framed JSONL line. Marshal and write errors are logged to stderr so a
+// broken output pipe or unencodable event does not silently lose frames.
 func (r *JSONLRenderer) emit(evt tauchat.ChatEvent) {
 	data, err := bridge.MarshalEvent(evt)
 	if err != nil {
+		log.Printf("jsonl: marshal error: %v", err)
 		return
 	}
-	_ = r.w.WriteRaw(data)
+	if err := r.w.WriteRaw(data); err != nil {
+		log.Printf("jsonl: write error: %v", err)
+	}
 }

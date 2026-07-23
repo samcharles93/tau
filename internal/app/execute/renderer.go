@@ -15,8 +15,10 @@ import (
 // calls these methods but never touches fmt, os, or any I/O — the renderer
 // implementations own all output formatting.
 type Renderer interface {
-	// OnDelta is called for each ChatResponseDeltaEvent.
-	OnDelta(ctx context.Context, sessionID string, delta string)
+	// OnDelta is called for each ChatResponseDeltaEvent. The full event is
+	// passed so renderers that need fields beyond Delta (e.g. JSONL) do not
+	// lose data through reconstruction.
+	OnDelta(ctx context.Context, evt tauchat.ChatResponseDeltaEvent)
 
 	// OnToolStart is called for ChatToolExecutionStartedEvent.
 	OnToolStart(ctx context.Context, evt tauchat.ChatToolExecutionStartedEvent)
@@ -28,9 +30,10 @@ type Renderer interface {
 	// returns nil after this call.
 	OnComplete(ctx context.Context, evt tauchat.ChatResponseCompletedEvent, tracker *metrics.UsageTracker, sessionID string)
 
-	// OnError is called for ChatRuntimeErrorEvent. The runner returns the
-	// error built from the event after this call.
-	OnError(ctx context.Context, evt tauchat.ChatRuntimeErrorEvent) error
+	// OnError is called for ChatRuntimeErrorEvent. The runner constructs and
+	// returns the error itself; the renderer is only responsible for output
+	// (logging, emitting JSONL frames, etc.).
+	OnError(ctx context.Context, evt tauchat.ChatRuntimeErrorEvent)
 
 	// OnCancel is called for ChatResponseCancelledEvent. The runner
 	// returns nil after this call.

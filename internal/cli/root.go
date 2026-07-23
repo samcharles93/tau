@@ -163,6 +163,10 @@ func NewRootCommand(version string) *urfavecli.Command {
 				Sources: urfavecli.EnvVars("TAU_EPHEMERAL"),
 			},
 			&urfavecli.BoolFlag{
+				Name:  "jsonl",
+				Usage: "Output framed JSONL events on stdout instead of plain text (stdin mode only)",
+			},
+			&urfavecli.BoolFlag{
 				Name:  "skip-setup",
 				Usage: "Do not auto-launch the setup wizard when no provider is configured",
 			},
@@ -329,6 +333,10 @@ func firstNonEmptyString(values ...string) string {
 }
 
 func chatOptionsFromCmd(cmd *urfavecli.Command, cfg tauconfig.Config, provider tauconfig.ProviderConfig, version string) app.ChatOptions {
+	outputFormat := ""
+	if cmd.Bool("jsonl") {
+		outputFormat = "jsonl"
+	}
 	return app.ChatOptions{
 		Config:               cfg,
 		Provider:             provider,
@@ -347,5 +355,6 @@ func chatOptionsFromCmd(cmd *urfavecli.Command, cfg tauconfig.Config, provider t
 		AllowedTools:         splitToolsFlag(cmd.StringSlice("tools")),
 		AgentSpec:            firstNonEmptyString(cmd.String("agent"), "tau"),
 		TrustProjectRootSpec: cmd.Bool("trust-project-root-spec"),
+		OutputFormat:         outputFormat,
 	}
 }

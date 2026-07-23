@@ -14,7 +14,7 @@ func TestPlainRenderer_OnDelta_WritesToStdout(t *testing.T) {
 	var out, err bytes.Buffer
 	r := &PlainRenderer{stdout: &out, stderr: &err}
 
-	r.OnDelta(context.Background(), "s1", "hello")
+	r.OnDelta(context.Background(), tauchat.ChatResponseDeltaEvent{SessionID: "s1", Delta: "hello"})
 	if out.String() != "hello" {
 		t.Fatalf("expected 'hello', got %q", out.String())
 	}
@@ -94,7 +94,7 @@ func TestPlainRenderer_OnTimeout_WritesToStderr(t *testing.T) {
 	}
 }
 
-func TestPlainRenderer_ToolEvents_GoToStderr(t *testing.T) {
+func TestPlainRenderer_ToolEvents_AreNoOps(t *testing.T) {
 	var out, errBuf bytes.Buffer
 	r := &PlainRenderer{stdout: &out, stderr: &errBuf}
 
@@ -104,16 +104,9 @@ func TestPlainRenderer_ToolEvents_GoToStderr(t *testing.T) {
 		Summary:   "reading file",
 	}
 	r.OnToolStart(context.Background(), start)
-	if !strings.Contains(errBuf.String(), "read") {
-		t.Fatalf("expected tool name in stderr, got %q", errBuf.String())
+	if out.Len() > 0 || errBuf.Len() > 0 {
+		t.Fatalf("expected no output from no-op OnToolStart, got stdout=%q stderr=%q", out.String(), errBuf.String())
 	}
-	if out.Len() > 0 {
-		t.Fatalf("expected no stdout, got %q", out.String())
-	}
-
-	// Reset buffers
-	out.Reset()
-	errBuf.Reset()
 
 	complete := tauchat.ChatToolExecutionCompletedEvent{
 		SessionID: "s1",
@@ -122,11 +115,8 @@ func TestPlainRenderer_ToolEvents_GoToStderr(t *testing.T) {
 		Duration:  time.Second,
 	}
 	r.OnToolComplete(context.Background(), complete)
-	if !strings.Contains(errBuf.String(), "read") {
-		t.Fatalf("expected tool name in stderr, got %q", errBuf.String())
-	}
-	if out.Len() > 0 {
-		t.Fatalf("expected no stdout, got %q", out.String())
+	if out.Len() > 0 || errBuf.Len() > 0 {
+		t.Fatalf("expected no output from no-op OnToolComplete, got stdout=%q stderr=%q", out.String(), errBuf.String())
 	}
 }
 
@@ -192,12 +182,9 @@ func TestDuration_Formatting(t *testing.T) {
 	}
 }
 
-func TestPlainRenderer_OnError_ReturnsNil(t *testing.T) {
+func TestPlainRenderer_OnError_DoesNotPanic(t *testing.T) {
 	r := NewPlainRenderer()
-	err := r.OnError(context.Background(), tauchat.ChatRuntimeErrorEvent{})
-	if err != nil {
-		t.Fatalf("expected nil error, got %v", err)
-	}
+	r.OnError(context.Background(), tauchat.ChatRuntimeErrorEvent{})
 }
 
 // Ensure NewPlainRenderer uses os.Stdout/os.Stderr by checking it doesn't panic.

@@ -23,8 +23,8 @@ func TestJSONLRenderer_OnDelta_EmitsValidEnvelope(t *testing.T) {
 	var buf testWriter
 	r := &JSONLRenderer{w: stdio.NewWriter(&buf)}
 
-	r.OnDelta(context.Background(), "s1", "hello")
-	r.OnDelta(context.Background(), "s1", " world")
+	r.OnDelta(context.Background(), tauchat.ChatResponseDeltaEvent{SessionID: "s1", Delta: "hello"})
+	r.OnDelta(context.Background(), tauchat.ChatResponseDeltaEvent{SessionID: "s1", Delta: " world"})
 
 	lines := strings.Split(strings.TrimSpace(buf.String()), "\n")
 	if len(lines) != 2 {
@@ -103,13 +103,10 @@ func TestJSONLRenderer_OnError_EmitsValidEnvelope(t *testing.T) {
 	var buf testWriter
 	r := &JSONLRenderer{w: stdio.NewWriter(&buf)}
 
-	err := r.OnError(context.Background(), tauchat.ChatRuntimeErrorEvent{
+	r.OnError(context.Background(), tauchat.ChatRuntimeErrorEvent{
 		SessionID: "s1",
 		Message:   "boom",
 	})
-	if err == nil {
-		t.Fatal("expected error, got nil")
-	}
 
 	line := strings.TrimSpace(buf.String())
 	var env bridge.Envelope
