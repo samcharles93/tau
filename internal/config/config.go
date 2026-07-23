@@ -39,6 +39,8 @@ type Config struct {
 	// Metrics configures observability export and tracking.
 	Metrics     MetricsConfig     `yaml:"metrics"`
 	AutoCompact AutoCompactConfig `yaml:"auto_compact"`
+	// Updates configures background update check behaviour.
+	Updates UpdatesConfig `yaml:"updates"`
 }
 
 // MetricsConfig controls observability export and session cost tracking.
@@ -53,6 +55,15 @@ type MetricsConfig struct {
 	Session bool `yaml:"session"`
 	// TUI enables the TUI cost status bar widget. Ignored in headless mode.
 	TUI bool `yaml:"tui"`
+}
+
+// UpdatesConfig controls automatic update check behaviour.
+type UpdatesConfig struct {
+	// Mode controls how update checks are performed:
+	//   "warn" (default) – `tau update` works; tau may notify when an update is available
+	//   "disabled" – no update checks (including manual `tau update`; dev builds are always excluded)
+	//   "auto" (reserved) – accepted but behaves as "warn" with a logged warning; reserved for future background auto-update
+	Mode string `yaml:"mode"`
 }
 
 // AutoCompactConfig controls automatic conversation-history compaction before
@@ -250,6 +261,7 @@ func (c *Config) UnmarshalYAML(value *yaml.Node) error {
 		SkillPaths      []string                  `yaml:"skill_paths"`
 		Metrics         MetricsConfig             `yaml:"metrics"`
 		AutoCompact     AutoCompactConfig         `yaml:"auto_compact"`
+		Updates         UpdatesConfig             `yaml:"updates"`
 	}
 	var raw rawConfig
 	if err := value.Decode(&raw); err != nil {
@@ -267,6 +279,7 @@ func (c *Config) UnmarshalYAML(value *yaml.Node) error {
 	c.SkillPaths = raw.SkillPaths
 	c.Metrics = raw.Metrics
 	c.AutoCompact = raw.AutoCompact
+	c.Updates = raw.Updates
 	if raw.Providers.Kind != 0 {
 		providers, err := decodeProviders(raw.Providers)
 		if err != nil {
@@ -1234,6 +1247,7 @@ func mergeConfigs(globalCfg, localCfg Config) Config {
 	merged.UI = mergeUIConfigs(merged.UI, localCfg.UI)
 	merged.ModelModes = mergeModelModes(merged.ModelModes, localCfg.ModelModes)
 	merged.Agents = mergeAgentsConfigs(merged.Agents, localCfg.Agents)
+	merged.Updates = mergeUpdatesConfigs(merged.Updates, localCfg.Updates)
 	return merged
 }
 
@@ -1318,6 +1332,14 @@ func mergeAgentsConfigs(globalCfg, localCfg AgentsConfig) AgentsConfig {
 	return merged
 }
 
+func mergeUpdatesConfigs(globalCfg, localCfg UpdatesConfig) UpdatesConfig {
+	merged := globalCfg
+	if strings.TrimSpace(localCfg.Mode) != "" {
+		merged.Mode = localCfg.Mode
+	}
+	return merged
+}
+
 // Validate checks that configured providers have the fields required by auth type.
 func Validate(cfg Config) error {
 	seen := make(map[string]struct{}, len(cfg.Providers))
@@ -1397,6 +1419,17 @@ func Validate(cfg Config) error {
 	}
 	if cfg.Agents.OrphanStaleAge < 0 {
 		return errors.New("agents.orphan_stale_age must be >= 0")
+	}
+
+	// Validate updates.mode: warn (default), disabled, or auto (reserved, behaves as warn).
+	switch cfg.Updates.Mode {
+	case "":
+		// default
+	case "warn", "disabled":
+	case "auto":
+		slog.Warn("updates.mode 'auto' is reserved; behaving as 'warn'")
+	default:
+		return fmt.Errorf("updates.mode: unsupported mode %q (valid: warn, disabled, auto)", cfg.Updates.Mode)
 	}
 
 	return nil

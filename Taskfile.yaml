@@ -120,6 +120,11 @@ tasks:
     cmds:
       - go run ./scripts/tool-stats {{.CLI_ARGS}}
 
+  verify-release-assets:
+    desc: Validate a goreleaser dist/ directory has every supported platform archive with matching checksums
+    cmds:
+      - go run ./scripts/verify-release-assets --dist {{.DIST | default "dist"}} --tag {{.TAG | default "v0.0.0-dev"}}
+
   check:windows:
     desc: Run formatting and modernization on Windows-only files
     env:

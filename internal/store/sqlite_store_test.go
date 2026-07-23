@@ -2,6 +2,8 @@ package store_test
 
 import (
 	"context"
+	"database/sql"
+	"errors"
 	"os"
 	"path/filepath"
 	"testing"
@@ -274,6 +276,66 @@ func TestSQLiteStore_LoadNonExistent(t *testing.T) {
 	assert.Contains(t, err.Error(), "not found")
 }
 
+func TestSQLiteStore_LoadRejectsMalformedTimestamps(t *testing.T) {
+	tests := []struct {
+		name      string
+		corrupt   func(t *testing.T, ctx context.Context, db *sql.DB)
+		wantField string
+	}{
+		{
+			name: "session created_at",
+			corrupt: func(t *testing.T, ctx context.Context, db *sql.DB) {
+				t.Helper()
+				_, err := db.ExecContext(ctx, `UPDATE sessions SET created_at = 'not-a-timestamp' WHERE id = 'corrupt-session'`)
+				require.NoError(t, err)
+			},
+			wantField: "session created_at",
+		},
+		{
+			name: "session updated_at",
+			corrupt: func(t *testing.T, ctx context.Context, db *sql.DB) {
+				t.Helper()
+				_, err := db.ExecContext(ctx, `UPDATE sessions SET updated_at = 'not-a-timestamp' WHERE id = 'corrupt-session'`)
+				require.NoError(t, err)
+			},
+			wantField: "session updated_at",
+		},
+		{
+			name: "message created_at",
+			corrupt: func(t *testing.T, ctx context.Context, db *sql.DB) {
+				t.Helper()
+				_, err := db.ExecContext(ctx, `UPDATE messages SET created_at = 'not-a-timestamp' WHERE session_id = 'corrupt-session' AND seq = 0`)
+				require.NoError(t, err)
+			},
+			wantField: "message 0 created_at",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			s, dbPath := newTestStoreAtPath(t)
+			ctx := context.Background()
+			state := chatSessionFixture("corrupt-session", "model", "provider")
+			state.Messages = []chat.ChatMessage{
+				{Role: chat.ChatRoleUser, Content: "hello", CreatedAt: state.CreatedAt},
+			}
+			require.NoError(t, s.Save(ctx, state, 0))
+
+			db, err := sql.Open("sqlite", dbPath)
+			require.NoError(t, err)
+			t.Cleanup(func() { require.NoError(t, db.Close()) })
+			tt.corrupt(t, ctx, db)
+
+			loaded, err := s.Load(ctx, state.SessionID)
+			require.Error(t, err)
+			assert.Equal(t, chat.ChatSessionState{}, loaded, "malformed persisted state must not be partially loaded")
+			assert.Contains(t, err.Error(), tt.wantField)
+			var parseErr *time.ParseError
+			assert.True(t, errors.As(err, &parseErr), "timestamp parse error must remain inspectable")
+		})
+	}
+}
+
 func TestSQLiteStore_ExportMessages(t *testing.T) {
 	s := newTestStore(t)
 	ctx := context.Background()
@@ -431,12 +493,18 @@ func TestSQLiteStore_CostCalculation(t *testing.T) {
 
 func newTestStore(t *testing.T) *store.SQLiteStore {
 	t.Helper()
+	s, _ := newTestStoreAtPath(t)
+	return s
+}
+
+func newTestStoreAtPath(t *testing.T) (*store.SQLiteStore, string) {
+	t.Helper()
 	tmpDir := t.TempDir()
 	dbPath := filepath.Join(tmpDir, "test.db")
 	s, err := store.NewSQLiteStore(context.Background(), dbPath, tmpDir)
 	require.NoError(t, err)
 	t.Cleanup(func() { s.Close() })
-	return s
+	return s, dbPath
 }
 
 func chatSessionFixture(id, modelID, provider string) chat.ChatSessionState {

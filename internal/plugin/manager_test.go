@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"io"
 	"log/slog"
+	"maps"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -40,6 +41,21 @@ func (m *mockExtensionServiceClient) ExecuteTool(ctx context.Context, in *api.Ex
 	return &api.ExecuteToolResponse{}, nil
 }
 
+// GetCapabilities, GetMetadata, and GetTools have safe zero-value defaults
+// so tests that exercise Load() (which calls all three) don't panic on the
+// embedded nil api.ExtensionServiceClient.
+func (m *mockExtensionServiceClient) GetCapabilities(ctx context.Context, in *api.GetCapabilitiesRequest, opts ...grpc.CallOption) (*api.GetCapabilitiesResponse, error) {
+	return &api.GetCapabilitiesResponse{}, nil
+}
+
+func (m *mockExtensionServiceClient) GetMetadata(ctx context.Context, in *api.GetMetadataRequest, opts ...grpc.CallOption) (*api.GetMetadataResponse, error) {
+	return &api.GetMetadataResponse{}, nil
+}
+
+func (m *mockExtensionServiceClient) GetTools(ctx context.Context, in *api.GetToolsRequest, opts ...grpc.CallOption) (*api.GetToolsResponse, error) {
+	return &api.GetToolsResponse{}, nil
+}
+
 // newTestManager creates a Manager with short timeouts for fast tests.
 func newTestManager(t *testing.T) *Manager {
 	t.Helper()
@@ -54,13 +70,35 @@ func newTestManager(t *testing.T) *Manager {
 	return m
 }
 
+// fakeProcess is a no-op pluginProcess for tests that don't spawn real
+// plugin binaries.
+type fakeProcess struct {
+	killed atomic.Bool
+}
+
+func (p *fakeProcess) Kill() { p.killed.Store(true) }
+
 // setPluginClientForTest injects a mock gRPC client for a plugin, bypassing
 // the full go-plugin startup path.
 func (m *Manager) setPluginClientForTest(name string, client *api.GRPCClient) {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	m.grpcClients[name] = client
-	m.pluginOrder = append(m.pluginOrder, name)
+	m.setPluginEntryForTest(&pluginEntry{name: name, grpc: client, process: &fakeProcess{}})
+}
+
+// setPluginEntryForTest publishes a single plugin entry into the registry,
+// preserving whatever is already there. Test setup is single-threaded, so
+// this does a plain (non-CAS) read-modify-publish.
+func (m *Manager) setPluginEntryForTest(pe *pluginEntry) {
+	old := m.snapshot.Load()
+	next := &registrySnapshot{entries: make(map[string]*pluginEntry)}
+	if old != nil {
+		maps.Copy(next.entries, old.entries)
+		next.order = append(next.order, old.order...)
+	}
+	if _, exists := next.entries[pe.name]; !exists {
+		next.order = append(next.order, pe.name)
+	}
+	next.entries[pe.name] = pe
+	m.snapshot.Store(next)
 }
 
 func TestDispatchEvent_AllSuccess(t *testing.T) {

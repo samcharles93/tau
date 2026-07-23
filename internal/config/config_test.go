@@ -75,6 +75,25 @@ auto_compact:
 	}
 }
 
+func TestConfigUnmarshalYAMLPopulatesUpdates(t *testing.T) {
+	var cfg Config
+	err := yaml.Unmarshal([]byte(`
+providers:
+  - name: acme
+    base_url: https://acme.example
+    auth:
+      type: none
+updates:
+  mode: warn
+`), &cfg)
+	if err != nil {
+		t.Fatalf("Unmarshal() error = %v", err)
+	}
+	if cfg.Updates.Mode != "warn" {
+		t.Fatalf("Updates.Mode = %q, want warn", cfg.Updates.Mode)
+	}
+}
+
 func TestLoadConfigAutoCompactLocalCanDisableGlobal(t *testing.T) {
 	configDir := t.TempDir()
 	projectDir := t.TempDir()
@@ -512,6 +531,8 @@ metrics:
   dir: /custom/metrics/path
   session: false
   tui: false
+updates:
+  mode: ""
 `
 	writeFile(t, path, original)
 
@@ -1297,5 +1318,95 @@ agents:
 	}
 	if a.MaxTotalChildren != 32 {
 		t.Errorf("MaxTotalChildren = %d, want 32", a.MaxTotalChildren)
+	}
+}
+
+func TestUpdatesConfigValidate(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name      string
+		yaml      string
+		wantMode  string
+		wantError bool
+	}{
+		{
+			name:     "warn is valid",
+			yaml:     "updates:\n  mode: warn\n",
+			wantMode: "warn",
+		},
+		{
+			name:     "disabled is valid",
+			yaml:     "updates:\n  mode: disabled\n",
+			wantMode: "disabled",
+		},
+		{
+			name:     "auto is accepted but reserved",
+			yaml:     "updates:\n  mode: auto\n",
+			wantMode: "auto",
+		},
+		{
+			name:      "invalid mode fails",
+			yaml:      "updates:\n  mode: invalid\n",
+			wantMode:  "invalid",
+			wantError: true,
+		},
+		{
+			name:     "missing updates block defaults to empty",
+			yaml:     "",
+			wantMode: "",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			fullYAML := "providers:\n  - name: acme\n    base_url: https://acme.example\n    auth:\n      type: none\n" + tt.yaml
+			var cfg Config
+			err := yaml.Unmarshal([]byte(fullYAML), &cfg)
+			if err != nil {
+				t.Fatalf("Unmarshal() error = %v", err)
+			}
+
+			if cfg.Updates.Mode != tt.wantMode {
+				t.Fatalf("Updates.Mode = %q, want %q", cfg.Updates.Mode, tt.wantMode)
+			}
+
+			validateErr := Validate(cfg)
+			if tt.wantError && validateErr == nil {
+				t.Fatal("expected Validate to fail, but it passed")
+			}
+			if !tt.wantError && validateErr != nil {
+				t.Fatalf("Validate() unexpected error = %v", validateErr)
+			}
+		})
+	}
+}
+
+func TestLoadConfigMergesUpdates(t *testing.T) {
+	configDir := t.TempDir()
+	projectDir := t.TempDir()
+	t.Setenv("TAU_CONFIG_DIR", configDir)
+
+	writeFile(t, filepath.Join(configDir, "config.yaml"), `default_provider: acme
+providers:
+  - name: acme
+    base_url: https://acme.example
+    auth:
+      type: none
+updates:
+  mode: disabled
+`)
+	writeFile(t, filepath.Join(projectDir, ".tau.yaml"), `updates:
+  mode: warn
+`)
+
+	cfg, err := LoadConfigFrom(projectDir)
+	if err != nil {
+		t.Fatalf("LoadConfigFrom() error = %v", err)
+	}
+	if cfg.Updates.Mode != "warn" {
+		t.Fatalf("Updates.Mode = %q, want warn (local overrides global)", cfg.Updates.Mode)
 	}
 }

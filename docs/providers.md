@@ -39,6 +39,45 @@ This catalog means users don't need to specify `base_url` for well-known provide
 The state file is managed by `/provider` commands and the provider runtime in `internal/app/`. Tau does not write OAuth
 secrets to `config.yaml`.
 
+### Credential Sources
+
+Tau supports three paths for providing API credentials, with a well-defined precedence:
+
+| Precedence | Source | Description |
+|---|---|---|
+| **1 (highest)** | **Environment variable** (`api_key_env`) | Session-scoped, overrides everything else. Set the provider's API key env var (e.g. `DEEPSEEK_API_KEY`). |
+| **2** | **Managed API key** | Persisted default stored in `~/.config/tau/auth.yaml` via `tau setup` or `tau provider login`. Used when no env var is present. |
+| **3 (lowest)** | **OAuth** (device-code flow) | For `github-copilot` and `openai-codex` only. Access tokens stored in `auth.yaml` with automatic refresh. |
+
+**How it works in practice:**
+
+- `tau provider login deepseek` stores `sk-...` → `api_keys.deepseek` in `auth.yaml`. The provider activates immediately.
+- Setting `DEEPSEEK_API_KEY=sk-other` overrides the managed key — env always wins.
+- Unsetting the env var falls back to the stored managed key.
+- `tau provider logout deepseek` clears both the managed key and the enabled flag.
+
+Hand-written `config.yaml` providers (with `auth.api_key_env` or `auth.api_key`) are evaluated separately from catalog providers and are used first — they are never rewritten by Tau.
+
+### auth.yaml Schema
+
+```yaml
+version: 1
+enabled:
+  - deepseek
+  - ollama
+disabled: []
+oauth:
+  github-copilot:
+    access: ghu_abc123...
+    refresh: ghr_def456...
+    expires: 1718200000
+    extra:
+      base_url: https://api.individual.githubcopilot.com
+      available_model_ids: gpt-5.5,claude-sonnet-4-5
+api_keys:
+  deepseek: sk-d57c...
+```
+
 ### State Operations
 
 ```go
@@ -50,21 +89,27 @@ func (s *State) Disable(providerID string)
 func (s *State) SetOAuth(providerID string, creds OAuthCredentials)
 func (s *State) OAuthFor(providerID string) (OAuthCredentials, bool)
 func (s *State) RemoveOAuth(providerID string)
+func (s *State) SetAPIKey(providerID, key string)
+func (s *State) APIKeyFor(providerID string) (string, bool)
+func (s *State) RemoveAPIKey(providerID string)
 ```
 
 ## Resolution
 
-`resolve.go` merges three sources to determine the effective providers:
+`resolve.go` merges four sources to determine the effective providers:
 
 1. **Hand-written config** (`config.yaml` / `.tau.yaml`) - Provider names, base URLs, API key env vars.
-2. **Managed state** (`auth.yaml`) - OAuth tokens, enabled/disabled flags.
-3. **Environment variables** - API keys from configured env vars.
+2. **Environment variables** - API keys from configured env vars.
+3. **Managed state** (`auth.yaml`) - Managed API keys (`api_keys`) stored via setup or `tau provider login`.
+4. **Managed state** (`auth.yaml`) - OAuth tokens, enabled/disabled flags.
 
 Resolution order:
 
 1. Hand-written config providers are used first and are never rewritten by Tau.
-2. Catalog API-key providers are enabled from environment variables or `/provider <name>`.
-3. OAuth providers with stored credentials are refreshed before use; failed refresh makes the provider unavailable and
+2. Catalog API-key providers are auto-enabled when their env var is present, unless explicitly disabled.
+3. Managed API keys (persisted in `auth.yaml` via `StoreAPIKey`) are used as a fallback when no env var is active.
+   Env always wins over a managed key.
+4. OAuth providers with stored credentials are refreshed before use; failed refresh makes the provider unavailable and
    asks for re-login instead of using stale credentials.
 
 ## Effective Provider Set
