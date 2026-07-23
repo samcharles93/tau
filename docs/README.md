@@ -22,7 +22,8 @@ not need a `--model` flag; if no model is configured the session starts unselect
 | `--max-tokens <n>`            | Maximum completion tokens per response                                    |
 | `--temperature <f>`           | Sampling temperature (0–2)                                                |
 | `--resume`, `-r <id\|latest>` | Resume a saved session by ID, or `latest`                                 |
-| `--prompt`, `-p <text>`       | Single-shot mode: process prompt, print response, exit (no Web UI)        |
+| `--prompt`, `-p <text>`       | One-shot / execute mode: process prompt, print response, exit (no Web UI) |
+| `--child`                     | Run as a headless agent child process (internal use; hidden)              |
 | `--web`                       | Start the Web UI and open it in the default browser                       |
 | `--port <n>`                  | HTTP port for the Web UI. Default `0` = OS-assigned ephemeral port        |
 | `--no-web`                    | Do not start the Web UI. TUI only                                         |
@@ -34,15 +35,17 @@ not need a `--model` flag; if no model is configured the session starts unselect
 Tau discovers providers automatically. To enable a provider:
 
 1. **`tau setup` (recommended for first run):** Interactive walkthrough for selecting a provider and authenticating.
-   Managed credentials are stored in `~/.config/tau/auth.yaml`.
+   Managed API keys are stored in `~/.config/tau/auth.yaml` — env vars override them when both are present.
 
 2. **`tau provider` CLI:**
    ```bash
    tau provider list                      # show all providers and auth state
+   tau provider login deepseek            # enter and store a managed API key
    tau provider login openai-codex        # OAuth device-code flow
    tau provider login                     # interactive selector (TTY only)
    tau provider logout openai             # disable and clear credentials
    ```
+   For non-OAuth providers, `tau provider login` stores a managed API key in `auth.yaml`.
 
 3. **Environment variable:** Export the provider's API key env var (e.g. `DEEPSEEK_API_KEY=sk-...`). Tau
    detects it at startup.
