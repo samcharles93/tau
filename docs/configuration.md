@@ -78,14 +78,14 @@ The `updates` section controls how tau checks for new releases:
 
 ```yaml
 updates:
-  mode: manual
+  mode: warn
 ```
 
 | `updates.mode` | Behavior |
 |:---|:---|
-| `manual` (default) | Only `tau update` triggers a check. No background activity. |
-| `auto` | Tau may check for updates automatically in the background. |
-| `off` | No update checks at all — `tau update` is also disabled. |
+| `warn` (default) | `tau update` works; tau may notify when an update is available. |
+| `disabled` | No update checks at all — `tau update` is also disabled. |
+| `auto` (reserved) | Accepted but behaves as `warn` with a logged warning. Reserved for future background auto-update. |
 
 > **Note:** Dev builds (`go build` from source, version `dev`) are always excluded
 > from update checks. Only release builds downloaded from GitHub releases are

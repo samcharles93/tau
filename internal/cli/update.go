@@ -4,7 +4,9 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 
+	"github.com/samcharles93/tau/internal/config"
 	"github.com/samcharles93/tau/internal/updater"
 	urfavecli "github.com/urfave/cli/v3"
 )
@@ -12,8 +14,8 @@ import (
 func updateCmd(currentVersion string) *urfavecli.Command {
 	return &urfavecli.Command{
 		Name:        "update",
-		Usage:       "Update tau from GitHub releases; set updates.mode=auto for background checks",
-		Description: "By default update checks only run when you invoke `tau update`.\nSet `updates.mode: auto` in config to enable automatic background update checks.\nSet `updates.mode: off` to disable all update checks (including this command).\nDev builds are excluded from update checks.",
+		Usage:       "Update tau from GitHub releases; set updates.mode=auto for background checks (reserved)",
+		Description: "By default update checks only run when you invoke `tau update`.\nSet `updates.mode: auto` in config to enable automatic background update checks (reserved; currently behaves as `warn`).\nSet `updates.mode: disabled` to disable all update checks (including this command).\nDev builds are excluded from update checks.",
 		Flags: []urfavecli.Flag{
 			&urfavecli.BoolFlag{
 				Name:  "check",
@@ -34,6 +36,20 @@ func updateCmd(currentVersion string) *urfavecli.Command {
 			},
 		},
 		Action: func(ctx context.Context, cmd *urfavecli.Command) error {
+			cfg, _ := config.LoadConfigAllowEmpty()
+			mode := cfg.Updates.Mode
+			if mode == "" {
+				mode = "warn"
+			}
+			if mode == "auto" {
+				slog.Warn("updates.mode 'auto' is reserved; behaving as 'warn'")
+				mode = "warn"
+			}
+			if mode == "disabled" {
+				fmt.Fprintf(cmd.Root().Writer, "update checks are disabled (updates.mode: disabled)\n")
+				return nil
+			}
+
 			result, err := updater.Run(ctx, updater.Options{
 				CurrentVersion: currentVersion,
 				TargetVersion:  cmd.String("version"),
