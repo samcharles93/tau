@@ -27,7 +27,10 @@ const (
 	userAgent         = "tau"
 )
 
-var ErrNoUpdate = errors.New("tau is already up to date")
+var (
+	ErrNoUpdate = errors.New("tau is already up to date")
+	ErrDevBuild = errors.New("dev builds cannot update; use a release build for update checks")
+)
 
 type Options struct {
 	CurrentVersion string
@@ -64,12 +67,14 @@ type releaseAsset struct {
 
 func Run(ctx context.Context, opts Options) (Result, error) {
 	opts = withDefaults(opts)
+	current := currentTag(opts.CurrentVersion)
+	if current == "dev" {
+		return Result{CurrentVersion: current}, ErrDevBuild
+	}
 	rel, err := fetchRelease(ctx, opts)
 	if err != nil {
 		return Result{}, err
 	}
-
-	current := currentTag(opts.CurrentVersion)
 	result := Result{
 		CurrentVersion: current,
 		TargetVersion:  rel.TagName,

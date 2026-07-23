@@ -39,6 +39,8 @@ type Config struct {
 	// Metrics configures observability export and tracking.
 	Metrics     MetricsConfig     `yaml:"metrics"`
 	AutoCompact AutoCompactConfig `yaml:"auto_compact"`
+	// Updates configures background update check behaviour.
+	Updates UpdatesConfig `yaml:"updates"`
 }
 
 // MetricsConfig controls observability export and session cost tracking.
@@ -53,6 +55,15 @@ type MetricsConfig struct {
 	Session bool `yaml:"session"`
 	// TUI enables the TUI cost status bar widget. Ignored in headless mode.
 	TUI bool `yaml:"tui"`
+}
+
+// UpdatesConfig controls automatic update check behaviour.
+type UpdatesConfig struct {
+	// Mode controls how update checks are performed:
+	//   "manual" (default) – only `tau update` triggers a check
+	//   "auto" – tau may check for updates automatically in the background
+	//   "off" – no update checks (including manual `tau update`; dev builds are always excluded)
+	Mode string `yaml:"mode"`
 }
 
 // AutoCompactConfig controls automatic conversation-history compaction before
@@ -250,6 +261,7 @@ func (c *Config) UnmarshalYAML(value *yaml.Node) error {
 		SkillPaths      []string                  `yaml:"skill_paths"`
 		Metrics         MetricsConfig             `yaml:"metrics"`
 		AutoCompact     AutoCompactConfig         `yaml:"auto_compact"`
+		Updates         UpdatesConfig             `yaml:"updates"`
 	}
 	var raw rawConfig
 	if err := value.Decode(&raw); err != nil {
@@ -267,6 +279,7 @@ func (c *Config) UnmarshalYAML(value *yaml.Node) error {
 	c.SkillPaths = raw.SkillPaths
 	c.Metrics = raw.Metrics
 	c.AutoCompact = raw.AutoCompact
+	c.Updates = raw.Updates
 	if raw.Providers.Kind != 0 {
 		providers, err := decodeProviders(raw.Providers)
 		if err != nil {

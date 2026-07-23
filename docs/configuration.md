@@ -72,6 +72,25 @@ plugins:
 
 Tau does not validate or interpret plugin config - each plugin parses its own section.
 
+## Updates
+
+The `updates` section controls how tau checks for new releases:
+
+```yaml
+updates:
+  mode: manual
+```
+
+| `updates.mode` | Behavior |
+|:---|:---|
+| `manual` (default) | Only `tau update` triggers a check. No background activity. |
+| `auto` | Tau may check for updates automatically in the background. |
+| `off` | No update checks at all — `tau update` is also disabled. |
+
+> **Note:** Dev builds (`go build` from source, version `dev`) are always excluded
+> from update checks. Only release builds downloaded from GitHub releases are
+> eligible. See `tau update --help` for the manual update flow.
+
 ## Example Configurations
 
 ### Minimal (API Key)

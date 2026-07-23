@@ -11,8 +11,9 @@ import (
 
 func updateCmd(currentVersion string) *urfavecli.Command {
 	return &urfavecli.Command{
-		Name:  "update",
-		Usage: "Update tau to the latest GitHub release",
+		Name:        "update",
+		Usage:       "Update tau from GitHub releases; set updates.mode=auto for background checks",
+		Description: "By default update checks only run when you invoke `tau update`.\nSet `updates.mode: auto` in config to enable automatic background update checks.\nSet `updates.mode: off` to disable all update checks (including this command).\nDev builds are excluded from update checks.",
 		Flags: []urfavecli.Flag{
 			&urfavecli.BoolFlag{
 				Name:  "check",
@@ -42,6 +43,10 @@ func updateCmd(currentVersion string) *urfavecli.Command {
 			})
 			if errors.Is(err, updater.ErrNoUpdate) {
 				fmt.Fprintf(cmd.Root().Writer, "tau is already up to date (%s)\n", result.CurrentVersion)
+				return nil
+			}
+			if errors.Is(err, updater.ErrDevBuild) {
+				fmt.Fprintf(cmd.Root().Writer, "dev build detected — update checks only apply to release builds\n")
 				return nil
 			}
 			if err != nil {
