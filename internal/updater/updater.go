@@ -13,6 +13,8 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"os"
+	"os/exec"
 	"path/filepath"
 	"runtime"
 	"strings"
@@ -33,16 +35,17 @@ var (
 )
 
 type Options struct {
-	CurrentVersion string
-	TargetVersion  string
-	Repo           string
-	CheckOnly      bool
-	Force          bool
-	TargetPath     string
-	GOOS           string
-	GOARCH         string
-	HTTPClient     *http.Client
-	APIBaseURL     string
+	CurrentVersion      string
+	TargetVersion       string
+	Repo                string
+	CheckOnly           bool
+	Force               bool
+	TargetPath          string
+	GOOS                string
+	GOARCH              string
+	HTTPClient          *http.Client
+	APIBaseURL          string
+	VerifyBinaryTimeout time.Duration
 }
 
 type Result struct {
@@ -120,6 +123,9 @@ func Run(ctx context.Context, opts Options) (Result, error) {
 	if err != nil {
 		return Result{}, err
 	}
+	if err := verifyBinaryRuns(binary, opts.GOOS, opts.VerifyBinaryTimeout); err != nil {
+		return Result{}, err
+	}
 	binaryHash := sha256.Sum256(binary)
 	if err := selfupdate.Apply(bytes.NewReader(binary), selfupdate.Options{
 		TargetPath: opts.TargetPath,
@@ -149,6 +155,9 @@ func withDefaults(opts Options) Options {
 	}
 	if opts.APIBaseURL == "" {
 		opts.APIBaseURL = defaultAPIBaseURL
+	}
+	if opts.VerifyBinaryTimeout == 0 {
+		opts.VerifyBinaryTimeout = 10 * time.Second
 	}
 	return opts
 }
@@ -315,6 +324,50 @@ func extractZip(archiveBytes []byte) ([]byte, error) {
 		return binary, nil
 	}
 	return nil, errors.New("release archive did not contain tau binary")
+}
+
+func verifyBinaryRuns(binary []byte, goos string, timeout time.Duration) error {
+	name := "tau"
+	if goos == "windows" {
+		name = "tau.exe"
+	}
+	f, err := os.CreateTemp("", name+"-verify-*")
+	if err != nil {
+		return fmt.Errorf("creating temp file for binary verification: %w", err)
+	}
+	if _, err := f.Write(binary); err != nil {
+		f.Close()
+		os.Remove(f.Name())
+		return fmt.Errorf("writing temp binary for verification: %w", err)
+	}
+	if err := f.Close(); err != nil {
+		os.Remove(f.Name())
+		return fmt.Errorf("closing temp binary for verification: %w", err)
+	}
+	defer os.Remove(f.Name())
+
+	if err := os.Chmod(f.Name(), 0o755); err != nil {
+		return fmt.Errorf("making temp binary executable: %w", err)
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	defer cancel()
+
+	cmd := exec.CommandContext(ctx, f.Name(), "--version")
+	cmd.Stdout = io.Discard
+	cmd.Stderr = io.Discard
+
+	if err := cmd.Run(); err != nil {
+		if ctx.Err() == context.DeadlineExceeded {
+			return fmt.Errorf("downloaded binary did not respond to --version within %v — leaving existing install untouched", timeout)
+		}
+		var exitErr *exec.ExitError
+		if errors.As(err, &exitErr) {
+			return fmt.Errorf("downloaded binary failed --version check: exit status %d — leaving existing install untouched", exitErr.ExitCode())
+		}
+		return fmt.Errorf("downloaded binary failed --version check: %w — leaving existing install untouched", err)
+	}
+	return nil
 }
 
 func isTauBinary(name string) bool {
