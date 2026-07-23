@@ -429,6 +429,7 @@ func RunChat(ctx context.Context, opts ChatOptions) error {
 		if pluginOnReady != nil {
 			pluginOnReady()
 		}
+		go StartBackgroundUpdateCheck(ctx, opts.Version, opts.Config.Updates, bus)
 	}
 
 	tuiCfg := tui.TUIConfig{
