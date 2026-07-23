@@ -160,7 +160,7 @@ Useful for debugging auth configuration.
 
 ### `tau update`
 
-Update the current tau binary from GitHub release assets.
+Update the current tau binary from GitHub release assets, or check for available updates.
 
 ```bash
 tau update [--check] [--version v0.16.2] [--repo owner/repo] [--force]
@@ -168,6 +168,12 @@ tau update [--check] [--version v0.16.2] [--repo owner/repo] [--force]
 
 The updater downloads the platform archive and `checksums.txt`, verifies the archive checksum, extracts the tau binary,
 and applies it in place.
+
+By default, update checks only happen when you run `tau update` manually. Set
+`updates.mode: auto` in [configuration](configuration.md#updates) to enable
+automatic background update checks, or `updates.mode: off` to disable all update
+checks including `tau update`. Dev builds (version `dev`) are always excluded
+from update checks — only release builds are eligible.
 
 ## Configuration
 

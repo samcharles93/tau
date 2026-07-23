@@ -206,6 +206,27 @@ func makeZip(t *testing.T, name string, contents []byte) []byte {
 	return buf.Bytes()
 }
 
+func TestRunDevBuildReturnsError(t *testing.T) {
+	t.Parallel()
+
+	_, err := Run(context.Background(), Options{
+		CurrentVersion: "dev",
+		Repo:           "samcharles93/tau",
+	})
+	require.ErrorIs(t, err, ErrDevBuild)
+}
+
+func TestRunDevBuildReturnsErrorEvenWithForce(t *testing.T) {
+	t.Parallel()
+
+	_, err := Run(context.Background(), Options{
+		CurrentVersion: "dev",
+		Repo:           "samcharles93/tau",
+		Force:          true,
+	})
+	require.ErrorIs(t, err, ErrDevBuild)
+}
+
 func TestCurrentTag(t *testing.T) {
 	t.Parallel()
 

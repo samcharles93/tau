@@ -75,6 +75,25 @@ auto_compact:
 	}
 }
 
+func TestConfigUnmarshalYAMLPopulatesUpdates(t *testing.T) {
+	var cfg Config
+	err := yaml.Unmarshal([]byte(`
+providers:
+  - name: acme
+    base_url: https://acme.example
+    auth:
+      type: none
+updates:
+  mode: auto
+`), &cfg)
+	if err != nil {
+		t.Fatalf("Unmarshal() error = %v", err)
+	}
+	if cfg.Updates.Mode != "auto" {
+		t.Fatalf("Updates.Mode = %q, want auto", cfg.Updates.Mode)
+	}
+}
+
 func TestLoadConfigAutoCompactLocalCanDisableGlobal(t *testing.T) {
 	configDir := t.TempDir()
 	projectDir := t.TempDir()
@@ -512,6 +531,8 @@ metrics:
   dir: /custom/metrics/path
   session: false
   tui: false
+updates:
+  mode: ""
 `
 	writeFile(t, path, original)
 
