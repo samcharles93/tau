@@ -17,8 +17,9 @@ const (
 
 // Tool box internal spacing.
 const (
-	toolBoxPadTopBottom = 0
-	toolBoxPadLeftRight = 1
+	toolBoxPadTopBottom    = 0
+	toolBoxPadLeftRight    = 1
+	spacingBetweenToolRows = 0 // gap between per-tool rows inside a group
 )
 
 // Separator (between viewport and input chrome) margins.

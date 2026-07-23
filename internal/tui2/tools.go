@@ -895,7 +895,7 @@ func (m *model) renderToolGroupBox(tools []toolState, expandedID string, focused
 		lines = append(lines, line)
 	}
 
-	box := toolGroupBoxStyle.Width(width).Padding(0, 1).Render(strings.Join(lines, "\n"))
+	box := toolGroupBoxStyle.Width(width).Padding(toolBoxPadTopBottom, toolBoxPadLeftRight).Render(strings.Join(lines, "\n"))
 	return box, rows
 }
 
@@ -947,7 +947,7 @@ func (m *model) renderToolBox(t toolState, expanded bool, _ int, width int) stri
 	if width < 20 {
 		width = 80
 	}
-	boxStyle = boxStyle.Width(width).Padding(0, 1)
+	boxStyle = boxStyle.Width(width).Padding(toolBoxPadTopBottom, toolBoxPadLeftRight)
 
 	// For agent tools, render the live child state block while running
 	// or the terminal summary once complete.
@@ -979,7 +979,7 @@ func (m *model) renderToolBox(t toolState, expanded bool, _ int, width int) stri
 			Border(lipgloss.RoundedBorder()).
 			BorderForeground(themeHex(theme.SecondaryColor)).
 			Width(innerWidth).
-			Padding(0, 1)
+			Padding(toolBoxPadTopBottom, toolBoxPadLeftRight)
 		var innerContent strings.Builder
 		if len(t.result) == 0 {
 			innerContent.WriteString("No output\n")

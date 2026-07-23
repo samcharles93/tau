@@ -451,6 +451,10 @@ func (m *model) applySnapshot(e tauchat.ChatSessionSnapshotEvent) {
 				continue
 			}
 			flushPendingTools()
+			// spacingToolToContent blank lines after tool group.
+			for range spacingToolToContent {
+				m.renderedLines = append(m.renderedLines, "")
+			}
 			start := len(m.renderedLines)
 			lines := strings.Split(msg.Content, "\n")
 			for i, l := range lines {
@@ -471,15 +475,31 @@ func (m *model) applySnapshot(e tauchat.ChatSessionSnapshotEvent) {
 			// this function is the sole source of truth for renderedLines.
 			if msg.ReasoningContent != "" && m.showReasoning {
 				flushPendingTools()
+				// spacingToolToContent blank lines after tool group.
+				for range spacingToolToContent {
+					m.renderedLines = append(m.renderedLines, "")
+				}
 				key := committedReasoningKey(msg.ID, idx)
 				m.commitReasoningBlock(msg.ReasoningContent, key, msg.Content != "", oldReasoning)
+				// spacingReasoningToContent blank lines before next component.
+				for range spacingReasoningToContent {
+					m.renderedLines = append(m.renderedLines, "")
+				}
 			}
 			if msg.Content != "" {
 				flushPendingTools()
+				// spacingToolToContent blank lines after tool group.
+				for range spacingToolToContent {
+					m.renderedLines = append(m.renderedLines, "")
+				}
 				start := len(m.renderedLines)
 				m.lastAssistantText = msg.Content
 				rendered := m.renderMarkdown(msg.Content, m.width)
 				m.renderedLines = append(m.renderedLines, strings.Split(rendered, "\n")...)
+				// spacingBetweenMessages blank lines after assistant markdown.
+				for range spacingBetweenMessages {
+					m.renderedLines = append(m.renderedLines, "")
+				}
 				if msg.ID != "" {
 					m.messageRanges = append(m.messageRanges, messageLineRange{id: msg.ID, content: msg.Content, startLine: start, endLine: len(m.renderedLines)})
 				}
@@ -501,6 +521,10 @@ func (m *model) applySnapshot(e tauchat.ChatSessionSnapshotEvent) {
 		}
 	}
 	flushPendingTools()
+	// spacingToolToContent blank lines after final tool group.
+	for range spacingToolToContent {
+		m.renderedLines = append(m.renderedLines, "")
+	}
 	m.viewport.SetContentLines(m.renderedLines)
 
 	// Store copy-safe canonical message history for /copy session / /copy N.
@@ -612,6 +636,10 @@ func (m *model) finalizeResponse(id string) string {
 	if len(m.tools) > 0 {
 		m.failUnfinishedTools("inference ended before tool execution completed")
 		m.flushToolGroup()
+		// spacingToolToContent blank lines after tool group.
+		for range spacingToolToContent {
+			m.renderedLines = append(m.renderedLines, "")
+		}
 	}
 	// Commit reasoning to scrollback before the final answer, styled the
 	// same as the live reasoning view. Previously reasoning only ever
@@ -630,6 +658,10 @@ func (m *model) finalizeResponse(id string) string {
 		}
 		key := committedReasoningKey(id, m.reasoningKeySeq)
 		m.commitReasoningBlock(m.reasoning, key, m.streaming != "", nil)
+		// spacingReasoningToContent blank lines before next component.
+		for range spacingReasoningToContent {
+			m.renderedLines = append(m.renderedLines, "")
+		}
 	}
 	content := m.streaming
 	if content != "" {
@@ -641,6 +673,10 @@ func (m *model) finalizeResponse(id string) string {
 		start := len(m.renderedLines)
 		rendered := m.renderMarkdown(content, m.width)
 		m.renderedLines = append(m.renderedLines, strings.Split(rendered, "\n")...)
+		// spacingBetweenMessages blank lines after assistant markdown.
+		for range spacingBetweenMessages {
+			m.renderedLines = append(m.renderedLines, "")
+		}
 		if id != "" {
 			m.messageRanges = append(m.messageRanges, messageLineRange{id: id, content: content, startLine: start, endLine: len(m.renderedLines)})
 		}
@@ -732,11 +768,19 @@ func (m *model) flushStreamingText() {
 		m.reasoningKeySeq++
 		key := committedReasoningKey("", m.reasoningKeySeq)
 		m.commitReasoningBlock(m.reasoning, key, m.streaming != "", nil)
+		// spacingReasoningToContent blank lines before next component.
+		for range spacingReasoningToContent {
+			m.renderedLines = append(m.renderedLines, "")
+		}
 		changed = true
 	}
 	if m.streaming != "" {
 		rendered := m.renderMarkdown(m.streaming, m.width)
 		m.renderedLines = append(m.renderedLines, strings.Split(rendered, "\n")...)
+		// spacingBetweenMessages blank lines after streaming text.
+		for range spacingBetweenMessages {
+			m.renderedLines = append(m.renderedLines, "")
+		}
 		changed = true
 	}
 	if changed {

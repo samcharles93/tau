@@ -27,8 +27,10 @@ var (
 	inputColor = themeHex(theme.ShimmerHighlight)
 
 	userGlyphStyle = lipgloss.NewStyle().Foreground(themeHex(theme.AccentColor)).Bold(true)
-	userStyle      = lipgloss.NewStyle()
-	assistantStyle = lipgloss.NewStyle()
+	// userStyle applies contentPadLeft minus the 2-char "⏎ " glyph so user
+	// content text aligns with continuation lines at column contentPadLeft.
+	userStyle      = lipgloss.NewStyle().PaddingLeft(contentPadLeft - 2)
+	assistantStyle = lipgloss.NewStyle().PaddingLeft(contentPadLeft)
 	// reasoningLabelStyle colors the "│ " bar prefixed to every line of a
 	// reasoning block - the one deliberate, sparing use of Warm Ochre in
 	// reasoning output, giving the whole block its own visual lane next to
@@ -95,7 +97,10 @@ var (
 	inputSteerPromptStyle = lipgloss.NewStyle().Foreground(themeHex(theme.ToneWarn)).Bold(true)
 	inputPlaceholderStyle = lipgloss.NewStyle().Faint(true).Italic(true)
 	inputBoxStyle         = lipgloss.NewStyle().Foreground(themeHex(theme.SecondaryColor))
-	separatorStyle        = lipgloss.NewStyle().Foreground(themeHex(theme.SecondaryColor))
+	separatorStyle        = lipgloss.NewStyle().
+				Foreground(themeHex(theme.SecondaryColor)).
+				MarginTop(separatorMarginTop).
+				MarginBottom(separatorMarginBottom)
 
 	// Phase 1: tool box styles - bordered boxes for each lifecycle state,
 	// foreground/border only (no Background fill): a tool box can span many
