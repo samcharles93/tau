@@ -79,16 +79,13 @@ func TestHostServiceSetConfigOverridesAndPersists(t *testing.T) {
 	require.Equal(t, `[{"name":"x"}]`, v)
 }
 
-func TestManagerHasCapability(t *testing.T) {
-	m := &Manager{capabilities: map[string][]string{
-		"mcp":  {api.CapabilityTools},
-		"full": {}, // advertises nothing -> treated as fully capable
-	}}
+func TestPluginEntryHasCapability(t *testing.T) {
+	mcp := &pluginEntry{name: "mcp", capabilities: []string{api.CapabilityTools}}
+	full := &pluginEntry{name: "full", capabilities: []string{}} // advertises nothing -> treated as fully capable
 
-	require.True(t, m.hasCapability("mcp", api.CapabilityTools))
-	require.False(t, m.hasCapability("mcp", api.CapabilityEvents))
-	require.True(t, m.hasCapability("full", api.CapabilityEvents))   // empty = all
-	require.True(t, m.hasCapability("unknown", api.CapabilityTools)) // unrecorded = all
+	require.True(t, mcp.hasCapability(api.CapabilityTools))
+	require.False(t, mcp.hasCapability(api.CapabilityEvents))
+	require.True(t, full.hasCapability(api.CapabilityEvents)) // empty = all
 }
 
 func TestHostServiceLogAndNotifyNilSafe(t *testing.T) {
