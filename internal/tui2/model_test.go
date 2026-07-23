@@ -354,13 +354,13 @@ func TestViewPinsInputAreaToBottomInAltScreen(t *testing.T) {
 		t.Fatalf("rendered view = %d lines, want 40 (fill terminal)", len(lines))
 	}
 	plain := stripANSI(view.Content)
-	for _, want := range []string{"⏎ hi", "╭ chat", "╰"} {
+	for _, want := range []string{"⏎     hi", "╭ chat", "╰"} {
 		if !strings.Contains(plain, want) {
 			t.Fatalf("rendered view missing %q:\n%s", want, plain)
 		}
 	}
 
-	hiLine := lineContaining(lines, "⏎ hi")
+	hiLine := lineContaining(lines, "⏎     hi")
 	if hiLine < 30 {
 		t.Fatalf("content line = %d, expected short content near the bottom", hiLine)
 	}
