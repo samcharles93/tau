@@ -1234,12 +1234,15 @@ func readChildResult(ctx context.Context, reader *stdio.Reader, instanceID, call
 		switch typ {
 		case "agent.event":
 			if childPub != nil {
-				childPub.Publish(tauchat.ChatToolOutputEvent{
-					SessionID:  parentSessionID,
-					CallID:     instanceID,
-					Chunk:      string(payload),
-					ReceivedAt: time.Now(),
-				})
+				// Publish the decoded event for the child-transcript renderer
+				// (internal/tui2 appendChildMessageEvent and equivalents).
+				// Do NOT also publish a ChatToolOutputEvent here: that event
+				// type is documented as a live human-readable text chunk, but
+				// the only "chunk" available at this point is the raw wire
+				// envelope bytes for payload - publishing those would leak
+				// protocol internals (JSON discriminators, nested envelopes)
+				// into anything that renders or persists ChatToolOutputEvent
+				// verbatim.
 				var agentEv bridge.AgentEvent
 				if err := json.Unmarshal(payload, &agentEv); err == nil && agentEv.Event != nil {
 					childPub.Publish(tauchat.ChildAgentMessageEvent{
