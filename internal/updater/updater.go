@@ -87,6 +87,10 @@ func Run(ctx context.Context, opts Options) (Result, error) {
 		return result, ErrNoUpdate
 	}
 
+	if opts.CheckOnly {
+		return result, nil
+	}
+
 	assetName, err := ArchiveName(rel.TagName, opts.GOOS, opts.GOARCH)
 	if err != nil {
 		return Result{}, err
@@ -97,10 +101,6 @@ func Run(ctx context.Context, opts Options) (Result, error) {
 	}
 	result.AssetName = asset.Name
 	result.DownloadURL = asset.BrowserDownloadURL
-
-	if opts.CheckOnly {
-		return result, nil
-	}
 
 	checksumAsset, ok := findAsset(rel.Assets, "checksums.txt")
 	if !ok {
