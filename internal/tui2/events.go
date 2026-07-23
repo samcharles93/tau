@@ -675,9 +675,9 @@ func mdCacheWidth(width int) int {
 }
 
 // ensureMDRenderer creates a glamour TermRenderer for the given width in
-// the cache if one doesn't already exist. Uses the "dark" bundled style;
-// a custom glamour theme (glamour.WithStyles) would give full visual
-// control over code blocks and headings, matching tau's theme palette.
+// the cache if one doesn't already exist. Uses a Tau-themed StyleConfig
+// (see highlight.go) for code-block syntax highlighting and heading
+// colours, matching Tau's semantic palette.
 // A nil cache (e.g. markdown rendering deliberately disabled) is a no-op,
 // not a panic - renderMarkdown/renderToolBox then fall back to raw text.
 func ensureMDRenderer(cache map[int]*glamour.TermRenderer, width int) {
@@ -690,7 +690,7 @@ func ensureMDRenderer(cache map[int]*glamour.TermRenderer, width int) {
 	}
 	r, err := glamour.NewTermRenderer(
 		glamour.WithWordWrap(width),
-		glamour.WithStylePath("dark"),
+		glamour.WithStyles(tauGlamourConfig()),
 	)
 	if err != nil {
 		return
