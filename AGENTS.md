@@ -216,6 +216,11 @@ internal packages live under `internal/`.
   runs the coordinator headless, and exits after writing `agent.result`. Hidden behind `--child` flag.
   stderr is reserved for logs; protocol is on stdout. Exit codes: 0 after result, 1 protocol error,
   2 fatal runtime error. See `docs/specs/agents/03-wire-protocol.md` for the envelope spec.
+- **`app/execute`** - Extracts the event-reduction loop from the headless `-p` mode into a standalone
+  `Runner` that drains `ChatEvent` and dispatches to a `Renderer` interface. `PlainRenderer` emits
+  human-readable stdout/stderr (byte-identical to the legacy loop); `JSONLRenderer` produces framed
+  JSONL on stdout via `bridge.Envelope`. The runner owns error construction; renderers own all I/O.
+  Selected via `ChatOptions.OutputFormat` ("" or "plain" → `PlainRenderer`, "jsonl" → `JSONLRenderer`).
 - **`plugin`** - gRPC-based plugin/extension system using HashiCorp go-plugin.
 - **`registry`** - Command registry: discovers built-in, custom (markdown-based), skill-based, and extension commands.
   Publishes `CommandsChangedEvent` on the event bus so the TUI can update completions.
