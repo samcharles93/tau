@@ -5,6 +5,7 @@ import (
 	"strings"
 	"testing"
 
+	"charm.land/glamour/v2"
 	"charm.land/lipgloss/v2"
 	"github.com/samcharles93/tau/internal/theme"
 )
@@ -21,6 +22,23 @@ func BenchmarkRendererPipeline(b *testing.B) {
 			ensureMDRenderer(m.mdCache, width-8)
 			r := m.mdCache[mdCacheWidth(width-8)]
 			md := "```result.md\n" + payload + "\n```"
+			b.ReportAllocs()
+			for b.Loop() {
+				if _, err := r.Render(md); err != nil {
+					b.Fatal(err)
+				}
+			}
+		})
+
+		b.Run(name+"/glamour-tau-style", func(b *testing.B) {
+			r, err := glamour.NewTermRenderer(
+				glamour.WithWordWrap(width-8),
+				glamour.WithStyles(tauGlamourConfig()),
+			)
+			if err != nil {
+				b.Fatal(err)
+			}
+			md := "```go\n" + payload + "\n```\n"
 			b.ReportAllocs()
 			for b.Loop() {
 				if _, err := r.Render(md); err != nil {
