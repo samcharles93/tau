@@ -69,6 +69,9 @@ tau provider login                     # interactive selector on TTY
 tau provider logout openai             # disable and clear credentials
 ```
 
+API keys entered through setup are stored securely in `~/.config/tau/auth.yaml` —
+environment variables override them when both are present.
+
 Full flag reference: [`docs/README.md`](docs/README.md).
 
 ## Web UI

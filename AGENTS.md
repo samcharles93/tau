@@ -206,6 +206,16 @@ internal packages live under `internal/`.
   ripgrep/pure-Go search whenever indexing is unavailable.
 - **`sessions`** - Session lifecycle management (create, update, close, branch). Wraps the coordinator and store for
   session orchestration.
+- **`providers`** - Provider catalog and lifecycle. `catalog.go` defines well-known OpenAI-compatible providers.
+  `state.go` manages the writable `~/.config/tau/auth.yaml` (enabled/disabled sets, OAuth credentials,
+  managed API keys). `resolve.go` merges config + state + env into effective providers. `manage.go` provides
+  the `Manage` service — Toggle, LoginComplete, Logout, StoreAPIKey, Enable, Effective — shared by CLI, both
+  TUIs, and the setup wizard.
+- **`app/child.go`** - Headless child entry point for agent processes. `RunChild(ctx, opts)` writes
+  `agent.ready` on stdout, reads `agent.assign` on stdin (JSONL-framed), loads its instance/session,
+  runs the coordinator headless, and exits after writing `agent.result`. Hidden behind `--child` flag.
+  stderr is reserved for logs; protocol is on stdout. Exit codes: 0 after result, 1 protocol error,
+  2 fatal runtime error. See `docs/specs/agents/03-wire-protocol.md` for the envelope spec.
 - **`plugin`** - gRPC-based plugin/extension system using HashiCorp go-plugin.
 - **`registry`** - Command registry: discovers built-in, custom (markdown-based), skill-based, and extension commands.
   Publishes `CommandsChangedEvent` on the event bus so the TUI can update completions.
@@ -648,6 +658,29 @@ LLM provider integration is handled through the external `github.com/samcharles9
 - `internal/providers/snapshot/models.json` is the single authoritative model catalogue for snapshot-backed providers at
   runtime. Dynamic providers such as Ollama and OpenAI Codex query live endpoints instead. `~/.config/tau/models.json`
   is no longer used.
+
+### Changing Provider Management (Manage service)
+
+- `internal/providers/manage.go` - `Manage` struct: the provider lifecycle service shared
+  by CLI, both TUIs, and the setup wizard. Carries no session state; each method loads/
+  saves state fresh.
+  - `Toggle(name)` - flip an API-key/no-auth provider on/off (rejects OAuth/managed-key)
+  - `LoginComplete(name, creds)` - persist OAuth credentials after a device-code flow
+  - `Logout(name)` - disable provider + clear both OAuth and managed API key credentials
+  - `StoreAPIKey(name, key)` - persist a managed API key and enable the provider
+  - `Enable(name)` - idempotent enable (safe for setup re-selection)
+  - `Effective(ctx)` - re-resolve the full effective provider set
+
+### Headless Child Entry Point (Agent Processes)
+
+- `internal/app/child.go` - `RunChild(ctx, opts)`: the headless agent child entry point.
+  Writes `agent.ready` on stdout, reads `agent.assign` on stdin (JSONL-framed),
+  loads its instance/session from the shared store, runs the coordinator headless with
+  injected model/tools/limits, and exits after writing `agent.result`.
+  - Hidden behind `--child` flag in `internal/cli/root.go`
+  - stderr reserved for logs only; protocol on stdout
+  - Exit codes: 0 after result, 1 protocol error, 2 fatal runtime error
+  - See `docs/specs/agents/03-wire-protocol.md` for the envelope spec
 
 ---
 
