@@ -3,6 +3,8 @@ package cli
 import (
 	"fmt"
 	"strings"
+
+	"github.com/samcharles93/tau/internal/plugin"
 )
 
 // PluginSourceSpec represents a plugin install source in the form
@@ -42,27 +44,24 @@ func ParsePluginSourceSpec(raw string) (PluginSourceSpec, error) {
 	owner := repoParts[0]
 	repo := repoParts[1]
 
-	plugin := pluginRef
+	pluginName := pluginRef
 	version := ""
 	if before, after, ok := strings.Cut(pluginRef, "@"); ok {
-		plugin = strings.TrimSpace(before)
+		pluginName = strings.TrimSpace(before)
 		version = strings.TrimSpace(after)
 		if version == "" {
 			return PluginSourceSpec{}, fmt.Errorf("invalid plugin source %q: version cannot be empty", raw)
 		}
 	}
 
-	if plugin == "" {
-		return PluginSourceSpec{}, fmt.Errorf("invalid plugin source %q: plugin name cannot be empty", raw)
-	}
-	if strings.Contains(plugin, "/") {
-		return PluginSourceSpec{}, fmt.Errorf("invalid plugin name %q: must not contain '/'", plugin)
+	if err := plugin.ValidatePluginName(pluginName); err != nil {
+		return PluginSourceSpec{}, fmt.Errorf("invalid plugin source %q: %w", raw, err)
 	}
 
 	return PluginSourceSpec{
 		Owner:   owner,
 		Repo:    repo,
-		Plugin:  plugin,
+		Plugin:  pluginName,
 		Version: version,
 	}, nil
 }
