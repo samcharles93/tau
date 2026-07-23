@@ -43,6 +43,11 @@ func TestParsePluginSourceSpec(t *testing.T) {
 		{name: "missing slash in repo", raw: "samcharles93:mcp", wantErr: true},
 		{name: "empty plugin", raw: "samcharles93/tau-plugins:", wantErr: true},
 		{name: "plugin contains slash", raw: "samcharles93/tau-plugins:m/cp", wantErr: true},
+		{name: "plugin is dot", raw: "samcharles93/tau-plugins:.", wantErr: true},
+		{name: "plugin is dot-dot", raw: "samcharles93/tau-plugins:..", wantErr: true},
+		{name: "plugin contains backslash", raw: `samcharles93/tau-plugins:m\cp`, wantErr: true},
+		{name: "plugin is absolute path", raw: "samcharles93/tau-plugins:/etc/passwd", wantErr: true},
+		{name: "plugin is volume-qualified", raw: "samcharles93/tau-plugins:C:evil", wantErr: true},
 		{name: "empty version", raw: "samcharles93/tau-plugins:mcp@", wantErr: true},
 	}
 
