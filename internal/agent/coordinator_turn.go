@@ -1250,11 +1250,7 @@ func (c *Coordinator) cancelTurn(sessionID, requestID string, at time.Time) {
 		c.mu.Unlock()
 		return
 	}
-	_ = session.state.CancelTurn(at)
-	session.cancel = nil
-	session.steeringMu.Lock()
-	session.pendingSteering = nil
-	session.steeringMu.Unlock()
+	_ = cancelSessionTurn(session, at)
 	snapshot := chat.CloneChatSessionState(session.state)
 	c.mu.Unlock()
 
@@ -1282,6 +1278,17 @@ func (c *Coordinator) cancelTurn(sessionID, requestID string, at time.Time) {
 		RequestID:   requestID,
 		CancelledAt: at,
 	})
+}
+
+func cancelSessionTurn(session *coordinatorSession, at time.Time) error {
+	if err := session.state.CancelTurn(at); err != nil {
+		return err
+	}
+	session.cancel = nil
+	session.steeringMu.Lock()
+	session.pendingSteering = nil
+	session.steeringMu.Unlock()
+	return nil
 }
 
 func (c *Coordinator) failTurn(sessionID, requestID string, err error, at time.Time) {
@@ -1332,11 +1339,17 @@ func (c *Coordinator) failTurn(sessionID, requestID string, err error, at time.T
 
 func (c *Coordinator) cancelAllSessions() {
 	c.mu.Lock()
+	now := time.Now().UTC()
 	states := make([]chat.ChatSessionState, 0, len(c.sessions))
 	sessionIDs := make([]string, 0, len(c.sessions))
 	for id, session := range c.sessions {
 		if session.cancel != nil {
 			session.cancel()
+		}
+		if session.state.HasActiveRequest() {
+			if err := cancelSessionTurn(session, now); err != nil {
+				c.loggerWith(id).Error("terminalize session during shutdown", "err", err)
+			}
 		}
 		states = append(states, chat.CloneChatSessionState(session.state))
 		sessionIDs = append(sessionIDs, id)
