@@ -3,13 +3,13 @@ package tui2
 import (
 	"fmt"
 	"math"
-	"strconv"
 	"strings"
 	"time"
 	"unicode/utf8"
 
 	"charm.land/lipgloss/v2"
 	"github.com/samcharles93/tau/internal/theme"
+	"github.com/samcharles93/tau/pkg/taui"
 	"github.com/samcharles93/tau/pkg/taui/termkit"
 )
 
@@ -49,21 +49,12 @@ func (m *model) inResponse() bool {
 
 // --- status bar segments ---------------------------------------------------
 
-// statusSeg is one widget in the status bar. text is the PLAIN string used
-// for width math; style applies ANSI styling and is nil for the default
-// grey.
-//
-// When styledOverride is non-empty it replaces style(text) in the styled
-// output (text is still used for width measurement). This lets a segment
-// embed raw escape sequences the width math can't see through - e.g. an
-// OSC 8 hyperlink, whose terminator isn't the SGR 'm' stripANSI/lipgloss
-// expect. Mirrors internal/tui/statusbar.go's statusSeg (see webSeg below).
-type statusSeg struct {
-	text           string
-	style          func(string) string // nil = default grey
-	styledOverride string
-	prio           int // lower is dropped first under width pressure
-}
+// statusSeg is an alias for the frontend-neutral segment type shared with
+// internal/tui (see pkg/taui/statusline.go) - the layout/width-pressure
+// algorithm, segment joining, and usage formatters live there; this file
+// keeps only this frontend's styling (lipgloss/theme-based) and the
+// agent-state-driven segment assembly.
+type statusSeg = taui.StatusLineSeg
 
 const (
 	// Left-side identity segments (see identitySegs) - reasoning effort is
@@ -88,16 +79,15 @@ const (
 	// session-token/context segments above.
 	prioMetric = 6
 	// prioTransient marks a segment as effectively undroppable by
-	// renderStatusBar's width-pressure loop (see its "prio >= prioTransient"
-	// skip) - used for "τ tau", the active-state label (Thinking/Running
-	// <tool>/generating/Cancelled/Error), the "Ctrl+C Stop" hint, and the
-	// steering indicator, so a narrow terminal degrades by shedding
-	// secondary metadata first and keeps showing what the agent is
-	// actually doing.
-	prioTransient = 100
+	// renderStatusBar's width-pressure loop - used for "τ tau", the
+	// active-state label (Thinking/Running <tool>/generating/Cancelled/
+	// Error), the "Ctrl+C Stop" hint, and the steering indicator, so a
+	// narrow terminal degrades by shedding secondary metadata first and
+	// keeps showing what the agent is actually doing. Shared with
+	// internal/tui via taui.StatusLinePrioTransient so the "never drop"
+	// threshold can't silently drift between frontends.
+	prioTransient = taui.StatusLinePrioTransient
 )
-
-const statusSep = " · "
 
 // statusGrey renders secondary status-bar text (separators, unstyled
 // segments) using terminal-native dim rather than a fixed grey - it dims
@@ -108,161 +98,14 @@ func statusGrey(s string) string { return lipgloss.NewStyle().Faint(true).Render
 // --- rendering -------------------------------------------------------------
 
 // renderStatusBar assembles left and right segment groups into a single line
-// that never exceeds width. Both sides are priority-dropped whole-segment-at-
-// a-time under pressure before either resorts to character-level truncation
-// - dropping whole segments first avoids chopping one mid-word (e.g. a
-// provider name truncated to a meaningless "o…"). Width is measured on
-// plain text so ANSI never inflates the budget.
+// that never exceeds width (see pkg/taui.RenderStatusLine for the shared
+// layout/width-pressure algorithm).
 func renderStatusBar(width int, left, right []statusSeg) string {
-	if width < 1 {
-		width = 1
-	}
-
-	lefts := make([]statusSeg, 0, len(left))
-	for _, s := range left {
-		if s.text != "" {
-			lefts = append(lefts, s)
-		}
-	}
-	leftStyled, leftPlain := joinSegs(lefts)
-	leftW := visibleWidth(leftPlain)
-
-	rights := make([]statusSeg, 0, len(right))
-	for _, s := range right {
-		if s.text != "" {
-			rights = append(rights, s)
-		}
-	}
-	rightStyled, rightPlain := joinSegs(rights)
-	rightW := visibleWidth(rightPlain)
-
-	gap := func(rw int) int {
-		if leftW > 0 && rw > 0 {
-			return 1
-		}
-		return 0
-	}
-
-	// dropLowestPrio removes the lowest-priority segment (skipping anything
-	// >= prioTransient, which is meant to survive any width) from segs,
-	// returning the updated slice/styled/plain/width, or ok=false when
-	// nothing left is droppable.
-	dropLowestPrio := func(segs []statusSeg) (out []statusSeg, styled, plain string, w int, ok bool) {
-		idx := -1
-		for i, s := range segs {
-			if s.prio >= prioTransient {
-				continue
-			}
-			if idx == -1 || s.prio < segs[idx].prio {
-				idx = i
-			}
-		}
-		if idx == -1 {
-			return segs, "", "", 0, false
-		}
-		out = append(segs[:idx:idx], segs[idx+1:]...)
-		styled, plain = joinSegs(out)
-		return out, styled, plain, visibleWidth(plain), true
-	}
-
-	// floorWidth is the width of segs once every droppable (prio <
-	// prioTransient) segment is gone - the minimum space this side is
-	// guaranteed to need no matter how much gets dropped from it. The
-	// right-drop loop below must reserve this much room for the left side
-	// (and vice versa) rather than just checking whether it fits alone -
-	// otherwise an undroppable left ("τ tau · Ready") could still lose
-	// content to the character-truncation fallback while purely
-	// decorative right segments (e.g. a low-priority model name) survive
-	// untouched, which is backwards from "prioritize active state over
-	// secondary metadata."
-	floorWidth := func(segs []statusSeg) int {
-		var floor []statusSeg
-		for _, s := range segs {
-			if s.prio >= prioTransient {
-				floor = append(floor, s)
-			}
-		}
-		_, plain := joinSegs(floor)
-		return visibleWidth(plain)
-	}
-	leftFloorW := floorWidth(lefts)
-
-	// Drop lowest-priority right segments until the right side no longer
-	// crowds out the left side's guaranteed floor. This loop alone
-	// establishes leftFloorW+gap+rightW <= width whenever right has
-	// anything droppable left to give, and dropping left below (in the
-	// next loop) never grows rightW back - so a second right-side pass
-	// afterward would be redundant.
-	for leftFloorW+gap(rightW)+rightW > width {
-		next, styled, _, w, ok := dropLowestPrio(rights)
-		if !ok {
-			break
-		}
-		rights, rightStyled, rightW = next, styled, w
-	}
-
-	// Then drop lowest-priority left segments (whole segments, not
-	// characters) until the combined line fits, or only left's own floor
-	// remains - symmetric with the right-side loop above.
-	for leftW+gap(rightW)+rightW > width && leftW > leftFloorW {
-		next, styled, _, w, ok := dropLowestPrio(lefts)
-		if !ok {
-			break
-		}
-		lefts, leftStyled, leftW = next, styled, w
-	}
-
-	if rightW == 0 {
-		if leftStyled == "" {
-			return strings.Repeat(" ", width)
-		}
-		if leftW > width {
-			return truncateANSIToWidth(leftStyled, width, "…")
-		}
-		return leftStyled
-	}
-
-	if leftW+gap(rightW)+rightW <= width {
-		pad := max(width-leftW-rightW, 1)
-		return leftStyled + strings.Repeat(" ", pad) + rightStyled
-	}
-
-	// Whole-segment dropping above couldn't make it fit (e.g. every
-	// remaining segment is at or above prioTransient) - fall back to
-	// character-level truncation as a last resort.
-	avail := width - gap(rightW) - rightW
-	if avail < 1 {
-		return truncateANSIToWidth(rightStyled, width, "…")
-	}
-	leftTrunc := truncateANSIToWidth(leftStyled, avail, "…")
-	pad := max(width-visibleWidth(leftTrunc)-rightW, 1)
-	return leftTrunc + strings.Repeat(" ", pad) + rightStyled
+	return taui.RenderStatusLine(width, left, right, statusGrey)
 }
 
 func joinSegs(segs []statusSeg) (styled, plain string) {
-	var sb, pb strings.Builder
-	first := true
-	for _, s := range segs {
-		if s.text == "" {
-			continue
-		}
-		if !first {
-			sb.WriteString(statusGrey(statusSep))
-			pb.WriteString(statusSep)
-		}
-		first = false
-		if s.styledOverride != "" {
-			sb.WriteString(s.styledOverride)
-		} else {
-			style := s.style
-			if style == nil {
-				style = statusGrey
-			}
-			sb.WriteString(style(s.text))
-		}
-		pb.WriteString(s.text)
-	}
-	return sb.String(), pb.String()
+	return taui.JoinStatusLineSegs(segs, statusGrey)
 }
 
 // identitySegs returns the model/provider/reasoning-effort segments shared
@@ -272,16 +115,16 @@ func joinSegs(segs []statusSeg) (styled, plain string) {
 func (m *model) identitySegs(full bool) []statusSeg {
 	var segs []statusSeg
 	if m.modelName != "" {
-		segs = append(segs, statusSeg{text: m.modelName, style: boldText, prio: prioModel})
+		segs = append(segs, statusSeg{Text: m.modelName, Style: boldText, Prio: prioModel})
 	}
 	if !full {
 		return segs
 	}
 	if m.provider != "" && m.provider != m.modelName {
-		segs = append(segs, statusSeg{text: m.provider, prio: prioProvider})
+		segs = append(segs, statusSeg{Text: m.provider, Prio: prioProvider})
 	}
 	if m.reasoningEffort != "" && m.reasoningEffort != "auto" {
-		segs = append(segs, statusSeg{text: m.reasoningEffort, prio: prioEffort})
+		segs = append(segs, statusSeg{Text: m.reasoningEffort, Prio: prioEffort})
 	}
 	return segs
 }
@@ -302,20 +145,20 @@ func (m *model) sessionTokenSegs() []statusSeg {
 	// a single combined total - it's the split that actually drives cost
 	// and context usage differently, not just a bigger/smaller number.
 	segs := []statusSeg{{
-		text: fmt.Sprintf("↑%s ↓%s", humanizeTokens(totals.PromptTokens), humanizeTokens(totals.CompletionTokens)),
-		prio: prioTokens,
+		Text: fmt.Sprintf("↑%s ↓%s", humanizeTokens(totals.PromptTokens), humanizeTokens(totals.CompletionTokens)),
+		Prio: prioTokens,
 	}}
 	if totals.Cost > 0 {
-		segs = append(segs, statusSeg{text: formatCost(totals.Cost), prio: prioCost})
+		segs = append(segs, statusSeg{Text: formatCost(totals.Cost), Prio: prioCost})
 	}
 	if totals.TurnDurationMs > 0 {
-		segs = append(segs, statusSeg{text: formatDurationCompact(totals.TurnDurationMs), prio: prioDuration})
+		segs = append(segs, statusSeg{Text: formatDurationCompact(totals.TurnDurationMs), Prio: prioDuration})
 	}
 	if pct := contextPct(totals.LastPromptTokens, m.ctxWindow); pct >= 0 {
 		segs = append(segs, statusSeg{
-			text:  fmt.Sprintf("ctx %d%%", pct),
-			style: contextStyle(pct),
-			prio:  prioContext,
+			Text:  fmt.Sprintf("ctx %d%%", pct),
+			Style: contextStyle(pct),
+			Prio:  prioContext,
 		})
 	}
 	return segs
@@ -329,9 +172,9 @@ func (m *model) sessionTokenSegs() []statusSeg {
 // segment's width for no extra information a click doesn't already give.
 func webSeg(url string) statusSeg {
 	return statusSeg{
-		text:           "web",
-		styledOverride: termkit.Hyperlink("web", url),
-		prio:           prioWeb,
+		Text:           "web",
+		StyledOverride: termkit.Hyperlink("web", url),
+		Prio:           prioWeb,
 	}
 }
 
@@ -343,9 +186,9 @@ func webSeg(url string) statusSeg {
 // prioTransient so it's one of the last things a narrow terminal drops.
 func ctrlCStopSeg() statusSeg {
 	return statusSeg{
-		text:  "Ctrl+C Stop",
-		style: func(s string) string { return termkit.FgOnly(s, theme.ErrorColor) },
-		prio:  prioTransient,
+		Text:  "Ctrl+C Stop",
+		Style: func(s string) string { return termkit.FgOnly(s, theme.ErrorColor) },
+		Prio:  prioTransient,
 	}
 }
 
@@ -392,24 +235,24 @@ func approxTokensPerSecond(streamed string, elapsed time.Duration) (rate int, ok
 func (m *model) computeStatusBar() string {
 	// "τ tau" is prioTransient (undroppable) - it's the app's own identity,
 	// the last thing that should ever disappear.
-	left := []statusSeg{{text: "τ", prio: prioTransient}}
+	left := []statusSeg{{Text: "τ", Prio: prioTransient}}
 	var right []statusSeg
 
 	switch m.agentState {
 	case agentThinking:
 		left = append(left, statusSeg{
-			text:  "Thinking " + thinkingDots(m.spinnerFrame),
-			style: func(s string) string { return termkit.FgOnly(s, theme.AccentColor) },
-			prio:  prioTransient,
+			Text:  "Thinking " + thinkingDots(m.spinnerFrame),
+			Style: func(s string) string { return termkit.FgOnly(s, theme.AccentColor) },
+			Prio:  prioTransient,
 		})
 		right = append(right, m.identitySegs(false)...)
 		right = append(right, ctrlCStopSeg())
 
 	case agentProcessing:
 		left = append(left, statusSeg{
-			text:  "Processing " + thinkingDots(m.spinnerFrame),
-			style: func(s string) string { return termkit.FgOnly(s, theme.AccentColor) },
-			prio:  prioTransient,
+			Text:  "Processing " + thinkingDots(m.spinnerFrame),
+			Style: func(s string) string { return termkit.FgOnly(s, theme.AccentColor) },
+			Prio:  prioTransient,
 		})
 		right = append(right, m.identitySegs(false)...)
 		right = append(right, ctrlCStopSeg())
@@ -427,30 +270,30 @@ func (m *model) computeStatusBar() string {
 			elapsed = time.Since(t.startedAt)
 		}
 		left = append(left, statusSeg{
-			text:  toolText,
-			style: func(s string) string { return termkit.FgOnly(s, theme.ToneWarn) },
-			prio:  prioTransient,
+			Text:  toolText,
+			Style: func(s string) string { return termkit.FgOnly(s, theme.ToneWarn) },
+			Prio:  prioTransient,
 		})
-		right = append(right, statusSeg{text: formatElapsed(elapsed), prio: prioMetric})
+		right = append(right, statusSeg{Text: formatElapsed(elapsed), Prio: prioMetric})
 		right = append(right, ctrlCStopSeg())
 
 	case agentStreaming:
 		left = append(left, statusSeg{
-			text:  "generating",
-			style: func(s string) string { return termkit.FgOnly(s, theme.ToneSuccess) },
-			prio:  prioTransient,
+			Text:  "generating",
+			Style: func(s string) string { return termkit.FgOnly(s, theme.ToneSuccess) },
+			Prio:  prioTransient,
 		})
 		if rate, ok := approxTokensPerSecond(m.streaming, time.Since(m.streamStartedAt)); ok {
-			right = append(right, statusSeg{text: fmt.Sprintf("~%d tok/s", rate), prio: prioMetric})
+			right = append(right, statusSeg{Text: fmt.Sprintf("~%d tok/s", rate), Prio: prioMetric})
 		}
 		right = append(right, m.sessionTokenSegs()...)
 		right = append(right, ctrlCStopSeg())
 
 	case agentCancelled:
 		left = append(left, statusSeg{
-			text:  "Cancelled",
-			style: func(s string) string { return termkit.FgOnly(s, theme.ToneMuted) },
-			prio:  prioTransient,
+			Text:  "Cancelled",
+			Style: func(s string) string { return termkit.FgOnly(s, theme.ToneMuted) },
+			Prio:  prioTransient,
 		})
 		right = append(right, m.identitySegs(true)...)
 		right = append(right, m.sessionTokenSegs()...)
@@ -464,13 +307,13 @@ func (m *model) computeStatusBar() string {
 		// scrollback (see ChatRuntimeErrorEvent), both on screen at the same
 		// time as this bar. Restating it here too was pure duplication.
 		left = append(left, statusSeg{
-			text:  "Error",
-			style: func(s string) string { return termkit.FgOnly(s, theme.ErrorColor) },
-			prio:  prioTransient,
+			Text:  "Error",
+			Style: func(s string) string { return termkit.FgOnly(s, theme.ErrorColor) },
+			Prio:  prioTransient,
 		})
 
 	default: // agentReady
-		left = append(left, statusSeg{text: "Ready", prio: prioTransient})
+		left = append(left, statusSeg{Text: "Ready", Prio: prioTransient})
 		right = append(right, m.identitySegs(true)...)
 		right = append(right, m.sessionTokenSegs()...)
 		if m.webURL != "" {
@@ -488,9 +331,9 @@ func (m *model) computeStatusBar() string {
 	if m.steering {
 		dots := (m.spinnerFrame / 4) % 4
 		left = append(left, statusSeg{
-			text:  "steering" + strings.Repeat(".", dots),
-			style: func(s string) string { return termkit.FgOnly(s, theme.ToneWarn) },
-			prio:  prioTransient,
+			Text:  "steering" + strings.Repeat(".", dots),
+			Style: func(s string) string { return termkit.FgOnly(s, theme.ToneWarn) },
+			Prio:  prioTransient,
 		})
 	}
 
@@ -499,47 +342,27 @@ func (m *model) computeStatusBar() string {
 
 // --- formatters ------------------------------------------------------------
 
-func humanizeTokens(n int) string {
-	switch {
-	case n < 1000:
-		return strconv.Itoa(n)
-	case n < 1_000_000:
-		return fmt.Sprintf("%.1fk", float64(n)/1000)
-	default:
-		return fmt.Sprintf("%.1fM", float64(n)/1_000_000)
-	}
-}
+func humanizeTokens(n int) string { return taui.HumanizeTokens(n) }
 
-func formatCost(usd float64) string {
-	if usd < 1 {
-		return fmt.Sprintf("$%.4f", usd)
-	}
-	return fmt.Sprintf("$%.2f", usd)
-}
+func formatCost(usd float64) string { return taui.FormatCost(usd) }
 
-func contextPct(promptTok, ctxWindow int) int {
-	if promptTok <= 0 || ctxWindow <= 0 {
-		return -1
-	}
-	return int(math.Round(float64(promptTok) / float64(ctxWindow) * 100))
-}
+func contextPct(promptTok, ctxWindow int) int { return taui.ContextPct(promptTok, ctxWindow) }
 
 // formatContextPct renders "N%", or "" when unavailable. Mirrors
 // internal/tui/statusbar.go's function of the same name - used by /cost's
 // full breakdown (unlike contextStyle, which is status-bar-only).
 func formatContextPct(promptTok, ctxWindow int) string {
-	p := contextPct(promptTok, ctxWindow)
-	if p < 0 {
-		return ""
-	}
-	return fmt.Sprintf("%d%%", p)
+	return taui.FormatContextPct(promptTok, ctxWindow)
 }
 
+// contextStyle picks a severity colour for the context widget from the
+// shared taui.ContextSeverityFor thresholds (75%/90%, kept in sync with
+// internal/tui): grey below 75%, warn from 75%, error from 90%.
 func contextStyle(pct int) func(string) string {
-	switch {
-	case pct >= 90:
+	switch taui.ContextSeverityFor(pct) {
+	case taui.ContextCritical:
 		return func(s string) string { return termkit.FgOnly(s, theme.ErrorColor) }
-	case pct >= 75:
+	case taui.ContextWarn:
 		return func(s string) string { return termkit.FgOnly(s, theme.ToneWarn) }
 	default:
 		return nil
@@ -549,69 +372,23 @@ func contextStyle(pct int) func(string) string {
 // --- width helpers ---------------------------------------------------------
 
 // visibleWidth approximates the rendered width of a plain string (no ANSI).
-func visibleWidth(s string) int {
-	return lipgloss.Width(s)
-}
+func visibleWidth(s string) int { return taui.VisibleWidth(s) }
 
 // truncateANSIToWidth truncates a styled string to fit within maxWidth,
 // appending an ellipsis marker when truncation occurs.
 func truncateANSIToWidth(s string, maxWidth int, ellipsis string) string {
-	if maxWidth <= 0 {
-		return ""
-	}
-	plain := stripANSI(s)
-	if visibleWidth(plain) <= maxWidth {
-		return s
-	}
-	budget := max(maxWidth-visibleWidth(ellipsis), 0)
-	style := lipgloss.NewStyle().MaxWidth(budget)
-	return style.Render(s) + ellipsis
+	return taui.TruncateANSIToWidth(s, maxWidth, ellipsis)
 }
 
 // stripANSI removes both CSI sequences (ESC '[' ... final byte in 0x40-0x7E,
 // e.g. SGR colour codes ending in 'm') and OSC sequences (ESC ']' ... BEL or
-// ST, e.g. OSC 8 hyperlinks). An earlier version only recognised the SGR
-// 'm' terminator, so an OSC 8 hyperlink - whose payload (a URL) rarely
-// contains 'm' - would swallow everything up to the next unrelated 'm' it
-// found, corrupting width measurements for any segment built from it.
-func stripANSI(s string) string {
-	var b strings.Builder
-	for i := 0; i < len(s); {
-		if s[i] != '\x1b' {
-			b.WriteByte(s[i])
-			i++
-			continue
-		}
-		switch {
-		case i+1 < len(s) && s[i+1] == ']': // OSC: ESC ']' ... (BEL | ESC '\')
-			j := i + 2
-			for j < len(s) && s[j] != '\x07' && !(s[j] == '\x1b' && j+1 < len(s) && s[j+1] == '\\') {
-				j++
-			}
-			switch {
-			case j < len(s) && s[j] == '\x07':
-				i = j + 1
-			case j+1 < len(s):
-				i = j + 2
-			default:
-				i = len(s)
-			}
-		case i+1 < len(s) && s[i+1] == '[': // CSI: ESC '[' ... final byte 0x40-0x7E
-			j := i + 2
-			for j < len(s) && !(s[j] >= 0x40 && s[j] <= 0x7e) {
-				j++
-			}
-			if j < len(s) {
-				i = j + 1
-			} else {
-				i = len(s)
-			}
-		default:
-			i++ // unrecognised escape - skip just the ESC byte
-		}
-	}
-	return b.String()
-}
+// ST, e.g. OSC 8 hyperlinks) - delegates to pkg/taui, shared with
+// internal/tui, which independently needed the identical OSC-aware fix (an
+// earlier version here only recognised the SGR 'm' terminator, so an OSC 8
+// hyperlink - whose payload rarely contains 'm' - would swallow everything
+// up to the next unrelated 'm', corrupting width measurements for any
+// segment built from it).
+func stripANSI(s string) string { return taui.StripANSI(s) }
 
 // visualLineCount returns the number of visible lines in s, ignoring any
 // trailing newlines. Empty strings contribute zero height so they do not
