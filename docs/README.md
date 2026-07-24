@@ -22,7 +22,9 @@ not need a `--model` flag; if no model is configured the session starts unselect
 | `--max-tokens <n>`            | Maximum completion tokens per response                                    |
 | `--temperature <f>`           | Sampling temperature (0–2)                                                |
 | `--resume`, `-r <id\|latest>` | Resume a saved session by ID, or `latest`                                 |
-| `--prompt`, `-p <text>`       | One-shot / execute mode: process prompt, print response, exit (no Web UI) |
+| `--execute`, `-x <text>`      | Execute mode: process prompt, print response, exit (reads stdin when piped) |
+| `--prompt`, `-p <text>`       | [deprecated] Use `-x`/`--execute` instead. One-shot / execute mode         |
+| `--jsonl`, `--stream-json`    | Output framed JSONL events on stdout instead of plain text (execute mode)   |
 | `--child`                     | Run as a headless agent child process (internal use; hidden)              |
 | `--web`                       | Start the Web UI and open it in the default browser                       |
 | `--port <n>`                  | HTTP port for the Web UI. Default `0` = OS-assigned ephemeral port        |

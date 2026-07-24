@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"log/slog"
 	"os"
 	"path/filepath"
@@ -110,10 +111,15 @@ func NewRootCommand(version string) *urfavecli.Command {
 				Aliases: []string{"r"},
 				Usage:   "Resume a saved session (pass ID or 'latest' for most recent)",
 			},
+			&urfavecli.BoolFlag{
+				Name:    "execute",
+				Aliases: []string{"x"},
+				Usage:   "Execute mode: process prompt and exit (reads from stdin when piped, positional args when provided)",
+			},
 			&urfavecli.StringFlag{
 				Name:    "prompt",
 				Aliases: []string{"p"},
-				Usage:   "Single-shot mode: process prompt and exit",
+				Usage:   "Deprecated: use -x/--execute instead. One-shot mode: process prompt and exit",
 			},
 			&urfavecli.BoolFlag{
 				Name:  "web",
@@ -163,8 +169,9 @@ func NewRootCommand(version string) *urfavecli.Command {
 				Sources: urfavecli.EnvVars("TAU_EPHEMERAL"),
 			},
 			&urfavecli.BoolFlag{
-				Name:  "jsonl",
-				Usage: "Output framed JSONL events on stdout instead of plain text (stdin mode only)",
+				Name:    "jsonl",
+				Aliases: []string{"stream-json"},
+				Usage:   "Output framed JSONL events on stdout instead of plain text (execute mode only)",
 			},
 			&urfavecli.BoolFlag{
 				Name:  "skip-setup",
@@ -213,12 +220,12 @@ func NewRootCommand(version string) *urfavecli.Command {
 				// unreachable - exitChild calls os.Exit
 				return err
 			}
-			prompt := cmd.String("prompt")
+			prompt, err := resolveExecutePrompt(cmd)
+			if err != nil {
+				return err
+			}
 			if prompt != "" {
-				if args := cmd.Args(); args.Len() > 0 {
-					prompt = strings.TrimSpace(prompt + " " + strings.Join(args.Slice(), " "))
-				}
-				// One-shot mode never starts the web server.
+				// Execute mode never starts the web server.
 				opts.Web = false
 				opts.NoWeb = true
 				return app.RunStdIn(ctx, opts, prompt)
@@ -228,21 +235,56 @@ func NewRootCommand(version string) *urfavecli.Command {
 	}
 }
 
+// resolveExecutePrompt resolves the prompt for execute mode from --execute
+// (positional args or stdin) or --prompt (deprecated flag value).
+// --execute takes precedence.
+func resolveExecutePrompt(cmd *urfavecli.Command) (string, error) {
+	if cmd.Bool("execute") {
+		// Collect prompt from positional args.
+		if args := cmd.Args(); args.Len() > 0 {
+			return strings.TrimSpace(strings.Join(args.Slice(), " ")), nil
+		}
+		// No args; check for piped stdin.
+		if !term.IsTerminal(int(os.Stdin.Fd())) {
+			data, err := io.ReadAll(os.Stdin)
+			if err != nil {
+				return "", fmt.Errorf("reading stdin: %w", err)
+			}
+			return strings.TrimSpace(string(data)), nil
+		}
+		return "", urfavecli.Exit("execute mode requires a prompt argument or piped stdin\nusage: tau -x <prompt>  or  echo <prompt> | tau -x", 2)
+	}
+	// Fallback to deprecated --prompt.
+	if prompt := cmd.String("prompt"); prompt != "" {
+		if args := cmd.Args(); args.Len() > 0 {
+			prompt = strings.TrimSpace(prompt + " " + strings.Join(args.Slice(), " "))
+		}
+		return prompt, nil
+	}
+	return "", nil
+}
+
+// isOneShot reports whether the command is in one-shot/execute mode
+// (either via --execute or the deprecated --prompt flag).
+func isOneShot(cmd *urfavecli.Command) bool {
+	return cmd.Bool("execute") || cmd.String("prompt") != ""
+}
+
 // shouldAutoSetup reports whether the root command should launch the setup
 // wizard in place of failing outright. Only applies to the specific "zero
 // usable providers" failure (an already-configured-but-unavailable provider
 // should surface its own actionable error, not trigger a wizard the user
 // didn't ask for), and only when a human is actually present to drive it:
 // not suppressed via --skip-setup, not a headless child process, not
-// one-shot --prompt mode (which may be scripted even with a TTY attached),
-// and stdin is a real terminal (so a piped invocation like `echo hi | tau`
-// gets the plain actionable error instead of hanging on a prompt no one can
-// answer).
+// one-shot --prompt or --execute mode (which may be scripted even with a
+// TTY attached), and stdin is a real terminal (so a piped invocation like
+// `echo hi | tau` gets the plain actionable error instead of hanging on a
+// prompt no one can answer).
 func shouldAutoSetup(err error, cmd *urfavecli.Command) bool {
 	if !errors.Is(err, errNoProviders) {
 		return false
 	}
-	if cmd.Bool("skip-setup") || cmd.Bool("child") || cmd.String("prompt") != "" {
+	if cmd.Bool("skip-setup") || cmd.Bool("child") || isOneShot(cmd) {
 		return false
 	}
 	return term.IsTerminal(int(os.Stdin.Fd()))
@@ -253,9 +295,9 @@ func shouldAutoSetup(err error, cmd *urfavecli.Command) bool {
 // rather than failing on the "no usable providers" error. Only applies when
 // the user explicitly passed --skip-setup (opting into this on purpose) and
 // only for the genuinely interactive path - a headless --child process or
-// one-shot --prompt run has no coherent way to "continue with guidance" the
-// way the interactive TUI's existing startup messaging does (run.go's
-// RunChat), so those still get the plain actionable error.
+// one-shot --prompt/--execute run has no coherent way to "continue with
+// guidance" the way the interactive TUI's existing startup messaging does
+// (run.go's RunChat), so those still get the plain actionable error.
 func shouldSkipSetupContinue(err error, cmd *urfavecli.Command) bool {
 	if !errors.Is(err, errNoProviders) {
 		return false
@@ -263,7 +305,7 @@ func shouldSkipSetupContinue(err error, cmd *urfavecli.Command) bool {
 	if !cmd.Bool("skip-setup") {
 		return false
 	}
-	return !cmd.Bool("child") && cmd.String("prompt") == ""
+	return !cmd.Bool("child") && !isOneShot(cmd)
 }
 
 // autoInvokeSetup runs the interactive setup wizard, then re-resolves the
