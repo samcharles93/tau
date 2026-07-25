@@ -7,7 +7,7 @@ import (
 
 // TestGenerateSessionID_NoCollisionsUnderConcurrency reproduces a real
 // collision risk: generateSessionID used to be "child-" + time.Now().UnixNano(),
-// pure wall-clock time with no randomness. instantiateChild calls it once per
+// pure wall-clock time with no randomness. Each fresh spawn calls it once per
 // spawned child agent, and the coordinator explicitly supports spawning
 // children concurrently (parallel tool calls), so two children minted on
 // different goroutines within the same clock tick got the identical session
