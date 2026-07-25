@@ -23,6 +23,7 @@ import (
 	tauconfig "github.com/samcharles93/tau/internal/config"
 	"github.com/samcharles93/tau/internal/eventbus"
 	"github.com/samcharles93/tau/internal/indexing"
+	taulogger "github.com/samcharles93/tau/internal/logger"
 	"github.com/samcharles93/tau/internal/plugin"
 	"github.com/samcharles93/tau/internal/providers"
 	"github.com/samcharles93/tau/internal/providers/snapshot"
@@ -629,8 +630,11 @@ func buildCoordinator(ctx context.Context, cfg coordinatorConfig) (*agent.Coordi
 	pluginMgr, err := plugin.NewManager(plugin.Config{
 		ToolRegistry: registry,
 		Logger:       pluginLogger,
-		Plugins:      cfg.ChatOptions.Config.Plugins,
-		Notify:       pluginNotify,
+		// go-plugin's own hclog output goes to the tau log file, never stderr:
+		// stderr is the terminal the TUI is drawing on.
+		LogOutput: taulogger.Sink(),
+		Plugins:   cfg.ChatOptions.Config.Plugins,
+		Notify:    pluginNotify,
 	})
 	if err != nil {
 		return nil, nil, nil, fmt.Errorf("plugin manager: %w", err)

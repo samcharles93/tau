@@ -150,7 +150,11 @@ func (m *model) acceptPaletteRow(row compRow) tea.Cmd {
 
 	switch kind {
 	case paletteModels:
-		return m.cmdModel(row.Word)
+		selection := row.Value
+		if selection == "" {
+			selection = row.Word
+		}
+		return m.cmdModel(selection)
 	case paletteProviders:
 		if providerAction == "" && (row.Word == "login" || row.Word == "logout") {
 			return m.openProviderPalette(row.Word)

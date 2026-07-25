@@ -364,12 +364,15 @@ func effortLabel(level string) string {
 func (c *inlineChat) currentModelRef() tauchat.ChatModelRef {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	for _, m := range c.availableModels {
-		if m.ID == c.modelName {
-			return m
-		}
+	model, ok := tauchat.ResolveModelSelection(c.availableModels, tauchat.ChatModelRef{
+		ID:       c.modelName,
+		Provider: c.provider,
+	}.SelectionID())
+	if ok {
+		return model
 	}
-	return tauchat.ChatModelRef{}
+	model, _ = tauchat.ResolveModelSelection(c.availableModels, c.modelName)
+	return model
 }
 
 // effortLevels returns the cycle of reasoning-effort levels for a model:
@@ -468,14 +471,7 @@ func (c *inlineChat) handleModelCommand(modelID string) {
 		return
 	}
 	c.mu.Lock()
-	var model tauchat.ChatModelRef
-	found := false
-	for _, m := range c.availableModels {
-		if m.ID == modelID {
-			model, found = m, true
-			break
-		}
-	}
+	model, found := tauchat.ResolveModelSelection(c.availableModels, modelID)
 	c.mu.Unlock()
 	if !found {
 		c.engine.PrintAbove("%s %s", c.grey("✗"), fmt.Sprintf("model %q is not in the available model list", modelID))

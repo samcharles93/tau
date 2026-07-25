@@ -3,11 +3,13 @@ package app
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"log/slog"
 	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	tauchat "github.com/samcharles93/tau/internal/chat"
@@ -102,6 +104,60 @@ func StartBackgroundUpdateCheck(ctx context.Context, version string, updatesCfg 
 
 	// 7. Update cache.
 	writeUpdateCache(cachePath)
+}
+
+// NewUpdateFunc returns the /update handler for the TUI. With install set it
+// downloads, verifies, and swaps in the new binary (updater.Run replaces the
+// running executable in place), then reports restart=true so the frontend can
+// quit and the caller can re-exec. It ignores the 24-hour cache
+// StartBackgroundUpdateCheck uses, because the user asked directly.
+//
+// restartWanted is set on a successful install and read by RunChat after the
+// TUI has exited and released the terminal.
+func NewUpdateFunc(version string, updatesCfg tauconfig.UpdatesConfig, restartWanted *atomic.Bool) func(context.Context, bool) (string, bool, error) {
+	return func(ctx context.Context, install bool) (string, bool, error) {
+		if updatesCfg.Mode == "disabled" {
+			return "updates are disabled (updates.mode: disabled)", false, nil
+		}
+
+		// An install downloads an archive and verifies the extracted binary, so
+		// it needs a far more generous budget than a metadata check.
+		timeout := 30 * time.Second
+		if install {
+			timeout = 10 * time.Minute
+		}
+		childCtx, cancel := context.WithTimeout(ctx, timeout)
+		defer cancel()
+
+		current := currentTagFromVersion(version)
+		result, err := updater.Run(childCtx, updater.Options{
+			CurrentVersion: version,
+			CheckOnly:      !install,
+			HTTPClient:     &http.Client{Timeout: timeout},
+			APIBaseURL:     os.Getenv("TAU_UPDATE_API_URL"),
+		})
+		switch {
+		case errors.Is(err, updater.ErrNoUpdate):
+			return "tau is already up to date (" + current + ")", false, nil
+		case errors.Is(err, updater.ErrDevBuild):
+			return "dev build - updates only apply to release builds", false, nil
+		case err != nil:
+			return "", false, err
+		}
+		if !install {
+			if result.TargetVersion == "" || result.TargetVersion == current {
+				return "tau is already up to date (" + current + ")", false, nil
+			}
+			return "tau " + result.TargetVersion + " is available - run /update to install", false, nil
+		}
+		if !result.Updated {
+			return "tau is already up to date (" + current + ")", false, nil
+		}
+		if restartWanted != nil {
+			restartWanted.Store(true)
+		}
+		return "updated to tau " + result.TargetVersion + " - restarting", true, nil
+	}
 }
 
 // cacheFresh reports whether the cache file exists and was written less

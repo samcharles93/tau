@@ -248,6 +248,41 @@ func TestCtrlLOpensSearchableModelPaletteAndApplies(t *testing.T) {
 	}
 }
 
+func TestModelPalettePreservesProviderForDuplicateIDs(t *testing.T) {
+	rt := &fakeRuntime{}
+	m := newTestModel(rt, nil)
+	m.availableModels = []tauchat.ChatModelRef{
+		{ID: "gpt-5.6-sol", Provider: "openai"},
+		{ID: "gpt-5.6-sol", Provider: "openai-codex"},
+	}
+
+	m.dispatchKey(key('l', tea.ModCtrl))
+	rows := m.paletteRows()
+	if len(rows) != 2 {
+		t.Fatalf("rows = %+v, want two provider-specific entries", rows)
+	}
+	if rows[1].Description != "openai-codex" {
+		t.Fatalf("second row provider = %q, want openai-codex", rows[1].Description)
+	}
+	m.palette.picker.selected = 1
+	cmd := m.dispatchKey(key(tea.KeyEnter, 0))
+	drainCmd(cmd)
+
+	if m.provider != "openai-codex" {
+		t.Fatalf("provider = %q, want openai-codex", m.provider)
+	}
+	if len(rt.sent) != 1 {
+		t.Fatalf("sent %d commands, want1", len(rt.sent))
+	}
+	update, ok := rt.sent[0].(tauchat.UpdateChatSessionCommand)
+	if !ok {
+		t.Fatalf("command = %T, want UpdateChatSessionCommand", rt.sent[0])
+	}
+	if update.Patch.Provider == nil || *update.Patch.Provider != "openai-codex" {
+		t.Fatalf("provider patch = %v, want openai-codex", update.Patch.Provider)
+	}
+}
+
 func TestCtrlLSwitchesOpenCommandPaletteToModels(t *testing.T) {
 	m := newTestModel(&fakeRuntime{}, nil)
 	m.availableModels = []tauchat.ChatModelRef{{ID: "gpt-4", Provider: "openai"}}

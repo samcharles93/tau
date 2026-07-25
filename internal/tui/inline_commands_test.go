@@ -3,11 +3,35 @@ package tui
 import (
 	"strings"
 	"testing"
+
+	tauchat "github.com/samcharles93/tau/internal/chat"
 )
 
 // TestCommandTableIsSingleSourceOfTruth guards that dispatch (slashByName),
 // name completion (commandGroups), and /help all derive from the same table,
 // so they can't drift the way the old three separate lists did.
+func TestHandleModelCommandPreservesQualifiedProvider(t *testing.T) {
+	c, rt := newTestChat(t)
+	c.availableModels = []tauchat.ChatModelRef{
+		{ID: "gpt-5.6-sol", Provider: "openai"},
+		{ID: "gpt-5.6-sol", Provider: "openai-codex"},
+	}
+
+	matches := c.modelMatches()
+	if len(matches) != 2 || matches[1].Value != "openai-codex/gpt-5.6-sol" {
+		t.Fatalf("model matches = %+v, want qualified Codex value", matches)
+	}
+	c.handleModelCommand(matches[1].Value)
+
+	update, ok := rt.last().(tauchat.UpdateChatSessionCommand)
+	if !ok {
+		t.Fatalf("command = %T, want UpdateChatSessionCommand", rt.last())
+	}
+	if update.Patch.Provider == nil || *update.Patch.Provider != "openai-codex" {
+		t.Fatalf("provider patch = %v, want openai-codex", update.Patch.Provider)
+	}
+}
+
 func TestCommandTableIsSingleSourceOfTruth(t *testing.T) {
 	c, _ := newTestChat(t)
 
