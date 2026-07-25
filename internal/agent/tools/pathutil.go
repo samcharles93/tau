@@ -1,8 +1,10 @@
 package tools
 
 import (
+	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 )
 
 const (
@@ -21,6 +23,42 @@ func resolvePath(cwd, path string) string {
 		return filepath.Clean(path)
 	}
 	return filepath.Clean(filepath.Join(cwd, path))
+}
+
+// goModCacheDir returns the Go module cache root, or "" if it cannot be
+// determined. It mirrors cmd/go's own resolution order rather than shelling
+// out to `go env GOMODCACHE`, so path checks stay allocation-cheap and do not
+// depend on a Go toolchain being installed. It is a var so tests can point it
+// at a temp dir instead of the host's real cache.
+var goModCacheDir = sync.OnceValue(func() string {
+	if v := os.Getenv("GOMODCACHE"); v != "" {
+		return filepath.Clean(v)
+	}
+	if v := os.Getenv("GOPATH"); v != "" {
+		// GOPATH may be a list; cmd/go uses the first entry.
+		if first, _, _ := strings.Cut(v, string(os.PathListSeparator)); first != "" {
+			return filepath.Join(filepath.Clean(first), "pkg", "mod")
+		}
+	}
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return ""
+	}
+	return filepath.Join(home, "go", "pkg", "mod")
+})
+
+// isReadConfined reports whether a read-only tool may touch target. It permits
+// the workspace plus the Go module cache: sandbox_escape on module-cache paths
+// was the largest avoidable error class across analysed sessions, and every
+// occurrence was a legitimate attempt to read dependency source. The cache is
+// deliberately NOT extended to the mutating tools (edit, write), which stay
+// confined to the workspace so the agent cannot corrupt shared dependencies.
+func isReadConfined(base, target string) bool {
+	if isConfined(base, target) {
+		return true
+	}
+	cache := goModCacheDir()
+	return cache != "" && isConfined(cache, target)
 }
 
 // isConfined checks whether target is within (or equal to) the base directory.

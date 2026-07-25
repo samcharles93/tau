@@ -123,8 +123,8 @@ func makeReadExecutor(cwd string, rt *ReadTracker) Executor {
 
 		path := resolvePath(cwd, p.Path)
 
-		if !isConfined(cwd, path) {
-			return Result{Content: "path escapes working directory; for Go dependencies, use shell with `go env GOMODCACHE` and inspect the resolved module path", IsError: true, ErrorKind: "sandbox_escape"}, nil
+		if !isReadConfined(cwd, path) {
+			return Result{Content: "path escapes working directory", IsError: true, ErrorKind: "sandbox_escape"}, nil
 		}
 
 		info, err := os.Stat(path)

@@ -78,7 +78,7 @@ func makeFindExecutor(cwd string) Executor {
 			searchPath = resolvePath(cwd, p.Path)
 		}
 
-		if !isConfined(cwd, searchPath) {
+		if !isReadConfined(cwd, searchPath) {
 			return Result{Content: "error: path escapes working directory", IsError: true}, nil
 		}
 

@@ -123,8 +123,8 @@ func makeGrepExecutor(cwd string, workspaceIndex GrepIndex) Executor {
 			searchPath = resolvePath(cwd, p.Path)
 		}
 
-		if !isConfined(cwd, searchPath) {
-			return Result{Content: "error: path escapes working directory; for Go dependencies, use shell with `go env GOMODCACHE` and inspect the resolved module path", IsError: true, ErrorKind: "sandbox_escape"}, nil
+		if !isReadConfined(cwd, searchPath) {
+			return Result{Content: "error: path escapes working directory", IsError: true, ErrorKind: "sandbox_escape"}, nil
 		}
 
 		args := buildGrepArgs(p)
