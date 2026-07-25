@@ -164,9 +164,11 @@ type model struct {
 	availableModels       []tauchat.ChatModelRef
 	refresh               func(context.Context) ([]tauchat.ChatModelRef, error)
 	completeProviderLogin func(string, providers.OAuthCredentials) error
-	// checkUpdate backs /update. The app layer owns it because only it knows
-	// the running binary's version. Nil means the check is unavailable.
-	checkUpdate func(context.Context) (string, error)
+	// updateFn backs /update. The app layer owns it because only it knows the
+	// running binary's version and how to re-exec after an install. It returns
+	// the line to show, and whether a restart is now pending. Nil disables the
+	// command.
+	updateFn func(ctx context.Context, install bool) (string, bool, error)
 	showReasoning         bool
 	reasoningEffort       string
 	ctxWindow             int // context window size for % display
@@ -326,7 +328,7 @@ func newModel(
 	sessionID, modelName, provider string,
 	availableModels []tauchat.ChatModelRef,
 	refresh func(context.Context) ([]tauchat.ChatModelRef, error),
-	checkUpdate func(context.Context) (string, error),
+	updateFn func(ctx context.Context, install bool) (string, bool, error),
 	showReasoning bool,
 	reasoningEffort string,
 	toolCallsDefaultCollapsed bool,
@@ -362,7 +364,7 @@ func newModel(
 		toolsSel:                  newSelectionState(),
 		availableModels:           availableModels,
 		refresh:                   refresh,
-		checkUpdate:               checkUpdate,
+		updateFn:                  updateFn,
 		completeProviderLogin:     providers.NewManage(nil).LoginComplete,
 		showReasoning:             showReasoning,
 		reasoningEffort:           reasoningEffort,
@@ -537,9 +539,14 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case updateCheckMsg:
 		if msg.err != nil {
-			return m, m.setNotification("update check failed: " + msg.err.Error())
+			return m, m.setNotification("update failed: " + msg.err.Error())
 		}
 		m.appendMessage("system", msg.text)
+		if msg.restart {
+			// The binary on disk is already the new one; quitting lets the app
+			// layer re-exec it in this same terminal.
+			return m, tea.Quit
+		}
 		return m, nil
 
 	case providerToggleResultMsg:

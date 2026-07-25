@@ -427,16 +427,17 @@ func (m *model) cmdRefresh(_ string) tea.Cmd {
 	}
 }
 
-// cmdUpdate checks for a newer release without leaving the session. It only
-// checks: installing still goes through `tau update`, which replaces the
-// binary this process is running from.
-func (m *model) cmdUpdate(_ string) tea.Cmd {
-	if m.checkUpdate == nil {
-		return m.setNotification("update checks are not available in this build")
+// cmdUpdate downloads and installs the latest release, then asks the TUI to
+// quit so the app layer can re-exec the replaced binary. `/update check`
+// reports what is available without installing anything.
+func (m *model) cmdUpdate(args string) tea.Cmd {
+	if m.updateFn == nil {
+		return m.setNotification("updates are not available in this build")
 	}
+	install := !strings.EqualFold(strings.TrimSpace(args), "check")
 	return func() tea.Msg {
-		text, err := m.checkUpdate(m.ctx)
-		return updateCheckMsg{text: text, err: err}
+		text, restart, err := m.updateFn(m.ctx, install)
+		return updateCheckMsg{text: text, restart: restart, err: err}
 	}
 }
 
@@ -874,8 +875,10 @@ type refreshResultMsg struct {
 	err    error
 }
 
-// updateCheckMsg carries the outcome of /update's release check.
+// updateCheckMsg carries the outcome of /update. restart is set when a new
+// binary is in place and the process must re-exec to run it.
 type updateCheckMsg struct {
-	text string
-	err  error
+	text    string
+	restart bool
+	err     error
 }
