@@ -356,6 +356,13 @@ Use this section to quickly find the right files for a given change.
   - **Plugin dispatch**: `dispatchPluginEvent()`, `broadcastTurnLifecycle()`, `applyPluginMessageModifications()`
 - `internal/agent/prompt.go` - System prompt construction: `PromptConfig`, `BuildSystemPrompt()`,
   `DiscoverContextFiles()`, `RenderAgentPrompt()` (renders a built-in agent command's template)
+- `internal/agent/instance/` - Dependency-neutral root/fresh-child/resumed-child instantiation semantics: resolved model
+  selection, depth enforcement, effective-tool attenuation, immutable spec snapshot/hash construction, and
+  collision-safe instance persistence/ownership transfer. Root trust-gate resolution and child session minting/seeding
+  remain caller-owned.
+- `internal/agent/prompttmpl/` - Shared agent spec-body template data and function map used by both root and child prompt
+  rendering, including the bounded workspace tree. Root-only system-prompt composition stays in
+  `internal/agent/prompt.go`.
 - `internal/agent/ui_bridge.go` - `coordinatorUIBridge` implementing `tools.UIBridge` (Confirm, Select, Input, Notify)
 - `internal/agent/templates/agent.md.tpl` - the base system prompt, a Go text/template
 - `internal/agent/spec/` (package `spec`) - declarative built-in agent commands (`/plan`, `/research`, etc.), one

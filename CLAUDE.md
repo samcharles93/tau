@@ -71,7 +71,13 @@ _Add your build and test commands here_
 
 ## Architecture Overview
 
-_Add a brief overview of your project architecture_
+Root and child agent callers share dependency-neutral lifecycle primitives:
+
+- `internal/agent/instance/` owns model resolution, depth enforcement, effective-tool attenuation, spec snapshots and
+  hashes, and collision-safe instance persistence/ownership transfer for root, fresh-child, and resumed-child paths.
+  Root trust resolution and child session seeding remain at the caller.
+- `internal/agent/prompttmpl/` owns the common agent spec-body template data, bounded workspace tree, and function map.
+  Root-only system-prompt composition remains in `internal/agent/prompt.go`.
 
 ## Conventions & Patterns
 

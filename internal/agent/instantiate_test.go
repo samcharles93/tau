@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/samcharles93/tau/internal/agent/spec"
 	"github.com/samcharles93/tau/internal/procid"
 	"github.com/samcharles93/tau/internal/store"
 	"github.com/stretchr/testify/require"
@@ -36,6 +37,36 @@ func saveOpenInstance(t *testing.T, s store.SessionStore, id string, pid int, pr
 		ProcessStartNS:   processStartNS,
 		StartedAt:        startedAt,
 	}))
+}
+
+func TestInstantiateRootUsesSharedResolvedSemantics(t *testing.T) {
+	s := newSweepTestStore(t)
+	def := &spec.Definition{
+		Name:     "tau",
+		Provider: "anthropic",
+		Model:    "claude-root",
+		Tools:    []string{"read", "grep"},
+		Body:     "Root agent.",
+	}
+
+	got, err := Instantiate(context.Background(), InstantiateConfig{
+		Name:               "tau",
+		PreResolvedRootDef: def,
+		Store:              s,
+	})
+	require.NoError(t, err)
+	require.Equal(t, 0, got.Depth)
+	require.Equal(t, "anthropic", got.ResolvedProvider)
+	require.Equal(t, "claude-root", got.ResolvedModel)
+	require.Equal(t, []string{"read", "grep"}, got.EffectiveTools)
+	require.Equal(t, got.InstanceID, got.SessionConfig.AgentInstanceID)
+	require.Equal(t, "anthropic", got.SessionConfig.Provider.Name)
+	require.Equal(t, "claude-root", got.SessionConfig.Model.ID)
+
+	saved, err := s.GetAgentInstance(context.Background(), got.InstanceID)
+	require.NoError(t, err)
+	require.Equal(t, spec.BuildSpecSnapshot(def, "anthropic", "claude-root", []string{"read", "grep"}), saved.SpecSnapshot)
+	require.Equal(t, spec.HashSpecSnapshot(saved.SpecSnapshot), saved.SpecHash)
 }
 
 // --- G10: orphan sweep ---

@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	agentinstance "github.com/samcharles93/tau/internal/agent/instance"
 	"github.com/samcharles93/tau/internal/agent/spec"
 	"github.com/samcharles93/tau/internal/chat"
 	"github.com/samcharles93/tau/internal/config"
@@ -65,20 +66,12 @@ type InstantiateConfig struct {
 
 // InstantiateResult is the output of a successful Instantiate call.
 type InstantiateResult struct {
-	// InstanceID is the minted agent instance address, e.g. "research#k3v9qp".
-	InstanceID string
-	// SessionConfig is the ready-to-use session configuration with
-	// AgentInstanceID set. The caller sends StartChatSessionCommand with this.
-	SessionConfig chat.ChatSessionConfig
-	// ResolvedProvider / ResolvedModel are the concrete provider/model pair
-	// the instance will use.
+	InstanceID       string
+	SessionConfig    chat.ChatSessionConfig
 	ResolvedProvider string
 	ResolvedModel    string
-	// EffectiveTools is the computed toolset for this instance.
-	// nil means unrestricted (full registry).
-	EffectiveTools []string
-	// Depth is the instance's tree depth (0 for root).
-	Depth int
+	EffectiveTools   []string
+	Depth            int
 }
 
 // Instantiate runs the five-step agent-instantiation path: resolve the spec,
@@ -118,105 +111,41 @@ func Instantiate(ctx context.Context, cfg InstantiateConfig) (*InstantiateResult
 		def = d
 	}
 
-	// Step 2: Resolve the model to a concrete provider/model pair.
-	resolvedProvider, resolvedModel := config.ResolveModelMode(
-		cfg.ModelOverride,
-		def.Model,
-		def.Provider,
-		cfg.InheritedProvider,
-		cfg.InheritedModel,
-		cfg.DefaultProvider,
-		cfg.DefaultModel,
-		cfg.ModelModes,
-	)
-
-	// Step 3: Compute the effective toolset.
-	effectiveTools := computeEffectiveTools(def.Tools, cfg)
-
-	// Step 4: mint the instance id and the instance row (ID is minted
-	// below, with collision retry).
-	depth := cfg.ParentDepth
-	if cfg.ParentInstanceID != "" {
-		depth++ // child
+	pid := osPID()
+	result, err := agentinstance.Instantiate(ctx, agentinstance.Config{
+		Child:                cfg.ParentInstanceID != "",
+		Definition:           def,
+		ParentInstanceID:     cfg.ParentInstanceID,
+		ParentDepth:          cfg.ParentDepth,
+		ParentEffectiveTools: cfg.ParentEffectiveTools,
+		SpawnTools:           cfg.SpawnTools,
+		ModelOverride:        cfg.ModelOverride,
+		InheritedProvider:    cfg.InheritedProvider,
+		InheritedModel:       cfg.InheritedModel,
+		ModelModes:           cfg.ModelModes,
+		DefaultProvider:      cfg.DefaultProvider,
+		DefaultModel:         cfg.DefaultModel,
+		Agents:               cfg.Agents,
+		Store:                cfg.Store,
+		PID:                  pid,
+		ProcessStartNS:       procid.CaptureProcessStartNS(pid),
+	})
+	if err != nil {
+		return nil, fmt.Errorf("instantiate: %w", err)
 	}
-
-	// Apply depth caps from config defaults.
-	if depth > 0 {
-		maxDepth := cfg.Agents.DefaultMaxDepth
-		if maxDepth <= 0 {
-			maxDepth = config.DefaultAgentsConfig().DefaultMaxDepth
-		}
-		ceiling := cfg.Agents.DepthCeiling
-		if ceiling <= 0 {
-			ceiling = config.DefaultAgentsConfig().DepthCeiling
-		}
-		if maxDepth > 0 && depth > maxDepth {
-			return nil, fmt.Errorf("instantiate: depth %d exceeds cap %d", depth, maxDepth)
-		}
-		if ceiling > 0 && depth > ceiling {
-			return nil, fmt.Errorf("instantiate: depth %d exceeds ceiling %d", depth, ceiling)
-		}
-	}
-
-	// Build the spec snapshot (resolved definition + body as JSON).
-	specSnapshot := spec.BuildSpecSnapshot(def, resolvedProvider, resolvedModel, effectiveTools)
-	specHash := spec.HashSpecSnapshot(specSnapshot)
-
-	now := time.Now()
-	inst := store.AgentInstance{
-		SpecName:         def.Name,
-		SpecScope:        spec.ScopeString(def.Scope),
-		SpecSourcePath:   def.SourcePath,
-		SpecHash:         specHash,
-		SpecSnapshot:     specSnapshot,
-		ResolvedProvider: resolvedProvider,
-		ResolvedModel:    resolvedModel,
-		EffectiveTools:   spec.ToolsToJSON(effectiveTools),
-		Depth:            depth,
-		ParentInstanceID: cfg.ParentInstanceID,
-		PID:              osPID(),
-		ProcessStartNS:   procid.CaptureProcessStartNS(osPID()),
-		StartedAt:        now,
-	}
-
-	// Retry with a freshly minted ID on a primary-key collision. 6-char
-	// base32 gives ~30 bits of entropy - rare, but the DB is the
-	// authoritative uniqueness check, not the RNG (see
-	// docs/specs/agents/04-storage-and-sessions.md, G3/G10).
-	instanceID := ""
-	var saveErr error
-	for range spec.MaxInstanceIDCollisionRetries {
-		inst.ID = spec.MintInstanceID(def.Name)
-		if saveErr = cfg.Store.SaveAgentInstance(ctx, inst); saveErr == nil {
-			instanceID = inst.ID
-			break
-		}
-		if !store.IsUniqueConstraintError(saveErr) {
-			return nil, fmt.Errorf("instantiate: save instance: %w", saveErr)
-		}
-	}
-	if instanceID == "" {
-		return nil, fmt.Errorf("instantiate: save instance: id collision after %d attempts: %w", spec.MaxInstanceIDCollisionRetries, saveErr)
-	}
-
-	// Step 5: Build the session config.
-	sessionCfg := chat.ChatSessionConfig{
-		Provider:        config.ProviderConfig{Name: resolvedProvider},
-		Model:           chat.ChatModelRef{ID: resolvedModel},
-		SystemPrompt:    "", // caller fills this in (e.g. BuildSystemPrompt for root)
-		ParentSessionID: cfg.ParentSessionID,
-		AgentInstanceID: instanceID,
-	}
-
-	result := &InstantiateResult{
-		InstanceID:       instanceID,
-		SessionConfig:    sessionCfg,
-		ResolvedProvider: resolvedProvider,
-		ResolvedModel:    resolvedModel,
-		EffectiveTools:   effectiveTools,
-		Depth:            depth,
-	}
-	return result, nil
+	return &InstantiateResult{
+		InstanceID: result.InstanceID,
+		SessionConfig: chat.ChatSessionConfig{
+			Provider:        config.ProviderConfig{Name: result.ResolvedProvider},
+			Model:           chat.ChatModelRef{ID: result.ResolvedModel},
+			ParentSessionID: cfg.ParentSessionID,
+			AgentInstanceID: result.InstanceID,
+		},
+		ResolvedProvider: result.ResolvedProvider,
+		ResolvedModel:    result.ResolvedModel,
+		EffectiveTools:   result.EffectiveTools,
+		Depth:            result.Depth,
+	}, nil
 }
 
 // resolveTauRoot resolves the bare name "tau" through full discovery
@@ -251,68 +180,6 @@ func ResolveBuiltinTau() *spec.Definition {
 	d, _ := spec.Lookup("tau")
 	return d
 }
-
-// computeEffectiveTools computes the effective toolset for a new instance.
-// For root processes (no parent), the spec's tools are used directly
-// (nil means unrestricted). For children, the effective set is:
-//
-//	child spec tools ∩ parent effective ∩ spawn narrowing
-//
-// A nil contributor means "no restriction from this level".
-func computeEffectiveTools(specTools []string, cfg InstantiateConfig) []string {
-	// Root process: spec tools or nil (unrestricted).
-	if cfg.ParentInstanceID == "" {
-		if len(specTools) == 0 {
-			return nil
-		}
-		out := make([]string, len(specTools))
-		copy(out, specTools)
-		return out
-	}
-
-	// Child: intersect spec tools ∩ parent effective ∩ spawn narrowing.
-	if len(cfg.ParentEffectiveTools) == 0 {
-		// Parent is unrestricted - child gets spec ∩ spawn only.
-		return intersectTools(specTools, cfg.SpawnTools)
-	}
-
-	// Parent has restrictions - intersect all three.
-	step1 := intersectTools(specTools, cfg.ParentEffectiveTools)
-	return intersectTools(step1, cfg.SpawnTools)
-}
-
-// intersectTools returns the intersection of a and b. If either is nil,
-// the other is returned unchanged (nil = no restriction).
-func intersectTools(a, b []string) []string {
-	if len(a) == 0 {
-		return b
-	}
-	if len(b) == 0 {
-		return a
-	}
-	set := make(map[string]bool, len(b))
-	for _, name := range b {
-		set[name] = true
-	}
-	var out []string
-	for _, name := range a {
-		if set[name] {
-			out = append(out, name)
-		}
-	}
-	return out
-}
-
-// buildSpecSnapshot serialises the resolved definition + body as JSON
-// so every instance carries exactly what ran it.
-
-// hashSpec returns the hex-encoded SHA-256 of the spec snapshot JSON.
-// Hashing the full snapshot (which includes all frontmatter fields and the
-// resolved model/tools) means any change to tools:, model:, description, or
-// the body will produce a different hash - correctly detecting spec drift
-// rather than silently colliding on identical bodies with different frontmatter.
-
-// toolsToJSON serialises a tool list as a JSON array string, or "" for nil/empty.
 
 // defaultOrphanStaleAge is used when staleAge <= 0 (config unset).
 const defaultOrphanStaleAge = 24 * time.Hour

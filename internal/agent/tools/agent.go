@@ -13,6 +13,8 @@ import (
 
 	"github.com/google/uuid"
 
+	agentinstance "github.com/samcharles93/tau/internal/agent/instance"
+	"github.com/samcharles93/tau/internal/agent/prompttmpl"
 	"github.com/samcharles93/tau/internal/agent/spec"
 	"github.com/samcharles93/tau/internal/agent/stdio"
 	"github.com/samcharles93/tau/internal/bridge"
@@ -200,14 +202,61 @@ func executeSpawn(ctx context.Context, args agentToolArgs, cfg AgentToolConfig) 
 
 	// 3. Depth cap check.
 	childDepth := cfg.ParentDepth + 1
-	if err := checkDepthCap(childDepth, cfg.Agents); err != nil {
+	if err := agentinstance.CheckDepth(childDepth, cfg.Agents); err != nil {
 		return Result{Content: fmt.Sprintf("agent call failed: %v", err), IsError: true, ErrorKind: "depth_exceeded"}, nil
 	}
 
 	// 4. Instantiate the child agent.
-	instCfg := instantiateConfig{
-		Name:                 targetName,
-		CWD:                  cfg.CWD,
+	sessionID, err := generateSessionID()
+	if err != nil {
+		return Result{Content: fmt.Sprintf("agent instantiation failed: mint session id: %v", err), IsError: true, ErrorKind: "instantiation_failed"}, nil
+	}
+	sharedResult, err := agentinstance.Instantiate(ctx, childInstantiationConfig(def, args, cfg))
+	if err != nil {
+		return Result{Content: fmt.Sprintf("agent instantiation failed: %v", err), IsError: true, ErrorKind: "instantiation_failed"}, nil
+	}
+	instResult := &childInstance{
+		Result:    sharedResult,
+		SessionID: sessionID,
+	}
+
+	// 5. Seed the child session based on context_mode. ChildSystemPrompt is
+	// the child's own resolved spec body - its identity - not the
+	// parent's; only "fork" mode (below) inherits the parent's prompt.
+	if err := seedChildSession(ctx, seedSessionConfig{
+		Store:            cfg.Store,
+		SessionID:        instResult.SessionID,
+		ParentSessionID:  cfg.SessionID,
+		ParentInstanceID: cfg.ParentInstanceID,
+		ParentMessages:   cfg.ParentMessages,
+		ChildSystemPrompt: prompttmpl.RenderSpec(
+			def.Name,
+			def.Body,
+			prompttmpl.NewData(cfg.CWD, instResult.ResolvedModel, instResult.SessionID, time.Now()),
+		),
+		ParentSystemPrompt: cfg.ParentSystemPrompt,
+		ContextMode:        args.ContextMode,
+		Resume:             "",
+		Prompt:             args.Prompt,
+		Context:            args.Context,
+		SpecName:           args.Agent,
+	}); err != nil {
+		// The instance row was already saved by the shared instantiator; without
+		// a session to run it never will (see spawnChildProcess) - close
+		// it now rather than leaving it "started" forever (G3).
+		if cfg.Store != nil {
+			_ = cfg.Store.CloseAgentInstance(context.WithoutCancel(ctx), instResult.InstanceID, string(tauchat.ChildAgentFailed), "", fmt.Sprintf("seed child session: %v", err))
+		}
+		return Result{Content: fmt.Sprintf("seed child session: %v", err), IsError: true, ErrorKind: "instantiation_failed"}, nil
+	}
+
+	return spawnChildProcess(ctx, args, cfg, instResult)
+}
+
+func childInstantiationConfig(def *spec.Definition, args agentToolArgs, cfg AgentToolConfig) agentinstance.Config {
+	return agentinstance.Config{
+		Child:                true,
+		Definition:           def,
 		ParentInstanceID:     cfg.ParentInstanceID,
 		ParentDepth:          cfg.ParentDepth,
 		ParentEffectiveTools: cfg.ParentEffectiveTools,
@@ -221,39 +270,6 @@ func executeSpawn(ctx context.Context, args agentToolArgs, cfg AgentToolConfig) 
 		Agents:               cfg.Agents,
 		Store:                cfg.Store,
 	}
-
-	instResult, err := instantiateChild(ctx, instCfg)
-	if err != nil {
-		return Result{Content: fmt.Sprintf("agent instantiation failed: %v", err), IsError: true, ErrorKind: "instantiation_failed"}, nil
-	}
-
-	// 5. Seed the child session based on context_mode. ChildSystemPrompt is
-	// the child's own resolved spec body - its identity - not the
-	// parent's; only "fork" mode (below) inherits the parent's prompt.
-	if err := seedChildSession(ctx, seedSessionConfig{
-		Store:              cfg.Store,
-		SessionID:          instResult.SessionID,
-		ParentSessionID:    cfg.SessionID,
-		ParentInstanceID:   cfg.ParentInstanceID,
-		ParentMessages:     cfg.ParentMessages,
-		ChildSystemPrompt:  renderChildSystemPrompt(def, cfg.CWD, instResult.ResolvedModel, instResult.SessionID),
-		ParentSystemPrompt: cfg.ParentSystemPrompt,
-		ContextMode:        args.ContextMode,
-		Resume:             "",
-		Prompt:             args.Prompt,
-		Context:            args.Context,
-		SpecName:           args.Agent,
-	}); err != nil {
-		// The instance row was already saved by instantiateChild; without
-		// a session to run it never will (see spawnChildProcess) - close
-		// it now rather than leaving it "started" forever (G3).
-		if cfg.Store != nil {
-			_ = cfg.Store.CloseAgentInstance(context.WithoutCancel(ctx), instResult.InstanceID, string(tauchat.ChildAgentFailed), "", fmt.Sprintf("seed child session: %v", err))
-		}
-		return Result{Content: fmt.Sprintf("seed child session: %v", err), IsError: true, ErrorKind: "instantiation_failed"}, nil
-	}
-
-	return spawnChildProcess(ctx, args, cfg, instResult)
 }
 
 // executeResume implements the resume path per
@@ -310,60 +326,26 @@ func executeResume(ctx context.Context, args agentToolArgs, cfg AgentToolConfig)
 	// The resumed instance is a fresh spawn under the resuming (calling)
 	// instance, same depth-cap treatment as an ordinary child.
 	depth := cfg.ParentDepth + 1
-	if err := checkDepthCap(depth, cfg.Agents); err != nil {
+	if err := agentinstance.CheckDepth(depth, cfg.Agents); err != nil {
 		return Result{Content: fmt.Sprintf("agent call failed: %v", err), IsError: true, ErrorKind: "depth_exceeded"}, nil
 	}
 
-	// Model/provider precedence: resume call's model overrides; unset
-	// inherits the snapshot's resolved pair. Tier names resolve against the
-	// current config, not the historical one (see 02, Model/provider
-	// precedence on resume).
-	resolvedProvider, resolvedModel := orig.ResolvedProvider, orig.ResolvedModel
-	if args.Model != "" {
-		resolvedProvider, resolvedModel = config.ResolveModelMode(
-			args.Model, "", "",
-			cfg.InheritedProvider, cfg.InheritedModel,
-			cfg.DefaultProvider, cfg.DefaultModel,
-			cfg.ModelModes,
-		)
-	}
-
-	// Recompute capabilities - never trust the persisted effective_tools as
-	// sufficient authority on its own. The original snapshot's effective
-	// tools act as the ceiling in place of a spec's tools list.
-	originalCeiling := spec.ToolsFromJSON(orig.EffectiveTools)
-	effectiveTools := computeChildEffectiveTools(originalCeiling, cfg.ParentEffectiveTools, args.Tools)
-
-	newSnapshot, err := spec.PatchSnapshotResolved(orig.SpecSnapshot, resolvedProvider, resolvedModel, effectiveTools)
-	if err != nil {
-		return agentToolError("resume snapshot", err), nil
-	}
-	maxTurns, timeout := spec.SnapshotLimits(newSnapshot)
-
-	newInstance := store.AgentInstance{
-		SpecName:         orig.SpecName,
-		SpecScope:        orig.SpecScope,
-		SpecSourcePath:   orig.SpecSourcePath,
-		SpecHash:         spec.HashSpecSnapshot(newSnapshot),
-		SpecSnapshot:     newSnapshot,
-		ResolvedProvider: resolvedProvider,
-		ResolvedModel:    resolvedModel,
-		EffectiveTools:   spec.ToolsToJSON(effectiveTools),
-		Depth:            depth,
-		ParentInstanceID: cfg.ParentInstanceID,
-		StartedAt:        time.Now(),
-	}
-
-	// Retry with a freshly minted ID on a primary-key collision - see
-	// saveInstanceWithIDRetry's doc comment (G3/G10).
-	var resumeErr error
-	for range spec.MaxInstanceIDCollisionRetries {
-		newInstance.ID = spec.MintInstanceID(orig.SpecName)
-		resumeErr = cfg.Store.ResumeSession(ctx, args.Resume, newInstance)
-		if resumeErr == nil || !store.IsUniqueConstraintError(resumeErr) {
-			break
-		}
-	}
+	sharedResult, resumeErr := agentinstance.Resume(ctx, agentinstance.ResumeConfig{
+		Original:             orig,
+		SessionID:            args.Resume,
+		ParentInstanceID:     cfg.ParentInstanceID,
+		ParentDepth:          cfg.ParentDepth,
+		ParentEffectiveTools: cfg.ParentEffectiveTools,
+		SpawnTools:           args.Tools,
+		ModelOverride:        args.Model,
+		InheritedProvider:    cfg.InheritedProvider,
+		InheritedModel:       cfg.InheritedModel,
+		ModelModes:           cfg.ModelModes,
+		DefaultProvider:      cfg.DefaultProvider,
+		DefaultModel:         cfg.DefaultModel,
+		Agents:               cfg.Agents,
+		Store:                cfg.Store,
+	})
 	if resumeErr != nil {
 		switch {
 		case errors.Is(resumeErr, store.ErrSessionActive):
@@ -377,39 +359,12 @@ func executeResume(ctx context.Context, args agentToolArgs, cfg AgentToolConfig)
 
 	// No session seeding: the child loads the existing (resumed) session by
 	// id on startup - see internal/app.RunChild.
-	instResult := &instantiateResult{
-		InstanceID:       newInstance.ID,
-		SpecName:         orig.SpecName,
-		SessionID:        args.Resume,
-		ResolvedProvider: resolvedProvider,
-		ResolvedModel:    resolvedModel,
-		EffectiveTools:   effectiveTools,
-		Depth:            depth,
-		MaxTurns:         maxTurns,
-		Timeout:          timeout,
+	instResult := &childInstance{
+		Result:    sharedResult,
+		SessionID: args.Resume,
 	}
 
 	return spawnChildProcess(ctx, args, cfg, instResult)
-}
-
-// checkDepthCap rejects a depth that exceeds either the configured default
-// cap or the hard ceiling.
-func checkDepthCap(depth int, agentsCfg config.AgentsConfig) error {
-	maxDepth := agentsCfg.DefaultMaxDepth
-	if maxDepth <= 0 {
-		maxDepth = config.DefaultAgentsConfig().DefaultMaxDepth
-	}
-	ceiling := agentsCfg.DepthCeiling
-	if ceiling <= 0 {
-		ceiling = config.DefaultAgentsConfig().DepthCeiling
-	}
-	if maxDepth > 0 && depth > maxDepth {
-		return fmt.Errorf("depth %d exceeds cap %d", depth, maxDepth)
-	}
-	if ceiling > 0 && depth > ceiling {
-		return fmt.Errorf("depth %d exceeds ceiling %d", depth, ceiling)
-	}
-	return nil
 }
 
 // maxAncestorHops bounds the ancestor-chain walk defensively against a
@@ -445,7 +400,7 @@ func isAncestorOf(ctx context.Context, s store.SessionStore, candidateInstanceID
 // and assembles the tool result per the completion contract. Shared by both
 // the fresh-spawn and resume paths, which differ only in how instResult was
 // produced.
-func spawnChildProcess(ctx context.Context, args agentToolArgs, cfg AgentToolConfig, instResult *instantiateResult) (Result, error) {
+func spawnChildProcess(ctx context.Context, args agentToolArgs, cfg AgentToolConfig, instResult *childInstance) (Result, error) {
 	// Compensating close: any return path below that doesn't reach the
 	// normal completion close (which sets instanceClosed) means spawn,
 	// handshake, or streaming failed before a result was ever obtained.
@@ -725,154 +680,9 @@ func spawnChildProcess(ctx context.Context, args agentToolArgs, cfg AgentToolCon
 	}, nil
 }
 
-// instantiateConfig mirrors agent.InstantiateConfig but is defined here
-// to avoid importing internal/agent from the tools package (tools is a leaf).
-type instantiateConfig struct {
-	Name                 string
-	CWD                  string
-	ParentInstanceID     string
-	ParentDepth          int
-	ParentEffectiveTools []string
-	SpawnTools           []string
-	ModelOverride        string
-	InheritedProvider    string
-	InheritedModel       string
-	ModelModes           map[string]config.ModeConfig
-	DefaultProvider      string
-	DefaultModel         string
-	Agents               config.AgentsConfig
-	Store                store.SessionStore
-}
-
-type instantiateResult struct {
-	InstanceID       string
-	SessionID        string
-	SpecName         string
-	ResolvedProvider string
-	ResolvedModel    string
-	EffectiveTools   []string
-	Depth            int
-	MaxTurns         int
-	Timeout          time.Duration
-}
-
-// instantiateChild resolves, attenuates, mints and persists a child instance.
-// It mirrors agent.Instantiate but uses the local instantiateConfig to avoid
-// importing the agent package (tools is a leaf package).
-func instantiateChild(ctx context.Context, cfg instantiateConfig) (*instantiateResult, error) {
-	def, ok := spec.Resolve(cfg.Name, cfg.CWD)
-	if !ok {
-		return nil, fmt.Errorf("spec %q not found", cfg.Name)
-	}
-
-	resolvedProvider, resolvedModel := config.ResolveModelMode(
-		cfg.ModelOverride,
-		def.Model,
-		def.Provider,
-		cfg.InheritedProvider,
-		cfg.InheritedModel,
-		cfg.DefaultProvider,
-		cfg.DefaultModel,
-		cfg.ModelModes,
-	)
-
-	effectiveTools := computeChildEffectiveTools(def.Tools, cfg.ParentEffectiveTools, cfg.SpawnTools)
-
-	depth := cfg.ParentDepth + 1
-
-	if err := checkDepthCap(depth, cfg.Agents); err != nil {
-		return nil, err
-	}
-
-	// Mint a session ID for the child.
-	sessionID, err := generateSessionID()
-	if err != nil {
-		return nil, fmt.Errorf("mint session id: %w", err)
-	}
-
-	now := time.Now()
-	specSnapshot := spec.BuildSpecSnapshot(def, resolvedProvider, resolvedModel, effectiveTools)
-	inst := store.AgentInstance{
-		SpecName:         def.Name,
-		SpecScope:        spec.ScopeString(def.Scope),
-		SpecSourcePath:   def.SourcePath,
-		SpecHash:         spec.HashSpecSnapshot(specSnapshot),
-		SpecSnapshot:     specSnapshot,
-		ResolvedProvider: resolvedProvider,
-		ResolvedModel:    resolvedModel,
-		EffectiveTools:   spec.ToolsToJSON(effectiveTools),
-		Depth:            depth,
-		ParentInstanceID: cfg.ParentInstanceID,
-		StartedAt:        now,
-	}
-
-	instanceID, err := saveInstanceWithIDRetry(ctx, cfg.Store, &inst, def.Name)
-	if err != nil {
-		return nil, err
-	}
-
-	return &instantiateResult{
-		InstanceID:       instanceID,
-		SpecName:         def.Name,
-		SessionID:        sessionID,
-		ResolvedProvider: resolvedProvider,
-		ResolvedModel:    resolvedModel,
-		EffectiveTools:   effectiveTools,
-		Depth:            depth,
-		MaxTurns:         def.MaxTurns,
-		Timeout:          def.Timeout,
-	}, nil
-}
-
-// saveInstanceWithIDRetry mints an instance ID, sets it on inst, and saves
-// it, retrying with a freshly minted ID on a primary-key/unique collision
-// (store.IsUniqueConstraintError). Returns the ID that was actually saved.
-// A nil store mints an ID but performs no write (matches instantiateChild's
-// existing "store is optional" contract for tests).
-func saveInstanceWithIDRetry(ctx context.Context, s store.SessionStore, inst *store.AgentInstance, specName string) (string, error) {
-	var lastErr error
-	for range spec.MaxInstanceIDCollisionRetries {
-		inst.ID = spec.MintInstanceID(specName)
-		if s == nil {
-			return inst.ID, nil
-		}
-		if err := s.SaveAgentInstance(ctx, *inst); err != nil {
-			if store.IsUniqueConstraintError(err) {
-				lastErr = err
-				continue
-			}
-			return "", fmt.Errorf("save instance: %w", err)
-		}
-		return inst.ID, nil
-	}
-	return "", fmt.Errorf("save instance: id collision after %d attempts: %w", spec.MaxInstanceIDCollisionRetries, lastErr)
-}
-
-// computeChildEffectiveTools computes the child's effective toolset via
-// attenuation: child spec ∩ parent effective ∩ spawn narrowing.
-func computeChildEffectiveTools(specTools, parentEffective, spawnTools []string) []string {
-	step1 := intersectToolLists(specTools, parentEffective)
-	return intersectToolLists(step1, spawnTools)
-}
-
-func intersectToolLists(a, b []string) []string {
-	if len(a) == 0 {
-		return append([]string(nil), b...)
-	}
-	if len(b) == 0 {
-		return append([]string(nil), a...)
-	}
-	set := make(map[string]bool, len(b))
-	for _, name := range b {
-		set[name] = true
-	}
-	var out []string
-	for _, name := range a {
-		if set[name] {
-			out = append(out, name)
-		}
-	}
-	return out
+type childInstance struct {
+	*agentinstance.Result
+	SessionID string
 }
 
 // seedSessionConfig holds the parameters for seeding a child session.

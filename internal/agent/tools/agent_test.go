@@ -10,6 +10,8 @@ import (
 	"testing"
 	"time"
 
+	agentinstance "github.com/samcharles93/tau/internal/agent/instance"
+	"github.com/samcharles93/tau/internal/agent/prompttmpl"
 	"github.com/samcharles93/tau/internal/agent/spec"
 	tauchat "github.com/samcharles93/tau/internal/chat"
 	"github.com/samcharles93/tau/internal/config"
@@ -217,7 +219,7 @@ func TestExecuteAgentTool_DepthCeilingEnforcement(t *testing.T) {
 }
 
 // TestIntersectToolLists verifies the tool list intersection logic used
-// in computeChildEffectiveTools.
+// in the shared agent-instance attenuation logic.
 func TestIntersectToolLists(t *testing.T) {
 	tests := []struct {
 		name string
@@ -234,7 +236,7 @@ func TestIntersectToolLists(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := intersectToolLists(tt.a, tt.b)
+			got := agentinstance.EffectiveTools(tt.a, true, tt.b, nil)
 			if len(got) == 0 && len(tt.want) == 0 {
 				return // both nil/empty
 			}
@@ -250,6 +252,21 @@ func TestIntersectToolLists(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestChildInstantiationConfigMarksChildWithoutParentIdentity(t *testing.T) {
+	def := &spec.Definition{
+		Name:  "task",
+		Tools: []string{"read", "write"},
+	}
+	got, err := agentinstance.Instantiate(context.Background(), childInstantiationConfig(
+		def,
+		agentToolArgs{Tools: []string{"read"}},
+		AgentToolConfig{ParentEffectiveTools: []string{"read", "grep"}},
+	))
+	require.NoError(t, err)
+	require.Equal(t, 1, got.Depth)
+	require.Equal(t, []string{"read"}, got.EffectiveTools)
 }
 
 // TestBuildChildPrompt verifies the parent_context wrapping behavior.
@@ -347,35 +364,6 @@ func TestSeedForkSession_ProvenanceWrapper(t *testing.T) {
 	last := loaded.Messages[len(loaded.Messages)-1].Content
 	if last != "the new task" {
 		t.Errorf("last message = %q, want the new task prompt unwrapped", last)
-	}
-}
-
-// TestInstantiateChild_DepthRejection verifies that instantiateChild
-// rejects depth violations before writing to the store.
-func TestInstantiateChild_DepthRejection(t *testing.T) {
-	cfg := instantiateConfig{
-		Name:        "plan",
-		CWD:         t.TempDir(),
-		Agents:      config.AgentsConfig{DefaultMaxDepth: 1},
-		ParentDepth: 1, // child depth would be 2 > cap 1
-	}
-	_, err := instantiateChild(context.Background(), cfg)
-	if err == nil {
-		t.Errorf("expected error for depth exceeded, got nil")
-	}
-}
-
-// TestInstantiateChild_SpecNotFound verifies that instantiateChild
-// rejects unknown specs before any side effects.
-func TestInstantiateChild_SpecNotFound(t *testing.T) {
-	cfg := instantiateConfig{
-		Name:   "nonexistent",
-		CWD:    t.TempDir(),
-		Agents: config.DefaultAgentsConfig(),
-	}
-	_, err := instantiateChild(context.Background(), cfg)
-	if err == nil {
-		t.Errorf("expected error for unknown spec, got nil")
 	}
 }
 
@@ -822,7 +810,7 @@ func TestExecuteSpawn_RejectedBySpawnAdmission(t *testing.T) {
 		t.Errorf("queued = %v, want false (queue depth is 0)", details["queued"])
 	}
 
-	// The instance row instantiateChild created must be closed as failed,
+	// The shared instantiator's instance row must be closed as failed,
 	// not left dangling "started" forever (G3 compensation applies here too).
 	insts, err := s.ListAgentInstances(context.Background(), parentID)
 	require.NoError(t, err)
@@ -1045,7 +1033,11 @@ func TestRenderChildSystemPrompt_RendersOwnSpecBody(t *testing.T) {
 		Name: "research",
 		Body: "You are research.\nWorking directory: {{.WorkingDir}}\nModel: {{.ModelName}}",
 	}
-	got := renderChildSystemPrompt(def, "/work/proj", "gpt-5", "child-session-1")
+	got := prompttmpl.RenderSpec(
+		def.Name,
+		def.Body,
+		prompttmpl.NewData("/work/proj", "gpt-5", "child-session-1", time.Now()),
+	)
 	if !strings.Contains(got, "Working directory: /work/proj") {
 		t.Errorf("rendered prompt missing WorkingDir substitution: %q", got)
 	}
@@ -1170,7 +1162,12 @@ func TestComputeChildEffectiveTools_ResumePattern(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := computeChildEffectiveTools(tt.originalCeil, tt.parentEffective, tt.spawnTools)
+			got := agentinstance.EffectiveTools(
+				tt.originalCeil,
+				true,
+				tt.parentEffective,
+				tt.spawnTools,
+			)
 			require.Equal(t, tt.want, got)
 		})
 	}
