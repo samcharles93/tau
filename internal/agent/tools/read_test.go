@@ -120,3 +120,93 @@ func writeReadTestFile(t *testing.T, dir, name, content string) {
 		t.Fatal(err)
 	}
 }
+
+func TestReadTool_DirectoryReturnsListing(t *testing.T) {
+	tmp := t.TempDir()
+	writeReadTestFile(t, tmp, "alpha.go", "package a\n")
+	writeReadTestFile(t, tmp, "beta.go", "package b\n")
+	if err := os.Mkdir(filepath.Join(tmp, "sub"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	res := execRead(t, tmp, `{"path": "."}`)
+	if res.IsError {
+		t.Fatalf("expected a listing, not an error: %s", res.Content)
+	}
+	for _, want := range []string{"alpha.go", "beta.go", "sub/"} {
+		if !strings.Contains(res.Content, want) {
+			t.Fatalf("listing missing %q, got:\n%s", want, res.Content)
+		}
+	}
+	if !strings.Contains(res.Content, "is a directory") {
+		t.Fatalf("expected the listing to say the path is a directory, got:\n%s", res.Content)
+	}
+}
+
+// A directory must not satisfy the read-before-write check: marking it read
+// would let a later write to a same-named file bypass the guard.
+func TestReadTool_DirectoryDoesNotMarkRead(t *testing.T) {
+	tmp := t.TempDir()
+	rt := NewReadTracker()
+	tool := NewReadTool(tmp, rt)
+	res, err := tool.Execute(context.Background(), json.RawMessage(`{"path": "."}`), nil)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if res.IsError {
+		t.Fatalf("unexpected tool error: %s", res.Content)
+	}
+	if err := rt.CheckRead(tmp, "."); err == nil {
+		t.Fatal("reading a directory must not mark it as read")
+	}
+}
+
+// 5 reads in the analysed corpus failed on plausible-but-wrong paths, each
+// costing a round trip plus a follow-up find.
+func TestReadTool_NotFoundSuggestsNearestPaths(t *testing.T) {
+	tmp := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(tmp, "internal", "ui", "theme"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	writeReadTestFile(t, filepath.Join(tmp, "internal", "ui", "theme"), "theme.go", "package theme\n")
+
+	res := execRead(t, tmp, `{"path":"internal/theme/theme.go"}`)
+	if !res.IsError {
+		t.Fatal("expected a not-found error")
+	}
+	if !strings.Contains(res.Content, filepath.Join("internal", "ui", "theme", "theme.go")) {
+		t.Fatalf("expected the real path to be suggested, got:\n%s", res.Content)
+	}
+}
+
+func TestReadTool_NotFoundWithNoCandidateStaysPlain(t *testing.T) {
+	tmp := t.TempDir()
+	writeReadTestFile(t, tmp, "other.go", "package other\n")
+
+	res := execRead(t, tmp, `{"path":"internal/nothing/absent.go"}`)
+	if !res.IsError {
+		t.Fatal("expected a not-found error")
+	}
+	if strings.Contains(res.Content, "did you mean") {
+		t.Fatalf("no candidate should mean no suggestion, got:\n%s", res.Content)
+	}
+}
+
+// The real-world miss was internal/theme/theme.go: the directory exists but
+// holds differently-named files, so a basename search finds nothing. Listing
+// the directory that does exist is the useful answer.
+func TestReadTool_NotFoundListsExistingParentDir(t *testing.T) {
+	tmp := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(tmp, "internal", "theme"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	writeReadTestFile(t, filepath.Join(tmp, "internal", "theme"), "colors.go", "package theme\n")
+
+	res := execRead(t, tmp, `{"path":"internal/theme/theme.go"}`)
+	if !res.IsError {
+		t.Fatal("expected a not-found error")
+	}
+	if !strings.Contains(res.Content, "colors.go") {
+		t.Fatalf("expected the existing directory to be listed, got:\n%s", res.Content)
+	}
+}

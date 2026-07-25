@@ -4,7 +4,9 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io/fs"
 	"os"
+	"path/filepath"
 	"strings"
 	"unicode/utf8"
 )
@@ -24,7 +26,7 @@ const DefaultReadLines = 400
 
 var readSchema = Schema{
 	Name:        "read",
-	Description: fmt.Sprintf("Read file contents. Omitted limits return at most %d lines; set full:true only when the complete file is genuinely needed. Output is always capped at %d lines or %s and includes a continuation offset.", DefaultReadLines, DefaultMaxLines, FormatSize(DefaultMaxBytes)),
+	Description: fmt.Sprintf("Read file contents; pointed at a directory it returns a listing. Omitted limits return at most %d lines; set full:true only when the complete file is genuinely needed. Output is always capped at %d lines or %s and includes a continuation offset.", DefaultReadLines, DefaultMaxLines, FormatSize(DefaultMaxBytes)),
 	// NOTE: file is a compatibility alias for path; the executor
 	// handles the fallback (file → path) and returns a clear error
 	// when both are empty. We intentionally do NOT use anyOf here
@@ -51,10 +53,131 @@ var readSchema = Schema{
 			},
 			"full": {
 				"type": "boolean",
-				"description": "Return the whole file up to the global safety cap. Defaults to false."
+				"description": "Return the whole file up to the global safety cap, and resend lines you have already been shown. Defaults to false. Lines already read from an unchanged file are skipped unless this is set."
 			}
 		}
 	}`),
+}
+
+const (
+	// maxPathSuggestions bounds how many alternatives a not-found read offers.
+	maxPathSuggestions = 5
+
+	// maxSuggestionScan bounds the walk behind those suggestions. A miss is
+	// already an error path, so it must stay cheap on a large workspace.
+	maxSuggestionScan = 20000
+)
+
+// suggestPaths looks for files sharing the missing path's basename. Reads that
+// fail on a plausible-but-wrong path cost a round trip plus a follow-up find;
+// naming the real location lets the model correct itself immediately.
+//
+// The match is on basename alone, which is loose, but a wrong suggestion costs
+// one line of output while no suggestion costs a whole round trip.
+func suggestPaths(cwd, missing string) string {
+	if cwd == "" {
+		return ""
+	}
+	want := filepath.Base(missing)
+	if want == "" || want == "." || want == string(filepath.Separator) {
+		return ""
+	}
+
+	// If the directory exists, its contents are the most useful answer: the
+	// model had the location right and only the filename wrong. This is the
+	// shape of the real misses (internal/theme/theme.go, where the directory
+	// exists but holds colors.go), and it avoids the walk entirely.
+	if dir := filepath.Dir(missing); dir != "" {
+		if entries, err := os.ReadDir(dir); err == nil {
+			names := make([]string, 0, maxPathSuggestions)
+			for _, e := range entries {
+				if len(names) >= maxPathSuggestions {
+					names = append(names, "...")
+					break
+				}
+				names = append(names, e.Name())
+			}
+			if len(names) > 0 {
+				rel, relErr := filepath.Rel(cwd, dir)
+				if relErr != nil {
+					rel = dir
+				}
+				return fmt.Sprintf("%s exists and contains: %s", rel, strings.Join(names, ", "))
+			}
+		}
+	}
+
+	var found []string
+	scanned := 0
+
+	_ = filepath.WalkDir(cwd, func(path string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return nil //nolint:nilerr // an unreadable subtree just yields no suggestions
+		}
+		if scanned++; scanned > maxSuggestionScan {
+			return fs.SkipAll
+		}
+		if d.IsDir() {
+			if skipSuggestionDir(d.Name()) {
+				return fs.SkipDir
+			}
+			return nil
+		}
+		if d.Name() != want {
+			return nil
+		}
+		if rel, relErr := filepath.Rel(cwd, path); relErr == nil {
+			found = append(found, rel)
+		}
+		if len(found) >= maxPathSuggestions {
+			return fs.SkipAll
+		}
+		return nil
+	})
+
+	if len(found) == 0 {
+		return ""
+	}
+	return "did you mean: " + strings.Join(found, ", ")
+}
+
+// skipSuggestionDir keeps the suggestion walk out of directories that are large
+// and never the answer.
+func skipSuggestionDir(name string) bool {
+	switch name {
+	case ".git", "node_modules", "vendor", "dist", "build", ".cache":
+		return true
+	}
+	return false
+}
+
+// maxDirEntries bounds the listing returned when read is pointed at a
+// directory. Large directories are truncated rather than refused.
+const maxDirEntries = 200
+
+// listDirResult renders a bounded directory listing. display is the path as
+// the caller wrote it, so the notice echoes their own spelling.
+func listDirResult(path, display string) (Result, error) {
+	entries, err := os.ReadDir(path)
+	if err != nil {
+		return Result{Content: fmt.Sprintf("error reading directory: %v", err), IsError: true}, nil
+	}
+
+	var b strings.Builder
+	fmt.Fprintf(&b, "%s is a directory, not a file. Listing:\n", display)
+	for i, e := range entries {
+		if i >= maxDirEntries {
+			fmt.Fprintf(&b, "\n[%d more entries; use find for a filtered search]", len(entries)-maxDirEntries)
+			break
+		}
+		if e.IsDir() {
+			fmt.Fprintf(&b, "%s/\n", e.Name())
+			continue
+		}
+		fmt.Fprintf(&b, "%s\n", e.Name())
+	}
+
+	return Result{Content: strings.TrimRight(b.String(), "\n"), Truncated: len(entries) > maxDirEntries}, nil
 }
 
 // NewReadTool creates the built-in read tool.
@@ -85,6 +208,12 @@ func makeReadExecutor(cwd string, rt *ReadTracker) Executor {
 		if strings.TrimSpace(p.Path) == "" {
 			return Result{Content: "path is required (file is accepted as an alias)", IsError: true, ErrorKind: "invalid_arguments"}, nil
 		}
+		// Record whether the caller asked for a specific slice before the
+		// default is applied. An explicit limit that happens to equal the
+		// default is still an explicit content request, so it must not be
+		// mistaken for "unspecified" by the outline check below.
+		rangeRequested := p.Offset > 0 || p.Limit > 0
+
 		if p.Limit == 0 && !p.Full {
 			p.Limit = DefaultReadLines
 		}
@@ -94,16 +223,23 @@ func makeReadExecutor(cwd string, rt *ReadTracker) Executor {
 
 		path := resolvePath(cwd, p.Path)
 
-		if !isConfined(cwd, path) {
-			return Result{Content: "path escapes working directory; for Go dependencies, use shell with `go env GOMODCACHE` and inspect the resolved module path", IsError: true, ErrorKind: "sandbox_escape"}, nil
+		if !isReadConfined(cwd, path) {
+			return Result{Content: "path escapes working directory", IsError: true, ErrorKind: "sandbox_escape"}, nil
 		}
 
 		info, err := os.Stat(path)
 		if err != nil {
-			return Result{Content: fmt.Sprintf("error stating file: %v", err), IsError: true}, nil
+			msg := fmt.Sprintf("error stating file: %v", err)
+			if hint := suggestPaths(cwd, path); hint != "" {
+				msg += "\n" + hint
+			}
+			return Result{Content: msg, IsError: true, ErrorKind: "not_found"}, nil
 		}
 		if info.IsDir() {
-			return Result{Content: "path is a directory, not a file", IsError: true}, nil
+			// The intent is unambiguous, so answer it rather than spending a
+			// round trip on an error. Deliberately returned before MarkRead:
+			// a directory must never satisfy the read-before-write check.
+			return listDirResult(path, p.Path)
 		}
 		if info.Size() > maxReadBytes {
 			return Result{Content: fmt.Sprintf("file too large (%s > %s)", FormatSize(int(info.Size())), FormatSize(maxReadBytes)), IsError: true}, nil
@@ -129,6 +265,16 @@ func makeReadExecutor(cwd string, rt *ReadTracker) Executor {
 		lines := strings.Split(content, "\n")
 		totalLines := len(lines)
 
+		// For a large source file with no explicit range requested, an index of
+		// the whole file beats its first page. Returned before the served-range
+		// bookkeeping below, because the model has not been shown any of these
+		// lines and a later read of them must not be suppressed.
+		if !rangeRequested && !p.Full {
+			if outline := outlineFor(path, lines); outline != "" {
+				return Result{Content: outline, Truncated: true, ResultBytes: len(data)}, nil
+			}
+		}
+
 		// Apply offset (1-based).
 		startLine := 1
 		if p.Offset > 0 {
@@ -144,9 +290,33 @@ func makeReadExecutor(cwd string, rt *ReadTracker) Executor {
 			endLine = startLine + p.Limit - 1
 		}
 
+		// Skip lines this session has already been shown from an unchanged
+		// file. Repeated reads were 23.6% of all tool result tokens across
+		// analysed sessions - one file was read 58 times in a single session.
+		// full:true is the deliberate escape hatch for a model that has lost
+		// the earlier content (compaction, handoff) and needs it resent.
+		requestedStart := startLine
+		if rt != nil && !p.Full {
+			novelStart, novelEnd, hasNovel := rt.Novel(cwd, p.Path, FileIdentity(info), startLine, endLine)
+			if !hasNovel {
+				return Result{Content: fmt.Sprintf(
+					"[lines %d-%d of %s are unchanged since you last read them; nothing new to show. Set full:true to have the content resent.]",
+					startLine, endLine, p.Path,
+				)}, nil
+			}
+			startLine, endLine = novelStart, novelEnd
+		}
+
 		selected := strings.Join(lines[startLine-1:endLine], "\n")
 		tr := TruncateHeadRaw(selected, DefaultMaxLines, DefaultMaxBytes)
 		output := tr.Content
+
+		if startLine > requestedStart {
+			output = fmt.Sprintf(
+				"[lines %d-%d unchanged since you last read them; showing from line %d.]\n\n",
+				requestedStart, startLine-1, startLine,
+			) + output
+		}
 
 		switch {
 		case tr.Truncated && tr.OutputLines == 0:

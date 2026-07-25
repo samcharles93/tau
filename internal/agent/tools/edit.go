@@ -3,6 +3,7 @@ package tools
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"sort"
@@ -231,7 +232,7 @@ func applyEdits(content string, edits []EditAction) (string, error) {
 				matches = fuzzyIndexAll(content, edit.OldText)
 			}
 			if len(matches) == 0 {
-				return "", editNotFoundError(i)
+				return "", editNotFoundError(i, content, edit.OldText)
 			}
 			for _, m := range matches {
 				spans = append(spans, editSpan{start: m[0], end: m[1], repl: edit.NewText, editIdx: i})
@@ -248,7 +249,7 @@ func applyEdits(content string, edits []EditAction) (string, error) {
 			case 1:
 				spans = append(spans, editSpan{start: fuzzy[0][0], end: fuzzy[0][1], repl: edit.NewText, editIdx: i})
 			case 0:
-				return "", editNotFoundError(i)
+				return "", editNotFoundError(i, content, edit.OldText)
 			default:
 				return "", editAmbiguousError(i, len(fuzzy))
 			}
@@ -279,8 +280,49 @@ func applyEdits(content string, edits []EditAction) (string, error) {
 	return b.String(), nil
 }
 
-func editNotFoundError(idx int) error {
-	return fmt.Errorf("edit %d: old_text not found in file; it must match exactly, including whitespace and indentation", idx+1)
+func editNotFoundError(idx int, content, oldText string) error {
+	base := fmt.Sprintf("edit %d: old_text not found in file; it must match exactly, including whitespace and indentation", idx+1)
+	if hint := nearestMatchHint(content, oldText); hint != "" {
+		return fmt.Errorf("%s\n%s", base, hint)
+	}
+	return errors.New(base)
+}
+
+// nearestMatchHint locates the most likely intended location for a failed
+// old_text and quotes the file's actual text there, so the model can correct
+// the edit from the error alone instead of spending a round trip re-reading
+// the file. stale_edit was 6.7% of all edit calls across analysed sessions.
+//
+// The anchor is the first non-blank line of old_text compared with leading and
+// trailing whitespace removed, because indentation drift is the dominant cause:
+// the model reproduces the right code at the wrong nesting depth. Matching on
+// content alone is deliberately loose - a wrong hint costs nothing beyond a few
+// lines of output, whereas no hint costs a whole round trip.
+func nearestMatchHint(content, oldText string) string {
+	var anchor string
+	wantLines := strings.Split(oldText, "\n")
+	for _, l := range wantLines {
+		if t := strings.TrimSpace(l); t != "" {
+			anchor = t
+			break
+		}
+	}
+	if anchor == "" {
+		return ""
+	}
+
+	lines := strings.Split(content, "\n")
+	for i, l := range lines {
+		if strings.TrimSpace(l) != anchor {
+			continue
+		}
+		end := min(i+len(wantLines), len(lines))
+		return fmt.Sprintf(
+			"nearest match is at line %d; the file actually contains:\n%s",
+			i+1, strings.Join(lines[i:end], "\n"),
+		)
+	}
+	return ""
 }
 
 func editAmbiguousError(idx, occurrences int) error {

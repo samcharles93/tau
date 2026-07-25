@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"log/slog"
 	"maps"
 	"os"
@@ -20,6 +21,7 @@ import (
 	goplugin "github.com/hashicorp/go-plugin"
 	"github.com/samcharles93/tau/internal/agent/tools"
 	"github.com/samcharles93/tau/internal/chat"
+	tauconfig "github.com/samcharles93/tau/internal/config"
 	"github.com/samcharles93/tau/pkg/plugin/api"
 	"google.golang.org/grpc"
 )
@@ -38,6 +40,11 @@ type Config struct {
 	Plugins map[string]map[string]any
 	// StateDir is where plugin SetConfig values persist (default: PluginsDir/..).
 	StateDir string
+	// LogOutput is where go-plugin's own lifecycle logging goes. It must never
+	// be os.Stderr in interactive mode: stderr is the terminal the TUI draws
+	// on, so handshake and shutdown noise would scroll over the UI. Defaults
+	// to io.Discard; the app layer points it at the tau log file.
+	LogOutput io.Writer
 	// Optional host capabilities exposed to plugins via HostService.
 	Notify       Notifier
 	Models       func() []string
@@ -142,8 +149,12 @@ var _ chat.ExtensionReloader = &Manager{}
 // extension binaries.
 func NewManager(cfg Config) (*Manager, error) {
 	if cfg.PluginsDir == "" {
-		home, _ := os.UserHomeDir()
-		cfg.PluginsDir = filepath.Join(home, ".config", "tau", "plugins")
+		// Derive from the config dir so TAU_CONFIG_DIR is honoured; the
+		// hot-reload sentinel path already resolves that way.
+		cfg.PluginsDir = filepath.Join(tauconfig.Dir(), "plugins")
+	}
+	if cfg.LogOutput == nil {
+		cfg.LogOutput = io.Discard
 	}
 	if cfg.Logger == nil {
 		cfg.Logger = slog.Default()
@@ -228,15 +239,20 @@ func (m *Manager) Load(ctx context.Context) error {
 
 		m.cfg.Logger.Debug("plugin manager: loading plugin", "path", pluginPath)
 
-		process, grpcClient, err := m.spawnPlugin(ctx, pluginPath)
-		if err != nil {
-			m.cfg.Logger.Warn("plugin manager: failed to start plugin", "path", pluginPath, "err", err)
-			continue
-		}
-
 		name := entry.Name()
 		if ext := filepath.Ext(name); ext != "" {
 			name = name[:len(name)-len(ext)]
+		}
+
+		process, grpcClient, err := m.spawnPlugin(ctx, pluginPath)
+		if err != nil {
+			m.cfg.Logger.Warn("plugin manager: failed to start plugin", "path", pluginPath, "err", err)
+			// A failed start leaves the plugin's tools missing for the whole
+			// session, so tell the user rather than only the log file.
+			if m.cfg.Notify != nil {
+				m.cfg.Notify("warn", startFailureHint(name, err))
+			}
+			continue
 		}
 
 		pe := &pluginEntry{name: name, process: process, grpc: grpcClient}
@@ -281,6 +297,20 @@ func (m *Manager) Load(ctx context.Context) error {
 	}
 
 	return nil
+}
+
+// startFailureHint turns a plugin start error into a message worth showing a
+// user. go-plugin reports a handshake protocol mismatch as an opaque
+// "incompatible API version" error; the only remedy is rebuilding the plugin
+// against the current pkg/plugin/api, so say that outright.
+func startFailureHint(name string, err error) string {
+	if strings.Contains(err.Error(), "incompatible API version") {
+		return fmt.Sprintf(
+			"plugin %s was built against an older tau plugin API and did not load - rebuild it against this tau version",
+			name,
+		)
+	}
+	return fmt.Sprintf("plugin %s failed to load: %v", name, err)
 }
 
 // retire kills each started plugin's process and unregisters any tools it
@@ -604,7 +634,7 @@ func (m *Manager) registerPluginTools(ctx context.Context, pluginName string, c 
 func (m *Manager) startPlugin(ctx context.Context, pluginPath string) (*goplugin.Client, *api.GRPCClient, error) {
 	logger := hclog.New(&hclog.LoggerOptions{
 		Level:      hclog.Warn,
-		Output:     os.Stderr,
+		Output:     m.cfg.LogOutput,
 		JSONFormat: false,
 		Name:       filepath.Base(pluginPath),
 	})

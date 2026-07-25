@@ -8,6 +8,26 @@ import (
 	"github.com/samcharles93/tau/internal/config"
 )
 
+func TestResolveModelSelection(t *testing.T) {
+	models := []ChatModelRef{
+		{ID: "gpt-5.6-sol", Provider: "openai"},
+		{ID: "gpt-5.6-sol", Provider: "openai-codex"},
+	}
+
+	got, ok := ResolveModelSelection(models, "openai-codex/gpt-5.6-sol")
+	if !ok {
+		t.Fatal("expected qualified selection to resolve")
+	}
+	if got.Provider != "openai-codex" {
+		t.Fatalf("provider = %q, want openai-codex", got.Provider)
+	}
+
+	got, ok = ResolveModelSelection(models, "gpt-5.6-sol")
+	if !ok || got.Provider != "openai" {
+		t.Fatalf("bare selection = %+v, %v; want first matching provider", got, ok)
+	}
+}
+
 func testProvider() config.ProviderConfig {
 	return config.ProviderConfig{
 		Name:    "test",

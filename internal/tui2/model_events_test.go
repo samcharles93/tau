@@ -442,6 +442,7 @@ func TestHandleChatEventExtensionViewClosed(t *testing.T) {
 
 func TestHandleChatEventSkillsChanged(t *testing.T) {
 	m := newTestModel(&fakeRuntime{}, nil)
+	m.skillsListPending = true // the /skills list path
 
 	m.handleChatEvent(tauchat.SkillsChangedEvent{Skills: []tauchat.SkillInfo{
 		{Name: "python", Description: "Python helper", Scope: "project"},
@@ -765,6 +766,7 @@ func TestHandleChatEventCommandsChanged(t *testing.T) {
 
 func TestHandleChatEventSkillsChangedWithEmptyList(t *testing.T) {
 	m := newTestModel(&fakeRuntime{}, nil)
+	m.skillsListPending = true // the /skills list path
 
 	m.handleChatEvent(tauchat.SkillsChangedEvent{Skills: nil})
 
@@ -1029,5 +1031,44 @@ func TestChatRuntimeErrorEventClosesStuckOverlay(t *testing.T) {
 	}
 	if m.notification == "" {
 		t.Error("expected a notification explaining the load failure")
+	}
+}
+
+// The skill catalog is a wall of text; publishing it at startup (skill
+// discovery emits SkillsChangedEvent) buried the session before the user typed
+// anything. Only an explicit /skills list may render it.
+func TestSkillsChangedNotRenderedUnlessRequested(t *testing.T) {
+	m := newTestModel(&fakeRuntime{}, nil)
+
+	m.handleChatEvent(tauchat.SkillsChangedEvent{Skills: []tauchat.SkillInfo{
+		{Name: "python", Description: "Python helper", Scope: "project"},
+	}})
+
+	if len(m.renderedLines) != 0 {
+		t.Fatalf("unrequested SkillsChangedEvent rendered %d lines: %q", len(m.renderedLines), m.renderedLines)
+	}
+	if len(m.skills) != 1 {
+		t.Errorf("skills state not updated: %+v", m.skills)
+	}
+}
+
+func TestSkillsChangedRenderedOnceAfterRequest(t *testing.T) {
+	m := newTestModel(&fakeRuntime{}, nil)
+	m.cmdSkills("list")
+
+	m.handleChatEvent(tauchat.SkillsChangedEvent{Skills: []tauchat.SkillInfo{
+		{Name: "python", Description: "Python helper", Scope: "project"},
+	}})
+	if len(m.renderedLines) == 0 {
+		t.Fatal("/skills list did not render the catalog")
+	}
+
+	// A later background refresh must not re-dump it.
+	before := len(m.renderedLines)
+	m.handleChatEvent(tauchat.SkillsChangedEvent{Skills: []tauchat.SkillInfo{
+		{Name: "go", Description: "Go helper"},
+	}})
+	if len(m.renderedLines) != before {
+		t.Errorf("catalog re-rendered on a later event: %d -> %d lines", before, len(m.renderedLines))
 	}
 }

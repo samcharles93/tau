@@ -137,6 +137,32 @@ func TestCompletionsEmptySlotPreservesPrefix(t *testing.T) {
 	}
 }
 
+func TestCompletionsInsertsValueWhileDisplayingWord(t *testing.T) {
+	input := NewLineInput("")
+	for _, r := range "/model " {
+		input.HandleInput(string(r))
+	}
+	cursor := input.Cursor()
+	var selected string
+	c := NewCompletions(input, func(CompletionContext) *CompletionSet {
+		return &CompletionSet{
+			ReplaceStart: cursor,
+			ReplaceEnd:   cursor,
+			Groups: []MatchGroup{{Matches: []Match{{
+				Word:  "gpt-5.6-sol",
+				Value: "openai-codex/gpt-5.6-sol",
+			}}}},
+		}
+	})
+	c.SetOnSelect(func(value string) { selected = value })
+	c.Render(80)
+	c.HandleInput("\r")
+
+	if selected != "/model openai-codex/gpt-5.6-sol " {
+		t.Fatalf("selected = %q, want provider-qualified value", selected)
+	}
+}
+
 func TestCompletionsEscDismiss(t *testing.T) {
 	input := NewLineInput("")
 	c := NewCompletions(input, func(ctx CompletionContext) *CompletionSet {

@@ -1175,3 +1175,41 @@ func TestComputeChildEffectiveTools_ResumePattern(t *testing.T) {
 		})
 	}
 }
+
+// The agent tool advertised "research, plan, tau, task" in its schema while
+// research and plan both carry disable-model-invocation, so the model was
+// being told to call specs that reject it on arrival. That accounted for 3 of
+// the 11 failures in 15 agent calls across the analysed sessions.
+func TestAgentToolSchemaOmitsNonSpawnableSpecs(t *testing.T) {
+	tool := NewAgentTool(AgentToolConfig{})
+	schema := string(tool.Schema.Parameters) + tool.Schema.Description
+
+	builtins, err := spec.Builtins()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var checkedNonSpawnable, checkedSpawnable bool
+	for _, def := range builtins {
+		if def.DisableModelInvocation {
+			checkedNonSpawnable = true
+			if strings.Contains(schema, def.Name) {
+				t.Errorf("schema advertises non-spawnable spec %q", def.Name)
+			}
+			continue
+		}
+		checkedSpawnable = true
+		if !strings.Contains(schema, def.Name) {
+			t.Errorf("schema omits spawnable spec %q", def.Name)
+		}
+	}
+
+	// Guard the guard: if the fixture stops covering both cases the test above
+	// silently passes without asserting anything meaningful.
+	if !checkedNonSpawnable {
+		t.Fatal("no built-in spec has disable-model-invocation; test proves nothing")
+	}
+	if !checkedSpawnable {
+		t.Fatal("no built-in spec is spawnable; test proves nothing")
+	}
+}

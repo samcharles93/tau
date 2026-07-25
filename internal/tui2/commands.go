@@ -150,6 +150,10 @@ func init() {
 			},
 		},
 		{
+			name: "update", usage: "[check]", description: "install the latest tau release and restart",
+			run: (*model).cmdUpdate,
+		},
+		{
 			name: "clear", aliases: []string{"new", "reset"}, description: "start a new session",
 			run: (*model).cmdClear,
 		},
@@ -362,29 +366,22 @@ func (m *model) cmdModel(modelID string) tea.Cmd {
 		return m.openModelPalette()
 	}
 
-	var ref tauchat.ChatModelRef
-	found := false
-	for _, r := range m.availableModels {
-		if r.ID == modelID {
-			ref, found = r, true
-			break
-		}
-	}
+	model, found := tauchat.ResolveModelSelection(m.availableModels, modelID)
 	if !found {
 		return m.setNotification(fmt.Sprintf("model %q not found - try /refresh", modelID))
 	}
 
-	effort := defaultEffortForModel(ref)
-	m.modelName = ref.ID
+	effort := defaultEffortForModel(model)
+	m.modelName = model.ID
 	m.reasoningEffort = effort
-	patch := tauchat.ChatSessionPatch{Model: &ref, ReasoningEffort: &effort}
-	if ref.Provider != "" {
-		m.provider = ref.Provider
+	patch := tauchat.ChatSessionPatch{Model: &model, ReasoningEffort: &effort}
+	if model.Provider != "" {
+		m.provider = model.Provider
 		patch.Provider = &m.provider
 	}
-	notice := "model: " + ref.ID
-	if ref.Provider != "" {
-		notice += " (" + ref.Provider + ")"
+	notice := "model: " + model.ID
+	if model.Provider != "" {
+		notice += " (" + model.Provider + ")"
 	}
 
 	return tea.Batch(
@@ -420,6 +417,20 @@ func (m *model) cmdRefresh(_ string) tea.Cmd {
 			return refreshResultMsg{err: err}
 		}
 		return refreshResultMsg{models: models}
+	}
+}
+
+// cmdUpdate downloads and installs the latest release, then asks the TUI to
+// quit so the app layer can re-exec the replaced binary. `/update check`
+// reports what is available without installing anything.
+func (m *model) cmdUpdate(args string) tea.Cmd {
+	if m.updateFn == nil {
+		return m.setNotification("updates are not available in this build")
+	}
+	install := !strings.EqualFold(strings.TrimSpace(args), "check")
+	return func() tea.Msg {
+		text, restart, err := m.updateFn(m.ctx, install)
+		return updateCheckMsg{text: text, restart: restart, err: err}
 	}
 }
 
@@ -730,6 +741,7 @@ func providerState() providers.State {
 func (m *model) cmdSkills(args string) tea.Cmd {
 	args = strings.TrimSpace(args)
 	if args == "" || args == "list" {
+		m.skillsListPending = true
 		return sendCommand(m.runtime, tauchat.ListSkillsCommand{
 			RequestedAt: time.Now().UTC(),
 		})
@@ -810,12 +822,15 @@ func (m *model) runAgentCommand(name, args string) tea.Cmd {
 
 // currentModelRef returns the selected model from the available list.
 func (m *model) currentModelRef() tauchat.ChatModelRef {
-	for _, ref := range m.availableModels {
-		if ref.ID == m.modelName {
-			return ref
-		}
+	model, ok := tauchat.ResolveModelSelection(m.availableModels, tauchat.ChatModelRef{
+		ID:       m.modelName,
+		Provider: m.provider,
+	}.SelectionID())
+	if ok {
+		return model
 	}
-	return tauchat.ChatModelRef{}
+	model, _ = tauchat.ResolveModelSelection(m.availableModels, m.modelName)
+	return model
 }
 
 // effortLevels returns the available reasoning-effort levels for a model.
@@ -855,4 +870,12 @@ func defaultEffortForModel(model tauchat.ChatModelRef) string {
 type refreshResultMsg struct {
 	models []tauchat.ChatModelRef
 	err    error
+}
+
+// updateCheckMsg carries the outcome of /update. restart is set when a new
+// binary is in place and the process must re-exec to run it.
+type updateCheckMsg struct {
+	text    string
+	restart bool
+	err     error
 }
