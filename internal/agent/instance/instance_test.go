@@ -48,6 +48,17 @@ func TestInstantiateRootAndChildSemantics(t *testing.T) {
 			wantModel: "claude-root",
 		},
 		{
+			name: "child with nil parent and spawn tools is unrestricted",
+			cfg: Config{
+				Child:            true,
+				Definition:       &spec.Definition{Name: "task", Tools: []string{"read", "grep", "write"}},
+				ParentInstanceID: "tau#parent",
+				ParentDepth:      0,
+			},
+			wantTools: []string{"read", "grep", "write"},
+			wantDepth: 1,
+		},
+		{
 			name: "unrestricted child is narrowed by parent",
 			cfg: Config{
 				Child:                true,
