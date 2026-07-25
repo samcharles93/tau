@@ -150,7 +150,7 @@ func init() {
 			},
 		},
 		{
-			name: "update", description: "check whether a newer tau release is available",
+			name: "update", usage: "[check]", description: "install the latest tau release and restart",
 			run: (*model).cmdUpdate,
 		},
 		{
@@ -748,6 +748,7 @@ func providerState() providers.State {
 func (m *model) cmdSkills(args string) tea.Cmd {
 	args = strings.TrimSpace(args)
 	if args == "" || args == "list" {
+		m.skillsListPending = true
 		return sendCommand(m.runtime, tauchat.ListSkillsCommand{
 			RequestedAt: time.Now().UTC(),
 		})

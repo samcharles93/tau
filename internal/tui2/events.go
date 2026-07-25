@@ -304,6 +304,13 @@ func (m *model) handleChatEvent(evt tauchat.ChatEvent) tea.Cmd {
 	// skillsChangedText.
 	case tauchat.SkillsChangedEvent:
 		m.skills = e.Skills
+		// Skill discovery publishes this at startup and on every reload. The
+		// catalog is a full-screen wall of text, so render it only for the
+		// user who asked via /skills list.
+		if !m.skillsListPending {
+			return nil
+		}
+		m.skillsListPending = false
 		rendered := m.renderMarkdown(skillsChangedText(e.Skills), m.width)
 		m.renderedLines = append(m.renderedLines, strings.Split(rendered, "\n")...)
 		m.viewport.SetContentLines(m.renderedLines)

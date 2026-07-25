@@ -173,6 +173,12 @@ type model struct {
 	reasoningEffort       string
 	ctxWindow             int // context window size for % display
 
+	// skillsListPending records that the user ran /skills list, so the next
+	// SkillsChangedEvent may render the catalog into scrollback. Startup
+	// discovery and background reloads publish the same event and must stay
+	// silent.
+	skillsListPending bool
+
 	// Extension commands (populated from ExtensionCommandsChangedEvent).
 	extensionCommands map[string]tauchat.ExtensionCommand
 
