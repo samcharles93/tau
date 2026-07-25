@@ -208,6 +208,12 @@ func makeReadExecutor(cwd string, rt *ReadTracker) Executor {
 		if strings.TrimSpace(p.Path) == "" {
 			return Result{Content: "path is required (file is accepted as an alias)", IsError: true, ErrorKind: "invalid_arguments"}, nil
 		}
+		// Record whether the caller asked for a specific slice before the
+		// default is applied. An explicit limit that happens to equal the
+		// default is still an explicit content request, so it must not be
+		// mistaken for "unspecified" by the outline check below.
+		rangeRequested := p.Offset > 0 || p.Limit > 0
+
 		if p.Limit == 0 && !p.Full {
 			p.Limit = DefaultReadLines
 		}
@@ -263,7 +269,7 @@ func makeReadExecutor(cwd string, rt *ReadTracker) Executor {
 		// the whole file beats its first page. Returned before the served-range
 		// bookkeeping below, because the model has not been shown any of these
 		// lines and a later read of them must not be suppressed.
-		if p.Offset == 0 && p.Limit == DefaultReadLines && !p.Full {
+		if !rangeRequested && !p.Full {
 			if outline := outlineFor(path, lines); outline != "" {
 				return Result{Content: outline, Truncated: true, ResultBytes: len(data)}, nil
 			}

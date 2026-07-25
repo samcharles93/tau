@@ -126,3 +126,15 @@ func truncateForMsg(s string) string {
 	}
 	return s
 }
+
+// An explicit limit that happens to equal the default is still explicit, and
+// must be honoured as a content request rather than read as "unspecified".
+func TestRead_ExplicitDefaultSizedLimitBypassesOutline(t *testing.T) {
+	tmp := t.TempDir()
+	bigGoFile(t, tmp, "big.go", 60)
+
+	res := execRead(t, tmp, fmt.Sprintf(`{"path":"big.go","limit":%d}`, DefaultReadLines))
+	if !strings.Contains(res.Content, "body 0 line 0") {
+		t.Fatalf("an explicit limit must return raw content, got:\n%s", truncateForMsg(res.Content))
+	}
+}
