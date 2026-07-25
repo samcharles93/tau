@@ -169,7 +169,9 @@ internal packages live under `internal/`.
   functions.
 - **`cli`** - Thin command definitions using urfave/cli. Parses flags and delegates to `app`.
 - **`chat`** - Chat types and contracts. Defines `ChatCommand`, `ChatEvent`, `ChatRuntime`, `ChatSessionState`,
-  `ChatSessionConfig`, `ChatSessionPatch`, `ChatModelRef`, `ChatParameters`, `ChatUsage`, `ChatToolCall`, `ChatToolDef`,
+  `ChatSessionConfig`, `ChatSessionPatch`, `ChatModelRef` (including provider-qualified `SelectionID` and
+ `ResolveModelSelection` helpers for unambiguous cross-provider picker routing), `ChatParameters`, `ChatUsage`,
+ `ChatToolCall`, `ChatToolDef`,
   `CommandRef`, `ExtensionCommand`, `ExtensionReloader`, `SessionSummary`, and all concrete event/command types.
   Consumed by every other package; exports only types (no behaviour).
 - **`eventbus`** - Central in-process event bus. Routes events by Go type (`Publisher[ChatEvent]` →

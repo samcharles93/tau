@@ -20,6 +20,10 @@ import (
 type compMatch struct {
 	Word        string
 	Description string
+	// Value is the command argument represented by this row. When empty, Word
+	// is used. Model rows use it to preserve provider/model identity while
+	// continuing to display and fuzzy-match the plain model ID.
+	Value string
 	// RequiresArg is true for slash commands whose usage is a required
 	// argument (e.g. "<id>", "<prompt>") - accepting one of these must not
 	// auto-submit, since the command is invalid without more typing. Left
@@ -357,7 +361,11 @@ func (m *model) modelCompletions(argsBefore int) []compGroup {
 		if desc == "" {
 			desc = ref.URL
 		}
-		matches = append(matches, compMatch{Word: ref.ID, Description: desc})
+		matches = append(matches, compMatch{
+			Word:        ref.ID,
+			Description: desc,
+			Value:       ref.SelectionID(),
+		})
 	}
 	return []compGroup{{Title: "Models", Matches: matches}}
 }
@@ -600,7 +608,11 @@ func (m *model) handleCompletionKey(msg tea.KeyPressMsg) (tea.Cmd, bool) {
 // trailing space so the user can keep typing the next argument) and resets
 // selection state.
 func (m *model) acceptCompletionRow(row compRow) {
-	m.replaceCompletionToken(row.Word + " ")
+	value := row.Value
+	if value == "" {
+		value = row.Word
+	}
+	m.replaceCompletionToken(value + " ")
 }
 
 // replaceCompletionToken replaces the last whitespace-delimited token of

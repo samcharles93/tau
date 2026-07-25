@@ -232,7 +232,11 @@ func (c *inlineChat) modelMatches() []taui.Match {
 		if desc == "" {
 			desc = m.URL
 		}
-		out = append(out, taui.Match{Word: m.ID, Description: desc})
+		out = append(out, taui.Match{
+			Word:        m.ID,
+			Description: desc,
+			Value:       m.SelectionID(),
+		})
 	}
 	return out
 }

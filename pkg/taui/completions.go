@@ -13,6 +13,9 @@ type Match struct {
 	Word        string
 	Display     string
 	Description string
+	// Value is inserted when the match is selected. When empty, Word is used.
+	// This lets duplicate display words carry distinct identities.
+	Value string
 }
 
 type MatchGroup struct {
@@ -213,8 +216,12 @@ func (c *Completions) HandleInput(data string) bool {
 }
 
 func (c *Completions) fullReplace(row filteredRow) string {
+	value := row.match.Value
+	if value == "" {
+		value = row.match.Word
+	}
 	if c.rawSet == nil {
-		return row.match.Word
+		return value
 	}
 	text := c.input.Value()
 	// Keep everything before the replacement span. Guard only on ReplaceStart
@@ -224,7 +231,7 @@ func (c *Completions) fullReplace(row filteredRow) string {
 	if c.rawSet.ReplaceStart > 0 {
 		prefix = runePrefix(text, c.rawSet.ReplaceStart)
 	}
-	result := prefix + row.match.Word
+	result := prefix + value
 	if !row.noSpace {
 		result += " "
 	}

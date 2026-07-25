@@ -366,29 +366,22 @@ func (m *model) cmdModel(modelID string) tea.Cmd {
 		return m.openModelPalette()
 	}
 
-	var ref tauchat.ChatModelRef
-	found := false
-	for _, r := range m.availableModels {
-		if r.ID == modelID {
-			ref, found = r, true
-			break
-		}
-	}
+	model, found := tauchat.ResolveModelSelection(m.availableModels, modelID)
 	if !found {
 		return m.setNotification(fmt.Sprintf("model %q not found - try /refresh", modelID))
 	}
 
-	effort := defaultEffortForModel(ref)
-	m.modelName = ref.ID
+	effort := defaultEffortForModel(model)
+	m.modelName = model.ID
 	m.reasoningEffort = effort
-	patch := tauchat.ChatSessionPatch{Model: &ref, ReasoningEffort: &effort}
-	if ref.Provider != "" {
-		m.provider = ref.Provider
+	patch := tauchat.ChatSessionPatch{Model: &model, ReasoningEffort: &effort}
+	if model.Provider != "" {
+		m.provider = model.Provider
 		patch.Provider = &m.provider
 	}
-	notice := "model: " + ref.ID
-	if ref.Provider != "" {
-		notice += " (" + ref.Provider + ")"
+	notice := "model: " + model.ID
+	if model.Provider != "" {
+		notice += " (" + model.Provider + ")"
 	}
 
 	return tea.Batch(
@@ -829,12 +822,15 @@ func (m *model) runAgentCommand(name, args string) tea.Cmd {
 
 // currentModelRef returns the selected model from the available list.
 func (m *model) currentModelRef() tauchat.ChatModelRef {
-	for _, ref := range m.availableModels {
-		if ref.ID == m.modelName {
-			return ref
-		}
+	model, ok := tauchat.ResolveModelSelection(m.availableModels, tauchat.ChatModelRef{
+		ID:       m.modelName,
+		Provider: m.provider,
+	}.SelectionID())
+	if ok {
+		return model
 	}
-	return tauchat.ChatModelRef{}
+	model, _ = tauchat.ResolveModelSelection(m.availableModels, m.modelName)
+	return model
 }
 
 // effortLevels returns the available reasoning-effort levels for a model.
