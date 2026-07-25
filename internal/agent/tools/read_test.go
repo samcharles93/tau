@@ -191,3 +191,22 @@ func TestReadTool_NotFoundWithNoCandidateStaysPlain(t *testing.T) {
 		t.Fatalf("no candidate should mean no suggestion, got:\n%s", res.Content)
 	}
 }
+
+// The real-world miss was internal/theme/theme.go: the directory exists but
+// holds differently-named files, so a basename search finds nothing. Listing
+// the directory that does exist is the useful answer.
+func TestReadTool_NotFoundListsExistingParentDir(t *testing.T) {
+	tmp := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(tmp, "internal", "theme"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	writeReadTestFile(t, filepath.Join(tmp, "internal", "theme"), "colors.go", "package theme\n")
+
+	res := execRead(t, tmp, `{"path":"internal/theme/theme.go"}`)
+	if !res.IsError {
+		t.Fatal("expected a not-found error")
+	}
+	if !strings.Contains(res.Content, "colors.go") {
+		t.Fatalf("expected the existing directory to be listed, got:\n%s", res.Content)
+	}
+}

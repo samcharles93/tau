@@ -83,6 +83,30 @@ func suggestPaths(cwd, missing string) string {
 		return ""
 	}
 
+	// If the directory exists, its contents are the most useful answer: the
+	// model had the location right and only the filename wrong. This is the
+	// shape of the real misses (internal/theme/theme.go, where the directory
+	// exists but holds colors.go), and it avoids the walk entirely.
+	if dir := filepath.Dir(missing); dir != "" {
+		if entries, err := os.ReadDir(dir); err == nil {
+			names := make([]string, 0, maxPathSuggestions)
+			for _, e := range entries {
+				if len(names) >= maxPathSuggestions {
+					names = append(names, "...")
+					break
+				}
+				names = append(names, e.Name())
+			}
+			if len(names) > 0 {
+				rel, relErr := filepath.Rel(cwd, dir)
+				if relErr != nil {
+					rel = dir
+				}
+				return fmt.Sprintf("%s exists and contains: %s", rel, strings.Join(names, ", "))
+			}
+		}
+	}
+
 	var found []string
 	scanned := 0
 
