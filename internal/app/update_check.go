@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	tauchat "github.com/samcharles93/tau/internal/chat"
@@ -105,38 +106,57 @@ func StartBackgroundUpdateCheck(ctx context.Context, version string, updatesCfg 
 	writeUpdateCache(cachePath)
 }
 
-// NewUpdateChecker returns the /update handler for the TUI: an on-demand
-// release check that reports its outcome as a single line. It ignores the
-// 24-hour cache StartBackgroundUpdateCheck uses, because the user asked.
-// Installing is still `tau update` - swapping the binary underneath a running
-// session is not something a slash command should do.
-func NewUpdateChecker(version string, updatesCfg tauconfig.UpdatesConfig) func(context.Context) (string, error) {
-	return func(ctx context.Context) (string, error) {
+// NewUpdateFunc returns the /update handler for the TUI. With install set it
+// downloads, verifies, and swaps in the new binary (updater.Run replaces the
+// running executable in place), then reports restart=true so the frontend can
+// quit and the caller can re-exec. It ignores the 24-hour cache
+// StartBackgroundUpdateCheck uses, because the user asked directly.
+//
+// restartWanted is set on a successful install and read by RunChat after the
+// TUI has exited and released the terminal.
+func NewUpdateFunc(version string, updatesCfg tauconfig.UpdatesConfig, restartWanted *atomic.Bool) func(context.Context, bool) (string, bool, error) {
+	return func(ctx context.Context, install bool) (string, bool, error) {
 		if updatesCfg.Mode == "disabled" {
-			return "update checks are disabled (updates.mode: disabled)", nil
+			return "updates are disabled (updates.mode: disabled)", false, nil
 		}
 
-		childCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
+		// An install downloads an archive and verifies the extracted binary, so
+		// it needs a far more generous budget than a metadata check.
+		timeout := 30 * time.Second
+		if install {
+			timeout = 10 * time.Minute
+		}
+		childCtx, cancel := context.WithTimeout(ctx, timeout)
 		defer cancel()
 
+		current := currentTagFromVersion(version)
 		result, err := updater.Run(childCtx, updater.Options{
 			CurrentVersion: version,
-			CheckOnly:      true,
-			HTTPClient:     &http.Client{Timeout: 10 * time.Second},
+			CheckOnly:      !install,
+			HTTPClient:     &http.Client{Timeout: timeout},
 			APIBaseURL:     os.Getenv("TAU_UPDATE_API_URL"),
 		})
 		switch {
 		case errors.Is(err, updater.ErrNoUpdate):
-			return "tau is already up to date (" + currentTagFromVersion(version) + ")", nil
+			return "tau is already up to date (" + current + ")", false, nil
 		case errors.Is(err, updater.ErrDevBuild):
-			return "dev build - update checks only apply to release builds", nil
+			return "dev build - updates only apply to release builds", false, nil
 		case err != nil:
-			return "", err
+			return "", false, err
 		}
-		if result.TargetVersion == "" || result.TargetVersion == currentTagFromVersion(version) {
-			return "tau is already up to date (" + currentTagFromVersion(version) + ")", nil
+		if !install {
+			if result.TargetVersion == "" || result.TargetVersion == current {
+				return "tau is already up to date (" + current + ")", false, nil
+			}
+			return "tau " + result.TargetVersion + " is available - run /update to install", false, nil
 		}
-		return "tau " + result.TargetVersion + " is available - run `tau update` to install", nil
+		if !result.Updated {
+			return "tau is already up to date (" + current + ")", false, nil
+		}
+		if restartWanted != nil {
+			restartWanted.Store(true)
+		}
+		return "updated to tau " + result.TargetVersion + " - restarting", true, nil
 	}
 }
 

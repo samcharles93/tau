@@ -429,6 +429,11 @@ func (c *Coordinator) executeToolsParallel(ctx context.Context, sessionID, reque
 		startedAt := time.Now().UTC()
 		effectiveArgs := tc.Function.Arguments
 
+		// Normalise a hallucinated tool name before anything else looks at it,
+		// so plugin hooks, UI events and the loop breaker all see the tool that
+		// will actually run.
+		tc.Function.Name = c.resolveToolName(tc.Function.Name)
+
 		loopVerdict := c.checkToolLoop(sessionID, tc)
 		switch {
 		case loopVerdict.hardStop:
@@ -553,10 +558,7 @@ func (c *Coordinator) executeToolsParallel(ctx context.Context, sessionID, reque
 						return tool.Execute(ctx, json.RawMessage(effectiveArgs), bridge)
 					}
 				} else {
-					result = tools.Result{
-						Content: fmt.Sprintf("unknown tool: %s", tc.Function.Name),
-						IsError: true,
-					}
+					result = c.unknownToolResult(tc.Function.Name)
 				}
 			}
 
@@ -566,10 +568,7 @@ func (c *Coordinator) executeToolsParallel(ctx context.Context, sessionID, reque
 					return tool.Execute(ctx, json.RawMessage(effectiveArgs), bridge)
 				}
 			} else {
-				result = tools.Result{
-					Content: fmt.Sprintf("unknown tool: %s", tc.Function.Name),
-					IsError: true,
-				}
+				result = c.unknownToolResult(tc.Function.Name)
 			}
 		}
 
@@ -724,6 +723,74 @@ func (c *Coordinator) SetAllowedTools(toolNames []string) {
 // effectiveTools ceiling and the allowedTools active filter. Used as an
 // execution-time guard: a tool hidden from the LLM by buildToolDefs must
 // also be blocked if the LLM hallucinates it anyway.
+// toolAliases maps names models reach for onto the tool that actually exists.
+// "unknown tool" was 10 calls across the 77 analysed sessions, and the names
+// were not random: they are the conventional names from other harnesses. An
+// alias only applies when the name the model used is not itself registered, so
+// a real tool can never be shadowed by an alias for something else.
+var toolAliases = map[string]string{
+	"bash":         "shell",
+	"sh":           "shell",
+	"run_shell":    "shell",
+	"run_command":  "shell",
+	"terminal":     "shell",
+	"execute":      "shell",
+	"read_file":    "read",
+	"view_file":    "read",
+	"cat":          "read",
+	"open":         "read",
+	"write_file":   "write",
+	"create_file":  "write",
+	"edit_file":    "edit",
+	"str_replace":  "edit",
+	"apply_patch":  "edit",
+	"search":       "grep",
+	"search_files": "grep",
+	"ripgrep":      "grep",
+	"rg":           "grep",
+	"find_files":   "find",
+	"list_files":   "find",
+}
+
+// resolveToolName maps a hallucinated tool name onto the real one when there is
+// an unambiguous match, so a naming slip costs nothing instead of a round trip.
+// A registered name always wins over an alias, and an alias whose target is not
+// registered is left alone rather than rewritten into a different error.
+func (c *Coordinator) resolveToolName(name string) string {
+	if _, ok := c.registry.Get(name); ok {
+		return name
+	}
+	alias, ok := toolAliases[strings.ToLower(strings.TrimSpace(name))]
+	if !ok {
+		return name
+	}
+	if _, ok := c.registry.Get(alias); !ok {
+		return name
+	}
+	return alias
+}
+
+// unknownToolResult reports an unresolvable tool name along with the names that
+// do exist, so the model can correct itself in the same turn rather than
+// guessing again. Callers (and existing tests) match on the "unknown tool"
+// prefix, which is preserved.
+func (c *Coordinator) unknownToolResult(name string) tools.Result {
+	available := strings.Join(c.registry.Names(), ", ")
+
+	if strings.TrimSpace(name) == "" {
+		return tools.Result{
+			Content:   fmt.Sprintf("unknown tool: the call arrived with no tool name. Available tools: %s", available),
+			IsError:   true,
+			ErrorKind: "unknown_tool",
+		}
+	}
+	return tools.Result{
+		Content:   fmt.Sprintf("unknown tool: %s. Available tools: %s", name, available),
+		IsError:   true,
+		ErrorKind: "unknown_tool",
+	}
+}
+
 func (c *Coordinator) toolAllowed(name string) bool {
 	c.mu.Lock()
 	effective := c.effectiveTools

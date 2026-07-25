@@ -26,10 +26,12 @@ type TUIConfig struct {
 	InitialCommands []tauchat.CommandRef
 	Bus             *eventbus.Bus
 	RefreshModels   ModelRefresher
-	// CheckUpdate backs /update: it checks for a newer release and returns the
-	// line to show the user. Provided by the app layer, which knows the running
-	// binary's version. Nil disables the command.
-	CheckUpdate     func(context.Context) (string, error)
+	// UpdateFunc backs /update: with install set it downloads and swaps in the
+	// new binary, otherwise it only reports what is available. It returns the
+	// line to show the user and whether a restart is now pending. Provided by
+	// the app layer, which knows the running binary's version. Nil disables the
+	// command.
+	UpdateFunc      func(ctx context.Context, install bool) (string, bool, error)
 	ShowReasoning   bool
 	ReasoningEffort string
 	Debug           bool
