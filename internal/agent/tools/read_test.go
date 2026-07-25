@@ -120,3 +120,43 @@ func writeReadTestFile(t *testing.T, dir, name, content string) {
 		t.Fatal(err)
 	}
 }
+
+func TestReadTool_DirectoryReturnsListing(t *testing.T) {
+	tmp := t.TempDir()
+	writeReadTestFile(t, tmp, "alpha.go", "package a\n")
+	writeReadTestFile(t, tmp, "beta.go", "package b\n")
+	if err := os.Mkdir(filepath.Join(tmp, "sub"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	res := execRead(t, tmp, `{"path": "."}`)
+	if res.IsError {
+		t.Fatalf("expected a listing, not an error: %s", res.Content)
+	}
+	for _, want := range []string{"alpha.go", "beta.go", "sub/"} {
+		if !strings.Contains(res.Content, want) {
+			t.Fatalf("listing missing %q, got:\n%s", want, res.Content)
+		}
+	}
+	if !strings.Contains(res.Content, "is a directory") {
+		t.Fatalf("expected the listing to say the path is a directory, got:\n%s", res.Content)
+	}
+}
+
+// A directory must not satisfy the read-before-write check: marking it read
+// would let a later write to a same-named file bypass the guard.
+func TestReadTool_DirectoryDoesNotMarkRead(t *testing.T) {
+	tmp := t.TempDir()
+	rt := NewReadTracker()
+	tool := NewReadTool(tmp, rt)
+	res, err := tool.Execute(context.Background(), json.RawMessage(`{"path": "."}`), nil)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if res.IsError {
+		t.Fatalf("unexpected tool error: %s", res.Content)
+	}
+	if err := rt.CheckRead(tmp, "."); err == nil {
+		t.Fatal("reading a directory must not mark it as read")
+	}
+}

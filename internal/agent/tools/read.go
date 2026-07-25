@@ -24,7 +24,7 @@ const DefaultReadLines = 400
 
 var readSchema = Schema{
 	Name:        "read",
-	Description: fmt.Sprintf("Read file contents. Omitted limits return at most %d lines; set full:true only when the complete file is genuinely needed. Output is always capped at %d lines or %s and includes a continuation offset.", DefaultReadLines, DefaultMaxLines, FormatSize(DefaultMaxBytes)),
+	Description: fmt.Sprintf("Read file contents; pointed at a directory it returns a listing. Omitted limits return at most %d lines; set full:true only when the complete file is genuinely needed. Output is always capped at %d lines or %s and includes a continuation offset.", DefaultReadLines, DefaultMaxLines, FormatSize(DefaultMaxBytes)),
 	// NOTE: file is a compatibility alias for path; the executor
 	// handles the fallback (file → path) and returns a clear error
 	// when both are empty. We intentionally do NOT use anyOf here
@@ -55,6 +55,35 @@ var readSchema = Schema{
 			}
 		}
 	}`),
+}
+
+// maxDirEntries bounds the listing returned when read is pointed at a
+// directory. Large directories are truncated rather than refused.
+const maxDirEntries = 200
+
+// listDirResult renders a bounded directory listing. display is the path as
+// the caller wrote it, so the notice echoes their own spelling.
+func listDirResult(path, display string) (Result, error) {
+	entries, err := os.ReadDir(path)
+	if err != nil {
+		return Result{Content: fmt.Sprintf("error reading directory: %v", err), IsError: true}, nil
+	}
+
+	var b strings.Builder
+	fmt.Fprintf(&b, "%s is a directory, not a file. Listing:\n", display)
+	for i, e := range entries {
+		if i >= maxDirEntries {
+			fmt.Fprintf(&b, "\n[%d more entries; use find for a filtered search]", len(entries)-maxDirEntries)
+			break
+		}
+		if e.IsDir() {
+			fmt.Fprintf(&b, "%s/\n", e.Name())
+			continue
+		}
+		fmt.Fprintf(&b, "%s\n", e.Name())
+	}
+
+	return Result{Content: strings.TrimRight(b.String(), "\n"), Truncated: len(entries) > maxDirEntries}, nil
 }
 
 // NewReadTool creates the built-in read tool.
@@ -103,7 +132,10 @@ func makeReadExecutor(cwd string, rt *ReadTracker) Executor {
 			return Result{Content: fmt.Sprintf("error stating file: %v", err), IsError: true}, nil
 		}
 		if info.IsDir() {
-			return Result{Content: "path is a directory, not a file", IsError: true}, nil
+			// The intent is unambiguous, so answer it rather than spending a
+			// round trip on an error. Deliberately returned before MarkRead:
+			// a directory must never satisfy the read-before-write check.
+			return listDirResult(path, p.Path)
 		}
 		if info.Size() > maxReadBytes {
 			return Result{Content: fmt.Sprintf("file too large (%s > %s)", FormatSize(int(info.Size())), FormatSize(maxReadBytes)), IsError: true}, nil
