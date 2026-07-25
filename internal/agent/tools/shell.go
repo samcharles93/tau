@@ -8,6 +8,7 @@ import (
 	"io"
 	"os"
 	"os/exec"
+	"regexp"
 	"runtime"
 	"strings"
 	"time"
@@ -128,6 +129,10 @@ func makeShellExecutor(cwd string, mq *MutationQueue) Executor {
 			output = "(no output)"
 		}
 
+		// Collapse before truncation, so a long passing test run is reduced to
+		// its summaries rather than tail-truncated into a partial log.
+		output, _ = collapseGoTestOutput(p.Command, output, err == nil)
+
 		tr := TruncateTail(output, DefaultMaxLines, DefaultMaxBytes)
 		content := tr.Content
 		if tr.Truncated {
@@ -161,6 +166,51 @@ func makeShellExecutor(cwd string, mq *MutationQueue) Executor {
 
 		return Result{Content: content, Truncated: tr.Truncated, ResultBytes: len(output)}, nil
 	}
+}
+
+// goTestSummaryRe matches cmd/go's per-package result lines: "ok", "FAIL" and
+// "?" (no test files). Note it must NOT match "---", which prefixes per-test
+// result lines ("--- PASS: TestX") - exactly the noise being collapsed. A
+// package that fails to build reports as "FAIL <pkg> [build failed]", so the
+// package-level failure case is already covered by the FAIL alternative.
+var goTestSummaryRe = regexp.MustCompile(`^(ok|FAIL|\?)\s`)
+
+// goTestInvocationRe matches a `go test` invocation, allowing for a leading
+// `cd ... &&` and for flags between `go` and `test`. It deliberately does not
+// match wrappers like gotestsum, whose output format differs.
+var goTestInvocationRe = regexp.MustCompile(`(^|[;&|]\s*)go\s+test\b`)
+
+// collapseGoTestOutput reduces a PASSING `go test` run to its per-package
+// summary lines. A single `go test ./internal/tui2/... -v` in the analysed
+// sessions took 14.2s and returned 11,044 tokens - 11% of all shell result
+// tokens in one call - despite every test having passed, where the only
+// information the model needed was "they passed".
+//
+// Failing runs are returned verbatim: on failure the per-test detail is the
+// entire point, and collapsing it would force a re-run to recover it.
+func collapseGoTestOutput(command, output string, succeeded bool) (string, bool) {
+	if !succeeded || !goTestInvocationRe.MatchString(command) {
+		return output, false
+	}
+
+	lines := strings.Split(strings.TrimRight(output, "\n"), "\n")
+	kept := make([]string, 0, len(lines))
+	for _, l := range lines {
+		if goTestSummaryRe.MatchString(l) {
+			kept = append(kept, l)
+		}
+	}
+
+	// Nothing recognisable to keep, or nothing to gain: leave it alone rather
+	// than returning an empty result or appending a pointless notice.
+	if len(kept) == 0 || len(kept) == len(lines) {
+		return output, false
+	}
+
+	return fmt.Sprintf(
+		"%s\n\n[%d lines of passing per-test output collapsed; re-run with -v and a narrower package to see it]",
+		strings.Join(kept, "\n"), len(lines)-len(kept),
+	), true
 }
 
 // saveFullOutput writes the complete, untruncated command output to a temp
