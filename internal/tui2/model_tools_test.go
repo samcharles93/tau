@@ -1203,3 +1203,78 @@ func TestFocusNextToolAndFocusNextChildAreMutuallyExclusive(t *testing.T) {
 		t.Fatalf("focusedChild = %d, want -1 (cleared by focusNextTool landing a real focus)", m.focusedChild)
 	}
 }
+
+// TestToolArgLabel covers the argument-preview label generalised from
+// skillLabelFromArgs to every builtin tool. Before this, renderTool and
+// renderToolBox showed only the bare tool name for anything but "skill" - a
+// shell call gave zero visibility into what command was running or ran,
+// both live and after completion, which is a real safety gap: an operator
+// watching the TUI could not tell a destructive command from a benign one.
+func TestToolArgLabel(t *testing.T) {
+	tests := []struct {
+		name string
+		args string
+		want string
+	}{
+		{"shell", `{"command":"go test ./...","timeout":120}`, "shell: go test ./..."},
+		{"grep", `{"pattern":"TODO","path":"internal"}`, "grep: TODO"},
+		{"read", `{"path":"internal/foo.go"}`, "read: internal/foo.go"},
+		{"read", `{"file":"internal/foo.go"}`, "read: internal/foo.go"},
+		{"edit", `{"path":"internal/foo.go","edits":[]}`, "edit: internal/foo.go"},
+		{"write", `{"path":"internal/foo.go","content":"x"}`, "write: internal/foo.go"},
+		{"find", `{"pattern":"*.go"}`, "find: *.go"},
+		// skill behavior must be unchanged (delegates to skillLabelFromArgs).
+		{"skill", `{"name":"code-review"}`, "skill: code-review"},
+		{"skill", `{"no-name":"x"}`, "skill"},
+		// Unknown/plugin tools and malformed args fall back to the bare name
+		// rather than guessing at a field that may not exist.
+		{"my_plugin_tool", `{"foo":"bar"}`, "my_plugin_tool"},
+		{"shell", "not json", "shell"},
+		{"shell", "", "shell"},
+		{"agent", `{"agent":"tau","prompt":"do the thing"}`, "agent"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name+"/"+tt.args, func(t *testing.T) {
+			if got := toolArgLabel(tt.name, tt.args); got != tt.want {
+				t.Errorf("toolArgLabel(%q, %q) = %q, want %q", tt.name, tt.args, got, tt.want)
+			}
+		})
+	}
+}
+
+// A long shell command must not blow out the one-line collapsed row; the
+// full command is still visible in the expanded box's raw args.
+func TestToolArgLabel_TruncatesLongArgValue(t *testing.T) {
+	longCmd := strings.Repeat("x", 200)
+	got := toolArgLabel("shell", `{"command":"`+longCmd+`"}`)
+	if !strings.HasPrefix(got, "shell: ") {
+		t.Fatalf("expected shell: prefix, got %q", got)
+	}
+	if len(got) > 90 {
+		t.Fatalf("label too long: %d chars: %q", len(got), got)
+	}
+	if !strings.HasSuffix(got, "…") {
+		t.Fatalf("expected truncated label to end with an ellipsis, got %q", got)
+	}
+}
+
+// The running/pending row must show the arg label too, not just once done -
+// that's the actual safety-critical moment, before/while a command executes.
+func TestRenderTool_ShowsArgLabelWhileRunning(t *testing.T) {
+	tool := toolState{name: "shell", args: `{"command":"rm -rf /tmp/scratch"}`, status: "running"}
+	out := stripANSI(renderTool(tool, 0))
+	if !strings.Contains(out, "rm -rf /tmp/scratch") {
+		t.Fatalf("running shell call must show its command, got: %q", out)
+	}
+}
+
+func TestRenderTool_ShowsArgLabelWhenDone(t *testing.T) {
+	tool := toolState{name: "shell", args: `{"command":"go build ./..."}`, result: "(no output)", status: "done"}
+	out := stripANSI(renderTool(tool, 0))
+	if !strings.Contains(out, "go build ./...") {
+		t.Fatalf("completed shell call must show its command, got: %q", out)
+	}
+	if !strings.Contains(out, "no output") {
+		t.Fatalf("completed shell call must still show its result, got: %q", out)
+	}
+}

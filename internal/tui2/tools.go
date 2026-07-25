@@ -1,6 +1,7 @@
 package tui2
 
 import (
+	"encoding/json"
 	"fmt"
 	"slices"
 	"strings"
@@ -720,12 +721,7 @@ func (m *model) toggleToolExpansion() tea.Cmd {
 func renderTool(t toolState, frame int) string {
 	style := toolStyleForStatus(t.name, t.status)
 
-	// Build the label: tool name, or for skill tool, parse JSON args for
-	// the human-readable skill name.
-	label := t.name
-	if t.name == "skill" {
-		label = skillLabelFromArgs(t.args)
-	}
+	label := toolArgLabel(t.name, t.args)
 
 	// Lead with a lifecycle glyph - use per-tool spinnerIdx (Phase 1) when
 	// available, falling back to the shared frame for backward compatibility.
@@ -905,10 +901,7 @@ func (m *model) renderToolGroupBox(tools []toolState, expandedID string, focused
 // m.width; the child transcript overlay passes its own narrower inner
 // width instead).
 func (m *model) renderToolBox(t toolState, expanded bool, _ int, width int) string {
-	label := t.name
-	if t.name == "skill" {
-		label = skillLabelFromArgs(t.args)
-	}
+	label := toolArgLabel(t.name, t.args)
 
 	glyph := toolGlyph(t.status, t.spinnerIdx)
 	var elapsed time.Duration
@@ -1171,6 +1164,60 @@ func toolBoxStyleForStatus(toolName, status string) lipgloss.Style {
 		}
 		return toolBoxRunningStyle
 	}
+}
+
+// toolArgPreviewField names, per builtin tool, the single argument that best
+// previews what a call is actually doing.
+var toolArgPreviewField = map[string]string{
+	"shell": "command",
+	"grep":  "pattern",
+	"read":  "path",
+	"edit":  "path",
+	"write": "path",
+	"find":  "pattern",
+}
+
+// toolArgLabelMaxChars bounds the previewed value in the one-line label - the
+// full argument JSON is always available in the expanded box, so this only
+// needs to be identifiable at a glance, not complete.
+const toolArgLabelMaxChars = 60
+
+// toolArgLabel builds a "name: <value>" label previewing a tool call's
+// primary argument (the shell command, the grep pattern, the file path),
+// generalising the skill-only special case that used to be the only tool
+// with any argument visibility at all. Before this, a running or completed
+// shell call showed nothing but the bare word "shell" - no visibility into
+// what command was executing, which is a real safety gap for an operator
+// watching the TUI. The label is built at both render sites (renderTool and
+// renderToolBox) so it shows up while the call is still running, which is
+// the moment it actually matters, not just after it completes.
+//
+// Unknown or plugin tool names, and args that fail to parse or lack the
+// expected field, fall back to the bare tool name rather than guessing.
+func toolArgLabel(name, args string) string {
+	if name == "skill" {
+		return skillLabelFromArgs(args)
+	}
+	field, ok := toolArgPreviewField[name]
+	if !ok {
+		return name
+	}
+	var parsed map[string]any
+	if err := json.Unmarshal([]byte(args), &parsed); err != nil {
+		return name
+	}
+	value, _ := parsed[field].(string)
+	if value == "" && field == "path" {
+		// read accepts "file" as a compatibility alias for "path".
+		value, _ = parsed["file"].(string)
+	}
+	if value == "" {
+		return name
+	}
+	if runes := []rune(value); len(runes) > toolArgLabelMaxChars {
+		value = string(runes[:toolArgLabelMaxChars]) + "…"
+	}
+	return name + ": " + value
 }
 
 // skillLabelFromArgs extracts a human-readable skill name from tool arguments
