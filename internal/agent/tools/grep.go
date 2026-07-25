@@ -23,6 +23,13 @@ const (
 	// grepDefaultLimit is the default maximum number of matches returned.
 	grepDefaultLimit = 100
 	grepMaxBytes     = 24 * 1024
+
+	// grepMaxContext bounds context_before/context_after. Large context values
+	// spend the whole byte budget on padding: at the default limit of 100
+	// matches, every extra context line is 100 extra lines of output, so a
+	// request for 10 lines either side truncates long before it has shown 100
+	// distinct matches. Clamping keeps the budget on matches instead.
+	grepMaxContext = 5
 )
 
 // grepMatchLineRe recognises a match line in ripgrep-style output
@@ -49,7 +56,7 @@ type GrepIndex interface {
 
 var grepSchema = Schema{
 	Name:        "grep",
-	Description: fmt.Sprintf("Search file contents for a regex pattern using ripgrep (rg). Respects .gitignore. Returns matching lines with file paths and line numbers. Supports alternation (e.g. 'foo|bar') and full regex syntax. Use context_before/context_after to show surrounding lines. Output is capped at %d matches (adjustable via limit) and long lines are truncated to %d chars.", grepDefaultLimit, grepMaxLineChars),
+	Description: fmt.Sprintf("Search file contents for a regex pattern using ripgrep (rg). Respects .gitignore. Returns matching lines with file paths and line numbers. Supports alternation (e.g. 'foo|bar') and full regex syntax. Use context_before/context_after to show surrounding lines (capped at %d each). Output is capped at %d matches (adjustable via limit) and long lines are truncated to %d chars.", grepMaxContext, grepDefaultLimit, grepMaxLineChars),
 	Parameters: json.RawMessage(`{
 		"type": "object",
 		"properties": {
@@ -118,6 +125,8 @@ func makeGrepExecutor(cwd string, workspaceIndex GrepIndex) Executor {
 		ctx, cancel := context.WithTimeout(ctx, DefaultToolTimeout)
 		defer cancel()
 
+		clamped := clampGrepContext(&p)
+
 		searchPath := cwd
 		if p.Path != "" {
 			searchPath = resolvePath(cwd, p.Path)
@@ -149,12 +158,12 @@ func makeGrepExecutor(cwd string, workspaceIndex GrepIndex) Executor {
 			// No external binary available - use pure-Go fallback.
 			output, err := grepFallback(ctx, p, searchPath, cwd, searchTargets)
 			if err != nil {
-				return grepBackendResult(Result{Content: fmt.Sprintf("grep error: %v", err), IsError: true}, searchBackend), nil
+				return grepBackendResult(Result{Content: fmt.Sprintf("grep error: %v", err), IsError: true}, searchBackend, clamped), nil
 			}
 			if output == "" {
-				return grepBackendResult(Result{Content: "no matches found"}, searchBackend), nil
+				return grepBackendResult(Result{Content: "no matches found"}, searchBackend, clamped), nil
 			}
-			return grepBackendResult(capGrepResult(output, limit), searchBackend), nil
+			return grepBackendResult(capGrepResult(output, limit), searchBackend, clamped), nil
 		}
 
 		cmd := exec.CommandContext(ctx, binary, args...)
@@ -183,21 +192,45 @@ func makeGrepExecutor(cwd string, workspaceIndex GrepIndex) Executor {
 		}
 		if output == "" && err != nil {
 			if exitErr, ok := err.(*exec.ExitError); ok && exitErr.ExitCode() == 1 {
-				return grepBackendResult(Result{Content: "no matches found"}, searchBackend), nil
+				return grepBackendResult(Result{Content: "no matches found"}, searchBackend, clamped), nil
 			}
 			errMsg := stderr.String()
 			if errMsg == "" {
 				errMsg = err.Error()
 			}
-			return grepBackendResult(Result{Content: fmt.Sprintf("grep error: %s", errMsg), IsError: true}, searchBackend), nil
+			return grepBackendResult(Result{Content: fmt.Sprintf("grep error: %s", errMsg), IsError: true}, searchBackend, clamped), nil
 		}
 
-		return grepBackendResult(capGrepResult(output, limit), searchBackend), nil
+		return grepBackendResult(capGrepResult(output, limit), searchBackend, clamped), nil
 	}
 }
 
-func grepBackendResult(result Result, backend string) Result {
+// clampGrepContext bounds the context window in place and returns a notice
+// describing what was clamped, or "" if the request was already within limits.
+func clampGrepContext(p *GrepParams) string {
+	var clamped []string
+	if p.ContextBefore > grepMaxContext {
+		p.ContextBefore = grepMaxContext
+		clamped = append(clamped, "context_before")
+	}
+	if p.ContextAfter > grepMaxContext {
+		p.ContextAfter = grepMaxContext
+		clamped = append(clamped, "context_after")
+	}
+	if len(clamped) == 0 {
+		return ""
+	}
+	return fmt.Sprintf(
+		"[%s clamped to %d; for a wider window, read the file at the reported line numbers]",
+		strings.Join(clamped, " and "), grepMaxContext,
+	)
+}
+
+func grepBackendResult(result Result, backend, clampNotice string) Result {
 	result.MetricLabels = map[string]string{"search_backend": backend}
+	if clampNotice != "" && !result.IsError {
+		result.Content += "\n" + clampNotice
+	}
 	return result
 }
 

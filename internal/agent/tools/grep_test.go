@@ -297,3 +297,58 @@ func createGrepTestFile(t *testing.T, base, relPath, content string) {
 		t.Fatal(err)
 	}
 }
+
+func TestGrepClampsContextLines(t *testing.T) {
+	tmp := t.TempDir()
+	var lines []string
+	for i := 1; i <= 200; i++ {
+		if i == 100 {
+			lines = append(lines, "the needle")
+			continue
+		}
+		lines = append(lines, fmt.Sprintf("filler %d", i))
+	}
+	createGrepTestFile(t, tmp, "f.txt", strings.Join(lines, "\n")+"\n")
+
+	tool := NewGrepTool(tmp, nil)
+	res, err := tool.Execute(context.Background(), json.RawMessage(
+		`{"pattern":"needle","context_before":40,"context_after":40}`), nil)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if res.IsError {
+		t.Fatalf("unexpected tool error: %s", res.Content)
+	}
+
+	// Context is clamped to grepMaxContext either side, so a line that far
+	// from the match must not appear.
+	if strings.Contains(res.Content, "filler 80") || strings.Contains(res.Content, "filler 120") {
+		t.Fatalf("context lines were not clamped, got:\n%s", res.Content)
+	}
+	if !strings.Contains(res.Content, "filler 99") || !strings.Contains(res.Content, "filler 101") {
+		t.Fatalf("clamped context should still include adjacent lines, got:\n%s", res.Content)
+	}
+	if !strings.Contains(res.Content, "context") {
+		t.Fatalf("expected a notice explaining the clamp, got:\n%s", res.Content)
+	}
+}
+
+func TestGrepLeavesModestContextAlone(t *testing.T) {
+	tmp := t.TempDir()
+	createGrepTestFile(t, tmp, "f.txt", "a\nb\nneedle\nd\ne\n")
+
+	tool := NewGrepTool(tmp, nil)
+	res, err := tool.Execute(context.Background(), json.RawMessage(
+		`{"pattern":"needle","context_before":2,"context_after":2}`), nil)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if strings.Contains(res.Content, "clamped") {
+		t.Fatalf("a within-limit request must not be clamped, got:\n%s", res.Content)
+	}
+	for _, want := range []string{"a", "b", "needle", "d", "e"} {
+		if !strings.Contains(res.Content, want) {
+			t.Fatalf("missing %q in:\n%s", want, res.Content)
+		}
+	}
+}
