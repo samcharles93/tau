@@ -51,7 +51,7 @@ var readSchema = Schema{
 			},
 			"full": {
 				"type": "boolean",
-				"description": "Return the whole file up to the global safety cap. Defaults to false."
+				"description": "Return the whole file up to the global safety cap, and resend lines you have already been shown. Defaults to false. Lines already read from an unchanged file are skipped unless this is set."
 			}
 		}
 	}`),
@@ -176,9 +176,33 @@ func makeReadExecutor(cwd string, rt *ReadTracker) Executor {
 			endLine = startLine + p.Limit - 1
 		}
 
+		// Skip lines this session has already been shown from an unchanged
+		// file. Repeated reads were 23.6% of all tool result tokens across
+		// analysed sessions - one file was read 58 times in a single session.
+		// full:true is the deliberate escape hatch for a model that has lost
+		// the earlier content (compaction, handoff) and needs it resent.
+		requestedStart := startLine
+		if rt != nil && !p.Full {
+			novelStart, novelEnd, hasNovel := rt.Novel(cwd, p.Path, FileIdentity(info), startLine, endLine)
+			if !hasNovel {
+				return Result{Content: fmt.Sprintf(
+					"[lines %d-%d of %s are unchanged since you last read them; nothing new to show. Set full:true to have the content resent.]",
+					startLine, endLine, p.Path,
+				)}, nil
+			}
+			startLine, endLine = novelStart, novelEnd
+		}
+
 		selected := strings.Join(lines[startLine-1:endLine], "\n")
 		tr := TruncateHeadRaw(selected, DefaultMaxLines, DefaultMaxBytes)
 		output := tr.Content
+
+		if startLine > requestedStart {
+			output = fmt.Sprintf(
+				"[lines %d-%d unchanged since you last read them; showing from line %d.]\n\n",
+				requestedStart, startLine-1, startLine,
+			) + output
+		}
 
 		switch {
 		case tr.Truncated && tr.OutputLines == 0:

@@ -441,6 +441,7 @@ func RunChat(ctx context.Context, opts ChatOptions) error {
 		InitialCommands:           initialCommands,
 		Bus:                       bus,
 		RefreshModels:             refresher,
+		CheckUpdate:               NewUpdateChecker(opts.Version, opts.Config.Updates),
 		ShowReasoning:             opts.Config.UI.ShowReasoning,
 		ReasoningEffort:           opts.ReasoningEffort,
 		Debug:                     isDevel(opts.Version, opts.Config),

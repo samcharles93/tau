@@ -36,6 +36,7 @@ func Run(
 	metricsCfg tauconfig.MetricsConfig,
 	availableModels []tauchat.ChatModelRef,
 	refresh func(context.Context) ([]tauchat.ChatModelRef, error),
+	checkUpdate func(context.Context) (string, error),
 	showReasoning bool,
 	reasoningEffort string,
 	toolCallsDefaultCollapsed bool,
@@ -81,7 +82,7 @@ func Run(
 		onReady()
 	}
 
-	m := newModel(ctx, runtime, chatSub, sessionID, modelName, provider, availableModels, refresh, showReasoning, reasoningEffort, toolCallsDefaultCollapsed, tracker, webURL, debug)
+	m := newModel(ctx, runtime, chatSub, sessionID, modelName, provider, availableModels, refresh, checkUpdate, showReasoning, reasoningEffort, toolCallsDefaultCollapsed, tracker, webURL, debug)
 
 	// Derive the colour profile from the environment rather than letting Bubble
 	// Tea auto-detect it with OSC 10/11 queries. Those query responses can leak

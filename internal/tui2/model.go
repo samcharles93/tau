@@ -164,6 +164,9 @@ type model struct {
 	availableModels       []tauchat.ChatModelRef
 	refresh               func(context.Context) ([]tauchat.ChatModelRef, error)
 	completeProviderLogin func(string, providers.OAuthCredentials) error
+	// checkUpdate backs /update. The app layer owns it because only it knows
+	// the running binary's version. Nil means the check is unavailable.
+	checkUpdate func(context.Context) (string, error)
 	showReasoning         bool
 	reasoningEffort       string
 	ctxWindow             int // context window size for % display
@@ -323,6 +326,7 @@ func newModel(
 	sessionID, modelName, provider string,
 	availableModels []tauchat.ChatModelRef,
 	refresh func(context.Context) ([]tauchat.ChatModelRef, error),
+	checkUpdate func(context.Context) (string, error),
 	showReasoning bool,
 	reasoningEffort string,
 	toolCallsDefaultCollapsed bool,
@@ -358,6 +362,7 @@ func newModel(
 		toolsSel:                  newSelectionState(),
 		availableModels:           availableModels,
 		refresh:                   refresh,
+		checkUpdate:               checkUpdate,
 		completeProviderLogin:     providers.NewManage(nil).LoginComplete,
 		showReasoning:             showReasoning,
 		reasoningEffort:           reasoningEffort,
@@ -529,6 +534,13 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		m.availableModels = msg.models
 		return m, m.setNotification(fmt.Sprintf("refreshed: %d models available", len(msg.models)))
+
+	case updateCheckMsg:
+		if msg.err != nil {
+			return m, m.setNotification("update check failed: " + msg.err.Error())
+		}
+		m.appendMessage("system", msg.text)
+		return m, nil
 
 	case providerToggleResultMsg:
 		var line string

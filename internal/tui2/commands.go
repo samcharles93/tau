@@ -150,6 +150,10 @@ func init() {
 			},
 		},
 		{
+			name: "update", description: "check whether a newer tau release is available",
+			run: (*model).cmdUpdate,
+		},
+		{
 			name: "clear", aliases: []string{"new", "reset"}, description: "start a new session",
 			run: (*model).cmdClear,
 		},
@@ -420,6 +424,19 @@ func (m *model) cmdRefresh(_ string) tea.Cmd {
 			return refreshResultMsg{err: err}
 		}
 		return refreshResultMsg{models: models}
+	}
+}
+
+// cmdUpdate checks for a newer release without leaving the session. It only
+// checks: installing still goes through `tau update`, which replaces the
+// binary this process is running from.
+func (m *model) cmdUpdate(_ string) tea.Cmd {
+	if m.checkUpdate == nil {
+		return m.setNotification("update checks are not available in this build")
+	}
+	return func() tea.Msg {
+		text, err := m.checkUpdate(m.ctx)
+		return updateCheckMsg{text: text, err: err}
 	}
 }
 
@@ -855,4 +872,10 @@ func defaultEffortForModel(model tauchat.ChatModelRef) string {
 type refreshResultMsg struct {
 	models []tauchat.ChatModelRef
 	err    error
+}
+
+// updateCheckMsg carries the outcome of /update's release check.
+type updateCheckMsg struct {
+	text string
+	err  error
 }

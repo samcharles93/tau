@@ -3,6 +3,7 @@ package app
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"log/slog"
 	"net/http"
 	"os"
@@ -102,6 +103,41 @@ func StartBackgroundUpdateCheck(ctx context.Context, version string, updatesCfg 
 
 	// 7. Update cache.
 	writeUpdateCache(cachePath)
+}
+
+// NewUpdateChecker returns the /update handler for the TUI: an on-demand
+// release check that reports its outcome as a single line. It ignores the
+// 24-hour cache StartBackgroundUpdateCheck uses, because the user asked.
+// Installing is still `tau update` - swapping the binary underneath a running
+// session is not something a slash command should do.
+func NewUpdateChecker(version string, updatesCfg tauconfig.UpdatesConfig) func(context.Context) (string, error) {
+	return func(ctx context.Context) (string, error) {
+		if updatesCfg.Mode == "disabled" {
+			return "update checks are disabled (updates.mode: disabled)", nil
+		}
+
+		childCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
+		defer cancel()
+
+		result, err := updater.Run(childCtx, updater.Options{
+			CurrentVersion: version,
+			CheckOnly:      true,
+			HTTPClient:     &http.Client{Timeout: 10 * time.Second},
+			APIBaseURL:     os.Getenv("TAU_UPDATE_API_URL"),
+		})
+		switch {
+		case errors.Is(err, updater.ErrNoUpdate):
+			return "tau is already up to date (" + currentTagFromVersion(version) + ")", nil
+		case errors.Is(err, updater.ErrDevBuild):
+			return "dev build - update checks only apply to release builds", nil
+		case err != nil:
+			return "", err
+		}
+		if result.TargetVersion == "" || result.TargetVersion == currentTagFromVersion(version) {
+			return "tau is already up to date (" + currentTagFromVersion(version) + ")", nil
+		}
+		return "tau " + result.TargetVersion + " is available - run `tau update` to install", nil
+	}
 }
 
 // cacheFresh reports whether the cache file exists and was written less

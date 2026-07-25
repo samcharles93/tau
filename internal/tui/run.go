@@ -12,7 +12,7 @@ import (
 // inline renderer. It blocks until the user exits.
 func Run(ctx context.Context, runtime tauchat.ChatRuntime, cfg TUIConfig) error {
 	if cfg.NewTUI {
-		return tui2.Run(ctx, runtime, cfg.Bus, cfg.OnReady, cfg.SessionID, cfg.ModelName, cfg.Provider, cfg.MetricsConfig, cfg.AvailableModels, cfg.RefreshModels, cfg.ShowReasoning, cfg.ReasoningEffort, cfg.ToolCallsDefaultCollapsed, cfg.WebURL, cfg.Debug)
+		return tui2.Run(ctx, runtime, cfg.Bus, cfg.OnReady, cfg.SessionID, cfg.ModelName, cfg.Provider, cfg.MetricsConfig, cfg.AvailableModels, cfg.RefreshModels, cfg.CheckUpdate, cfg.ShowReasoning, cfg.ReasoningEffort, cfg.ToolCallsDefaultCollapsed, cfg.WebURL, cfg.Debug)
 	}
 	return RunInline(ctx, runtime, cfg)
 }
