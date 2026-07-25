@@ -168,10 +168,10 @@ type model struct {
 	// running binary's version and how to re-exec after an install. It returns
 	// the line to show, and whether a restart is now pending. Nil disables the
 	// command.
-	updateFn func(ctx context.Context, install bool) (string, bool, error)
-	showReasoning         bool
-	reasoningEffort       string
-	ctxWindow             int // context window size for % display
+	updateFn        func(ctx context.Context, install bool) (string, bool, error)
+	showReasoning   bool
+	reasoningEffort string
+	ctxWindow       int // context window size for % display
 
 	// skillsListPending records that the user ran /skills list, so the next
 	// SkillsChangedEvent may render the catalog into scrollback. Startup

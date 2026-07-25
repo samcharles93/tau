@@ -139,10 +139,21 @@ func makeGrepExecutor(cwd string, workspaceIndex GrepIndex) Executor {
 		args := buildGrepArgs(p)
 		searchTargets := []string{searchPath}
 		searchBackend := "direct"
-		if workspaceIndex != nil && filepath.Clean(searchPath) == filepath.Clean(cwd) {
+		// The index is workspace-wide, so it can serve any search scoped at or
+		// below cwd once its candidates are narrowed to the requested subtree.
+		// Requiring searchPath == cwd meant subdirectory searches silently fell
+		// back to a full walk, which is why the index served only 5% of
+		// searches across analysed sessions.
+		if workspaceIndex != nil && isConfined(cwd, searchPath) {
 			if candidates, ok := workspaceIndex.Candidates(ctx, p.Pattern, p.Literal, p.CaseSensitive); ok {
-				searchTargets = candidates
-				searchBackend = "codesearch"
+				if scoped := filterUnder(searchPath, candidates); len(scoped) > 0 {
+					searchTargets = scoped
+					searchBackend = "codesearch"
+				}
+				// An empty scoped set is NOT evidence of no matches: the index
+				// may simply be cold or stale for this subtree, so fall through
+				// to the authoritative direct walk rather than reporting "no
+				// matches found" from an empty candidate list.
 			}
 		}
 		args = append(args, searchTargets...)
@@ -203,6 +214,21 @@ func makeGrepExecutor(cwd string, workspaceIndex GrepIndex) Executor {
 
 		return grepBackendResult(capGrepResult(output, limit), searchBackend, clamped), nil
 	}
+}
+
+// filterUnder returns the candidates at or below root. Paths are compared
+// after cleaning so that a candidate is only kept when root is a genuine path
+// prefix, not merely a string prefix ("/a/bc" is not under "/a/b").
+func filterUnder(root string, candidates []string) []string {
+	root = filepath.Clean(root)
+
+	out := make([]string, 0, len(candidates))
+	for _, c := range candidates {
+		if isConfined(root, filepath.Clean(c)) {
+			out = append(out, c)
+		}
+	}
+	return out
 }
 
 // clampGrepContext bounds the context window in place and returns a notice

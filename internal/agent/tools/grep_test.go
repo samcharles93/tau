@@ -352,3 +352,58 @@ func TestGrepLeavesModestContextAlone(t *testing.T) {
 		}
 	}
 }
+
+// The index served only 5% of searches across the analysed sessions
+// (codesearch 11, direct 199) because it engaged only when the search path was
+// exactly cwd. Any subdirectory-scoped search silently fell back to a walk.
+func TestGrepUsesIndexForSubdirectorySearch(t *testing.T) {
+	tmp := t.TempDir()
+	createGrepTestFile(t, tmp, "sub/inside.txt", "needle\n")
+	createGrepTestFile(t, tmp, "other/outside.txt", "needle\n")
+
+	index := staticGrepIndex{files: []string{
+		filepath.Join(tmp, "sub", "inside.txt"),
+		filepath.Join(tmp, "other", "outside.txt"),
+	}}
+
+	tool := NewGrepTool(tmp, index)
+	res, err := tool.Execute(context.Background(), json.RawMessage(
+		`{"pattern":"needle","path":"sub"}`), nil)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if res.IsError {
+		t.Fatalf("unexpected tool error: %s", res.Content)
+	}
+	if got := res.MetricLabels["search_backend"]; got != "codesearch" {
+		t.Fatalf("search_backend = %q, want codesearch", got)
+	}
+	if !strings.Contains(res.Content, "inside.txt") {
+		t.Fatalf("expected the in-scope match, got:\n%s", res.Content)
+	}
+	if strings.Contains(res.Content, "outside.txt") {
+		t.Fatalf("candidates outside the search path must be filtered out, got:\n%s", res.Content)
+	}
+}
+
+// If the index has no candidates inside the requested subtree we must not
+// conclude "no matches" from an empty candidate list - fall back to a walk.
+func TestGrepFallsBackToDirectWhenNoCandidatesInSubtree(t *testing.T) {
+	tmp := t.TempDir()
+	createGrepTestFile(t, tmp, "sub/inside.txt", "needle\n")
+
+	index := staticGrepIndex{files: []string{filepath.Join(tmp, "elsewhere.txt")}}
+
+	tool := NewGrepTool(tmp, index)
+	res, err := tool.Execute(context.Background(), json.RawMessage(
+		`{"pattern":"needle","path":"sub"}`), nil)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if got := res.MetricLabels["search_backend"]; got != "direct" {
+		t.Fatalf("search_backend = %q, want direct", got)
+	}
+	if !strings.Contains(res.Content, "inside.txt") {
+		t.Fatalf("an empty candidate set must not hide real matches, got:\n%s", res.Content)
+	}
+}
