@@ -4,7 +4,9 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io/fs"
 	"os"
+	"path/filepath"
 	"strings"
 	"unicode/utf8"
 )
@@ -55,6 +57,74 @@ var readSchema = Schema{
 			}
 		}
 	}`),
+}
+
+const (
+	// maxPathSuggestions bounds how many alternatives a not-found read offers.
+	maxPathSuggestions = 5
+
+	// maxSuggestionScan bounds the walk behind those suggestions. A miss is
+	// already an error path, so it must stay cheap on a large workspace.
+	maxSuggestionScan = 20000
+)
+
+// suggestPaths looks for files sharing the missing path's basename. Reads that
+// fail on a plausible-but-wrong path cost a round trip plus a follow-up find;
+// naming the real location lets the model correct itself immediately.
+//
+// The match is on basename alone, which is loose, but a wrong suggestion costs
+// one line of output while no suggestion costs a whole round trip.
+func suggestPaths(cwd, missing string) string {
+	if cwd == "" {
+		return ""
+	}
+	want := filepath.Base(missing)
+	if want == "" || want == "." || want == string(filepath.Separator) {
+		return ""
+	}
+
+	var found []string
+	scanned := 0
+
+	_ = filepath.WalkDir(cwd, func(path string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return nil //nolint:nilerr // an unreadable subtree just yields no suggestions
+		}
+		if scanned++; scanned > maxSuggestionScan {
+			return fs.SkipAll
+		}
+		if d.IsDir() {
+			if skipSuggestionDir(d.Name()) {
+				return fs.SkipDir
+			}
+			return nil
+		}
+		if d.Name() != want {
+			return nil
+		}
+		if rel, relErr := filepath.Rel(cwd, path); relErr == nil {
+			found = append(found, rel)
+		}
+		if len(found) >= maxPathSuggestions {
+			return fs.SkipAll
+		}
+		return nil
+	})
+
+	if len(found) == 0 {
+		return ""
+	}
+	return "did you mean: " + strings.Join(found, ", ")
+}
+
+// skipSuggestionDir keeps the suggestion walk out of directories that are large
+// and never the answer.
+func skipSuggestionDir(name string) bool {
+	switch name {
+	case ".git", "node_modules", "vendor", "dist", "build", ".cache":
+		return true
+	}
+	return false
 }
 
 // maxDirEntries bounds the listing returned when read is pointed at a
@@ -129,7 +199,11 @@ func makeReadExecutor(cwd string, rt *ReadTracker) Executor {
 
 		info, err := os.Stat(path)
 		if err != nil {
-			return Result{Content: fmt.Sprintf("error stating file: %v", err), IsError: true}, nil
+			msg := fmt.Sprintf("error stating file: %v", err)
+			if hint := suggestPaths(cwd, path); hint != "" {
+				msg += "\n" + hint
+			}
+			return Result{Content: msg, IsError: true, ErrorKind: "not_found"}, nil
 		}
 		if info.IsDir() {
 			// The intent is unambiguous, so answer it rather than spending a

@@ -160,3 +160,34 @@ func TestReadTool_DirectoryDoesNotMarkRead(t *testing.T) {
 		t.Fatal("reading a directory must not mark it as read")
 	}
 }
+
+// 5 reads in the analysed corpus failed on plausible-but-wrong paths, each
+// costing a round trip plus a follow-up find.
+func TestReadTool_NotFoundSuggestsNearestPaths(t *testing.T) {
+	tmp := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(tmp, "internal", "ui", "theme"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	writeReadTestFile(t, filepath.Join(tmp, "internal", "ui", "theme"), "theme.go", "package theme\n")
+
+	res := execRead(t, tmp, `{"path":"internal/theme/theme.go"}`)
+	if !res.IsError {
+		t.Fatal("expected a not-found error")
+	}
+	if !strings.Contains(res.Content, filepath.Join("internal", "ui", "theme", "theme.go")) {
+		t.Fatalf("expected the real path to be suggested, got:\n%s", res.Content)
+	}
+}
+
+func TestReadTool_NotFoundWithNoCandidateStaysPlain(t *testing.T) {
+	tmp := t.TempDir()
+	writeReadTestFile(t, tmp, "other.go", "package other\n")
+
+	res := execRead(t, tmp, `{"path":"internal/nothing/absent.go"}`)
+	if !res.IsError {
+		t.Fatal("expected a not-found error")
+	}
+	if strings.Contains(res.Content, "did you mean") {
+		t.Fatalf("no candidate should mean no suggestion, got:\n%s", res.Content)
+	}
+}
