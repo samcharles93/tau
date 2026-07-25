@@ -235,6 +235,16 @@ func makeReadExecutor(cwd string, rt *ReadTracker) Executor {
 		lines := strings.Split(content, "\n")
 		totalLines := len(lines)
 
+		// For a large source file with no explicit range requested, an index of
+		// the whole file beats its first page. Returned before the served-range
+		// bookkeeping below, because the model has not been shown any of these
+		// lines and a later read of them must not be suppressed.
+		if p.Offset == 0 && p.Limit == DefaultReadLines && !p.Full {
+			if outline := outlineFor(path, lines); outline != "" {
+				return Result{Content: outline, Truncated: true, ResultBytes: len(data)}, nil
+			}
+		}
+
 		// Apply offset (1-based).
 		startLine := 1
 		if p.Offset > 0 {
