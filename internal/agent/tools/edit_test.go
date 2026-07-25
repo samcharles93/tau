@@ -259,3 +259,71 @@ func TestApplyEdits_ExactMatchPreservesTrailingWhitespace(t *testing.T) {
 		t.Fatalf("result mismatch: %q", got)
 	}
 }
+
+// The dominant stale_edit cause is indentation drift: the model reproduces the
+// right code with the wrong leading whitespace. Naming the line and showing the
+// file's actual text lets the retry succeed without re-reading the file.
+func TestEdit_NotFoundReportsNearestMatch(t *testing.T) {
+	tmp := t.TempDir()
+	path := filepath.Join(tmp, "f.go")
+	content := "package p\n\nfunc handleCancel() {\n\t\tdoWork()\n}\n"
+	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	rt := NewReadTracker()
+	rt.MarkRead(tmp, path)
+	tool := NewEditTool(tmp, NewMutationQueue(), rt)
+
+	// Same code, wrong indentation on the body line.
+	res, err := tool.Execute(context.Background(), json.RawMessage(
+		`{"path":"f.go","edits":[{"old_text":"func handleCancel() {\n\tdoWork()\n}","new_text":"func handleCancel() { return }"}]}`), nil)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !res.IsError {
+		t.Fatal("expected the edit to fail")
+	}
+	if !strings.Contains(res.Content, "line 3") {
+		t.Fatalf("error should name the nearest line, got:\n%s", res.Content)
+	}
+	if !strings.Contains(res.Content, "doWork()") {
+		t.Fatalf("error should show the file's actual text, got:\n%s", res.Content)
+	}
+
+	// The file must be untouched.
+	after, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(after) != content {
+		t.Fatalf("a failed edit must not write; file is now:\n%s", after)
+	}
+}
+
+func TestEdit_NotFoundWithNoPlausibleMatchStaysGeneric(t *testing.T) {
+	tmp := t.TempDir()
+	path := filepath.Join(tmp, "f.go")
+	if err := os.WriteFile(path, []byte("package p\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	rt := NewReadTracker()
+	rt.MarkRead(tmp, path)
+	tool := NewEditTool(tmp, NewMutationQueue(), rt)
+
+	res, err := tool.Execute(context.Background(), json.RawMessage(
+		`{"path":"f.go","edits":[{"old_text":"nothing like this exists","new_text":"x"}]}`), nil)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !res.IsError {
+		t.Fatal("expected the edit to fail")
+	}
+	if strings.Contains(res.Content, "nearest") {
+		t.Fatalf("no plausible match should mean no nearest-match hint, got:\n%s", res.Content)
+	}
+	if !strings.Contains(res.Content, "old_text not found") {
+		t.Fatalf("expected the generic error, got:\n%s", res.Content)
+	}
+}

@@ -11,9 +11,11 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/require"
 )
@@ -68,33 +70,54 @@ func TestChecksumForAsset(t *testing.T) {
 func TestExtractBinary(t *testing.T) {
 	t.Parallel()
 
-	tarGz := makeTarGz(t, "tau_1.2.3_linux_amd64/tau", []byte("new-binary"))
+	goodBin := buildTestBinary(t, `package main
+import "os"
+func main() {
+	if len(os.Args) > 1 && os.Args[1] == "--version" {
+		os.Stdout.WriteString("test v1.0.0\n")
+		os.Exit(0)
+	}
+	os.Exit(1)
+}`)
+
+	tarGz := makeTarGz(t, "tau_1.2.3_linux_amd64/tau", goodBin)
 	got, err := extractBinary("tau_1.2.3_linux_amd64.tar.gz", tarGz)
 	require.NoError(t, err)
-	require.Equal(t, []byte("new-binary"), got)
+	require.Equal(t, goodBin, got)
 
-	zipBytes := makeZip(t, "tau_1.2.3_windows_amd64/tau.exe", []byte("windows-binary"))
+	zipBytes := makeZip(t, "tau_1.2.3_windows_amd64/tau.exe", goodBin)
 	got, err = extractBinary("tau_1.2.3_windows_amd64.zip", zipBytes)
 	require.NoError(t, err)
-	require.Equal(t, []byte("windows-binary"), got)
+	require.Equal(t, goodBin, got)
 }
 
 func TestRunCheckOnlyDoesNotApplyUpdate(t *testing.T) {
 	t.Parallel()
 
-	server := fakeReleaseServer(t, []byte("new-binary"))
+	goodBin := buildTestBinary(t, `package main
+import "os"
+func main() {
+	if len(os.Args) > 1 && os.Args[1] == "--version" {
+		os.Stdout.WriteString("test v1.0.0\n")
+		os.Exit(0)
+	}
+	os.Exit(1)
+}`)
+
+	server := fakeReleaseServer(t, goodBin)
 	targetPath := filepath.Join(t.TempDir(), "tau")
 	require.NoError(t, os.WriteFile(targetPath, []byte("old-binary"), 0o755))
 
 	result, err := Run(context.Background(), Options{
-		CurrentVersion: "v1.0.0 (abc, date)",
-		Repo:           "samcharles93/tau",
-		CheckOnly:      true,
-		TargetPath:     targetPath,
-		GOOS:           "linux",
-		GOARCH:         "amd64",
-		HTTPClient:     server.Client(),
-		APIBaseURL:     server.URL,
+		CurrentVersion:      "v1.0.0 (abc, date)",
+		Repo:                "samcharles93/tau",
+		CheckOnly:           true,
+		TargetPath:          targetPath,
+		GOOS:                "linux",
+		GOARCH:              "amd64",
+		HTTPClient:          server.Client(),
+		APIBaseURL:          server.URL,
+		VerifyBinaryTimeout: 5 * time.Second,
 	})
 	require.NoError(t, err)
 	require.False(t, result.Updated)
@@ -108,18 +131,29 @@ func TestRunCheckOnlyDoesNotApplyUpdate(t *testing.T) {
 func TestRunAppliesUpdate(t *testing.T) {
 	t.Parallel()
 
-	server := fakeReleaseServer(t, []byte("new-binary"))
+	goodBin := buildTestBinary(t, `package main
+import "os"
+func main() {
+	if len(os.Args) > 1 && os.Args[1] == "--version" {
+		os.Stdout.WriteString("test v1.0.0\n")
+		os.Exit(0)
+	}
+	os.Exit(1)
+}`)
+
+	server := fakeReleaseServer(t, goodBin)
 	targetPath := filepath.Join(t.TempDir(), "tau")
 	require.NoError(t, os.WriteFile(targetPath, []byte("old-binary"), 0o755))
 
 	result, err := Run(context.Background(), Options{
-		CurrentVersion: "v1.0.0 (abc, date)",
-		Repo:           "samcharles93/tau",
-		TargetPath:     targetPath,
-		GOOS:           "linux",
-		GOARCH:         "amd64",
-		HTTPClient:     server.Client(),
-		APIBaseURL:     server.URL,
+		CurrentVersion:      "v1.0.0 (abc, date)",
+		Repo:                "samcharles93/tau",
+		TargetPath:          targetPath,
+		GOOS:                "linux",
+		GOARCH:              "amd64",
+		HTTPClient:          server.Client(),
+		APIBaseURL:          server.URL,
+		VerifyBinaryTimeout: 5 * time.Second,
 	})
 	require.NoError(t, err)
 	require.True(t, result.Updated)
@@ -127,7 +161,7 @@ func TestRunAppliesUpdate(t *testing.T) {
 
 	targetBytes, err := os.ReadFile(targetPath)
 	require.NoError(t, err)
-	require.Equal(t, []byte("new-binary"), targetBytes)
+	require.Equal(t, goodBin, targetBytes)
 }
 
 func TestRunNoUpdate(t *testing.T) {
@@ -144,6 +178,136 @@ func TestRunNoUpdate(t *testing.T) {
 	})
 	require.ErrorIs(t, err, ErrNoUpdate)
 }
+
+func TestRunDevBuildReturnsError(t *testing.T) {
+	t.Parallel()
+
+	_, err := Run(context.Background(), Options{
+		CurrentVersion: "dev",
+		Repo:           "samcharles93/tau",
+	})
+	require.ErrorIs(t, err, ErrDevBuild)
+}
+
+func TestRunDevBuildReturnsErrorEvenWithForce(t *testing.T) {
+	t.Parallel()
+
+	_, err := Run(context.Background(), Options{
+		CurrentVersion: "dev",
+		Repo:           "samcharles93/tau",
+		Force:          true,
+	})
+	require.ErrorIs(t, err, ErrDevBuild)
+}
+
+func TestCurrentTag(t *testing.T) {
+	t.Parallel()
+
+	require.Equal(t, "v1.2.3", currentTag("v1.2.3 (abc, 2026-07-10)"))
+	require.Equal(t, "dev", currentTag("dev"))
+	require.Equal(t, "", currentTag(strings.TrimSpace(" ")))
+}
+
+// --- verifyBinaryRuns tests ---
+
+func TestVerifyBinaryRunsSuccess(t *testing.T) {
+	t.Parallel()
+
+	goodBin := buildTestBinary(t, `package main
+import "os"
+func main() {
+	if len(os.Args) > 1 && os.Args[1] == "--version" {
+		os.Stdout.WriteString("test v1.0.0\n")
+		os.Exit(0)
+	}
+	os.Exit(1)
+}`)
+
+	err := verifyBinaryRuns(goodBin, "linux", 5*time.Second)
+	require.NoError(t, err)
+}
+
+func TestVerifyBinaryRunsNonZero(t *testing.T) {
+	t.Parallel()
+
+	badBin := buildTestBinary(t, `package main
+import "os"
+func main() {
+	if len(os.Args) > 1 && os.Args[1] == "--version" {
+		os.Stderr.WriteString("error: something went wrong\n")
+		os.Exit(2)
+	}
+	os.Exit(0)
+}`)
+
+	err := verifyBinaryRuns(badBin, "linux", 5*time.Second)
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "failed --version check: exit status 2")
+	require.Contains(t, err.Error(), "leaving existing install untouched")
+}
+
+func TestVerifyBinaryRunsHang(t *testing.T) {
+	t.Parallel()
+
+	hangBin := buildTestBinary(t, `package main
+import (
+	"os"
+	"time"
+)
+func main() {
+	if len(os.Args) > 1 && os.Args[1] == "--version" {
+		time.Sleep(10 * time.Minute)
+		os.Exit(0)
+	}
+	os.Exit(0)
+}`)
+
+	err := verifyBinaryRuns(hangBin, "linux", 1*time.Second)
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "did not respond to --version within")
+	require.Contains(t, err.Error(), "leaving existing install untouched")
+}
+
+// --- end-to-end: corrupt binary leaves existing install untouched ---
+
+func TestRunRejectsBinaryThatFailsVersionCheck(t *testing.T) {
+	t.Parallel()
+
+	badBin := buildTestBinary(t, `package main
+import "os"
+func main() {
+	if len(os.Args) > 1 && os.Args[1] == "--version" {
+		os.Exit(1)
+	}
+	os.Exit(0)
+}`)
+
+	server := fakeReleaseServer(t, badBin)
+	targetPath := filepath.Join(t.TempDir(), "tau")
+	existing := []byte("old-working-binary")
+	require.NoError(t, os.WriteFile(targetPath, existing, 0o755))
+
+	_, err := Run(context.Background(), Options{
+		CurrentVersion:      "v1.0.0 (abc, date)",
+		Repo:                "samcharles93/tau",
+		TargetPath:          targetPath,
+		GOOS:                "linux",
+		GOARCH:              "amd64",
+		HTTPClient:          server.Client(),
+		APIBaseURL:          server.URL,
+		VerifyBinaryTimeout: 5 * time.Second,
+	})
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "failed --version check")
+	require.Contains(t, err.Error(), "leaving existing install untouched")
+
+	// Existing binary must be untouched.
+	targetBytes, err := os.ReadFile(targetPath)
+	require.NoError(t, err)
+	require.Equal(t, existing, targetBytes)
+}
+
+// --- helpers ---
 
 func fakeReleaseServer(t *testing.T, binary []byte) *httptest.Server {
 	t.Helper()
@@ -175,6 +339,23 @@ func fakeReleaseServer(t *testing.T, binary []byte) *httptest.Server {
 	return server
 }
 
+func buildTestBinary(t *testing.T, mainSrc string) []byte {
+	t.Helper()
+
+	dir := t.TempDir()
+	srcPath := filepath.Join(dir, "main.go")
+	require.NoError(t, os.WriteFile(srcPath, []byte(mainSrc), 0o644))
+	outPath := filepath.Join(dir, "testbin")
+
+	cmd := exec.CommandContext(context.Background(), "go", "build", "-o", outPath, srcPath)
+	out, err := cmd.CombinedOutput()
+	require.NoError(t, err, "go build: %s", out)
+
+	bin, err := os.ReadFile(outPath)
+	require.NoError(t, err)
+	return bin
+}
+
 func makeTarGz(t *testing.T, name string, contents []byte) []byte {
 	t.Helper()
 
@@ -204,12 +385,4 @@ func makeZip(t *testing.T, name string, contents []byte) []byte {
 	require.NoError(t, err)
 	require.NoError(t, zw.Close())
 	return buf.Bytes()
-}
-
-func TestCurrentTag(t *testing.T) {
-	t.Parallel()
-
-	require.Equal(t, "v1.2.3", currentTag("v1.2.3 (abc, 2026-07-10)"))
-	require.Equal(t, "dev", currentTag("dev"))
-	require.Equal(t, "", currentTag(strings.TrimSpace(" ")))
 }

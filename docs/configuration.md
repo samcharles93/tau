@@ -72,6 +72,25 @@ plugins:
 
 Tau does not validate or interpret plugin config - each plugin parses its own section.
 
+## Updates
+
+The `updates` section controls how tau checks for new releases:
+
+```yaml
+updates:
+  mode: warn
+```
+
+| `updates.mode` | Behavior |
+|:---|:---|
+| `warn` (default) | `tau update` works; tau may notify when an update is available. |
+| `disabled` | No update checks at all — `tau update` is also disabled. |
+| `auto` (reserved) | Accepted but behaves as `warn` with a logged warning. Reserved for future background auto-update. |
+
+> **Note:** Dev builds (`go build` from source, version `dev`) are always excluded
+> from update checks. Only release builds downloaded from GitHub releases are
+> eligible. See `tau update --help` for the manual update flow.
+
 ## Example Configurations
 
 ### Minimal (API Key)
@@ -203,6 +222,7 @@ Tau's config directory is `~/.config/tau/`:
 ```
 ~/.config/tau/
 ├── config.yaml           # Global config
+├── auth.yaml             # Managed provider credentials (API keys, OAuth tokens)
 ├── models.json           # models.dev catalog cache
 ├── api.overrides.json    # Model metadata overrides (optional)
 ├── sessions.db           # SQLite session store
@@ -211,6 +231,11 @@ Tau's config directory is `~/.config/tau/`:
 ├── skills/               # User skills
 └── tau.log               # Application logs
 ```
+
+API keys entered via `tau setup` or `tau provider login` are stored in `auth.yaml`, not
+`config.yaml`, so hand-edited config never contains secrets. See
+[Providers > Credential Sources](providers.md#credential-sources) for details on managed keys vs
+env vars vs OAuth.
 
 ## Programmatic Access
 

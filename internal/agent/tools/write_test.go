@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 )
 
 func TestWriteTool_PopulatesDiffDetails_NewFile(t *testing.T) {
@@ -64,5 +65,34 @@ func TestWriteTool_PopulatesDiffDetails_Overwrite(t *testing.T) {
 	}
 	if details.NewContent != "new content\n" {
 		t.Fatalf("NewContent mismatch: got %q", details.NewContent)
+	}
+}
+
+// TestWriteTool_RespectsParentContextDeadline is the regression test for
+// tau-6wa: the executor used to create a timeout-derived context and then
+// discard it, passing the original (unbounded) ctx to every downstream I/O
+// call. With that bug, an already-expired parent context would have no
+// effect on the write. Here the parent's deadline has already passed when
+// Execute is called, so the executor must surface a timeout error instead
+// of proceeding to write the file.
+func TestWriteTool_RespectsParentContextDeadline(t *testing.T) {
+	tmp := t.TempDir()
+	path := filepath.Join(tmp, "f.txt")
+
+	ctx, cancel := context.WithDeadline(context.Background(), time.Now().Add(-time.Second))
+	defer cancel()
+
+	tool := NewWriteTool(tmp, NewMutationQueue(), nil)
+	params := `{"path": "f.txt", "content": "hello\n"}`
+	res, err := tool.Execute(ctx, json.RawMessage(params), nil)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !res.IsError {
+		t.Fatalf("expected a timeout error result for an already-expired context, got success: %+v", res)
+	}
+
+	if _, statErr := os.Stat(path); statErr == nil {
+		t.Fatal("expected no file to be written when the context had already expired")
 	}
 }

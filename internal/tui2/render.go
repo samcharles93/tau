@@ -52,6 +52,10 @@ func (m *model) appendMessage(role, content string) {
 	if role == "assistant" {
 		m.lastAssistantText = content
 	}
+	// spacingBetweenMessages blank lines between distinct messages (0 today).
+	for range spacingBetweenMessages {
+		m.renderedLines = append(m.renderedLines, "")
+	}
 	lines := strings.Split(content, "\n")
 	if role == "tool" {
 		m.renderedLines = append(m.renderedLines, lines...)
@@ -80,7 +84,7 @@ func renderLine(role, content string) string {
 	case "assistant":
 		return assistantStyle.Render(content)
 	default:
-		return content
+		return continuationStyle.Render(content)
 	}
 }
 

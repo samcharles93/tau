@@ -281,5 +281,5 @@ func TestCmdCopyEmptyHistory(t *testing.T) {
 
 //nolint:unused // used by copy command tests
 func newTestModelCopy(rt tauchat.ChatRuntime) *model {
-	return newModel(context.Background(), rt, nil, "sess", "gpt", "openai", nil, nil, true, "medium", false, nil, "", false)
+	return newModel(context.Background(), rt, nil, "sess", "gpt", "openai", nil, nil, nil, true, "medium", false, nil, "", false)
 }

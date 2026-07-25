@@ -374,50 +374,53 @@ func (c *inlineChat) computeStatus() string {
 	// Context window from the selected model's config (takes c.mu internally).
 	ctxWindow := c.currentModelRef().Config.ContextWindow
 
-	// ── LEFT: identity (static during a turn). nil style → grey. ──
-	left := []statusSeg{{text: "τ tau"}}
+	// ── LEFT: identity (static during a turn). nil style → grey. "τ tau" is
+	// prioTransient (undroppable) - it's the app's own identity, the last
+	// thing that should ever disappear under width pressure (mirrors
+	// internal/tui2's identical choice for its own "τ" segment). ──
+	left := []statusSeg{{Text: "τ tau", Prio: prioTransient}}
 	if model != "" {
-		left = append(left, statusSeg{text: model})
+		left = append(left, statusSeg{Text: model})
 	}
 	if prov != "" {
-		left = append(left, statusSeg{text: prov})
+		left = append(left, statusSeg{Text: prov})
 	}
 	if effort != "" && effort != "auto" {
-		left = append(left, statusSeg{text: effort})
+		left = append(left, statusSeg{Text: effort})
 	}
 
 	// ── RIGHT: live metrics (right-justified). Transient items lead so they
 	// are never dropped by width pressure. ──
 	var right []statusSeg
 	if c.steering.Load() {
-		right = append(right, statusSeg{text: c.steerLabel(), style: steerStyle, prio: prioTransient})
+		right = append(right, statusSeg{Text: c.steerLabel(), Style: steerStyle, Prio: prioTransient})
 	}
 	if note != "" {
-		right = append(right, statusSeg{text: note, prio: prioTransient})
+		right = append(right, statusSeg{Text: note, Prio: prioTransient})
 	}
 	if totals != nil {
 		if totals.PromptTokens > 0 || totals.CompletionTokens > 0 {
 			right = append(right, statusSeg{
-				text: "↑" + humanizeTokens(totals.PromptTokens) + " ↓" + humanizeTokens(totals.CompletionTokens),
-				prio: prioTokens,
+				Text: "↑" + humanizeTokens(totals.PromptTokens) + " ↓" + humanizeTokens(totals.CompletionTokens),
+				Prio: prioTokens,
 			})
 		}
 		if totals.Cost > 0 {
-			right = append(right, statusSeg{text: formatCost(totals.Cost), prio: prioCost})
+			right = append(right, statusSeg{Text: formatCost(totals.Cost), Prio: prioCost})
 		}
 		if p := contextPct(totals.LastPromptTokens, ctxWindow); p >= 0 {
 			right = append(right, statusSeg{
-				text:  "ctx " + formatContextPct(totals.LastPromptTokens, ctxWindow),
-				style: contextStyle(p),
-				prio:  prioContext,
+				Text:  "ctx " + formatContextPct(totals.LastPromptTokens, ctxWindow),
+				Style: contextStyle(p),
+				Prio:  prioContext,
 			})
 		}
 	}
 	if webURL != "" {
 		right = append(right, statusSeg{
-			text:           "Open Browser",
-			styledOverride: termkit.FgOnly(termkit.Hyperlink("Open Browser", webURL), termkit.ColorGrey),
-			prio:           prioWeb,
+			Text:           "Open Browser",
+			StyledOverride: termkit.FgOnly(termkit.Hyperlink("Open Browser", webURL), termkit.ColorGrey),
+			Prio:           prioWeb,
 		})
 	}
 

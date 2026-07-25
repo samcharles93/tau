@@ -168,6 +168,33 @@ func (m ChatModelRef) Validate() error {
 	return nil
 }
 
+// SelectionID returns the provider-qualified identifier used by model pickers.
+// Qualification keeps models with the same ID but different providers distinct.
+func (m ChatModelRef) SelectionID() string {
+	if m.Provider == "" {
+		return m.ID
+	}
+	return m.Provider + "/" + m.ID
+}
+
+// ResolveModelSelection finds a model by its provider-qualified selection ID.
+// A bare model ID remains supported for typed commands and resolves to the
+// first matching entry for backward compatibility.
+func ResolveModelSelection(models []ChatModelRef, selection string) (ChatModelRef, bool) {
+	selection = strings.TrimSpace(selection)
+	for _, model := range models {
+		if model.SelectionID() == selection {
+			return model, true
+		}
+	}
+	for _, model := range models {
+		if model.ID == selection {
+			return model, true
+		}
+	}
+	return ChatModelRef{}, false
+}
+
 // MarshalJSON surfaces the resolved model's context-window size, pricing, and
 // reasoning effort levels to wire consumers (e.g. the web UI). The Config
 // field itself stays off the wire; only these derived fields are exposed

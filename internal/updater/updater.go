@@ -13,6 +13,8 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"os"
+	"os/exec"
 	"path/filepath"
 	"runtime"
 	"strings"
@@ -27,19 +29,23 @@ const (
 	userAgent         = "tau"
 )
 
-var ErrNoUpdate = errors.New("tau is already up to date")
+var (
+	ErrNoUpdate = errors.New("tau is already up to date")
+	ErrDevBuild = errors.New("dev builds cannot update; use a release build for update checks")
+)
 
 type Options struct {
-	CurrentVersion string
-	TargetVersion  string
-	Repo           string
-	CheckOnly      bool
-	Force          bool
-	TargetPath     string
-	GOOS           string
-	GOARCH         string
-	HTTPClient     *http.Client
-	APIBaseURL     string
+	CurrentVersion      string
+	TargetVersion       string
+	Repo                string
+	CheckOnly           bool
+	Force               bool
+	TargetPath          string
+	GOOS                string
+	GOARCH              string
+	HTTPClient          *http.Client
+	APIBaseURL          string
+	VerifyBinaryTimeout time.Duration
 }
 
 type Result struct {
@@ -64,12 +70,14 @@ type releaseAsset struct {
 
 func Run(ctx context.Context, opts Options) (Result, error) {
 	opts = withDefaults(opts)
+	current := currentTag(opts.CurrentVersion)
+	if current == "dev" {
+		return Result{CurrentVersion: current}, ErrDevBuild
+	}
 	rel, err := fetchRelease(ctx, opts)
 	if err != nil {
 		return Result{}, err
 	}
-
-	current := currentTag(opts.CurrentVersion)
 	result := Result{
 		CurrentVersion: current,
 		TargetVersion:  rel.TagName,
@@ -77,6 +85,10 @@ func Run(ctx context.Context, opts Options) (Result, error) {
 	}
 	if current == rel.TagName && !opts.Force {
 		return result, ErrNoUpdate
+	}
+
+	if opts.CheckOnly {
+		return result, nil
 	}
 
 	assetName, err := ArchiveName(rel.TagName, opts.GOOS, opts.GOARCH)
@@ -89,10 +101,6 @@ func Run(ctx context.Context, opts Options) (Result, error) {
 	}
 	result.AssetName = asset.Name
 	result.DownloadURL = asset.BrowserDownloadURL
-
-	if opts.CheckOnly {
-		return result, nil
-	}
 
 	checksumAsset, ok := findAsset(rel.Assets, "checksums.txt")
 	if !ok {
@@ -113,6 +121,9 @@ func Run(ctx context.Context, opts Options) (Result, error) {
 
 	binary, err := extractBinary(asset.Name, archiveBytes)
 	if err != nil {
+		return Result{}, err
+	}
+	if err := verifyBinaryRuns(binary, opts.GOOS, opts.VerifyBinaryTimeout); err != nil {
 		return Result{}, err
 	}
 	binaryHash := sha256.Sum256(binary)
@@ -144,6 +155,9 @@ func withDefaults(opts Options) Options {
 	}
 	if opts.APIBaseURL == "" {
 		opts.APIBaseURL = defaultAPIBaseURL
+	}
+	if opts.VerifyBinaryTimeout == 0 {
+		opts.VerifyBinaryTimeout = 10 * time.Second
 	}
 	return opts
 }
@@ -310,6 +324,50 @@ func extractZip(archiveBytes []byte) ([]byte, error) {
 		return binary, nil
 	}
 	return nil, errors.New("release archive did not contain tau binary")
+}
+
+func verifyBinaryRuns(binary []byte, goos string, timeout time.Duration) error {
+	name := "tau"
+	if goos == "windows" {
+		name = "tau.exe"
+	}
+	f, err := os.CreateTemp("", name+"-verify-*")
+	if err != nil {
+		return fmt.Errorf("creating temp file for binary verification: %w", err)
+	}
+	if _, err := f.Write(binary); err != nil {
+		f.Close()
+		os.Remove(f.Name())
+		return fmt.Errorf("writing temp binary for verification: %w", err)
+	}
+	if err := f.Close(); err != nil {
+		os.Remove(f.Name())
+		return fmt.Errorf("closing temp binary for verification: %w", err)
+	}
+	defer os.Remove(f.Name())
+
+	if err := os.Chmod(f.Name(), 0o755); err != nil {
+		return fmt.Errorf("making temp binary executable: %w", err)
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	defer cancel()
+
+	cmd := exec.CommandContext(ctx, f.Name(), "--version")
+	cmd.Stdout = io.Discard
+	cmd.Stderr = io.Discard
+
+	if err := cmd.Run(); err != nil {
+		if ctx.Err() == context.DeadlineExceeded {
+			return fmt.Errorf("downloaded binary did not respond to --version within %v — leaving existing install untouched", timeout)
+		}
+		var exitErr *exec.ExitError
+		if errors.As(err, &exitErr) {
+			return fmt.Errorf("downloaded binary failed --version check: exit status %d — leaving existing install untouched", exitErr.ExitCode())
+		}
+		return fmt.Errorf("downloaded binary failed --version check: %w — leaving existing install untouched", err)
+	}
+	return nil
 }
 
 func isTauBinary(name string) bool {

@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/samcharles93/tau/internal/agent"
@@ -421,6 +422,10 @@ func RunChat(ctx context.Context, opts ChatOptions) error {
 		}
 	}
 
+	// restartWanted is set by /update once a new binary is in place; the re-exec
+	// happens after the TUI exits (see the end of this function).
+	var restartWanted atomic.Bool
+
 	// Start the chat session (and load its history, on --resume) before
 	// loading plugins - both run only once the TUI has subscribed to bus
 	// events (see chatSessionOnReady's own comment for why).
@@ -429,6 +434,7 @@ func RunChat(ctx context.Context, opts ChatOptions) error {
 		if pluginOnReady != nil {
 			pluginOnReady()
 		}
+		go StartBackgroundUpdateCheck(ctx, opts.Version, opts.Config.Updates, bus)
 	}
 
 	tuiCfg := tui.TUIConfig{
@@ -440,6 +446,7 @@ func RunChat(ctx context.Context, opts ChatOptions) error {
 		InitialCommands:           initialCommands,
 		Bus:                       bus,
 		RefreshModels:             refresher,
+		UpdateFunc:                NewUpdateFunc(opts.Version, opts.Config.Updates, &restartWanted),
 		ShowReasoning:             opts.Config.UI.ShowReasoning,
 		ReasoningEffort:           opts.ReasoningEffort,
 		Debug:                     isDevel(opts.Version, opts.Config),
@@ -469,6 +476,15 @@ func RunChat(ctx context.Context, opts ChatOptions) error {
 		printExitSummary(ctx, sessionManager, sessionID, resumeSummary)
 		if err := sessionManager.Close(); err != nil {
 			slog.Warn("closing session store", "err", err)
+		}
+	}
+
+	// /update replaced this binary on disk: re-exec so the session the user
+	// gets back is running the new code. Done last, after the TUI has restored
+	// the terminal and every resource above is released.
+	if restartWanted.Load() && tuiErr == nil {
+		if err := restartInPlace(); err != nil {
+			fmt.Fprintf(os.Stderr, "tau updated but could not restart: %v\nrun tau again to use the new version\n", err)
 		}
 	}
 

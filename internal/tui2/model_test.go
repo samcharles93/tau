@@ -67,7 +67,7 @@ func drainCmd(cmd tea.Cmd) []tea.Msg {
 }
 
 func newTestModel(rt tauchat.ChatRuntime, sub *eventbus.Subscriber[tauchat.ChatEvent]) *model {
-	return newModel(context.Background(), rt, sub, "sess", "gpt", "openai", nil, nil, true, "medium", false, nil, "", false)
+	return newModel(context.Background(), rt, sub, "sess", "gpt", "openai", nil, nil, nil, true, "medium", false, nil, "", false)
 }
 
 func TestBashSendFailureClearsRunning(t *testing.T) {
@@ -354,13 +354,13 @@ func TestViewPinsInputAreaToBottomInAltScreen(t *testing.T) {
 		t.Fatalf("rendered view = %d lines, want 40 (fill terminal)", len(lines))
 	}
 	plain := stripANSI(view.Content)
-	for _, want := range []string{"⏎ hi", "╭ chat", "╰"} {
+	for _, want := range []string{"⏎     hi", "╭ chat", "╰"} {
 		if !strings.Contains(plain, want) {
 			t.Fatalf("rendered view missing %q:\n%s", want, plain)
 		}
 	}
 
-	hiLine := lineContaining(lines, "⏎ hi")
+	hiLine := lineContaining(lines, "⏎     hi")
 	if hiLine < 30 {
 		t.Fatalf("content line = %d, expected short content near the bottom", hiLine)
 	}

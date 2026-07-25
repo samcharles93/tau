@@ -65,13 +65,32 @@ type AgentToolConfig struct {
 	ParentSystemPrompt string
 }
 
+// spawnableBuiltins returns the names of built-in specs the model is actually
+// allowed to spawn. Specs carrying disable-model-invocation are excluded: the
+// schema previously advertised research and plan, both of which are rejected on
+// arrival by executeSpawn, so every such call was a guaranteed wasted turn.
+func spawnableBuiltins() []string {
+	defs, err := spec.Builtins()
+	if err != nil {
+		return nil
+	}
+	names := make([]string, 0, len(defs))
+	for _, def := range defs {
+		if def.DisableModelInvocation {
+			continue
+		}
+		names = append(names, def.Name)
+	}
+	return names
+}
+
 // NewAgentTool creates the agent tool for spawning child agent processes.
 func NewAgentTool(cfg AgentToolConfig) Tool {
 	return Tool{
 		Schema: Schema{
 			Name:        "agent",
 			Description: agentToolDescription,
-			Parameters:  agentToolParams,
+			Parameters:  agentToolParams(),
 		},
 		Execute: func(ctx context.Context, params json.RawMessage, ui UIBridge) (Result, error) {
 			return executeAgentTool(ctx, params, ui, cfg)
@@ -82,65 +101,69 @@ func NewAgentTool(cfg AgentToolConfig) Tool {
 
 const agentToolDescription = `Spawn a child agent to delegate a task to. Use this when:
 - The task is large enough to benefit from a dedicated agent with its own toolset and context.
-- You need a specialist agent (e.g. research for deep exploration, plan for structured planning).
 - The work can run in parallel with other work (multiple agent calls in one turn run concurrently).
 
 Choose the target agent by name based on its description. Use the default "tau" agent for general-purpose delegation. Prefer fresh context unless the child genuinely needs the full parent conversation history.`
 
-var agentToolParams = mustMarshal(map[string]any{
-	"type": "object",
-	"properties": map[string]any{
-		"agent": map[string]any{
-			"type":        "string",
-			"description": "The agent spec to spawn: a built-in name (research, plan, tau, task) or a prefixed spec (user:name, project:name). Required unless 'resume' is set - spec identity cannot change on resume.",
-		},
-		"prompt": map[string]any{
-			"type":        "string",
-			"description": "The task for the child agent to complete.",
-		},
-		"context": map[string]any{
-			"type":        "string",
-			"description": "Optional context string passed to the child as a <parent_context> block. Ignored when context_mode is fork. Mutually exclusive with resume.",
-		},
-		"context_mode": map[string]any{
-			"type":        "string",
-			"enum":        []string{"fresh", "fork"},
-			"description": "How to seed the child's session. 'fresh' (default) starts a new session with the system prompt and task. 'fork' copies the full parent conversation history. Mutually exclusive with resume.",
-		},
-		"resume": map[string]any{
-			"type":        "string",
-			"description": "Session ID of a previously finished child session to continue. Only an ancestor of the session's original agent instance may resume it. Mutually exclusive with agent/context/context_mode.",
-		},
-		"model": map[string]any{
-			"type":        "string",
-			"description": "Tier name (fast, smart, deep) or concrete model. Overrides the spec's model. Precedence: spawn > spec > inherit.",
-		},
-		"tools": map[string]any{
-			"type":        "array",
-			"items":       map[string]string{"type": "string"},
-			"description": "Optional list of tool names to further narrow the child's toolset. Can only restrict, never add tools the child wouldn't already have.",
-		},
-		"budget": map[string]any{
-			"type": "object",
-			"properties": map[string]any{
-				"max_tokens": map[string]any{
-					"type":        "integer",
-					"description": "Maximum total tokens the child may consume before returning partial results. Must be >= 0.",
-				},
-				"timeout": map[string]any{
-					"type":        "string",
-					"description": "Relative wall-clock limit (e.g. '5m', '1h'), overriding the spec/config default for this call. 1s-24h; values over 24h are capped.",
-				},
-				"deadline": map[string]any{
-					"type":        "string",
-					"description": "Absolute RFC 3339 deadline (e.g. '2026-07-13T12:00:00Z') after which the child must stop, independent of timeout. Must be in the future.",
-				},
+func agentToolParams() json.RawMessage {
+	return mustMarshal(map[string]any{
+		"type": "object",
+		"properties": map[string]any{
+			"agent": map[string]any{
+				"type": "string",
+				"description": fmt.Sprintf(
+					"The agent spec to spawn: a spawnable built-in name (%s) or a prefixed spec (user:name, project:name). Required unless 'resume' is set - spec identity cannot change on resume.",
+					strings.Join(spawnableBuiltins(), ", "),
+				),
 			},
-			"description": "Optional budget caps for this specific task.",
+			"prompt": map[string]any{
+				"type":        "string",
+				"description": "The task for the child agent to complete.",
+			},
+			"context": map[string]any{
+				"type":        "string",
+				"description": "Optional context string passed to the child as a <parent_context> block. Ignored when context_mode is fork. Mutually exclusive with resume.",
+			},
+			"context_mode": map[string]any{
+				"type":        "string",
+				"enum":        []string{"fresh", "fork"},
+				"description": "How to seed the child's session. 'fresh' (default) starts a new session with the system prompt and task. 'fork' copies the full parent conversation history. Mutually exclusive with resume.",
+			},
+			"resume": map[string]any{
+				"type":        "string",
+				"description": "Session ID of a previously finished child session to continue. Only an ancestor of the session's original agent instance may resume it. Mutually exclusive with agent/context/context_mode.",
+			},
+			"model": map[string]any{
+				"type":        "string",
+				"description": "Tier name (fast, smart, deep) or concrete model. Overrides the spec's model. Precedence: spawn > spec > inherit.",
+			},
+			"tools": map[string]any{
+				"type":        "array",
+				"items":       map[string]string{"type": "string"},
+				"description": "Optional list of tool names to further narrow the child's toolset. Can only restrict, never add tools the child wouldn't already have.",
+			},
+			"budget": map[string]any{
+				"type": "object",
+				"properties": map[string]any{
+					"max_tokens": map[string]any{
+						"type":        "integer",
+						"description": "Maximum total tokens the child may consume before returning partial results. Must be >= 0.",
+					},
+					"timeout": map[string]any{
+						"type":        "string",
+						"description": "Relative wall-clock limit (e.g. '5m', '1h'), overriding the spec/config default for this call. 1s-24h; values over 24h are capped.",
+					},
+					"deadline": map[string]any{
+						"type":        "string",
+						"description": "Absolute RFC 3339 deadline (e.g. '2026-07-13T12:00:00Z') after which the child must stop, independent of timeout. Must be in the future.",
+					},
+				},
+				"description": "Optional budget caps for this specific task.",
+			},
 		},
-	},
-	"required": []string{"prompt"},
-})
+		"required": []string{"prompt"},
+	})
+}
 
 // agentToolArgs is the parsed shape of the agent tool's parameters.
 type agentToolArgs struct {
@@ -450,12 +473,12 @@ func spawnChildProcess(ctx context.Context, args agentToolArgs, cfg AgentToolCon
 		tauPath, _ = exec.LookPath("tau") // Best effort - let exec fail if not found.
 	}
 
-	cmd := exec.CommandContext(ctx, tauPath, "--child")
-	// Disable exec.CommandContext's default cancellation behavior (an
-	// immediate Process.Kill() of just the direct process). Cancellation
-	// is instead handled by our own three-phase escalation (below), which
-	// signals the whole process group, not only the direct child.
-	cmd.Cancel = func() error { return nil }
+	// Use exec.Command, not exec.CommandContext: cancellation is handled
+	// by our own three-phase escalation (superviseCancellation) and
+	// readChildResult's context check. exec.CommandContext would cause
+	// Start() to return ctx.Err() when the context is already cancelled
+	// (e.g. under load), losing the structured cancellation result.
+	cmd := exec.Command(tauPath, "--child") //nolint:noctx // cancellation is handled by superviseCancellation, not ctx
 	cmd.Dir = cfg.CWD
 	cmd.Env = nil // inherit
 	setProcessGroup(cmd)
@@ -1044,12 +1067,15 @@ func readChildResult(ctx context.Context, reader *stdio.Reader, instanceID, call
 		switch typ {
 		case "agent.event":
 			if childPub != nil {
-				childPub.Publish(tauchat.ChatToolOutputEvent{
-					SessionID:  parentSessionID,
-					CallID:     instanceID,
-					Chunk:      string(payload),
-					ReceivedAt: time.Now(),
-				})
+				// Publish the decoded event for the child-transcript renderer
+				// (internal/tui2 appendChildMessageEvent and equivalents).
+				// Do NOT also publish a ChatToolOutputEvent here: that event
+				// type is documented as a live human-readable text chunk, but
+				// the only "chunk" available at this point is the raw wire
+				// envelope bytes for payload - publishing those would leak
+				// protocol internals (JSON discriminators, nested envelopes)
+				// into anything that renders or persists ChatToolOutputEvent
+				// verbatim.
 				var agentEv bridge.AgentEvent
 				if err := json.Unmarshal(payload, &agentEv); err == nil && agentEv.Event != nil {
 					childPub.Publish(tauchat.ChildAgentMessageEvent{

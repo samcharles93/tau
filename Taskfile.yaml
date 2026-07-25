@@ -98,7 +98,7 @@ tasks:
   plugins:
     desc: Build all example plugins into their directories
     cmds:
-      - for: [hello]
+      - for: [hello, mcp]
         cmd: cd plugins/tau-plugin-{{.ITEM}} && go mod tidy && go build -o tau-plugin-{{.ITEM}} .
 
   plugins:install:
@@ -106,9 +106,18 @@ tasks:
     deps:
       - plugins
     cmds:
-      - mkdir -p $(go run ./cmd/tau config-dir)/plugins
-      - for: [hello]
-        cmd: cp plugins/tau-plugin-{{.ITEM}}/tau-plugin-{{.ITEM}} $(go run ./cmd/tau config-dir)/plugins/
+      # Resolve the config dir once, and fail loudly if `tau config-dir` cannot
+      # run (a broken build used to leave the substitution empty, turning this
+      # into `mkdir -p /plugins`).
+      - |
+        set -e
+        dir=$(go run ./cmd/tau config-dir)
+        test -n "$dir" || { echo "task plugins:install: could not resolve tau config dir" >&2; exit 1; }
+        mkdir -p "$dir/plugins"
+        for p in hello mcp; do
+          cp "plugins/tau-plugin-$p/tau-plugin-$p" "$dir/plugins/"
+        done
+        echo "installed plugins to $dir/plugins"
 
   deadcode:
     desc: Detect dead code in production packages (exclude *_test.go)
@@ -119,6 +128,11 @@ tasks:
     desc: Analyse tau sessions and report per-tool usage, tokens, and error rates
     cmds:
       - go run ./scripts/tool-stats {{.CLI_ARGS}}
+
+  verify-release-assets:
+    desc: Validate a goreleaser dist/ directory has every supported platform archive with matching checksums
+    cmds:
+      - go run ./scripts/verify-release-assets --dist {{.DIST | default "dist"}} --tag {{.TAG | default "v0.0.0-dev"}}
 
   check:windows:
     desc: Run formatting and modernization on Windows-only files

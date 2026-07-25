@@ -23,6 +23,7 @@ import (
 	tauconfig "github.com/samcharles93/tau/internal/config"
 	"github.com/samcharles93/tau/internal/eventbus"
 	"github.com/samcharles93/tau/internal/indexing"
+	taulogger "github.com/samcharles93/tau/internal/logger"
 	"github.com/samcharles93/tau/internal/plugin"
 	"github.com/samcharles93/tau/internal/providers"
 	"github.com/samcharles93/tau/internal/providers/snapshot"
@@ -36,29 +37,29 @@ import (
 
 // ChatOptions holds the parameters for launching an interactive chat session.
 type ChatOptions struct {
-	Config          tauconfig.Config
-	Provider        tauconfig.ProviderConfig
-	Insecure        bool
-	Model           string
-	MaxTokens       int
-	Temperature     float64
-	ReasoningEffort string
-	Version         string
-	ResumeSessionID string
-	Web             bool     // --web: auto-open browser
-	WebPort         int      // --port: 0 = ephemeral
-	NoWeb           bool     // --no-web: do not start web UI
-	SkillDirs       []string // --skill-dir: additional skill directories
-	NewTUI          bool     // default true; --legacy-tui inverts to use the legacy inline TUI
-	Ephemeral       bool     // --ephemeral: do not persist this session to the session store
-	AllowedTools    []string // --tools: initial tool allowlist (empty = unrestricted)
-	AgentSpec       string   // --agent: spec name for the root agent identity (default "tau")
-	// TrustProjectRootSpec bypasses the root-spec override trust prompt
-	// (--trust-project-root-spec / TAU_TRUST_PROJECT_ROOT_SPEC), trusting
-	// a project-level tau.agent.md override for this invocation only -
-	// not persisted to trust.yaml. See docs/specs/agents/
-	// 01-agent-spec-format.md (Root-spec override trust).
+	Config               tauconfig.Config
+	Provider             tauconfig.ProviderConfig
+	Insecure             bool
+	Model                string
+	MaxTokens            int
+	Temperature          float64
+	ReasoningEffort      string
+	Version              string
+	ResumeSessionID      string
+	Web                  bool     // --web: auto-open browser
+	WebPort              int      // --port: 0 = ephemeral
+	NoWeb                bool     // --no-web: do not start web UI
+	SkillDirs            []string // --skill-dir: additional skill directories
+	NewTUI               bool     // default true; --legacy-tui inverts to use the legacy inline TUI
+	Ephemeral            bool     // --ephemeral: do not persist this session to the session store
+	AllowedTools         []string // --tools: initial tool allowlist (empty = unrestricted)
+	AgentSpec            string   // --agent: spec name for the root agent identity (default "tau")
 	TrustProjectRootSpec bool
+
+	// OutputFormat selects the event output format for -p (stdin) mode.
+	// "" or "plain" produces the default human-readable text; "jsonl" produces
+	// framed JSONL on stdout via JSONLRenderer.
+	OutputFormat string
 	// Logger is the root logger for the session. When nil, slog.Default() is
 	// used. Each subsystem derives a named child (component=xxx) from it.
 	Logger *slog.Logger
@@ -629,8 +630,11 @@ func buildCoordinator(ctx context.Context, cfg coordinatorConfig) (*agent.Coordi
 	pluginMgr, err := plugin.NewManager(plugin.Config{
 		ToolRegistry: registry,
 		Logger:       pluginLogger,
-		Plugins:      cfg.ChatOptions.Config.Plugins,
-		Notify:       pluginNotify,
+		// go-plugin's own hclog output goes to the tau log file, never stderr:
+		// stderr is the terminal the TUI is drawing on.
+		LogOutput: taulogger.Sink(),
+		Plugins:   cfg.ChatOptions.Config.Plugins,
+		Notify:    pluginNotify,
 	})
 	if err != nil {
 		return nil, nil, nil, fmt.Errorf("plugin manager: %w", err)
