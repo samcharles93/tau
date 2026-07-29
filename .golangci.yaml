@@ -4,47 +4,128 @@ run:
   go: "1.26"
 
 linters:
+  default: standard
   enable:
+    # Structure and complexity
+    - cyclop
+    - dupl
+    - funlen
+    - gocognit
+    - gocyclo
+    - maintidx
+    - nestif
+
+    # Architecture
+    - importas
+    - interfacebloat
+
+    # Correctness
     - bodyclose
-    - errcheck
-    - govet
-    - goprintffuncname
-    - ineffassign
-    - misspell
+    - containedctx
+    - contextcheck
+    - copyloopvar
+    - durationcheck
+    - errorlint
+    - fatcontext
+    - forcetypeassert
+    - makezero
+    - nilerr
+    - nilnesserr
     - noctx
-    - nolintlint
+    - reassign
+    - recvcheck
     - rowserrcheck
     - sqlclosecheck
-    - staticcheck
-    - tparallel
-    - unused
-    - whitespace
-    - protogetter
+
+    # Idiom and hygiene
+    - gocritic
+    - godox
+    - misspell
+    - predeclared
+    - sloglint
+    - unconvert
+    - usestdlibvars
+    - usetesting
+
+  settings:
+    cyclop:
+      max-complexity: 15
+    dupl:
+      threshold: 150
+    funlen:
+      lines: 80
+      statements: 50
+    gocognit:
+      min-complexity: 30
+    gocyclo:
+      min-complexity: 20
+    maintidx:
+      under: 20
+    nestif:
+      min-complexity: 5
+
+    godox:
+      # tracked work lives in beads - use it: `bd create [title] [flags]`
+      keywords:
+        - FIXME
+        - TODO
+        - HACK
+        - BUG
+
+    interfacebloat:
+      max: 8
+
+    sloglint:
+      no-mixed-args: true
+      key-naming-case: snake
+
   exclusions:
     generated: lax
+    warn-unused: true
     presets:
+      - comments
+      - std-error-handling
       - common-false-positives
+      - legacy
     rules:
-      - text: '(slog|log)\.\w+'
+      # Table-driven tests are supposed to resemble each other, and
+      # splitting one to satisfy a complexity budget makes it harder to
+      # read. Correctness linters still apply to tests.
+      - path: _test\.go
         linters:
-          - noctx
-      - linters:
-          - errcheck
-        path: _test\.go
-      - linters:
-          - errcheck
-        text: "Error return value of `.*(Write|WriteString|WriteDirect|WriteStyled|WriteGradient|ExitRawMode|EnterRawMode|Interrupt|Kill|Shutdown|Close|Flush|sendNotification|InitGopls|Sync|Read|Fprint|Fprintf|Remove|Rollback|RegisterPluginTool|MkdirAll|WriteFile)` is not checked"
-  settings:
-    staticcheck:
-      checks: ["SA*", "S*"]
-
-issues:
-  max-issues-per-linter: 0
-  max-same-issues: 0
+          - cyclop
+          - dupl
+          - funlen
+          - gocognit
+          - gocyclo
+          - maintidx
 
 formatters:
   enable:
     - gofumpt
     - goimports
+    - gci
+  settings:
+    gofumpt:
+      extra-rules: true
+    gci:
+      sections:
+        - standard
+        - default
+        - prefix(github.com/samcharles93/tau)
+      custom-order: true
   exclusions:
-    generated: lax
+    generated: strict
+
+issues:
+  # 0 = report everything. The defaults (50 per linter, 3 per message)
+  # silently truncate, which turns the issue count into a number you
+  # cannot track downward.
+  max-issues-per-linter: 0
+  max-same-issues: 0
+
+output:
+  show-stats: true
+  sort-order:
+    - linter
+    - file
