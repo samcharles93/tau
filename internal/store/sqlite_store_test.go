@@ -9,11 +9,12 @@ import (
 	"testing"
 	"time"
 
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+
 	"github.com/samcharles93/tau/internal/chat"
 	"github.com/samcharles93/tau/internal/config"
 	"github.com/samcharles93/tau/internal/store"
-	"github.com/stretchr/testify/assert"
-	"github.com/stretchr/testify/require"
 )
 
 func TestSQLiteStore_SaveAndLoad(t *testing.T) {

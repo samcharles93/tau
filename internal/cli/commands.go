@@ -8,6 +8,8 @@ import (
 	"os"
 	"strings"
 
+	urfavecli "github.com/urfave/cli/v3"
+
 	"github.com/samcharles93/tau/internal/app"
 	tauchat "github.com/samcharles93/tau/internal/chat"
 	"github.com/samcharles93/tau/internal/config"
@@ -15,7 +17,6 @@ import (
 	"github.com/samcharles93/tau/internal/sessions"
 	"github.com/samcharles93/tau/internal/skills"
 	"github.com/samcharles93/tau/internal/store"
-	urfavecli "github.com/urfave/cli/v3"
 )
 
 var defaultChatParameters = tauchat.DefaultParameters()

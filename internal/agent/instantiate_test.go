@@ -8,10 +8,11 @@ import (
 	"testing"
 	"time"
 
+	"github.com/stretchr/testify/require"
+
 	"github.com/samcharles93/tau/internal/agent/spec"
 	"github.com/samcharles93/tau/internal/procid"
 	"github.com/samcharles93/tau/internal/store"
-	"github.com/stretchr/testify/require"
 )
 
 func newSweepTestStore(t *testing.T) *store.SQLiteStore {

@@ -212,7 +212,7 @@ func (t *ProcessTerminal) Size() (cols, rows int) {
 	if r := os.Getenv("LINES"); r != "" {
 		_, _ = fmt.Sscanf(r, "%d", &rows)
 	}
-	return
+	return cols, rows
 }
 
 // Cursor control methods.

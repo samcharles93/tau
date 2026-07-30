@@ -4,9 +4,10 @@ import (
 	"testing"
 	"time"
 
+	"github.com/stretchr/testify/require"
+
 	"github.com/samcharles93/tau/internal/chat"
 	"github.com/samcharles93/tau/internal/eventbus"
-	"github.com/stretchr/testify/require"
 )
 
 func TestCoordinatorUIBridge_Log(t *testing.T) {

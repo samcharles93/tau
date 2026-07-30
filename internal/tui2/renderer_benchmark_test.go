@@ -7,6 +7,7 @@ import (
 
 	"charm.land/glamour/v2"
 	"charm.land/lipgloss/v2"
+
 	"github.com/samcharles93/tau/internal/theme"
 )
 

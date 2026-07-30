@@ -5,8 +5,9 @@ import (
 	"testing"
 	"time"
 
-	tauchat "github.com/samcharles93/tau/internal/chat"
 	"github.com/stretchr/testify/require"
+
+	tauchat "github.com/samcharles93/tau/internal/chat"
 )
 
 func TestAgentWireRoundTrip(t *testing.T) {

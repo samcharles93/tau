@@ -4,6 +4,7 @@ import (
 	"context"
 
 	"github.com/hashicorp/go-plugin"
+
 	"github.com/samcharles93/tau/internal/chat"
 )
 

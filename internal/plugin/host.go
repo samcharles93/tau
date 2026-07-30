@@ -188,13 +188,13 @@ func (h *hostService) RenderView(ctx context.Context, req *api.RenderViewRequest
 	}
 	_, isUpdate := owned[req.GetView().GetId()]
 	if !isUpdate {
-		max := h.maxViewsPerPlugin
-		if max <= 0 {
-			max = DefaultMaxViewsPerPlugin
+		maxViews := h.maxViewsPerPlugin
+		if maxViews <= 0 {
+			maxViews = DefaultMaxViewsPerPlugin
 		}
-		if len(owned) >= max {
+		if len(owned) >= maxViews {
 			h.viewsMu.Unlock()
-			return nil, fmt.Errorf("plugin host: too many open views for plugin %q (max %d)", req.GetPluginName(), max)
+			return nil, fmt.Errorf("plugin host: too many open views for plugin %q (max %d)", req.GetPluginName(), maxViews)
 		}
 		// Reserve the slot atomically with the quota check, before calling
 		// the renderer, so two concurrent RenderView calls for distinct new

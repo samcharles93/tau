@@ -10,10 +10,11 @@ import (
 	"strings"
 	"text/tabwriter"
 
+	urfavecli "github.com/urfave/cli/v3"
+
 	"github.com/samcharles93/tau/internal/config"
 	"github.com/samcharles93/tau/internal/plugin"
 	"github.com/samcharles93/tau/internal/plugin/registry"
-	urfavecli "github.com/urfave/cli/v3"
 )
 
 func pluginsCmd() *urfavecli.Command {

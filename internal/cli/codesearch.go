@@ -6,8 +6,9 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/samcharles93/tau/internal/indexing"
 	urfavecli "github.com/urfave/cli/v3"
+
+	"github.com/samcharles93/tau/internal/indexing"
 )
 
 func workspaceCodesearchCmd() *urfavecli.Command {

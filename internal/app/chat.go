@@ -773,7 +773,7 @@ func buildCoordinator(ctx context.Context, cfg coordinatorConfig) (*agent.Coordi
 		CommandRegistry:       cfg.CommandRegistry,
 		SkillsDiscoveryConfig: cfg.SkillsDiscoveryConfig,
 		ExtensionReloader:     pluginMgr,
-		OnPluginEvent: func(event string, sessionID string, payload *api.EventPayload) *api.EventResponse {
+		OnPluginEvent: func(event, sessionID string, payload *api.EventPayload) *api.EventResponse {
 			return pluginMgr.DispatchEvent(ctx, event, sessionID, payload)
 		},
 		OnClose: func() {

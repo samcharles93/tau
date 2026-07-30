@@ -3,7 +3,6 @@ package plugin
 import (
 	"context"
 	"errors"
-	"io"
 	"log/slog"
 	"os"
 	"path/filepath"
@@ -20,7 +19,7 @@ func TestNewManagerPluginsDirFollowsConfigDir(t *testing.T) {
 	dir := t.TempDir()
 	t.Setenv("TAU_CONFIG_DIR", dir)
 
-	m, err := NewManager(Config{Logger: slog.New(slog.NewTextHandler(io.Discard, nil))})
+	m, err := NewManager(Config{Logger: slog.New(slog.DiscardHandler)})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -35,7 +34,7 @@ func TestNewManagerPluginsDirFollowsConfigDir(t *testing.T) {
 // stderr is the terminal the TUI is drawing on, so plugin lifecycle noise
 // corrupts the display.
 func TestNewManagerLogOutputNeverStderr(t *testing.T) {
-	m, err := NewManager(Config{Logger: slog.New(slog.NewTextHandler(io.Discard, nil))})
+	m, err := NewManager(Config{Logger: slog.New(slog.DiscardHandler)})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -60,7 +59,7 @@ func TestLoadNotifiesOnVersionMismatch(t *testing.T) {
 	var notes []string
 	m, err := NewManager(Config{
 		PluginsDir: dir,
-		Logger:     slog.New(slog.NewTextHandler(io.Discard, nil)),
+		Logger:     slog.New(slog.DiscardHandler),
 		Notify: func(level, message string) {
 			notes = append(notes, level+": "+message)
 		},

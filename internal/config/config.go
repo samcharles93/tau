@@ -1590,7 +1590,7 @@ func ResolveModelMode(
 	defaultProvider string,
 	defaultModel string,
 	modelModes map[string]ModeConfig,
-) (provider string, model string) {
+) (provider, model string) {
 	// 1. Spawn-call parameter: tier lookup first, then concrete.
 	if s := strings.TrimSpace(modeOrModel); s != "" {
 		if mode, ok := modelModes[strings.ToLower(s)]; ok {

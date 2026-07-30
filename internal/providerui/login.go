@@ -8,6 +8,7 @@ import (
 	"sync"
 
 	"github.com/pkg/browser"
+
 	"github.com/samcharles93/tau/internal/providers"
 )
 
@@ -19,7 +20,7 @@ func StartMessage(displayName string) string {
 // DeviceCodeMessage renders the browser/device-code step. opened reports
 // whether Tau successfully asked the OS to open the verification URL; copied
 // reports whether Tau attempted to copy the user code to the clipboard.
-func DeviceCodeMessage(displayName string, code providers.DeviceCode, opened bool, copied bool) string {
+func DeviceCodeMessage(displayName string, code providers.DeviceCode, opened, copied bool) string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "%s authorization\n\n", displayName)
 	if opened {

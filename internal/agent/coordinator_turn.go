@@ -332,7 +332,7 @@ type toolLoopVerdict struct {
 // parseToolCallKey unmarshals the tool call arguments once and returns both
 // the normalized comparison key (name+args, excluding repeat_justification)
 // and any non-empty repeat_justification string.
-func parseToolCallKey(name, argsJSON string) (key string, justification string) {
+func parseToolCallKey(name, argsJSON string) (key, justification string) {
 	var m map[string]any
 	if err := json.Unmarshal([]byte(argsJSON), &m); err != nil {
 		return name + "\x00" + argsJSON, ""
@@ -1139,7 +1139,7 @@ func (c *Coordinator) getPendingContent(sessionID string) string {
 	return session.state.PendingAssistant
 }
 
-func (c *Coordinator) commitAssistantMessage(sessionID string, content string, reasoningContent string, calls []chat.ChatToolCall) {
+func (c *Coordinator) commitAssistantMessage(sessionID, content, reasoningContent string, calls []chat.ChatToolCall) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	session, ok := c.sessions[sessionID]

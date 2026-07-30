@@ -129,7 +129,7 @@ func atomicReplace(tempPath, destPath string) error {
 	if err := os.Rename(tempPath, destPath); err != nil {
 		if hadExisting {
 			if restoreErr := os.Rename(backupPath, destPath); restoreErr != nil {
-				return fmt.Errorf("replace plugin binary: %w (also failed to restore previous binary: %v)", err, restoreErr)
+				return fmt.Errorf("replace plugin binary: %w (also failed to restore previous binary: %w)", err, restoreErr)
 			}
 		}
 		return fmt.Errorf("replace plugin binary: %w", err)

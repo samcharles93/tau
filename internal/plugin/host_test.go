@@ -9,8 +9,9 @@ import (
 	"sync/atomic"
 	"testing"
 
-	"github.com/samcharles93/tau/pkg/plugin/api"
 	"github.com/stretchr/testify/require"
+
+	"github.com/samcharles93/tau/pkg/plugin/api"
 )
 
 func newTestHost(t *testing.T) *hostService {

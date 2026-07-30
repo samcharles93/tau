@@ -250,7 +250,7 @@ func analyse(dir, metricsDir string) (*reportData, error) {
 
 	for _, entry := range entries {
 		name := entry.Name()
-		if entry.IsDir() || !(strings.HasSuffix(name, ".jsonl") || strings.HasSuffix(name, ".jsonl.tmp")) {
+		if entry.IsDir() || (!strings.HasSuffix(name, ".jsonl") && !strings.HasSuffix(name, ".jsonl.tmp")) {
 			continue
 		}
 		if strings.HasSuffix(name, ".jsonl.tmp") && entryNames[strings.TrimSuffix(name, ".tmp")] {

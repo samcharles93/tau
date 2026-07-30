@@ -6,11 +6,12 @@ import (
 	"testing"
 	"time"
 
+	"github.com/stretchr/testify/require"
+
 	"github.com/samcharles93/tau/internal/agent/tools"
 	"github.com/samcharles93/tau/internal/chat"
 	"github.com/samcharles93/tau/internal/config"
 	"github.com/samcharles93/tau/internal/eventbus"
-	"github.com/stretchr/testify/require"
 )
 
 // fakeShellTool is a deterministic stand-in for the real "shell" tool
@@ -73,7 +74,7 @@ func TestCoordinatorHandleRunBashCommand_EndToEnd(t *testing.T) {
 
 	var sawStarted, sawOutput, sawCompleted bool
 	deadline := time.After(2 * time.Second)
-	for !(sawStarted && sawOutput && sawCompleted) {
+	for !sawStarted || !sawOutput || !sawCompleted {
 		select {
 		case ev := <-sub.Events():
 			switch e := ev.(type) {

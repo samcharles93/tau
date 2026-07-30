@@ -58,7 +58,7 @@ func (c *Coordinator) applyPluginMessageModifications(state *chat.ChatSessionSta
 // dispatchPluginRequestResponse dispatches a request-response lifecycle
 // event to plugins via the configured callback. Use publishPluginLifecycleEvent
 // for fire-and-forget notifications that don't need a response.
-func (c *Coordinator) dispatchPluginRequestResponse(event string, sessionID string, payload *api.EventPayload) *api.EventResponse {
+func (c *Coordinator) dispatchPluginRequestResponse(event, sessionID string, payload *api.EventPayload) *api.EventResponse {
 	if c.onPluginEvent == nil {
 		return nil
 	}

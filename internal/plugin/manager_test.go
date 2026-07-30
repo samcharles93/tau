@@ -3,16 +3,16 @@ package plugin
 import (
 	"context"
 	"encoding/json"
-	"io"
 	"log/slog"
 	"maps"
 	"sync/atomic"
 	"testing"
 	"time"
 
+	"google.golang.org/grpc"
+
 	"github.com/samcharles93/tau/internal/chat"
 	"github.com/samcharles93/tau/pkg/plugin/api"
-	"google.golang.org/grpc"
 )
 
 // mockExtensionServiceClient implements api.ExtensionServiceClient for tests.
@@ -60,7 +60,7 @@ func (m *mockExtensionServiceClient) GetTools(ctx context.Context, in *api.GetTo
 func newTestManager(t *testing.T) *Manager {
 	t.Helper()
 	m, err := NewManager(Config{
-		Logger:               slog.New(slog.NewTextHandler(io.Discard, nil)),
+		Logger:               slog.New(slog.DiscardHandler),
 		EventDispatchTimeout: 50 * time.Millisecond,
 		ToolExecutionTimeout: 50 * time.Millisecond,
 	})
@@ -329,7 +329,7 @@ func TestCommandHandles(t *testing.T) {
 
 func TestConfig_DefaultsApplied(t *testing.T) {
 	m, err := NewManager(Config{
-		Logger: slog.New(slog.NewTextHandler(io.Discard, nil)),
+		Logger: slog.New(slog.DiscardHandler),
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -344,7 +344,7 @@ func TestConfig_DefaultsApplied(t *testing.T) {
 
 func TestConfig_CustomTimeoutApplied(t *testing.T) {
 	m, err := NewManager(Config{
-		Logger:               slog.New(slog.NewTextHandler(io.Discard, nil)),
+		Logger:               slog.New(slog.DiscardHandler),
 		EventDispatchTimeout: 5 * time.Second,
 		ToolExecutionTimeout: 60 * time.Second,
 	})
@@ -361,7 +361,7 @@ func TestConfig_CustomTimeoutApplied(t *testing.T) {
 
 func TestConfig_MaxViewsPerPluginDefaultApplied(t *testing.T) {
 	m, err := NewManager(Config{
-		Logger: slog.New(slog.NewTextHandler(io.Discard, nil)),
+		Logger: slog.New(slog.DiscardHandler),
 	})
 	if err != nil {
 		t.Fatal(err)

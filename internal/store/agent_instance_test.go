@@ -6,9 +6,10 @@ import (
 	"testing"
 	"time"
 
+	"github.com/stretchr/testify/require"
+
 	"github.com/samcharles93/tau/internal/chat"
 	"github.com/samcharles93/tau/internal/store"
-	"github.com/stretchr/testify/require"
 )
 
 func TestSQLiteStore_SaveAndGetAgentInstance(t *testing.T) {

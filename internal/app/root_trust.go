@@ -7,12 +7,13 @@ import (
 	"path/filepath"
 	"strings"
 
+	"golang.org/x/term"
+
 	"github.com/samcharles93/tau/internal/agent"
 	"github.com/samcharles93/tau/internal/agent/spec"
 	tauconfig "github.com/samcharles93/tau/internal/config"
 	"github.com/samcharles93/tau/internal/skills"
 	"github.com/samcharles93/tau/internal/trust"
-	"golang.org/x/term"
 )
 
 // rootSpecDisplay carries the resolved-root-spec facts the caller shows in

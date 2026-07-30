@@ -3,7 +3,6 @@ package app
 import (
 	"context"
 	"fmt"
-	"io"
 	"log/slog"
 	"os"
 	"path/filepath"
@@ -14,7 +13,6 @@ import (
 
 	"github.com/samcharles93/tau/internal/agent"
 	"github.com/samcharles93/tau/internal/agent/tools"
-
 	tauchat "github.com/samcharles93/tau/internal/chat"
 	tauconfig "github.com/samcharles93/tau/internal/config"
 	"github.com/samcharles93/tau/internal/eventbus"
@@ -37,7 +35,7 @@ func initStartupLog() {
 	_ = os.MkdirAll(logDir, 0o700)
 	f, err := os.OpenFile(filepath.Join(logDir, "startup.log"), os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o600)
 	if err != nil {
-		startupLog = slog.New(slog.NewTextHandler(io.Discard, nil))
+		startupLog = slog.New(slog.DiscardHandler)
 		return
 	}
 	startupLog = slog.New(slog.NewTextHandler(f, &slog.HandlerOptions{Level: slog.LevelDebug}))

@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/pkg/browser"
+
 	"github.com/samcharles93/tau/internal/providers"
 )
 

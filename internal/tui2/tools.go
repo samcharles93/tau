@@ -839,7 +839,7 @@ const maxToolRowsVisible = 8
 // When there are more tools than maxToolRowsVisible, the box windows to show
 // the last N rows (most-recent calls at the bottom) and prepends an
 // "↑ N more" overflow indicator so the user knows there's more above.
-func (m *model) renderToolGroupBox(tools []toolState, expandedID string, focusedIdx int, width int) (string, []toolBoxGeometry) {
+func (m *model) renderToolGroupBox(tools []toolState, expandedID string, focusedIdx, width int) (string, []toolBoxGeometry) {
 	if width < 20 {
 		width = 80
 	}
@@ -900,7 +900,7 @@ func (m *model) renderToolGroupBox(tools []toolState, expandedID string, focused
 // expanded (Phase 1). width is the render width (callers normally pass
 // m.width; the child transcript overlay passes its own narrower inner
 // width instead).
-func (m *model) renderToolBox(t toolState, expanded bool, _ int, width int) string {
+func (m *model) renderToolBox(t toolState, expanded bool, _, width int) string {
 	label := toolArgLabel(t.name, t.args)
 
 	glyph := toolGlyph(t.status, t.spinnerIdx)

@@ -10,6 +10,7 @@ import (
 	"strings"
 
 	aisdkchat "github.com/samcharles93/ai-sdk/chat"
+
 	tauchat "github.com/samcharles93/tau/internal/chat"
 )
 

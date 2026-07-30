@@ -10,6 +10,7 @@ import (
 	"time"
 
 	tea "charm.land/bubbletea/v2"
+
 	agentspec "github.com/samcharles93/tau/internal/agent/spec"
 	tauchat "github.com/samcharles93/tau/internal/chat"
 	"github.com/samcharles93/tau/internal/config"
@@ -474,14 +475,14 @@ func (m *model) cmdCost(_ string) tea.Cmd {
 func (m *model) cmdCopy(args string) tea.Cmd {
 	args = strings.TrimSpace(args)
 
-	switch {
-	case args == "":
+	switch args {
+	case "":
 		if m.lastAssistantText == "" {
 			return m.setNotification("nothing to copy")
 		}
 		return tea.Batch(tea.SetClipboard(m.lastAssistantText), m.setNotification("copied to clipboard"))
 
-	case args == "session" || args == "all":
+	case "session", "all":
 		msgs := m.canonicalMessages
 		if len(msgs) == 0 {
 			return m.setNotification("nothing to copy")

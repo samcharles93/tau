@@ -75,7 +75,7 @@ func StartBackgroundUpdateCheck(ctx context.Context, version string, updatesCfg 
 	if err != nil {
 		// No update available or dev build — update cache and return
 		// without notifying.
-		if err == updater.ErrNoUpdate || err == updater.ErrDevBuild {
+		if errors.Is(err, updater.ErrNoUpdate) || errors.Is(err, updater.ErrDevBuild) {
 			writeUpdateCache(cachePath)
 			return
 		}

@@ -8,8 +8,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/samcharles93/tau/pkg/plugin/api"
 	"google.golang.org/grpc"
+
+	"github.com/samcharles93/tau/pkg/plugin/api"
 )
 
 // TestUnload_DoesNotWaitForInFlightDispatch is the regression test for the

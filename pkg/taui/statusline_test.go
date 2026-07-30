@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/rivo/uniseg"
+
 	"github.com/samcharles93/tau/pkg/taui/termkit"
 )
 

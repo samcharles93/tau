@@ -8,9 +8,10 @@ import (
 	"os"
 	"strings"
 
-	"github.com/samcharles93/tau/internal/app"
 	urfavecli "github.com/urfave/cli/v3"
 	"golang.org/x/term"
+
+	"github.com/samcharles93/tau/internal/app"
 )
 
 var errProviderUsage = errors.New("provider command usage error")

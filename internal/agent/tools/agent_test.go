@@ -10,6 +10,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/stretchr/testify/require"
+
 	agentinstance "github.com/samcharles93/tau/internal/agent/instance"
 	"github.com/samcharles93/tau/internal/agent/prompttmpl"
 	"github.com/samcharles93/tau/internal/agent/spec"
@@ -17,7 +19,6 @@ import (
 	"github.com/samcharles93/tau/internal/config"
 	"github.com/samcharles93/tau/internal/eventbus"
 	"github.com/samcharles93/tau/internal/store"
-	"github.com/stretchr/testify/require"
 )
 
 // TestExecuteAgentTool_SpecNotFound verifies that calling the agent tool with

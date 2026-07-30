@@ -7,10 +7,11 @@ import (
 	"testing"
 	"time"
 
+	"github.com/stretchr/testify/require"
+
 	"github.com/samcharles93/tau/internal/agent/spec"
 	"github.com/samcharles93/tau/internal/config"
 	"github.com/samcharles93/tau/internal/store"
-	"github.com/stretchr/testify/require"
 )
 
 type resumeCaptureStore struct {

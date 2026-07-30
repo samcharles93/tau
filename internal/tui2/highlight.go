@@ -2,6 +2,7 @@ package tui2
 
 import (
 	"charm.land/glamour/v2/ansi"
+
 	"github.com/samcharles93/tau/internal/theme"
 )
 

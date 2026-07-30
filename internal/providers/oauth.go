@@ -487,7 +487,7 @@ func (e oauthError) Error() string {
 		b.WriteString("OAuth request failed")
 	}
 	if e.StatusCode > 0 {
-		b.WriteString(fmt.Sprintf(" (HTTP %d)", e.StatusCode))
+		fmt.Fprintf(&b, " (HTTP %d)", e.StatusCode)
 	}
 	return b.String()
 }

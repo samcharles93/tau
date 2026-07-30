@@ -19,11 +19,12 @@ import (
 
 	"github.com/hashicorp/go-hclog"
 	goplugin "github.com/hashicorp/go-plugin"
+	"google.golang.org/grpc"
+
 	"github.com/samcharles93/tau/internal/agent/tools"
 	"github.com/samcharles93/tau/internal/chat"
 	tauconfig "github.com/samcharles93/tau/internal/config"
 	"github.com/samcharles93/tau/pkg/plugin/api"
-	"google.golang.org/grpc"
 )
 
 // Config configures the plugin manager.
@@ -450,7 +451,7 @@ func (m *Manager) ExecutePluginTool(ctx context.Context, pluginName, toolName st
 // sessionID is the explicit session identity, passed from the coordinator rather
 // than derived from the payload shape.
 // Returns the merged EventResponse from all plugins.
-func (m *Manager) DispatchEvent(ctx context.Context, event string, sessionID string, payload *api.EventPayload) *api.EventResponse {
+func (m *Manager) DispatchEvent(ctx context.Context, event, sessionID string, payload *api.EventPayload) *api.EventResponse {
 	snap := m.snapshot.Load()
 	if snap == nil {
 		return nil

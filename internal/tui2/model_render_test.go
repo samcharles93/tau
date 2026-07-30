@@ -136,7 +136,7 @@ func TestSessionSummariesTextTreeWithAgentAttribution(t *testing.T) {
 	rootIdx := indexOfSubstring(lines, "root")
 	child1Idx := indexOfSubstring(lines, "child-1")
 	child2Idx := indexOfSubstring(lines, "child-2")
-	if !(rootIdx < child1Idx && child1Idx < child2Idx) {
+	if rootIdx >= child1Idx || child1Idx >= child2Idx {
 		t.Fatalf("expected tree order root < child-1 < child-2, got indices %d,%d,%d", rootIdx, child1Idx, child2Idx)
 	}
 }

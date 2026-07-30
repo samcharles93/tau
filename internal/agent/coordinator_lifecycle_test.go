@@ -9,12 +9,13 @@ import (
 	"testing"
 	"time"
 
+	"github.com/stretchr/testify/require"
+
 	"github.com/samcharles93/tau/internal/agent/tools"
 	"github.com/samcharles93/tau/internal/chat"
 	"github.com/samcharles93/tau/internal/config"
 	"github.com/samcharles93/tau/internal/eventbus"
 	"github.com/samcharles93/tau/pkg/plugin/api"
-	"github.com/stretchr/testify/require"
 )
 
 // newTestBus returns a Bus that is automatically closed when the test completes.
@@ -237,7 +238,7 @@ func TestCoordinatorDispatchesSessionLifecycleHooks(t *testing.T) {
 		},
 		Streamer: noopStreamer{},
 		Registry: tools.NewRegistry(),
-		OnPluginEvent: func(event string, sessionID string, payload *api.EventPayload) *api.EventResponse {
+		OnPluginEvent: func(event, sessionID string, payload *api.EventPayload) *api.EventResponse {
 			// Request-response events only; fire-and-forget events go
 			// through the bus subscription above.
 			return nil

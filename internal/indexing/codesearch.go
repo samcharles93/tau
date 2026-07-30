@@ -20,9 +20,9 @@ import (
 
 	"github.com/google/codesearch/index"
 	"github.com/google/uuid"
-	"github.com/samcharles93/tau/internal/config"
-
 	_ "modernc.org/sqlite"
+
+	"github.com/samcharles93/tau/internal/config"
 )
 
 const (

@@ -6,9 +6,10 @@ import (
 	"fmt"
 	"log/slog"
 
+	urfavecli "github.com/urfave/cli/v3"
+
 	"github.com/samcharles93/tau/internal/config"
 	"github.com/samcharles93/tau/internal/updater"
-	urfavecli "github.com/urfave/cli/v3"
 )
 
 func updateCmd(currentVersion string) *urfavecli.Command {

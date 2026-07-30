@@ -5,8 +5,9 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/samcharles93/tau/internal/skills"
 	"github.com/stretchr/testify/require"
+
+	"github.com/samcharles93/tau/internal/skills"
 )
 
 func TestLoadFromSource_NonExistentDir(t *testing.T) {

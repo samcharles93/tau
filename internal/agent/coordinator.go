@@ -73,7 +73,7 @@ type Coordinator struct {
 	noPersist         bool
 	autoExportJSONL   bool
 	onClose           func()
-	onPluginEvent     func(event string, sessionID string, payload *api.EventPayload) *api.EventResponse
+	onPluginEvent     func(event, sessionID string, payload *api.EventPayload) *api.EventResponse
 	startupEvents     []chat.ChatEvent
 	startupEventsOnce sync.Once
 	commands          chan chat.ChatCommand
@@ -183,7 +183,7 @@ type CoordinatorConfig struct {
 	// The coordinator fires this at turn boundaries, tool execution boundaries,
 	// and LLM request boundaries. sessionID is the explicit session identity.
 	// Returns merged EventResponse, or nil if no plugins.
-	OnPluginEvent func(event string, sessionID string, payload *api.EventPayload) *api.EventResponse
+	OnPluginEvent func(event, sessionID string, payload *api.EventPayload) *api.EventResponse
 
 	// AllowedTools is the initial tool allowlist for this coordinator.
 	// When non-empty, the LLM can only see tools in this list (plus the

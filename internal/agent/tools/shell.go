@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -154,7 +155,8 @@ func makeShellExecutor(cwd string, mq *MutationQueue) Executor {
 				}, nil
 			}
 
-			if exitErr, ok := err.(*exec.ExitError); ok {
+			exitErr := &exec.ExitError{}
+			if errors.As(err, &exitErr) {
 				return Result{
 					Content: fmt.Sprintf("[exit code: %d]\n%s", exitErr.ExitCode(), content), IsError: true,
 					ErrorKind: "command_exit", Truncated: tr.Truncated, ResultBytes: len(output),

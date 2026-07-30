@@ -6,8 +6,9 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/samcharles93/tau/internal/app"
 	urfavecli "github.com/urfave/cli/v3"
+
+	"github.com/samcharles93/tau/internal/app"
 )
 
 // cliSetupPrompter implements app.SetupPrompter using this package's
@@ -74,7 +75,7 @@ func setupCmd() *urfavecli.Command {
 // setupExitPlan decides the exit code and the (stdout, stderr) messages for
 // a RunSetup outcome. Kept pure and separate from setupCmd's Action so it's
 // testable without invoking os.Exit.
-func setupExitPlan(result app.SetupResult, err error) (exitCode int, stdoutMsg string, stderrMsg string) {
+func setupExitPlan(result app.SetupResult, err error) (exitCode int, stdoutMsg, stderrMsg string) {
 	switch {
 	case err == nil:
 		return 0, setupSuccessMessage(result), ""

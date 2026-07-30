@@ -7,7 +7,7 @@ import (
 
 // collect drives a stdinBuffer over the given chunks and returns the keys and
 // pastes it emitted, in order.
-func collect(chunks ...string) (keys []string, pastes []string) {
+func collect(chunks ...string) (keys, pastes []string) {
 	b := newStdinBuffer(
 		func(seq string) { keys = append(keys, seq) },
 		func(content string) { pastes = append(pastes, content) },

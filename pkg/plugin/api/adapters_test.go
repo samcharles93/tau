@@ -7,11 +7,12 @@ import (
 	"testing"
 	"time"
 
-	"github.com/samcharles93/tau/internal/chat"
 	"github.com/stretchr/testify/require"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
 	"google.golang.org/grpc/test/bufconn"
+
+	"github.com/samcharles93/tau/internal/chat"
 )
 
 func TestProtoViewToChatNil(t *testing.T) {

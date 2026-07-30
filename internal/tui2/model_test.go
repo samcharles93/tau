@@ -401,7 +401,7 @@ func TestViewStreamsOverflowLikeBottomFollowingScroll(t *testing.T) {
 		if i > 1 {
 			streamed.WriteString("\n")
 		}
-		streamed.WriteString(fmt.Sprintf("stream %02d", i))
+		fmt.Fprintf(&streamed, "stream %02d", i)
 	}
 	m.streaming = streamed.String()
 

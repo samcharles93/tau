@@ -131,5 +131,5 @@ func splitPreserving(s string) (words []string, spaces []int) {
 		spaces = append(spaces, sp)
 		start = end
 	}
-	return
+	return words, spaces
 }

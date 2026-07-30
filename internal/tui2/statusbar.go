@@ -8,6 +8,7 @@ import (
 	"unicode/utf8"
 
 	"charm.land/lipgloss/v2"
+
 	"github.com/samcharles93/tau/internal/theme"
 	"github.com/samcharles93/tau/pkg/taui"
 	"github.com/samcharles93/tau/pkg/taui/termkit"

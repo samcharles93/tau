@@ -10,11 +10,12 @@ import (
 	"path/filepath"
 	"strings"
 
+	urfavecli "github.com/urfave/cli/v3"
+	"golang.org/x/term"
+
 	"github.com/samcharles93/tau/internal/app"
 	tauconfig "github.com/samcharles93/tau/internal/config"
 	taulogger "github.com/samcharles93/tau/internal/logger"
-	urfavecli "github.com/urfave/cli/v3"
-	"golang.org/x/term"
 )
 
 func initLogging(debug bool, version string) {
@@ -324,7 +325,7 @@ func autoInvokeSetup(ctx context.Context, cmd *urfavecli.Command) (tauconfig.Con
 	return loadProvider(ctx, cmd)
 }
 
-func splitProviderModel(raw string) (providerPart string, modelPart string, ok bool) {
+func splitProviderModel(raw string) (providerPart, modelPart string, ok bool) {
 	model := strings.TrimSpace(raw)
 	if model == "" {
 		return "", "", false

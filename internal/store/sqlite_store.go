@@ -9,10 +9,10 @@ import (
 	"path/filepath"
 	"time"
 
+	sqlite "modernc.org/sqlite"
+
 	"github.com/samcharles93/tau/internal/chat"
 	"github.com/samcharles93/tau/internal/config"
-
-	sqlite "modernc.org/sqlite"
 )
 
 // SQLiteStore implements SessionStore backed by a local SQLite database.
@@ -184,7 +184,7 @@ func (s *SQLiteStore) Load(ctx context.Context, id string) (chat.ChatSessionStat
 		&row.status, &row.systemPrompt, &row.messageCount, &row.parentID, &row.agentInstID,
 	)
 	if err != nil {
-		if err == sql.ErrNoRows {
+		if errors.Is(err, sql.ErrNoRows) {
 			return chat.ChatSessionState{}, fmt.Errorf("store: session %q not found", id)
 		}
 		return chat.ChatSessionState{}, fmt.Errorf("store: load session: %w", err)
@@ -359,7 +359,7 @@ func (s *SQLiteStore) ExportMessages(ctx context.Context, id string) (<-chan []b
 		var exists int
 		err := s.db.QueryRowContext(ctx, "SELECT 1 FROM sessions WHERE id = ?", id).Scan(&exists)
 		if err != nil {
-			if err == sql.ErrNoRows {
+			if errors.Is(err, sql.ErrNoRows) {
 				errs <- fmt.Errorf("store: session %q not found", id)
 			} else {
 				errs <- err
@@ -549,7 +549,7 @@ func (s *SQLiteStore) ResumeSession(ctx context.Context, sessionID string, newIn
 	var currentInstanceID sql.NullString
 	err = tx.QueryRowContext(ctx, `SELECT agent_instance_id FROM sessions WHERE id = ?`, sessionID).Scan(&currentInstanceID)
 	if err != nil {
-		if err == sql.ErrNoRows {
+		if errors.Is(err, sql.ErrNoRows) {
 			return ErrSessionNotFound
 		}
 		return fmt.Errorf("store: resume session: %w", err)

@@ -1,6 +1,7 @@
 package tui2
 
 import (
+	"errors"
 	"reflect"
 	"testing"
 
@@ -81,7 +82,7 @@ func TestSendCommandErrorPropagates(t *testing.T) {
 	if !ok {
 		t.Fatalf("expected sendResultMsg, got %T", msg)
 	}
-	if rm.err != errIntentional {
+	if !errors.Is(rm.err, errIntentional) {
 		t.Fatalf("err = %v, want %v", rm.err, errIntentional)
 	}
 }

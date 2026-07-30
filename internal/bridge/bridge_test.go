@@ -8,10 +8,11 @@ import (
 	"time"
 
 	"github.com/gorilla/websocket"
-	tauchat "github.com/samcharles93/tau/internal/chat"
-	"github.com/samcharles93/tau/internal/eventbus"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	tauchat "github.com/samcharles93/tau/internal/chat"
+	"github.com/samcharles93/tau/internal/eventbus"
 )
 
 type fakeRuntime struct {

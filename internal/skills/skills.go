@@ -11,8 +11,9 @@ import (
 	"slices"
 	"strings"
 
-	tauconfig "github.com/samcharles93/tau/internal/config"
 	"gopkg.in/yaml.v3"
+
+	tauconfig "github.com/samcharles93/tau/internal/config"
 )
 
 const (

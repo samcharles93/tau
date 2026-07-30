@@ -98,7 +98,7 @@ func Install(ctx context.Context, client *registry.Client, id, version string) (
 		return "", err
 	}
 
-	req, err := http.NewRequestWithContext(ctx, "GET", plat.URL, nil)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, plat.URL, nil)
 	if err != nil {
 		discardStaged(tmp)
 		return "", fmt.Errorf("create download request: %w", err)
@@ -341,7 +341,7 @@ func fetchGitHubRelease(ctx context.Context, owner, repo, version string) (*gith
 		url = fmt.Sprintf("%s/repos/%s/%s/releases/tags/%s", githubAPIBase, owner, repo, normalizeReleaseTag(version))
 	}
 
-	req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {
 		return nil, fmt.Errorf("create request: %w", err)
 	}
@@ -383,7 +383,7 @@ func fetchReleaseChecksum(ctx context.Context, release *githubRelease, assetName
 		return "", nil
 	}
 
-	req, err := http.NewRequestWithContext(ctx, "GET", manifest.BrowserDownloadURL, nil)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, manifest.BrowserDownloadURL, nil)
 	if err != nil {
 		return "", err
 	}
@@ -458,7 +458,7 @@ func findPlatformAsset(assets []githubReleaseAsset, goos, goarch string) *github
 // downloadFile downloads url to dest, enforcing limit bytes, and returns the
 // hex SHA256 digest of what was written.
 func downloadFile(ctx context.Context, url, dest string, limit int64) (string, error) {
-	req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {
 		return "", fmt.Errorf("create request: %w", err)
 	}

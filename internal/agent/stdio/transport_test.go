@@ -129,7 +129,7 @@ func TestReadEOF(t *testing.T) {
 	}
 
 	_, err = r.ReadMessage()
-	if err != io.EOF {
+	if !errors.Is(err, io.EOF) {
 		t.Fatalf("expected io.EOF after last message, got %v", err)
 	}
 }
@@ -356,7 +356,7 @@ func TestConcurrentWritesDontInterleave(t *testing.T) {
 	count := 0
 	for {
 		data, err := r.ReadMessage()
-		if err == io.EOF {
+		if errors.Is(err, io.EOF) {
 			break
 		}
 		if err != nil {
@@ -407,7 +407,7 @@ func TestReadMessage_PartialFinalLine(t *testing.T) {
 	}
 	// Next read should be EOF
 	_, err = r.ReadMessage()
-	if err != io.EOF {
+	if !errors.Is(err, io.EOF) {
 		t.Fatalf("expected EOF after partial final line, got %v", err)
 	}
 }

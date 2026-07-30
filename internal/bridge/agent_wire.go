@@ -215,7 +215,7 @@ func MarshalAgentMessage(msg any, from, to string) ([]byte, error) {
 
 // UnmarshalAgentMessage parses a JSON envelope into a concrete agent wire
 // message type.
-func UnmarshalAgentMessage(data []byte) (msg any, from string, to string, err error) {
+func UnmarshalAgentMessage(data []byte) (msg any, from, to string, err error) {
 	var env Envelope
 	if err := json.Unmarshal(data, &env); err != nil {
 		return nil, "", "", err
