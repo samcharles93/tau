@@ -1,0 +1,59 @@
+name: Security scan
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  schedule:
+    - cron: "0 6 * * 1" # weekly (Monday 06:00 UTC)
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  govulncheck:
+    name: govulncheck (Go modules)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      # Scans every module in the workspace. The toolchain comes from the
+      # go directive in go.mod (currently 1.26.6, which covers the stdlib
+      # advisories). govulncheck exits non-zero only for reachable
+      # vulnerabilities; unreachable findings (e.g. GO-2026-5932 openpgp via
+      # minio/selfupdate) do not fail the build.
+      - name: Scan all Go modules
+        run: |
+          set -euo pipefail
+          for m in . plugins/tau-plugin-mcp plugins/tau-plugin-hello tools; do
+            echo "::group::govulncheck $m"
+            (cd "$m" && go run golang.org/x/vuln/cmd/govulncheck@v1.7.0 ./...)
+            echo "::endgroup::"
+          done
+
+  audit:
+    name: pnpm audit (webui + docs)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v6
+        with:
+          version: 10
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: latest
+
+      - name: Audit webui
+        working-directory: internal/webui
+        run: pnpm audit
+
+      - name: Audit docs
+        working-directory: docs
+        run: pnpm audit

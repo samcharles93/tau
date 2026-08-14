@@ -143,11 +143,24 @@ tasks:
       - go fix ./...
       - gofumpt -w .
 
+  check:security:
+    desc: Run vulnerability scans (govulncheck on all Go modules, pnpm audit on webui + docs)
+    cmds:
+      - |
+        set -e
+        for m in . plugins/tau-plugin-mcp plugins/tau-plugin-hello tools; do
+          echo "govulncheck $m"
+          (cd "$m" && go run golang.org/x/vuln/cmd/govulncheck@v1.7.0 ./...)
+        done
+      - cd internal/webui && pnpm audit
+      - cd docs && pnpm audit
+
   check:
     desc: Run all quality checks (format, lint, vet, fix, test) for all platforms
     deps:
       - check:windows
       - check:webui
+      - check:security
     cmds:
       - go vet ./...
       - go fix ./...

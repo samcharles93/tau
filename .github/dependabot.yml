@@ -1,0 +1,36 @@
+version: 2
+updates:
+  # Go modules (the root go.work lists all four; keep them explicit so
+  # version bumps land in each module's own go.mod/go.sum).
+  - package-ecosystem: gomod
+    directory: /
+    schedule:
+      interval: weekly
+  - package-ecosystem: gomod
+    directory: /plugins/tau-plugin-mcp
+    schedule:
+      interval: weekly
+  - package-ecosystem: gomod
+    directory: /plugins/tau-plugin-hello
+    schedule:
+      interval: weekly
+  - package-ecosystem: gomod
+    directory: /tools
+    schedule:
+      interval: weekly
+
+  # npm workspaces (web UI SPA and VitePress docs)
+  - package-ecosystem: npm
+    directory: /internal/webui
+    schedule:
+      interval: weekly
+  - package-ecosystem: npm
+    directory: /docs
+    schedule:
+      interval: weekly
+
+  # GitHub Actions themselves
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
