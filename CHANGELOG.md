@@ -1,5 +1,59 @@
 # Changelog
 
+## [0.31.0](https://github.com/samcharles93/tau/compare/v0.30.1...v0.31.0) (2026-08-14)
+
+
+### Features
+
+* add ReasoningEfforts field and automated YAML parity tests ([5be5963](https://github.com/samcharles93/tau/commit/5be5963f7ed7deb842af61d40587ce132d2a1b54))
+* **app:** start background update check from post-subscription OnReady (archie) ([522511b](https://github.com/samcharles93/tau/commit/522511b8645300e73bfaf87739431d77c572f86c)), closes [#162](https://github.com/samcharles93/tau/issues/162)
+* **cli:** add -x/--execute flag and delegate deprecated -p to it (archie) ([4ff0ad5](https://github.com/samcharles93/tau/commit/4ff0ad598c58c4afd549e5da49ef2d30d21dccdd)), closes [#159](https://github.com/samcharles93/tau/issues/159)
+* **config:** add updates.mode config with warn and disabled options (archie) ([6a5fd55](https://github.com/samcharles93/tau/commit/6a5fd55afc13f9d62c27744c7ed2cd5beca44eff)), closes [#161](https://github.com/samcharles93/tau/issues/161)
+* **tools:** list the existing directory when a read misses inside it ([ed3bebc](https://github.com/samcharles93/tau/commit/ed3bebcaa4179f145fac9b7504d2c9d9fb1bb70d))
+* **tools:** quote the nearest match when an edit's old_text is not found ([3684e35](https://github.com/samcharles93/tau/commit/3684e355c5d400facf56707f82121784d6c4f186))
+* **tools:** return an outline instead of a first page for large source files ([e420fd0](https://github.com/samcharles93/tau/commit/e420fd070627fa8a02d3b7b27bdac33d08121bb1))
+* **tools:** suggest real paths when a read misses ([e91338a](https://github.com/samcharles93/tau/commit/e91338a492abd3043f0c17f12294fbcf14b243c6))
+* **tui2:** complete Markdown code-block syntax highlighting (archie) ([9bf14b6](https://github.com/samcharles93/tau/commit/9bf14b67db69d73e99afda2fdc3bcb72d552a0cd)), closes [#170](https://github.com/samcharles93/tau/issues/170)
+* **tui2:** make the status bar state-aware (archie) ([497e57b](https://github.com/samcharles93/tau/commit/497e57bf6a41e79ea877346a5f889a17449821d3)), closes [#168](https://github.com/samcharles93/tau/issues/168)
+* **tui:** add $ prefix skill invocation with tab-completion ([7d52ae1](https://github.com/samcharles93/tau/commit/7d52ae12029cc458458b4fe94ddfb918259bda60))
+
+
+### Bug Fixes
+
+* **agent/tools:** resolve predeclared identifier shadowing in truncationBoundary ([b41dda4](https://github.com/samcharles93/tau/commit/b41dda42ef869cc919044ff4f23d7b568531c3f5))
+* **agent:** alias hallucinated tool names and list real tools on failure ([ad29a93](https://github.com/samcharles93/tau/commit/ad29a930067f83464f276da4e03ba76e99a8e9cd))
+* **agent:** persist cancelled state on shutdown ([e357373](https://github.com/samcharles93/tau/commit/e357373f4b55922a2da7dd1142f9705c433d8aeb))
+* **agent:** stop leaking raw wire payload as ChatToolOutputEvent from child agents ([0645a8c](https://github.com/samcharles93/tau/commit/0645a8cb774c5de7e1e42528fc27043564c6f397))
+* baseline gate repair (go fix ./...) ([9a87ef4](https://github.com/samcharles93/tau/commit/9a87ef405f362bf7c3d7c30c08a58e04e3ce7e13))
+* baseline gate repair (go test ./... -count=1) ([d9df380](https://github.com/samcharles93/tau/commit/d9df38087c72dfa12af3fceeb1fe5720740d8549))
+* baseline gate repair (golangci-lint run) ([d9e2c98](https://github.com/samcharles93/tau/commit/d9e2c98b139119ff92ea696619133278c56a5082))
+* baseline gate repair (golangci-lint run) ([046504a](https://github.com/samcharles93/tau/commit/046504aa0973c578016e034b8fd67c1cb1f0b1af))
+* **chat:** preserve provider-qualified model identity through selection ([7b1c2a0](https://github.com/samcharles93/tau/commit/7b1c2a0b73266608aade3a125dcc8210767323f6))
+* **child:** subscribe before commands, fix cancel loop, and use authoritative iteration/usage counts ([4b76663](https://github.com/samcharles93/tau/commit/4b76663163ff56b92655c03f72460a7b22f81346))
+* **deps:** bump toolchain and dependencies to remediate security advisories ([c5e048e](https://github.com/samcharles93/tau/commit/c5e048ec60e7f0a0e066af3c695dea32f6ddc81f))
+* **deps:** patch webui and docs dependencies to remediate security advisories ([56703e1](https://github.com/samcharles93/tau/commit/56703e10562e297d3aabcb6fb0d4dae94edce607))
+* **execute:** address false-success regression and PR review findings ([27bd229](https://github.com/samcharles93/tau/commit/27bd229cf12e038438f6770b6ffff49a89767916))
+* **installer:** add checksum verification to install.sh and install.ps1 (archie) ([e93b3f2](https://github.com/samcharles93/tau/commit/e93b3f2f399f8993caed859a4e9b9289921738e3)), closes [#150](https://github.com/samcharles93/tau/issues/150)
+* **installer:** add prerequisite, archive, and temporary-binary validation (archie) ([fbe145a](https://github.com/samcharles93/tau/commit/fbe145ab2e98530e5f67dc8973060593cffaee2e)), closes [#149](https://github.com/samcharles93/tau/issues/149)
+* **plugin:** harden install paths, integrity checks, and atomic replacement ([e1ccce1](https://github.com/samcharles93/tau/commit/e1ccce1b01e705657bd25f0971059ac2da7b9fbc))
+* **plugin:** keep manager locks out of plugin process and RPC calls ([69307ce](https://github.com/samcharles93/tau/commit/69307ce6d8325b8d04f4e65aadf174a51769c4e4))
+* **plugin:** normalize direct GitHub release version to avoid double v-prefix ([c9a8bbd](https://github.com/samcharles93/tau/commit/c9a8bbd86333e75d508f527a8b263b622fa7d870))
+* **store:** reject malformed session timestamps ([0168e0c](https://github.com/samcharles93/tau/commit/0168e0c4165445e5e8f16ebd72702f5b1bca923f))
+* **tools:** allow read-only tools into the Go module cache ([4796be7](https://github.com/samcharles93/tau/commit/4796be7cb8a5d052a6edd02e4de358e5fb675499))
+* **tools:** apply the write tool's timeout context to downstream I/O ([539ea40](https://github.com/samcharles93/tau/commit/539ea401ae529272a5955cc112a31315b494cbe8))
+* **tools:** honour an explicit read limit that equals the default ([7767eb7](https://github.com/samcharles93/tau/commit/7767eb75740bf08512dba8ee580da2a5b08b4a80))
+* **tools:** return a listing when read is pointed at a directory ([09e77be](https://github.com/samcharles93/tau/commit/09e77be15d387e67585d9135d3070803e02eb91b))
+* **tools:** stop advertising non-spawnable specs in the agent tool schema ([5c5009b](https://github.com/samcharles93/tau/commit/5c5009b4bb120ac7f3ae91ecf41bfec4cf8a027f))
+* **tui2:** show a tool call's actual arguments, not just its name ([af53f3d](https://github.com/samcharles93/tau/commit/af53f3dfa0deeb42769ec8583ff8e646a1b8c727))
+
+
+### Performance Improvements
+
+* **tools:** clamp grep context_before/context_after to 5 lines ([61a3b6b](https://github.com/samcharles93/tau/commit/61a3b6b368a967b1935fee7c9e6c879e18835b17))
+* **tools:** collapse passing go test output to package summaries ([7ff49e6](https://github.com/samcharles93/tau/commit/7ff49e6bc9047549dbfe5ab5e9c6d9cfe1d56434))
+* **tools:** let the codesearch index serve subdirectory greps ([a94395b](https://github.com/samcharles93/tau/commit/a94395b9c6bd17980f79b9308c0403946a51e4c9))
+* **tools:** stop re-sending file lines the model has already been shown ([d77c9bf](https://github.com/samcharles93/tau/commit/d77c9bf2da4023d8244d8f6d4062ac9ebd9f7994))
+
 ## [0.30.1](https://github.com/samcharles93/tau/compare/v0.30.0...v0.30.1) (2026-07-21)
 
 
