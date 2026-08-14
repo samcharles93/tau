@@ -73,7 +73,7 @@ jobs:
       # Dry-run goreleaser (build + archive + checksum, skip publish) so a
       # misconfigured platform matrix fails CI before anything is uploaded.
       - name: goreleaser dry-run
-        uses: goreleaser/goreleaser-action@v6
+        uses: goreleaser/goreleaser-action@v7
         with:
           distribution: goreleaser
           version: "~> v2"
@@ -86,7 +86,7 @@ jobs:
           TAG_NAME: ${{ needs.release-please.outputs.tag_name }}
         run: go run ./scripts/verify-release-assets --dist dist --tag "$TAG_NAME"
 
-      - uses: goreleaser/goreleaser-action@v6
+      - uses: goreleaser/goreleaser-action@v7
         with:
           distribution: goreleaser
           version: "~> v2"
