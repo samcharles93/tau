@@ -37,11 +37,14 @@ jobs:
       - uses: actions/checkout@v4
 
       - name: Install Pester
-        shell: pwsh
+        shell: powershell
         run: Install-Module -Name Pester -Force -SkipPublisherCheck -Scope CurrentUser
 
+      # Run under Windows PowerShell (5.1): the test fixtures compile C#
+      # fixtures via Add-Type -OutputType ConsoleApplication, which
+      # PowerShell 7 (pwsh) does not support (PSNotSupportedException).
       - name: Run install.ps1 Pester tests
-        shell: pwsh
+        shell: powershell
         run: Invoke-Pester -Path ./install.tests.ps1
 
   goreleaser:
