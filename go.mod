@@ -21,7 +21,7 @@ require (
 	github.com/urfave/cli/v3 v3.10.1
 	golang.org/x/sys v0.46.0
 	golang.org/x/term v0.44.0
-	google.golang.org/grpc v1.82.1
+	google.golang.org/grpc v1.83.0
 	google.golang.org/protobuf v1.36.11
 	gopkg.in/yaml.v3 v3.0.1
 	modernc.org/sqlite v1.53.0
