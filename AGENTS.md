@@ -599,7 +599,9 @@ Use this section to quickly find the right files for a given change.
 - `internal/cli/provider.go` - thin `tau provider list/login/logout` command and terminal adapters; delegates provider
   use cases to `internal/app`
 - `internal/cli/update.go` and `internal/updater/` - `tau update` self-update command, GitHub release lookup, checksum
-  verification, and binary replacement
+  verification, and binary replacement. Binary swap is implemented in-house (`applyUpdate`/`commitBinary` + `hideFile` on
+  Windows) — no third-party self-update library. tau's trust model is SHA-256 checksums over TLS (goreleaser
+  `checksums.txt`), not PGP signatures; the updater must never pull in `x/crypto/openpgp` (GO-2026-5932).
 - `internal/cli/plugin_source.go` - Plugin source configuration
 
 ### Changing Session Persistence

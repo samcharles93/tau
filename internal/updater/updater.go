@@ -19,8 +19,6 @@ import (
 	"runtime"
 	"strings"
 	"time"
-
-	"github.com/minio/selfupdate"
 )
 
 const (
@@ -126,14 +124,7 @@ func Run(ctx context.Context, opts Options) (Result, error) {
 	if err := verifyBinaryRuns(binary, opts.GOOS, opts.VerifyBinaryTimeout); err != nil {
 		return Result{}, err
 	}
-	binaryHash := sha256.Sum256(binary)
-	if err := selfupdate.Apply(bytes.NewReader(binary), selfupdate.Options{
-		TargetPath: opts.TargetPath,
-		Checksum:   binaryHash[:],
-	}); err != nil {
-		if rollbackErr := selfupdate.RollbackError(err); rollbackErr != nil {
-			return Result{}, fmt.Errorf("applying update: %w; rollback failed: %w", err, rollbackErr)
-		}
+	if err := applyUpdate(binary, opts.TargetPath); err != nil {
 		return Result{}, fmt.Errorf("applying update: %w", err)
 	}
 	result.Updated = true
