@@ -16,8 +16,8 @@ importers:
   .:
     dependencies:
       '@hugeicons/core-free-icons':
-        specifier: ^4.2.2
-        version: 4.2.2
+        specifier: ^4.2.3
+        version: 4.2.3
       '@hugeicons/vue':
         specifier: ^1.0.7
         version: 1.0.7(vue@3.5.39(typescript@6.0.3))
@@ -380,8 +380,8 @@ packages:
     peerDependencies:
       hono: ^4
 
-  '@hugeicons/core-free-icons@4.2.2':
-    resolution: {integrity: sha512-fjQW3p6cwoJmwK3oCnV8Z3PC5sHihDvr2jkAHax8cxqp62GaV/D7B/Rnao+JwicW8fmLZUQ6QrzWfoyMFOEQlQ==}
+  '@hugeicons/core-free-icons@4.2.3':
+    resolution: {integrity: sha512-fpiU0qFZkv4ABi23xJ2m4qNr0BBfuIaYjPboN8WDA6aj9D+OzXa7eykxKOpACZRuGbDz1U9S5DsNx1d5KNnsgA==}
 
   '@hugeicons/vue@1.0.7':
     resolution: {integrity: sha512-oUE0ztUNYbsMFpMgbV3bsxQBObNkeouomUThFuFPzYC5eV++VTYonStsltJu2MoLMkxV8mzpoVvIbuMPBZSN0w==}
@@ -3256,7 +3256,7 @@ snapshots:
     dependencies:
       hono: 4.13.2
 
-  '@hugeicons/core-free-icons@4.2.2': {}
+  '@hugeicons/core-free-icons@4.2.3': {}
 
   '@hugeicons/vue@1.0.7(vue@3.5.39(typescript@6.0.3))':
     dependencies:
