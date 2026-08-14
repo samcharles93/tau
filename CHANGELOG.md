@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.31.1](https://github.com/samcharles93/tau/compare/v0.31.0...v0.31.1) (2026-08-14)
+
+
+### Code Refactoring
+
+* **updater:** replace minio/selfupdate with in-house atomic binary replacement ([6fe8b40](https://github.com/samcharles93/tau/commit/6fe8b4078868260ae793f0f7759e53b68e0f9022))
+
 ## [0.31.0](https://github.com/samcharles93/tau/compare/v0.30.1...v0.31.0) (2026-08-14)
 
 
