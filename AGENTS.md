@@ -357,7 +357,7 @@ Use this section to quickly find the right files for a given change.
 
 - `internal/agent/coordinator.go` - `Coordinator` struct (the agent runtime that implements `ChatRuntime`):
   - **Config**: `CoordinatorConfig` - TokenSource, Streamer, Registry, MaxToolIterations, ParallelToolCalls,
-    ShowReasoning, ExtensionReloader, SessionStore, OnPluginEvent, ScheduleInterval
+    ShowReasoning, ExtensionReloader, SessionStore, OnPluginEvent, ScheduleInterval, SubagentExecutor
   - **Lifecycle**: `NewCoordinator()`, `Send()`, `Close()`, `loop()`, `runTurn()`
   - **Command handlers**: `handleStart()`, `handleSubmit()`, `handleSteer()`, `handleUpdate()`, `handleCancel()`,
     `handleReset()`, `handleClose()`, `handleReloadExtensions()`, `handleRunExtensionCommand()`, `handleListSessions()`,
@@ -409,6 +409,12 @@ Use this section to quickly find the right files for a given change.
 - `internal/agent/tools/grep.go` - Content searching tool
 - `internal/agent/tools/ls.go` - Directory listing tool
 - `internal/agent/tools/docs.go` - tau documentation search/read tools (SearchDocs, ReadDoc)
+- `internal/agent/tools/subagent.go` - the `subagent` delegation tool: delegates a self-contained subtask to a
+  nested agent (ai-sdk `agent.Subagent`) running in a fresh context window on the session's current provider/model.
+  The runner is supplied by the coordinator (via `CoordinatorConfig.SubagentExecutor`, implemented in
+  `internal/app/subagent.go`), which resolves the calling session's provider/model at call time; the executor runs
+  the nested `core.GenerateText` with a read-only-plus-shell toolset (ai-sdk toolkit read/grep/find/shell;
+  edit/write excluded so a nested agent cannot mutate the workspace unseen). Disabled when the executor is nil.
 - `internal/agent/tools/mutation.go` - `MutationQueue` for write/edit/patch operations
 - `internal/agent/tools/fsutil.go` - Filesystem utilities
 - `internal/agent/tools/pathutil.go` - Path resolution utilities

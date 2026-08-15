@@ -806,6 +806,19 @@ func (c *Coordinator) toolAllowed(name string) bool {
 	return true
 }
 
+// sessionProviderModel returns the active provider name and model ID for the
+// given session, used to run the "subagent" delegation tool on the same
+// model the parent session is currently using. Empty strings mean the session
+// has no model selected yet.
+func (c *Coordinator) sessionProviderModel(sessionID string) (provider, model string) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if sess, ok := c.sessions[sessionID]; ok && sess != nil && sess.state != nil {
+		return sess.state.Provider.Name, sess.state.Model.ID
+	}
+	return "", ""
+}
+
 func (c *Coordinator) buildToolDefs() []chat.ChatToolDef {
 	schemas := c.registry.Schemas()
 

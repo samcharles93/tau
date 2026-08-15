@@ -255,7 +255,7 @@ func RunChat(ctx context.Context, opts ChatOptions) error {
 	// Auth is resolved by the runtime when the provider is created.
 	// The coordinator only needs a token source for legacy compatibility;
 	// pass an empty token.
-	result, err := newCoordinator(ctx, opts, "", sessionManager, startupEvents, bus, streamer, available, skillsMgr, skillDiscoveryCfg, true, agentInstanceID)
+	result, err := newCoordinator(ctx, opts, "", sessionManager, startupEvents, bus, streamer, rt, available, skillsMgr, skillDiscoveryCfg, true, agentInstanceID)
 	if err != nil {
 		if sessionManager != nil {
 			if err := sessionManager.Close(); err != nil {

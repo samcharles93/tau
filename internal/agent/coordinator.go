@@ -136,6 +136,13 @@ type coordinatorSession struct {
 // context window, and pricing). Returns nil if the model is unknown.
 type ModelLookup func(modelID string) *chat.ChatModelRef
 
+// SubagentExecutor runs a delegated subtask as a nested agent in a fresh
+// context window and returns its final conclusion. It is invoked with the
+// calling session's current provider name and model ID, resolved by the
+// coordinator at tool-call time. Implemented by the app layer (which owns the
+// ai-sdk runtime). Nil disables the "subagent" tool entirely.
+type SubagentExecutor func(ctx context.Context, provider, model, prompt string) (string, error)
+
 type CoordinatorConfig struct {
 	Bus         *eventbus.Bus
 	TokenSource TokenSource
@@ -200,6 +207,11 @@ type CoordinatorConfig struct {
 	// a model patch arrives to enrich the bare {id: "..."} with the full
 	// metadata so snapshots carry correct context_window and cost.
 	ModelLookup ModelLookup
+
+	// SubagentExecutor, when non-nil, registers the built-in "subagent"
+	// delegation tool, which runs a nested agent in a fresh context window
+	// using the calling session's current provider/model. Nil disables it.
+	SubagentExecutor SubagentExecutor
 
 	// MetricsConfig controls observability export. Session tracking is
 	// always on; Dir enables file export when non-empty.
@@ -315,6 +327,22 @@ func NewCoordinator(ctx context.Context, cfg CoordinatorConfig) (*Coordinator, e
 		c.uiBridge = &coordinatorUIBridge{coordinator: c}
 	} else {
 		c.uiBridge = tools.NonInteractiveBridge{}
+	}
+
+	// Register the "subagent" delegation tool when the app layer supplied an
+	// executor. The runner resolves the calling session's current
+	// provider/model at call time (sessions can switch models mid-turn).
+	if cfg.SubagentExecutor != nil {
+		exec := cfg.SubagentExecutor
+		if err := tools.RegisterSubagentTool(c.registry, tools.SubagentRunnerFunc(func(ctx context.Context, sessionID, prompt string) (string, error) {
+			provider, model := c.sessionProviderModel(sessionID)
+			if provider == "" || model == "" {
+				return "", errors.New("no model selected for this session; pick one with /model first")
+			}
+			return exec(ctx, provider, model, prompt)
+		})); err != nil {
+			return nil, fmt.Errorf("registering subagent tool: %w", err)
+		}
 	}
 
 	go func() {

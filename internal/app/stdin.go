@@ -122,6 +122,7 @@ func RunStdIn(ctx context.Context, opts ChatOptions, prompt string) error {
 		InteractiveUI:         false,
 		AutoExportJSONL:       false,
 		Streamer:              streamer,
+		Runtime:               rt,
 		SkillsManager:         skillsMgr,
 		SkillsDiscoveryConfig: skillDiscoveryCfg,
 		MetricsConfig:         opts.Config.Metrics,

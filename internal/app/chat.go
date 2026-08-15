@@ -489,7 +489,7 @@ type newCoordinatorResult struct {
 
 // newCoordinator creates and returns an agent coordinator with the standard
 // tool registry, config, and session persistence.
-func newCoordinator(ctx context.Context, opts ChatOptions, bearerToken string, sessionManager *sessions.Manager, startupEvents []tauchat.ChatEvent, bus *eventbus.Bus, streamer agent.Streamer, modelRefs []tauchat.ChatModelRef, skillsMgr *skills.Manager, skillsDiscoveryConfig skills.DiscoveryConfig, deferPlugins bool, agentInstanceID string) (*newCoordinatorResult, error) {
+func newCoordinator(ctx context.Context, opts ChatOptions, bearerToken string, sessionManager *sessions.Manager, startupEvents []tauchat.ChatEvent, bus *eventbus.Bus, streamer agent.Streamer, rt *runtime.Runtime, modelRefs []tauchat.ChatModelRef, skillsMgr *skills.Manager, skillsDiscoveryConfig skills.DiscoveryConfig, deferPlugins bool, agentInstanceID string) (*newCoordinatorResult, error) {
 	cwd, _ := os.Getwd()
 	cmdRegClient := bus.Client("command-registry")
 	cmdReg := commandreg.New(cwd, cmdRegClient)
@@ -508,6 +508,7 @@ func newCoordinator(ctx context.Context, opts ChatOptions, bearerToken string, s
 		CommandRegistry:       cmdReg,
 		AutoExportJSONL:       true,
 		Streamer:              streamer,
+		Runtime:               rt,
 		ModelRefs:             modelRefs,
 		SkillsManager:         skillsMgr,
 		SkillsDiscoveryConfig: skillsDiscoveryConfig,
@@ -539,7 +540,10 @@ type coordinatorConfig struct {
 	CommandRegistry *commandreg.Registry
 	AutoExportJSONL bool
 	Streamer        agent.Streamer
-	ModelRefs       []tauchat.ChatModelRef
+	// Runtime is the ai-sdk runtime used to resolve providers for the
+	// "subagent" delegation tool. Nil disables that tool.
+	Runtime   *runtime.Runtime
+	ModelRefs []tauchat.ChatModelRef
 	// SkillsManager provides the skill catalog snapshot. When nil the
 	// coordinator falls back to inline discovery (headless path).
 	SkillsManager *skills.Manager
@@ -789,12 +793,13 @@ func buildCoordinator(ctx context.Context, cfg coordinatorConfig) (*agent.Coordi
 			}
 			return nil
 		},
-		MetricsConfig: cfg.MetricsConfig,
-		MaxTurns:      cfg.MaxTurns,
-		Timeout:       cfg.Timeout,
-		MaxTokens:     cfg.MaxTokens,
-		Deadline:      cfg.Deadline,
-		AutoCompact:   cfg.ChatOptions.Config.AutoCompact,
+		SubagentExecutor: subagentExecutorOrNil(cfg.Runtime, cwd),
+		MetricsConfig:    cfg.MetricsConfig,
+		MaxTurns:         cfg.MaxTurns,
+		Timeout:          cfg.Timeout,
+		MaxTokens:        cfg.MaxTokens,
+		Deadline:         cfg.Deadline,
+		AutoCompact:      cfg.ChatOptions.Config.AutoCompact,
 	})
 	if err != nil {
 		return nil, nil, nil, err

@@ -124,6 +124,7 @@ func RunChild(ctx context.Context, opts ChatOptions) error {
 		InteractiveUI:         false,
 		AutoExportJSONL:       false,
 		Streamer:              streamer,
+		Runtime:               rt,
 		SkillsManager:         skillsMgr,
 		SkillsDiscoveryConfig: skills.DiscoveryConfig{WorkingDir: cwd},
 		MetricsConfig:         opts.Config.Metrics,
