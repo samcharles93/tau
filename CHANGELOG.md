@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.32.0](https://github.com/samcharles93/tau/compare/v0.31.1...v0.32.0) (2026-08-15)
+
+
+### Features
+
+* **agent:** add subagent delegation tool backed by nested ai-sdk agents ([ba9bdb3](https://github.com/samcharles93/tau/commit/ba9bdb399c5d81895160b4f5ec80b6f98a1389e1))
+
 ## [0.31.1](https://github.com/samcharles93/tau/compare/v0.31.0...v0.31.1) (2026-08-14)
 
 
