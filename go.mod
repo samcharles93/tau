@@ -16,13 +16,13 @@ require (
 	github.com/pkg/browser v0.0.0-20240102092130-5ac0b6a4141c
 	github.com/pmezard/go-difflib v1.0.0
 	github.com/rivo/uniseg v0.4.7
-	github.com/samcharles93/ai-sdk v0.1.17
+	github.com/samcharles93/ai-sdk v0.1.20
 	github.com/stretchr/testify v1.11.1
 	github.com/urfave/cli/v3 v3.10.1
-	golang.org/x/sys v0.46.0
-	golang.org/x/term v0.44.0
-	google.golang.org/grpc v1.82.1
-	google.golang.org/protobuf v1.36.11
+	golang.org/x/sys v0.47.0
+	golang.org/x/term v0.45.0
+	google.golang.org/grpc v1.83.0
+	google.golang.org/protobuf v1.36.12
 	gopkg.in/yaml.v3 v3.0.1
 	modernc.org/sqlite v1.53.0
 )
