@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.32.1](https://github.com/samcharles93/tau/compare/v0.32.0...v0.32.1) (2026-08-22)
+
+
+### Bug Fixes
+
+* **agent/tools:** resolve symlinks in isConfined to prevent sandbox escape ([125bbb7](https://github.com/samcharles93/tau/commit/125bbb7336243dfde46e10ef6255006d1cfccdbe))
+
 ## [0.32.0](https://github.com/samcharles93/tau/compare/v0.31.1...v0.32.0) (2026-08-15)
 
 
