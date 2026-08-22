@@ -1,11 +1,81 @@
 package tools
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
 	"sync"
 )
+
+const maxSymlinkHops = 64
+
+// resolveSymlinks resolves all symbolic links in path. If path (or part of it)
+// does not exist, existing ancestors are resolved and nonexistent trailing
+// components are preserved.
+func resolveSymlinks(path string) (string, error) {
+	return resolveSymlinksWithDepth(path, 0)
+}
+
+func resolveSymlinksWithDepth(path string, depth int) (string, error) {
+	if depth > maxSymlinkHops {
+		return "", errors.New("too many levels of symbolic links")
+	}
+
+	cleanPath, err := filepath.Abs(path)
+	if err != nil {
+		return "", err
+	}
+
+	// Fast path: if the path exists, evaluate symlinks directly.
+	if realPath, err := filepath.EvalSymlinks(cleanPath); err == nil {
+		return realPath, nil
+	}
+
+	vol := filepath.VolumeName(cleanPath)
+	rest := cleanPath[len(vol):]
+	parts := strings.Split(filepath.ToSlash(rest), "/")
+
+	current := vol
+	if current == "" && strings.HasPrefix(cleanPath, "/") {
+		current = "/"
+	}
+
+	for i, part := range parts {
+		if part == "" || part == "." {
+			continue
+		}
+		next := filepath.Join(current, part)
+		fi, err := os.Lstat(next)
+		if err != nil {
+			if os.IsNotExist(err) {
+				remaining := parts[i:]
+				return filepath.Join(append([]string{current}, remaining...)...), nil
+			}
+			return "", err
+		}
+
+		if fi.Mode()&os.ModeSymlink != 0 {
+			linkTarget, err := os.Readlink(next)
+			if err != nil {
+				return "", err
+			}
+			if !filepath.IsAbs(linkTarget) {
+				linkTarget = filepath.Join(current, linkTarget)
+			}
+			remaining := parts[i+1:]
+			fullRemaining := linkTarget
+			if len(remaining) > 0 {
+				fullRemaining = filepath.Join(append([]string{linkTarget}, remaining...)...)
+			}
+			return resolveSymlinksWithDepth(fullRemaining, depth+1)
+		}
+
+		current = next
+	}
+
+	return current, nil
+}
 
 const (
 	// maxReadBytes is the maximum file size the read tool will load into memory.
@@ -61,22 +131,25 @@ func isReadConfined(base, target string) bool {
 	return cache != "" && isConfined(cache, target)
 }
 
-// isConfined checks whether target is within (or equal to) the base directory.
-// Returns false if target escapes via ../ or is an unrelated absolute path.
+// isConfined checks whether target is within (or equal to) the base directory,
+// resolving any symbolic links in both base and target to prevent sandbox
+// escapes via project-internal symlinks pointing outside the workspace.
+// Returns false if target escapes via ../, symlinks to outside paths, or is an
+// unrelated absolute path.
 func isConfined(base, target string) bool {
 	if base == "" {
 		return true // no confinement if cwd is unset
 	}
-	baseAbs, err := filepath.Abs(base)
+	baseReal, err := resolveSymlinks(base)
 	if err != nil {
 		return false
 	}
-	targetAbs, err := filepath.Abs(target)
+	targetReal, err := resolveSymlinks(target)
 	if err != nil {
 		return false
 	}
 
-	rel, err := filepath.Rel(baseAbs, targetAbs)
+	rel, err := filepath.Rel(baseReal, targetReal)
 	if err != nil {
 		return false
 	}
