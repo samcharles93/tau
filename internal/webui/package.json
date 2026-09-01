@@ -11,7 +11,7 @@
     "test:watch": "vitest"
   },
   "dependencies": {
-    "@hugeicons/core-free-icons": "^4.2.3",
+    "@hugeicons/core-free-icons": "^4.3.0",
     "@hugeicons/vue": "^1.0.7",
     "@lucide/vue": "^1.31.0",
     "@vueuse/core": "^14.4.0",
