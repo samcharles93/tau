@@ -5,7 +5,7 @@ go 1.26.6
 require (
 	github.com/hashicorp/go-hclog v1.6.3
 	github.com/hashicorp/go-plugin v1.8.0
-	github.com/modelcontextprotocol/go-sdk v1.7.0
+	github.com/modelcontextprotocol/go-sdk v1.8.0
 	github.com/samcharles93/tau v0.0.0-20260602000000-000000000000
 )
 
