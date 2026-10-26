@@ -18,7 +18,7 @@ require (
 	github.com/rivo/uniseg v0.4.7
 	github.com/samcharles93/ai-sdk v0.1.21
 	github.com/stretchr/testify v1.12.1
-	github.com/urfave/cli/v3 v3.10.1
+	github.com/urfave/cli/v3 v3.11.0
 	golang.org/x/sys v0.47.0
 	golang.org/x/term v0.45.0
 	google.golang.org/grpc v1.83.2
