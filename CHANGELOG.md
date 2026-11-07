@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.34.3](https://github.com/samcharles93/tau/compare/v0.34.2...v0.34.3) (2026-11-07)
+
+
+### Bug Fixes
+
+* **agent:** derive auto-compact token budget from the compaction model's context window ([024a718](https://github.com/samcharles93/tau/commit/024a718bf7d30bf6aab46042b9e5a9b1019f7b62))
+* **tools:** kill the shell command's whole process group on timeout/cancel ([36144d5](https://github.com/samcharles93/tau/commit/36144d5faf1ef1d2493c4a2c337f8bd56b51964e))
+
 ## [0.34.2](https://github.com/samcharles93/tau/compare/v0.34.1...v0.34.2) (2026-11-07)
 
 
