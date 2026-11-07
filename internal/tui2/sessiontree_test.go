@@ -114,3 +114,48 @@ func TestSessionTreeEscCloses(t *testing.T) {
 		t.Fatal("expected Esc to close the session navigator")
 	}
 }
+
+func TestSessionCommandWithoutArgsOpensNavigator(t *testing.T) {
+	for _, name := range []string{"session", "resume"} {
+		t.Run(name, func(t *testing.T) {
+			rt := &fakeRuntime{}
+			m := newTestModel(rt, nil)
+			m.sessionSummaries = []tauchat.SessionSummary{{ID: "cached"}}
+
+			var cmd tea.Cmd
+			if name == "session" {
+				cmd = m.cmdSession("")
+			} else {
+				cmd = m.cmdResume("")
+			}
+			drainCmd(cmd)
+
+			if m.sessionTreeOverlay == nil {
+				t.Fatal("expected the session navigator to open")
+			}
+			if len(rt.sent) != 1 {
+				t.Fatalf("expected one background refresh, got %d commands", len(rt.sent))
+			}
+			list, ok := rt.sent[0].(tauchat.ListSessionsCommand)
+			if !ok || !list.Silent {
+				t.Fatalf("expected a silent ListSessionsCommand, got %#v", rt.sent[0])
+			}
+		})
+	}
+}
+
+func TestSessionListStillPrints(t *testing.T) {
+	rt := &fakeRuntime{}
+	m := newTestModel(rt, nil)
+	drainCmd(m.cmdSession("list"))
+
+	if m.sessionTreeOverlay != nil {
+		t.Fatal("/session list should not open the navigator")
+	}
+	if len(rt.sent) != 1 {
+		t.Fatalf("expected one command, got %d", len(rt.sent))
+	}
+	if list, ok := rt.sent[0].(tauchat.ListSessionsCommand); !ok || list.Silent {
+		t.Fatalf("expected a non-silent ListSessionsCommand, got %#v", rt.sent[0])
+	}
+}

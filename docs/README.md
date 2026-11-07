@@ -66,8 +66,8 @@ Run `/model` in the TUI to pick from all enabled providers' models.
 | `/effort [level]`                             | Set reasoning effort (`off`, `low`, `medium`, `high`, `max`)                                                          |
 | `/reasoning [peek\|full\|off]`                | Reasoning display: live tail (peek), whole trace (full), or hidden; no argument cycles                                |
 | `/system <prompt>`                            | Set the session system prompt                                                                                         |
-| `/session [list\|info\|export\|delete\|<id>]` | Manage saved sessions                                                                                                 |
-| `/resume [id]`                                | Resume a saved session                                                                                                |
+| `/session [list\|info\|export\|delete\|<id>]` | No argument opens the session navigator (Ctrl+O); `list` prints the sessions; others manage one session               |
+| `/resume [id]`                                | Resume a saved session; no argument opens the session navigator                                                       |
 | `/new`                                        | Start a fresh conversation (aliases: `/clear`, `/reset`)                                                              |
 | `/reload`                                     | Reload extensions/plugins                                                                                             |
 | `/help`                                       | Show all available commands                                                                                           |

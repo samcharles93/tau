@@ -46,6 +46,20 @@ func (m *model) openSessionTree() tea.Cmd {
 	return nil
 }
 
+// openSessionTreeFresh opens the navigator for an explicit /session or
+// /resume and always refreshes the list in the background, since a typed
+// command implies the user wants the current sessions, not a stale cache.
+func (m *model) openSessionTreeFresh() tea.Cmd {
+	if cmd := m.openSessionTree(); cmd != nil {
+		return cmd
+	}
+	if m.sessionsFetchInFlight {
+		return nil
+	}
+	m.startSessionsFetch()
+	return sendCommand(m.runtime, tauchat.ListSessionsCommand{Silent: true})
+}
+
 // sessionTreeRows flattens m.sessionSummaries into a depth-first
 // parent/child tree, mirroring sessionSummariesText's childrenOf/roots walk
 // (render.go) but emitting rows for interactive navigation instead of a

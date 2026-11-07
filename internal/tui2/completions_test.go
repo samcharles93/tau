@@ -681,7 +681,7 @@ func TestSilentSessionsListedEventDoesNotPrintToScrollback(t *testing.T) {
 }
 
 // TestExplicitSessionsListedEventPrintsToScrollback guards that an actual
-// "/session" submission still prints its result, unlike the silent
+// "/session list" submission still prints its result, unlike the silent
 // background prefetch above.
 func TestExplicitSessionsListedEventPrintsToScrollback(t *testing.T) {
 	m := newTestModel(&fakeRuntime{}, nil)

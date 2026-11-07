@@ -117,7 +117,7 @@ func init() {
 			run: (*model).cmdEffort,
 		},
 		{
-			name: "session", usage: "[list|info|export|delete|<id>]", description: "manage saved sessions",
+			name: "session", usage: "[list|info|export|delete|<id>]", description: "open the session navigator, or manage saved sessions",
 			run: (*model).cmdSession,
 		},
 		{
@@ -760,7 +760,9 @@ func (m *model) cmdSkills(args string) tea.Cmd {
 func (m *model) cmdSession(args string) tea.Cmd {
 	args = strings.TrimSpace(args)
 	switch {
-	case args == "" || args == "list":
+	case args == "":
+		return m.openSessionTreeFresh()
+	case args == "list":
 		return sendCommand(m.runtime, tauchat.ListSessionsCommand{})
 	case args == "info" || strings.HasPrefix(args, "info "):
 		id := strings.TrimSpace(strings.TrimPrefix(args, "info"))
@@ -802,8 +804,8 @@ func (m *model) cmdSession(args string) tea.Cmd {
 func (m *model) cmdResume(args string) tea.Cmd {
 	args = strings.TrimSpace(args)
 	if args == "" {
-		// List sessions so the user can pick.
-		return sendCommand(m.runtime, tauchat.ListSessionsCommand{})
+		// Open the session navigator so the user can pick.
+		return m.openSessionTreeFresh()
 	}
 	return sendCommand(m.runtime, tauchat.LoadSessionCommand{
 		SessionID: args,
