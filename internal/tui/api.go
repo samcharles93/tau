@@ -31,8 +31,10 @@ type TUIConfig struct {
 	// line to show the user and whether a restart is now pending. Provided by
 	// the app layer, which knows the running binary's version. Nil disables the
 	// command.
-	UpdateFunc      func(ctx context.Context, install bool) (string, bool, error)
-	ShowReasoning   bool
+	UpdateFunc    func(ctx context.Context, install bool) (string, bool, error)
+	ShowReasoning bool
+	// ReasoningMode is tui2\'s reasoning display mode: "peek", "full" or "off".
+	ReasoningMode   string
 	ReasoningEffort string
 	Debug           bool
 	// OnReady is called after the TUI subscribes to bus events but before it

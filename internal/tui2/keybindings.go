@@ -85,7 +85,13 @@ func (m *model) dispatchKey(msg tea.KeyPressMsg) tea.Cmd {
 		return m.cmdCopy("")
 
 	case "ctrl+r":
-		// Toggles the reasoning block from the turn that just finished -
+		// In peek mode, while reasoning is still streaming, widen the live
+		// tail to the full trace (and back) for the rest of this turn.
+		if m.reasoningPeek && m.reasoning != "" {
+			m.peekExpanded = !m.peekExpanded
+			return nil
+		}
+		// Otherwise toggle the reasoning block from the turn that just finished -
 		// there's no per-block focus-navigation the way tools have
 		// (focusNextTool), so this always reaches the most recent one
 		// (m.lastReasoningKey). A no-op while reasoning is off, before any

@@ -51,7 +51,7 @@ echo "  ok"
 
 echo "== launching tui2 in tmux =="
 tmux new-session -d -s "$SESSION" -x 100 -y 30 \
-  "TAU_CONFIG_DIR=$SCRATCH_DIR/tau-config $SCRATCH_DIR/tau-test chat --no-web"
+  "TAU_CONFIG_DIR=$SCRATCH_DIR/tau-config $SCRATCH_DIR/tau-test chat"
 sleep 1.5
 
 echo "== initial render =="

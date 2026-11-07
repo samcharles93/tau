@@ -7,6 +7,62 @@ import (
 	"charm.land/lipgloss/v2"
 )
 
+// Reasoning display modes, matching config.UIConfig.Reasoning.
+const (
+	reasoningModePeek = "peek"
+	reasoningModeFull = "full"
+	reasoningModeOff  = "off"
+)
+
+// reasoningPeekLines is how many trailing reasoning lines peek mode shows
+// while a turn is running.
+const reasoningPeekLines = 3
+
+// setReasoningMode applies a display mode. Anything unrecognised means peek.
+func (m *model) setReasoningMode(mode string) {
+	switch strings.ToLower(strings.TrimSpace(mode)) {
+	case reasoningModeOff:
+		m.showReasoning, m.reasoningPeek = false, false
+	case reasoningModeFull:
+		m.showReasoning, m.reasoningPeek = true, false
+	default:
+		m.showReasoning, m.reasoningPeek = true, true
+	}
+	m.peekExpanded = false
+}
+
+func (m *model) reasoningMode() string {
+	switch {
+	case !m.showReasoning:
+		return reasoningModeOff
+	case m.reasoningPeek:
+		return reasoningModePeek
+	default:
+		return reasoningModeFull
+	}
+}
+
+// autoCollapseReasoning decides a newly committed block's initial fold.
+// A block always folds once an answer follows it. In peek mode it also
+// folds when tool calls follow, since the tools are the visible outcome;
+// only a reasoning-only turn stays open, because folding it would hide the
+// whole response.
+func (m *model) autoCollapseReasoning(hasAnswer, hasTools bool) bool {
+	return hasAnswer || (m.reasoningPeek && hasTools)
+}
+
+// liveReasoningLines renders the in-progress reasoning for the viewport:
+// the whole trace in full mode (or after Ctrl+R in peek mode), otherwise
+// just the last reasoningPeekLines wrapped lines, so the direction of
+// travel is visible without the trace taking over the transcript.
+func (m *model) liveReasoningLines() []string {
+	lines := renderReasoningLines(m.reasoning, m.width)
+	if !m.reasoningPeek || m.peekExpanded || len(lines) <= reasoningPeekLines {
+		return lines
+	}
+	return lines[len(lines)-reasoningPeekLines:]
+}
+
 // committedReasoningBlock is a completed reasoning block already committed
 // to permanent scrollback that can still be collapsed/expanded afterward -
 // mirroring committedToolGroup's same "stay interactive after it scrolls
@@ -197,7 +253,7 @@ func (m *model) viewportLinesForView(visibleReasoning bool) []string {
 	// no visible reasoning), the status bar's own "Thinking ●●●" already
 	// covers this state - nothing to add here.
 	if visibleReasoning {
-		lines = append(lines, renderReasoningLines(m.reasoning, m.width)...)
+		lines = append(lines, m.liveReasoningLines()...)
 	}
 	if m.streaming != "" {
 		lines = append(lines, renderStreamingLines(m.streaming, m.width)...)

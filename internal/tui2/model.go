@@ -169,7 +169,9 @@ type model struct {
 	// the line to show, and whether a restart is now pending. Nil disables the
 	// command.
 	updateFn        func(ctx context.Context, install bool) (string, bool, error)
-	showReasoning   bool
+	showReasoning   bool // reasoning is shown at all (peek or full)
+	reasoningPeek   bool // peek mode: live tail only, committed blocks collapsed
+	peekExpanded    bool // Ctrl+R widened the live peek to the full trace for this turn
 	reasoningEffort string
 	ctxWindow       int // context window size for % display
 
@@ -334,7 +336,7 @@ func newModel(
 	availableModels []tauchat.ChatModelRef,
 	refresh func(context.Context) ([]tauchat.ChatModelRef, error),
 	updateFn func(ctx context.Context, install bool) (string, bool, error),
-	showReasoning bool,
+	reasoningMode string,
 	reasoningEffort string,
 	toolCallsDefaultCollapsed bool,
 	usage *metrics.UsageTracker,
@@ -349,7 +351,7 @@ func newModel(
 	// render immediately without a WindowSizeMsg having arrived yet.
 	ensureMDRenderer(mdCache, 80)
 
-	return &model{
+	m := &model{
 		ctx:                       ctx,
 		runtime:                   runtime,
 		chatSub:                   chatSub,
@@ -370,7 +372,6 @@ func newModel(
 		refresh:                   refresh,
 		updateFn:                  updateFn,
 		completeProviderLogin:     providers.NewManage(nil).LoginComplete,
-		showReasoning:             showReasoning,
 		reasoningEffort:           reasoningEffort,
 		toolCallsDefaultCollapsed: toolCallsDefaultCollapsed,
 		toolGroupCollapsed:        toolCallsDefaultCollapsed,
@@ -383,6 +384,8 @@ func newModel(
 		mdCache:                   mdCache,
 		expandedToolCache:         make(map[string]expandedToolCacheEntry),
 	}
+	m.setReasoningMode(reasoningMode)
+	return m
 }
 
 // spinnerFrames are the Unicode braille dots cycled through at 80ms -

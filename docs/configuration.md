@@ -51,13 +51,20 @@ Tau-managed catalog OAuth logins, currently `github-copilot` and `openai-codex`,
 
 ```go
 type UIConfig struct {
-    ShowReasoning bool `yaml:"show_reasoning"` // default: false
+    Reasoning     string `yaml:"reasoning"`      // peek | full | off, default: peek
+    ShowReasoning bool   `yaml:"show_reasoning"` // legacy; false means off when reasoning is unset
 }
 ```
 
 Controls terminal UI presentation:
 
-- `show_reasoning: true` - display reasoning/chain-of-thought content.
+- `reasoning: peek` (default) - while a turn runs, show the last few lines of the model's reasoning so you can see
+  where it's heading and steer or stop it. Finished reasoning folds to one line in scrollback; Ctrl+R expands it.
+- `reasoning: full` - show the whole reasoning trace inline as it streams.
+- `reasoning: off` - hide reasoning entirely.
+
+`/reasoning [peek|full|off]` changes the mode for the current session; with no argument it cycles through them.
+The older `show_reasoning: false` still means `off` when `reasoning` isn't set.
 
 ## Plugin Config
 
@@ -128,7 +135,7 @@ providers:
     base_url: http://localhost:11434/v1
 
 ui:
-  show_reasoning: true
+  reasoning: peek
 ```
 
 ### With Plugin Config

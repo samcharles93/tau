@@ -211,7 +211,7 @@ func (m *model) upsertToolCall(callID, toolName, argumentsSummary, summary strin
 	// far was authored before it started, so commit it now (see
 	// flushStreamingText) rather than let it render after the tool group
 	// that chronologically follows it.
-	m.flushStreamingText()
+	m.flushStreamingText(true)
 	m.tools = append(m.tools, toolState{
 		id:        callID,
 		name:      toolName,

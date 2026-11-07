@@ -36,6 +36,7 @@ providers:
     auth:
       type: none
 ui:
+  reasoning: full
   show_reasoning: true
   tool_calls_default_collapsed: true
 debug: true
@@ -85,6 +86,7 @@ updates:
 	checkStr(t, "default_provider", cfg.DefaultProvider, "test-provider")
 	checkStr(t, "default_model", cfg.DefaultModel, "test-model")
 	checkBool(t, "debug", cfg.Debug, true)
+	checkStr(t, "ui.reasoning", cfg.UI.Reasoning, "full")
 	checkTrue(t, "ui.show_reasoning", cfg.UI.ShowReasoning)
 	checkTrue(t, "ui.tool_calls_default_collapsed", cfg.UI.ToolCallsDefaultCollapsed)
 	checkStr(t, "registry.url", cfg.Registry.URL, "https://registry.example")
@@ -230,12 +232,14 @@ func TestAgentsConfigDurationErrors(t *testing.T) {
 func TestUIConfigParityRoundTrip(t *testing.T) {
 	var ui UIConfig
 	err := yaml.Unmarshal([]byte(`
+reasoning: full
 show_reasoning: true
 tool_calls_default_collapsed: true
 `), &ui)
 	if err != nil {
 		t.Fatalf("Unmarshal() error = %v", err)
 	}
+	checkStr(t, "reasoning", ui.Reasoning, "full")
 	checkTrue(t, "show_reasoning", ui.ShowReasoning)
 	checkTrue(t, "tool_calls_default_collapsed", ui.ToolCallsDefaultCollapsed)
 	assertAllExportedYAMLFieldsNonZero(t, ui)

@@ -26,6 +26,7 @@ func (m *model) handleChatEvent(evt tauchat.ChatEvent) tea.Cmd {
 	case tauchat.ChatResponseStartedEvent:
 		m.streaming = ""
 		m.reasoning = ""
+		m.peekExpanded = false
 		m.tools = nil
 		m.toolGroupCollapsed = m.toolCallsDefaultCollapsed
 		m.spinnerFrame = 0
@@ -488,7 +489,7 @@ func (m *model) applySnapshot(e tauchat.ChatSessionSnapshotEvent) {
 					m.renderedLines = append(m.renderedLines, "")
 				}
 				key := committedReasoningKey(msg.ID, idx)
-				m.commitReasoningBlock(msg.ReasoningContent, key, msg.Content != "", oldReasoning)
+				m.commitReasoningBlock(msg.ReasoningContent, key, m.autoCollapseReasoning(msg.Content != "", len(msg.ToolCalls) > 0), oldReasoning)
 				// spacingReasoningToContent blank lines before next component.
 				for range spacingReasoningToContent {
 					m.renderedLines = append(m.renderedLines, "")
@@ -665,7 +666,7 @@ func (m *model) finalizeResponse(id string) string {
 			m.reasoningKeySeq++
 		}
 		key := committedReasoningKey(id, m.reasoningKeySeq)
-		m.commitReasoningBlock(m.reasoning, key, m.streaming != "", nil)
+		m.commitReasoningBlock(m.reasoning, key, m.autoCollapseReasoning(m.streaming != "", false), nil)
 		// spacingReasoningToContent blank lines before next component.
 		for range spacingReasoningToContent {
 			m.renderedLines = append(m.renderedLines, "")
@@ -770,12 +771,14 @@ func (m *model) renderMarkdown(content string, width int) string {
 // render ahead of content that chronologically came first. Reasoning is
 // committed before response text, matching the order in which both were
 // authored and finalizeResponse's persistence behavior.
-func (m *model) flushStreamingText() {
+// toolsFollow says whether tool calls come after this text, which lets
+// peek mode fold the reasoning (see autoCollapseReasoning).
+func (m *model) flushStreamingText(toolsFollow bool) {
 	changed := false
 	if m.reasoning != "" && m.showReasoning {
 		m.reasoningKeySeq++
 		key := committedReasoningKey("", m.reasoningKeySeq)
-		m.commitReasoningBlock(m.reasoning, key, m.streaming != "", nil)
+		m.commitReasoningBlock(m.reasoning, key, m.autoCollapseReasoning(m.streaming != "", toolsFollow), nil)
 		// spacingReasoningToContent blank lines before next component.
 		for range spacingReasoningToContent {
 			m.renderedLines = append(m.renderedLines, "")
@@ -803,7 +806,7 @@ func (m *model) flushStreamingText() {
 // keep their final state; pending/running tools become error rows with the
 // interruption reason so they do not disappear as an unfinished live panel.
 func (m *model) flushInterruptedTurn(reason string) {
-	m.flushStreamingText()
+	m.flushStreamingText(len(m.tools) > 0)
 	if len(m.tools) == 0 {
 		return
 	}

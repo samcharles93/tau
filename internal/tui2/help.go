@@ -54,7 +54,8 @@ var helpSections = []helpSection{
 	{
 		title: "Reasoning",
 		rows: []helpRow{
-			{"Ctrl+R", "collapse/expand the last completed reasoning block"},
+			{"Ctrl+R", "expand live peek, or fold/unfold last block"},
+			{"/reasoning", "peek (live tail) · full (whole trace) · off"},
 		},
 	},
 	{

@@ -1410,3 +1410,41 @@ updates:
 		t.Fatalf("Updates.Mode = %q, want warn (local overrides global)", cfg.Updates.Mode)
 	}
 }
+
+func TestUIConfigReasoningMode(t *testing.T) {
+	cases := []struct {
+		name string
+		yaml string
+		want string
+	}{
+		{"unset defaults to peek", ``, ReasoningPeek},
+		{"show_reasoning true is peek", "show_reasoning: true\n", ReasoningPeek},
+		{"show_reasoning false is off", "show_reasoning: false\n", ReasoningOff},
+		{"explicit full", "reasoning: full\n", ReasoningFull},
+		{"explicit mode beats show_reasoning", "reasoning: peek\nshow_reasoning: false\n", ReasoningPeek},
+		{"case and space tolerant", "reasoning: ' OFF '\n", ReasoningOff},
+		{"unknown value falls back", "reasoning: loud\n", ReasoningPeek},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			var ui UIConfig
+			if err := yaml.Unmarshal([]byte(tc.yaml), &ui); err != nil {
+				t.Fatalf("Unmarshal: %v", err)
+			}
+			if got := ui.ReasoningMode(); got != tc.want {
+				t.Fatalf("ReasoningMode() = %q, want %q", got, tc.want)
+			}
+		})
+	}
+}
+
+func TestMergeUIConfigsReasoning(t *testing.T) {
+	merged := mergeUIConfigs(UIConfig{Reasoning: ReasoningFull}, UIConfig{})
+	if merged.Reasoning != ReasoningFull {
+		t.Fatalf("global reasoning lost: %q", merged.Reasoning)
+	}
+	merged = mergeUIConfigs(UIConfig{Reasoning: ReasoningFull}, UIConfig{Reasoning: ReasoningOff})
+	if merged.Reasoning != ReasoningOff {
+		t.Fatalf("local reasoning should win: %q", merged.Reasoning)
+	}
+}

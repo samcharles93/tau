@@ -109,7 +109,7 @@ func init() {
 			run: (*model).cmdSystem,
 		},
 		{
-			name: "reasoning", usage: "[on|off]", description: "toggle reasoning display",
+			name: "reasoning", usage: "[peek|full|off]", description: "set reasoning display (no argument cycles)",
 			run: (*model).cmdReasoning,
 		},
 		{
@@ -318,18 +318,25 @@ func (m *model) cmdReasoning(args string) tea.Cmd {
 	args = strings.TrimSpace(args)
 	switch strings.ToLower(args) {
 	case "":
-		m.showReasoning = !m.showReasoning
-	case "on", "true", "yes":
-		m.showReasoning = true
-	case "off", "false", "no", "auto":
-		m.showReasoning = false
+		// Cycle peek -> full -> off -> peek.
+		switch m.reasoningMode() {
+		case reasoningModePeek:
+			m.setReasoningMode(reasoningModeFull)
+		case reasoningModeFull:
+			m.setReasoningMode(reasoningModeOff)
+		default:
+			m.setReasoningMode(reasoningModePeek)
+		}
+	case reasoningModePeek:
+		m.setReasoningMode(reasoningModePeek)
+	case reasoningModeFull, "on", "true", "yes":
+		m.setReasoningMode(reasoningModeFull)
+	case reasoningModeOff, "false", "no":
+		m.setReasoningMode(reasoningModeOff)
 	default:
-		m.showReasoning = !m.showReasoning
+		return m.setNotification("usage: /reasoning [peek|full|off]")
 	}
-	if m.showReasoning {
-		return m.setNotification("reasoning: on")
-	}
-	return m.setNotification("reasoning: off")
+	return m.setNotification("reasoning: " + m.reasoningMode())
 }
 
 func (m *model) cmdEffort(args string) tea.Cmd {

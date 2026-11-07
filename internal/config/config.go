@@ -292,22 +292,49 @@ func (c *Config) UnmarshalYAML(value *yaml.Node) error {
 
 // UIConfig controls terminal UI observability and presentation.
 type UIConfig struct {
-	ShowReasoning             bool `yaml:"show_reasoning" json:"show_reasoning"`
-	ToolCallsDefaultCollapsed bool `yaml:"tool_calls_default_collapsed" json:"tool_calls_default_collapsed"`
+	// Reasoning selects how tui2 shows model reasoning: "peek" (a live
+	// tail while a turn runs, collapsed in scrollback), "full" (the whole
+	// trace inline) or "off". Empty falls back to ShowReasoning.
+	Reasoning                 string `yaml:"reasoning,omitempty" json:"reasoning,omitempty"`
+	ShowReasoning             bool   `yaml:"show_reasoning" json:"show_reasoning"`
+	ToolCallsDefaultCollapsed bool   `yaml:"tool_calls_default_collapsed" json:"tool_calls_default_collapsed"`
 
 	showReasoningSet             bool
 	toolCallsDefaultCollapsedSet bool
 }
 
+// Reasoning display modes for UIConfig.Reasoning.
+const (
+	ReasoningPeek = "peek"
+	ReasoningFull = "full"
+	ReasoningOff  = "off"
+)
+
+// ReasoningMode resolves the effective reasoning display mode. An explicit
+// Reasoning value wins; otherwise an explicit show_reasoning: false means
+// off, and everything else defaults to peek.
+func (c UIConfig) ReasoningMode() string {
+	switch m := strings.ToLower(strings.TrimSpace(c.Reasoning)); m {
+	case ReasoningPeek, ReasoningFull, ReasoningOff:
+		return m
+	}
+	if c.showReasoningSet && !c.ShowReasoning {
+		return ReasoningOff
+	}
+	return ReasoningPeek
+}
+
 func (c *UIConfig) UnmarshalYAML(value *yaml.Node) error {
 	type rawUIConfig struct {
-		ShowReasoning             *bool `yaml:"show_reasoning"`
-		ToolCallsDefaultCollapsed *bool `yaml:"tool_calls_default_collapsed"`
+		Reasoning                 string `yaml:"reasoning"`
+		ShowReasoning             *bool  `yaml:"show_reasoning"`
+		ToolCallsDefaultCollapsed *bool  `yaml:"tool_calls_default_collapsed"`
 	}
 	var raw rawUIConfig
 	if err := value.Decode(&raw); err != nil {
 		return err
 	}
+	c.Reasoning = raw.Reasoning
 	if raw.ShowReasoning != nil {
 		c.ShowReasoning = *raw.ShowReasoning
 		c.showReasoningSet = true
@@ -1253,6 +1280,9 @@ func mergeConfigs(globalCfg, localCfg Config) Config {
 
 func mergeUIConfigs(globalCfg, localCfg UIConfig) UIConfig {
 	merged := globalCfg
+	if localCfg.Reasoning != "" {
+		merged.Reasoning = localCfg.Reasoning
+	}
 	if localCfg.showReasoningSet {
 		merged.ShowReasoning = localCfg.ShowReasoning
 		merged.showReasoningSet = true

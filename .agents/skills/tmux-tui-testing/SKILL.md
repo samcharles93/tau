@@ -5,9 +5,9 @@ description: Build, run, and drive tau end-to-end - the Bubbletea v2 TUI (intern
 
 # Running and testing tau
 
-tau is a Go CLI with three surfaces: non-interactive subcommands (`provider`,
-`plugin`, `skills`, ...), an interactive Bubbletea v2 TUI (`internal/tui2`,
-the default), and an embedded web UI server. The TUI is an alt-screen app —
+tau is a Go CLI with two surfaces: non-interactive subcommands (`provider`,
+`plugin`, `skills`, ...) and an interactive Bubbletea v2 TUI (`internal/tui2`,
+the default). The TUI is an alt-screen app, so
 it can't be driven with plain Bash piping. This skill covers building it,
 launching it safely (without touching the user's real session history or
 making unintended API calls), and driving it with tmux send-keys/capture-pane.
@@ -79,11 +79,11 @@ instead.
 
 ```bash
 tmux new-session -d -s tautest -x 140 -y 40 \
-  "TAU_CONFIG_DIR=$SCRATCH/tau-config $SCRATCH/tau-test chat --no-web"
+  "TAU_CONFIG_DIR=$SCRATCH/tau-config $SCRATCH/tau-test chat"
 sleep 1.5   # first render takes a moment
 ```
 
-`--no-web` skips opening a browser. Pick `-x`/`-y` to match the scenario
+Pick `-x`/`-y` to match the scenario
 (narrow widths are useful for testing status-bar/layout truncation).
 
 ## 4. Read the screen

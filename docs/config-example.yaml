@@ -43,7 +43,7 @@ providers:
       api_key_env: MY_PROVIDER_API_KEY
 
 ui:
-  show_reasoning: true   # Display model reasoning content (default: false)
+  reasoning: peek        # peek (live tail, collapsed in scrollback), full, or off (default: peek)
 
 # Path to your plugin binaries directory (optional)
 # plugins_dir: ~/.config/tau/plugins

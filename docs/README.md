@@ -64,7 +64,7 @@ Run `/model` in the TUI to pick from all enabled providers' models.
 | `/provider logout <provider>`                 | Disable a provider / remove its saved key                                                                             |
 | `/refresh`                                    | Re-discover models from all enabled providers                                                                         |
 | `/effort [level]`                             | Set reasoning effort (`off`, `low`, `medium`, `high`, `max`)                                                          |
-| `/reasoning [on\|off]`                        | Toggle display of model reasoning content                                                                             |
+| `/reasoning [peek\|full\|off]`                | Reasoning display: live tail (peek), whole trace (full), or hidden; no argument cycles                                |
 | `/system <prompt>`                            | Set the session system prompt                                                                                         |
 | `/session [list\|info\|export\|delete\|<id>]` | Manage saved sessions                                                                                                 |
 | `/resume [id]`                                | Resume a saved session                                                                                                |
