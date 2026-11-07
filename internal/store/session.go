@@ -79,9 +79,11 @@ type SessionStore interface {
 	// Load reconstructs a full ChatSessionState from SQLite.
 	Load(ctx context.Context, id string) (chat.ChatSessionState, error)
 
-	// List returns paginated session summaries, newest first. Cursor is the
-	// created_at value to resume from (empty for first page). The returned
-	// nextCursor is empty when there are no more pages.
+	// List returns paginated session summaries, newest first. Cursor is an
+	// opaque token from a previous nextCursor (empty for first page); the
+	// returned nextCursor is empty when there are no more pages. The cursor
+	// is a total order over (created_at, id), so rows sharing a timestamp
+	// are never skipped.
 	List(ctx context.Context, limit int, cursor string) ([]SessionSummary, string, error)
 
 	// Delete removes a session and its messages (via CASCADE).

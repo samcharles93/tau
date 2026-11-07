@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"path/filepath"
+	"strings"
 	"time"
 
 	sqlite "modernc.org/sqlite"
@@ -261,9 +262,16 @@ func parseStoredTime(field, value string) (time.Time, error) {
 	return parsed, nil
 }
 
-// List returns paginated session summaries, newest first. The cursor is a
-// created_at ISO 8601 string. Returns up to limit summaries plus a nextCursor
-// (empty when there are no more pages).
+// cursorSep separates the created_at and id components of a composite
+// pagination cursor. It is a control character so it can never collide with
+// a timestamp or session ID.
+const cursorSep = "\x1f"
+
+// List returns paginated session summaries, newest first. The cursor is an
+// opaque composite (created_at, id) token from a previous nextCursor (empty
+// for the first page); a legacy single-column created_at cursor is still
+// accepted. Returns up to limit summaries plus a nextCursor (empty when
+// there are no more pages).
 func (s *SQLiteStore) List(ctx context.Context, limit int, cursor string) ([]SessionSummary, string, error) {
 	if limit <= 0 {
 		limit = 10
@@ -281,10 +289,18 @@ func (s *SQLiteStore) List(ctx context.Context, limit int, cursor string) ([]Ses
 	var args []any
 
 	if cursor != "" {
-		query += " WHERE s.created_at < ?"
-		args = append(args, cursor)
+		if createdAt, id, ok := strings.Cut(cursor, cursorSep); ok {
+			// Composite cursor gives a total order, so rows sharing a
+			// created_at timestamp are never skipped between pages.
+			query += " WHERE (s.created_at < ?) OR (s.created_at = ? AND s.id < ?)"
+			args = append(args, createdAt, createdAt, id)
+		} else {
+			// Legacy single-column created_at cursor.
+			query += " WHERE s.created_at < ?"
+			args = append(args, cursor)
+		}
 	}
-	query += " ORDER BY created_at DESC LIMIT ?"
+	query += " ORDER BY s.created_at DESC, s.id DESC LIMIT ?"
 	args = append(args, limit+1) // extra row to detect next page
 
 	rows, err := s.db.QueryContext(ctx, query, args...)
@@ -322,12 +338,11 @@ func (s *SQLiteStore) List(ctx context.Context, limit int, cursor string) ([]Ses
 	var nextCursor string
 	if len(summaries) > limit {
 		// The extra row at index `limit` tells us there is a next page.
-		// Use the last *visible* row's timestamp as the cursor so the
-		// extra row is included in the following page.
-		// NOTE: when multiple sessions share the same created_at, a
-		// composite (created_at, id) cursor would be more robust; the
-		// current single-column cursor may skip rows in that edge case.
-		nextCursor = summaries[limit-1].CreatedAt.UTC().Format(time.RFC3339)
+		// Use the last *visible* row as the composite cursor so the
+		// extra row is included in the following page, even when rows
+		// share a created_at timestamp.
+		last := summaries[limit-1]
+		nextCursor = last.CreatedAt.UTC().Format(time.RFC3339) + cursorSep + last.ID
 		summaries = summaries[:limit]
 	}
 

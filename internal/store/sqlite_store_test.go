@@ -230,6 +230,45 @@ func TestSQLiteStore_ListAndPagination(t *testing.T) {
 	assert.Empty(t, cursor2) // no more pages
 }
 
+// TestSQLiteStore_ListPaginationDuplicateCreatedAt guards the composite
+// (created_at, id) cursor: when several sessions share the same created_at
+// timestamp, no row may be dropped across pages.
+func TestSQLiteStore_ListPaginationDuplicateCreatedAt(t *testing.T) {
+	s := newTestStore(t)
+	ctx := context.Background()
+
+	// All five sessions share one created_at timestamp.
+	same := time.Now().UTC()
+	ids := []string{"dup-a", "dup-b", "dup-c", "dup-d", "dup-e"}
+	for _, id := range ids {
+		state := chatSessionFixture(id, "model", "prov")
+		state.CreatedAt = same
+		state.UpdatedAt = same
+		state.Messages = []chat.ChatMessage{
+			{Role: chat.ChatRoleUser, Content: "msg"},
+		}
+		require.NoError(t, s.Save(ctx, state, 0))
+	}
+
+	// Walk all pages with a page size that forces splits inside the
+	// duplicate-timestamp group.
+	var got []string
+	cursor := ""
+	for {
+		page, next, err := s.List(ctx, 2, cursor)
+		require.NoError(t, err)
+		for _, sum := range page {
+			got = append(got, sum.ID)
+		}
+		if next == "" {
+			break
+		}
+		cursor = next
+	}
+
+	assert.ElementsMatch(t, ids, got, "every session must appear exactly once across pages")
+}
+
 func TestSQLiteStore_Delete(t *testing.T) {
 	s := newTestStore(t)
 	ctx := context.Background()

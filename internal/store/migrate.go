@@ -9,7 +9,7 @@ import (
 
 // currentSchemaVersion is the latest migration number. Bump this when adding
 // new migrations and append the SQL to the migrations map below.
-const currentSchemaVersion = 7
+const currentSchemaVersion = 8
 
 // Migrate runs all pending schema migrations in order. It is idempotent -
 // already-applied migrations are skipped.
@@ -31,6 +31,7 @@ func Migrate(ctx context.Context, db *sql.DB) error {
 		5: migrationV5,
 		6: migrationV6,
 		7: migrationV7,
+		8: migrationV8,
 	}
 
 	for v := current + 1; v <= currentSchemaVersion; v++ {
@@ -171,4 +172,10 @@ CREATE INDEX IF NOT EXISTS idx_sessions_agent_instance ON sessions(agent_instanc
 var migrationV7 = strings.TrimSpace(`
 ALTER TABLE agent_instances ADD COLUMN process_start_ns INTEGER;
 ALTER TABLE agent_instances ADD COLUMN failure_reason TEXT;
+`)
+
+// migrationV8 adds a composite (created_at, id) index so paginated List
+// queries that use the composite cursor stay indexed.
+var migrationV8 = strings.TrimSpace(`
+CREATE INDEX IF NOT EXISTS idx_sessions_created_id ON sessions(created_at DESC, id DESC);
 `)
