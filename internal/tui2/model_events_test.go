@@ -366,6 +366,22 @@ func TestHandleChatEventSessionExported(t *testing.T) {
 	}
 }
 
+func TestHandleChatEventSessionExportedWithContent(t *testing.T) {
+	m := newTestModel(&fakeRuntime{}, nil)
+
+	// A stdout-style export (no file path) must render the payload into
+	// scrollback, not as a notification.
+	m.handleChatEvent(tauchat.SessionExportedEvent{SessionID: "sess-x", Format: "jsonl", Content: "{\"role\":\"user\"}\n"})
+
+	if m.notification != "" {
+		t.Fatalf("unexpected notification %q for content export", m.notification)
+	}
+	joined := strings.Join(m.renderedLines, "\n")
+	if !strings.Contains(joined, `{"role":"user"}`) {
+		t.Fatalf("expected export content in rendered lines, got %q", joined)
+	}
+}
+
 func TestHandleChatEventExtensionsReloaded(t *testing.T) {
 	m := newTestModel(&fakeRuntime{}, nil)
 

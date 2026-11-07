@@ -377,6 +377,9 @@ func (c *inlineChat) handleEvent(ev tauchat.ChatEvent) {
 		}
 		c.mu.Unlock()
 		c.pushNotice(msg)
+		if e.Content != "" {
+			c.engine.PrintAbove("%s", e.Content)
+		}
 		c.engine.PrintAbove("%s", c.grey(msg))
 		c.mu.Lock()
 	}

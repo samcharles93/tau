@@ -3,7 +3,6 @@ package agent
 import (
 	"context"
 	"fmt"
-	"os"
 	"strings"
 	"time"
 
@@ -201,6 +200,7 @@ func (c *Coordinator) handleExportSession(cmd chat.ExportSessionCommand) {
 	}
 
 	outputPath := cmd.Output
+	var content string
 	if outputPath != "" {
 		ctx, cancel := context.WithTimeout(c.ctx, 30*time.Second)
 		defer cancel()
@@ -215,7 +215,7 @@ func (c *Coordinator) handleExportSession(cmd chat.ExportSessionCommand) {
 			return
 		}
 	} else {
-		// Export to stdout: stream lines through events.
+		// No output file: collect the JSONL payload for the event.
 		ctx, cancel := context.WithTimeout(c.ctx, 30*time.Second)
 		defer cancel()
 
@@ -225,6 +225,7 @@ func (c *Coordinator) handleExportSession(cmd chat.ExportSessionCommand) {
 		for line := range ch {
 			output.Write(line)
 		}
+		content = output.String()
 
 		select {
 		case err := <-errCh:
@@ -240,14 +241,16 @@ func (c *Coordinator) handleExportSession(cmd chat.ExportSessionCommand) {
 		default:
 		}
 
-		// Write to actual stdout for CLI exports.
-		fmt.Fprint(os.Stdout, output.String())
 	}
 
+	// The export payload travels on the event, never on os.Stdout: writing to
+	// stdout from here corrupts the rendered frame during interactive TUI
+	// sessions. Frontends (and headless renderers) present Content themselves.
 	c.emit(chat.SessionExportedEvent{
 		SessionID: cmd.SessionID,
 		Format:    cmd.Format,
 		Path:      outputPath,
+		Content:   content,
 	})
 }
 

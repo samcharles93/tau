@@ -55,6 +55,7 @@ components:
                         - $ref: '#/components/schemas/ExportSessionCommand'
                         - $ref: '#/components/schemas/ListSessionsCommand'
                         - $ref: '#/components/schemas/ListSkillsCommand'
+                        - $ref: '#/components/schemas/LoadChildTranscriptCommand'
                         - $ref: '#/components/schemas/LoadSessionCommand'
                         - $ref: '#/components/schemas/ReloadExtensionsCommand'
                         - $ref: '#/components/schemas/ReloadSkillsCommand'
@@ -90,6 +91,9 @@ components:
                         - $ref: '#/components/schemas/ChatToolExecutionCompletedEvent'
                         - $ref: '#/components/schemas/ChatToolExecutionStartedEvent'
                         - $ref: '#/components/schemas/ChatToolOutputEvent'
+                        - $ref: '#/components/schemas/ChildAgentMessageEvent'
+                        - $ref: '#/components/schemas/ChildAgentStateEvent'
+                        - $ref: '#/components/schemas/ChildTranscriptLoadedEvent'
                         - $ref: '#/components/schemas/CommandsChangedEvent'
                         - $ref: '#/components/schemas/ExtensionCommandResultEvent'
                         - $ref: '#/components/schemas/ExtensionCommandsChangedEvent'
@@ -156,6 +160,8 @@ components:
                     items:
                         $ref: '#/components/schemas/ChatToolCall'
                     type: array
+                tool_result:
+                    $ref: '#/components/schemas/ToolResultMetadata'
             required:
                 - role
             type: object
@@ -241,15 +247,43 @@ components:
         ChatResponseCompletedEvent:
             additionalProperties: false
             properties:
+                budget_exhausted:
+                    description: |-
+                        BudgetExhausted is true when the turn ended due to max-turns or
+                        max-tokens budget exhaustion (per-task limit, per P2.4).
+                    type: boolean
                 completed_at:
                     format: date-time
                     type: string
+                cumulative_cost:
+                    description: CumulativeCost is the total USD cost of all iterations in this turn.
+                    type: number
+                cumulative_usage:
+                    $ref: '#/components/schemas/ChatUsage'
+                    description: |-
+                        CumulativeUsage carries aggregate token usage across all iterations
+                        within this turn, not just the last model call.
                 finish_reason:
                     type: string
+                partial:
+                    description: |-
+                        Partial is true when the response contains best-effort partial output
+                        from a limit-breached turn.
+                    type: boolean
                 request_id:
                     type: string
                 state:
                     $ref: '#/components/schemas/ChatSessionState'
+                timed_out:
+                    description: |-
+                        TimedOut is true when the turn ended due to a wall-clock deadline
+                        or timeout (per-task limit, per P2.4).
+                    type: boolean
+                turn_iterations:
+                    description: |-
+                        TurnIterations is the number of model iterations executed in this
+                        turn (the tool-call loop count). 1 means no tools were called.
+                    type: integer
                 usage:
                     $ref: '#/components/schemas/ChatUsage'
             required:
@@ -258,6 +292,9 @@ components:
                 - finish_reason
                 - usage
                 - completed_at
+                - turn_iterations
+                - cumulative_usage
+                - cumulative_cost
             type: object
         ChatResponseDeltaEvent:
             additionalProperties: false
@@ -319,6 +356,11 @@ components:
             additionalProperties: false
             description: ChatSessionConfig is the immutable setup for a newly created session.
             properties:
+                agent_instance_id:
+                    description: |-
+                        AgentInstanceID links this session to the agent instance that ran it.
+                        Empty for pre-migration sessions. Immutable after creation.
+                    type: string
                 model:
                     $ref: '#/components/schemas/ChatModelRef'
                 parameters:
@@ -366,6 +408,11 @@ components:
             description: ChatSessionState is the runtime-owned mutable state for one conversation.
             properties:
                 active_request_id:
+                    type: string
+                agent_instance_id:
+                    description: |-
+                        AgentInstanceID links this session to the agent instance that ran it.
+                        Empty for pre-migration sessions. Immutable after creation.
                     type: string
                 created_at:
                     format: date-time
@@ -502,6 +549,12 @@ components:
                 completed_at:
                     format: date-time
                     type: string
+                details:
+                    description: |-
+                        Details carries tool-specific structured data (e.g.
+                        tools.DiffDetails for edit/write) alongside the plain-text summary,
+                        so consumers like the TUI can render richer views. nil when the tool
+                        has nothing structured to offer.
                 duration:
                     type: integer
                 is_error:
@@ -544,6 +597,14 @@ components:
                 started_at:
                     format: date-time
                     type: string
+                summary:
+                    description: |-
+                        Summary is a short, model-authored one-liner describing what this
+                        call is doing (e.g. "Checking installed packages"), sourced from an
+                        optional "summary" argument injected into every tool's schema. Empty
+                        when the model didn't supply one - never populated with anything
+                        that failed sanitization, so consumers can render it as-is.
+                    type: string
                 tool_name:
                     type: string
             required:
@@ -579,6 +640,18 @@ components:
             additionalProperties: false
             description: ChatUsage stores token counts surfaced by the backend.
             properties:
+                cache_creation_tokens:
+                    description: |-
+                        CacheCreationTokens is Anthropic-specific: tokens written to the
+                        cache on this call, billed at a premium over normal input tokens.
+                    type: integer
+                cached_tokens:
+                    description: |-
+                        CachedTokens is the portion of PromptTokens served from a provider
+                        cache (OpenAI's automatic prefix cache, or an Anthropic cache_control
+                        read), billed at a reduced rate. Zero when the provider didn't
+                        report it or nothing was served from cache.
+                    type: integer
                 completion_tokens:
                     type: integer
                 output_tokens:
@@ -587,6 +660,83 @@ components:
                     type: integer
                 total_tokens:
                     type: integer
+            type: object
+        ChildAgentMessageEvent:
+            additionalProperties: false
+            description: ChildAgentMessageEvent forwards a child agent's inner chat event to the parent bus so the TUI/WebUI can render a live transcript for a running child, mirroring the events the child's own session would emit.
+            properties:
+                call_id:
+                    type: string
+                event: true
+                instance_id:
+                    type: string
+            required:
+                - instance_id
+                - call_id
+                - event
+            type: object
+        ChildAgentStateEvent:
+            additionalProperties: false
+            description: ChildAgentStateEvent is published on the parent bus when an agent-scoped event or usage update arrives from a spawned child.
+            properties:
+                activity:
+                    description: '"thinking" or tool verb + argument'
+                    type: string
+                call_id:
+                    description: spawning agent tool call id
+                    type: string
+                elapsed_ms:
+                    description: wall clock since spawn
+                    type: integer
+                error:
+                    type: string
+                input_tokens:
+                    description: cumulative from agent.usage
+                    type: integer
+                instance_id:
+                    description: child instance, e.g. "research#k3v9qp"
+                    type: string
+                occurred_at:
+                    format: date-time
+                    type: string
+                output_tokens:
+                    description: cumulative from agent.usage
+                    type: integer
+                partial:
+                    type: boolean
+                spec_name:
+                    description: e.g. "research"
+                    type: string
+                status:
+                    type: string
+                turns:
+                    description: from agent.usage
+                    type: integer
+            required:
+                - instance_id
+                - call_id
+                - spec_name
+                - activity
+                - turns
+                - input_tokens
+                - output_tokens
+                - elapsed_ms
+                - status
+                - occurred_at
+            type: object
+        ChildTranscriptLoadedEvent:
+            additionalProperties: false
+            description: ChildTranscriptLoadedEvent carries a finished child agent's message history for read-only drill-down.
+            properties:
+                messages:
+                    items:
+                        $ref: '#/components/schemas/ChatMessage'
+                    type: array
+                session_id:
+                    type: string
+            required:
+                - session_id
+                - messages
             type: object
         CloseChatSessionCommand:
             additionalProperties: false
@@ -909,6 +1059,8 @@ components:
                     type: string
                 limit:
                     type: integer
+                silent:
+                    type: boolean
             required:
                 - limit
             type: object
@@ -933,6 +1085,15 @@ components:
                     type: boolean
                 style:
                     $ref: '#/components/schemas/Style'
+            type: object
+        LoadChildTranscriptCommand:
+            additionalProperties: false
+            description: LoadChildTranscriptCommand requests a read-only load of a finished child agent's session, for TUI/WebUI drill-down.
+            properties:
+                session_id:
+                    type: string
+            required:
+                - session_id
             type: object
         LoadSessionCommand:
             additionalProperties: false
@@ -1070,6 +1231,9 @@ components:
             additionalProperties: false
             description: SessionExportedEvent signals that a session export completed.
             properties:
+                content:
+                    description: export payload when no file was written (e.g. stdout export requested from a TUI)
+                    type: string
                 format:
                     type: string
                 path:
@@ -1094,6 +1258,10 @@ components:
             additionalProperties: false
             description: SessionSummary is the wire type for session list rows.
             properties:
+                agent_instance_id:
+                    type: string
+                agent_spec_name:
+                    type: string
                 cost:
                     type: number
                 created_at:
@@ -1154,6 +1322,8 @@ components:
                     items:
                         $ref: '#/components/schemas/SessionSummary'
                     type: array
+                silent:
+                    type: boolean
             required:
                 - sessions
             type: object
@@ -1299,6 +1469,36 @@ components:
                     type: string
             required:
                 - text
+            type: object
+        ToolResultMetadata:
+            additionalProperties: false
+            description: ToolResultMetadata records authoritative execution facts for a tool result.
+            properties:
+                completed_at:
+                    format: date-time
+                    type: string
+                duration:
+                    type: integer
+                error_kind:
+                    type: string
+                request_id:
+                    type: string
+                result_bytes:
+                    type: integer
+                started_at:
+                    format: date-time
+                    type: string
+                status:
+                    type: string
+                tool_name:
+                    type: string
+                truncated:
+                    type: boolean
+            required:
+                - tool_name
+                - status
+                - duration
+                - result_bytes
             type: object
         UpdateChatSessionCommand:
             additionalProperties: false

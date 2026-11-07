@@ -423,7 +423,11 @@ func TestHandleExportSession_WritesJSONLFile(t *testing.T) {
 	require.True(t, os.IsNotExist(statErr), "temp file from the atomic rename must be cleaned up")
 }
 
-func TestHandleExportSession_StreamsToStdoutWhenNoOutputPath(t *testing.T) {
+// TestHandleExportSession_EmitsContentEventWhenNoOutputPath guards the
+// command/event boundary: with no output file the coordinator must not write
+// to os.Stdout (that corrupts the TUI during interactive sessions) - the JSONL
+// payload travels on SessionExportedEvent.Content instead.
+func TestHandleExportSession_EmitsContentEventWhenNoOutputPath(t *testing.T) {
 	mgr := newTestSessionManager(t)
 	coordinator := newTestCoordinatorWithManager(t, mgr)
 	sub, err := coordinator.SubscribeEvents()
@@ -465,5 +469,6 @@ func TestHandleExportSession_StreamsToStdoutWhenNoOutputPath(t *testing.T) {
 	exported := event.(chat.SessionExportedEvent)
 	require.Equal(t, "export-session-stdout", exported.SessionID)
 	require.Empty(t, exported.Path, "stdout export must not report a file path")
-	require.Contains(t, captured.String(), "stream me to stdout")
+	require.Contains(t, exported.Content, "stream me to stdout")
+	require.Empty(t, captured.String(), "coordinator must never write export payloads to os.Stdout")
 }

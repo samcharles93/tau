@@ -256,6 +256,10 @@ func (m *model) handleChatEvent(evt tauchat.ChatEvent) tea.Cmd {
 		return m.setNotification("session deleted: " + e.SessionID)
 
 	case tauchat.SessionExportedEvent:
+		if e.Content != "" {
+			m.appendMessage("system", "session export ("+e.Format+", "+e.SessionID+"):\n"+e.Content)
+			return nil
+		}
 		return m.setNotification("session exported: " + e.Path)
 
 	// Extension / plugin events.

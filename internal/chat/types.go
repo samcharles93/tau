@@ -1077,7 +1077,8 @@ func (SessionDeletedEvent) IsChatEvent() {}
 type SessionExportedEvent struct {
 	SessionID string `json:"session_id"`
 	Format    string `json:"format"`
-	Path      string `json:"path,omitempty"` // file path if written to file
+	Path      string `json:"path,omitempty"`    // file path if written to file
+	Content   string `json:"content,omitempty"` // export payload when no file was written (e.g. stdout export requested from a TUI)
 }
 
 func (SessionExportedEvent) IsChatEvent() {}
