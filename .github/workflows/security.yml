@@ -36,20 +36,5 @@ jobs:
             echo "::endgroup::"
           done
 
-  audit:
-    name: pnpm audit (docs)
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v7
-
-      - uses: pnpm/action-setup@v6
-        with:
-          version: 10
-
-      - uses: actions/setup-node@v7
-        with:
-          node-version: latest
-
-      - name: Audit docs
-        working-directory: docs
-        run: pnpm audit
+# The pnpm audit for the docs site lives in docs.yml, gated on docs/** path
+# changes - no reason to spin up a Node runner on every commit.

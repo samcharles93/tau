@@ -6,6 +6,10 @@ on:
     paths:
       - "docs/**"
       - ".github/workflows/docs.yml"
+  pull_request:
+    paths:
+      - "docs/**"
+      - ".github/workflows/docs.yml"
   workflow_dispatch:
 
 permissions:
@@ -18,7 +22,30 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  # Audit runs on docs-touching pushes and PRs (path filters above); on PRs
+  # the build/deploy jobs are skipped so a docs PR never deploys pages.
+  audit:
+    name: pnpm audit (docs)
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: pnpm/action-setup@v6
+        with:
+          version: 10
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: latest
+
+      - name: Audit docs
+        working-directory: docs
+        run: pnpm audit
+
   build:
+    if: github.event_name != 'pull_request'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
@@ -57,6 +84,7 @@ jobs:
           path: docs/.vitepress/dist
 
   deploy:
+    if: github.event_name != 'pull_request'
     needs: build
     runs-on: ubuntu-latest
     environment:
