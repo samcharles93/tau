@@ -104,6 +104,12 @@ type Coordinator struct {
 	done      chan struct{}
 	loopDone  chan struct{}
 	turnWG    sync.WaitGroup
+	// exportWG tracks auto-export JSONL goroutines launched by persistSession.
+	// The loop's shutdown path waits on it (after turnWG) so Close() only
+	// returns once every export has finished - the caller closes the session
+	// store right after, and an in-flight export against a closed SQLite db
+	// fails with "database is closed" (tau-eub).
+	exportWG  sync.WaitGroup
 	promptMu  sync.Mutex
 	prompts   map[string]chan interactivePromptResponse
 	promptSeq atomic.Uint64
@@ -424,6 +430,11 @@ func (c *Coordinator) loop() {
 			c.drainPendingCommands()
 			c.cancelAllSessions()
 			c.turnWG.Wait()
+			// All persistSession calls have now happened (cancelAllSessions on
+			// the loop goroutine, plus any final per-turn persists inside the
+			// turn goroutines just waited on), so no exportWG.Add can race
+			// this Wait.
+			c.exportWG.Wait()
 			return
 		case cmd := <-c.commands:
 			c.handleCommand(cmd)

@@ -15,6 +15,7 @@ import (
 	"github.com/samcharles93/tau/internal/config"
 	"github.com/samcharles93/tau/internal/eventbus"
 	"github.com/samcharles93/tau/internal/sessions"
+	"github.com/samcharles93/tau/internal/store"
 )
 
 // newTestCoordinatorWithManager creates a coordinator wired to the given
@@ -471,4 +472,39 @@ func TestHandleExportSession_EmitsContentEventWhenNoOutputPath(t *testing.T) {
 	require.Empty(t, exported.Path, "stdout export must not report a file path")
 	require.Contains(t, exported.Content, "stream me to stdout")
 	require.Empty(t, captured.String(), "coordinator must never write export payloads to os.Stdout")
+}
+
+// TestAutoExportJSONLCompletesBeforeClose guards tau-eub: the auto-export
+// goroutine is tracked in exportWG and the shutdown path waits for it, so
+// once coordinator.Close() returns the JSONL artifact must already exist on
+// disk. The caller closes the session store immediately after Close(), and
+// an export racing that close fails with "database is closed".
+func TestAutoExportJSONLCompletesBeforeClose(t *testing.T) {
+	dir := t.TempDir()
+	rawStore, err := store.NewSQLiteStore(context.Background(), filepath.Join(dir, "sessions.db"), dir)
+	require.NoError(t, err)
+	mgr := sessions.NewManager(rawStore)
+	t.Cleanup(func() { _ = mgr.Close() })
+
+	bus := newTestBus(t)
+	sub := eventbus.Subscribe[chat.ChatEvent](bus.Client("test"))
+	defer sub.Close()
+	coordinator, err := NewCoordinator(context.Background(), CoordinatorConfig{
+		Bus:             bus,
+		TokenSource:     func(context.Context, config.ProviderConfig) (string, error) { return "", nil },
+		Streamer:        noopStreamer{},
+		Registry:        tools.NewRegistry(),
+		SessionManager:  mgr,
+		AutoExportJSONL: true,
+	})
+	require.NoError(t, err)
+
+	persistSessionWithMessage(t, coordinator, sub, "auto-export-1", "export me on shutdown")
+
+	// Close must not return while the export goroutine is still in flight.
+	coordinator.Close()
+
+	matches, err := filepath.Glob(filepath.Join(dir, "*.jsonl"))
+	require.NoError(t, err)
+	require.NotEmpty(t, matches, "auto-export JSONL must exist on disk once Close() returns")
 }

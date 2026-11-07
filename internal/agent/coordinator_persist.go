@@ -292,8 +292,10 @@ func (c *Coordinator) persistSession(state chat.ChatSessionState, duration time.
 		return
 	}
 
-	// Auto-export JSONL as a background convenience artifact.
-	go func() {
+	// Auto-export JSONL as a background convenience artifact. Tracked in
+	// exportWG so the shutdown path can wait for it before Close() returns
+	// and the caller closes the session store (tau-eub).
+	c.exportWG.Go(func() {
 		exportPath := c.sessionManager.SessionJSONLPath(state.SessionID, state.CreatedAt)
 		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 		defer cancel()
@@ -303,5 +305,5 @@ func (c *Coordinator) persistSession(state chat.ChatSessionState, duration time.
 				"err", err,
 			)
 		}
-	}()
+	})
 }
