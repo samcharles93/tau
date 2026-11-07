@@ -1101,7 +1101,7 @@ ai-sdk's openai client (`pkg/provider/openai`) applies:
 ```bash
 go generate ./internal/providers/snapshot/...
 # or directly:
-go run ./internal/providers/snapshot/gen/main.go -output internal/providers/snapshot/models.json
+go run ./internal/providers/snapshot/gen -o internal/providers/snapshot/models.json
 ```
 
 Pass `-input /path/to/models.json` to use a local models.dev dump instead of fetching live.

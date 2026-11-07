@@ -11,7 +11,7 @@ import (
 	"github.com/samcharles93/ai-sdk/runtime"
 )
 
-//go:generate go run ./gen
+//go:generate go run ./gen -o models.json
 
 //go:embed models.json
 var data []byte
