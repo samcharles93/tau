@@ -335,6 +335,30 @@ func (m *model) anyToolRunning() bool {
 	return false
 }
 
+// allToolsSettled reports whether the live batch contains at least one tool
+// and every call has reached a terminal state. A settled batch is complete
+// for ordering purposes: reasoning or text that arrives after it was authored
+// after the batch, not inside it.
+//
+// Deliberately stricter than !anyToolRunning(): a tool that was only
+// announced (status "pending", tool-call deltas streamed but execution not
+// started) has not run yet. flushToolGroup copies toolState into the
+// committed group, and later lifecycle events only update m.tools - so
+// committing a pending row would freeze it as a spinner that never resolves.
+func (m *model) allToolsSettled() bool {
+	if len(m.tools) == 0 {
+		return false
+	}
+	for i := range m.tools {
+		switch m.tools[i].status {
+		case "done", "error":
+		default:
+			return false
+		}
+	}
+	return true
+}
+
 // runningTool returns the first tool currently executing, for the status
 // bar's "Running <tool>" segment - and its elapsed time. ok is false when
 // nothing is running (agentRunningTool should never be the current state in

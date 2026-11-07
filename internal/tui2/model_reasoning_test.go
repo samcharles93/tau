@@ -402,6 +402,114 @@ func TestAgentStateReasoningDeltaKeepsRunningTool(t *testing.T) {
 	}
 }
 
+// TestReasoningAfterSettledToolsKeepsChronologicalOrder guards the ordering
+// invariant between the three paint surfaces: committed scrollback, live
+// reasoning in the viewport, and the live tool group in the chrome below it.
+// A settled tool batch followed by reasoning must be committed first, or the
+// reasoning renders above the tool box it chronologically follows and only
+// jumps below it once response text flushes the group.
+func TestReasoningAfterSettledToolsKeepsChronologicalOrder(t *testing.T) {
+	m := newTestModel(&fakeRuntime{}, nil)
+	m.Update(tea.WindowSizeMsg{Width: 80, Height: 30})
+	m.showReasoning = true
+
+	m.handleChatEvent(tauchat.ChatResponseStartedEvent{})
+	m.handleChatEvent(tauchat.ChatReasoningDeltaEvent{Delta: "R1 first"})
+	m.handleChatEvent(tauchat.ChatToolCallDeltaEvent{
+		CallID:           "c1",
+		ToolName:         "read",
+		ArgumentsSummary: `{"path":"a.go"}`,
+	})
+	m.handleChatEvent(tauchat.ChatToolExecutionStartedEvent{CallID: "c1", ToolName: "read"})
+
+	if len(m.committedGroups) != 0 {
+		t.Fatal("tool batch must not commit before it has settled")
+	}
+
+	m.handleChatEvent(tauchat.ChatToolExecutionCompletedEvent{
+		CallID: "c1", ToolName: "read", ResultSummary: "ok",
+	})
+	m.handleChatEvent(tauchat.ChatReasoningDeltaEvent{Delta: "R2 after"})
+
+	if len(m.tools) != 0 {
+		t.Fatalf("settled tool batch still live after post-tool reasoning: %+v", m.tools)
+	}
+	if len(m.committedGroups) != 1 {
+		t.Fatalf("committed tool groups = %d, want 1", len(m.committedGroups))
+	}
+
+	assertInOrder(t, stripANSI(m.View().Content), "R1 first", "read", "R2 after")
+
+	m.handleChatEvent(tauchat.ChatResponseDeltaEvent{Delta: "the answer"})
+	m.handleChatEvent(tauchat.ChatResponseCompletedEvent{State: tauchat.ChatSessionState{
+		SessionID: "sess",
+		Messages: []tauchat.ChatMessage{{
+			ID:               "a2",
+			Role:             tauchat.ChatRoleAssistant,
+			ReasoningContent: "R2 after",
+			Content:          "the answer",
+		}},
+	}})
+	expandLastReasoningBlock(t, m)
+	assertInOrder(t, stripANSI(strings.Join(m.renderedLines, "\n")),
+		"R1 first", "read", "R2 after", "the answer")
+
+	m.applySnapshot(tauchat.ChatSessionSnapshotEvent{State: tauchat.ChatSessionState{
+		SessionID: "sess",
+		Messages: []tauchat.ChatMessage{
+			{ID: "u1", Role: tauchat.ChatRoleUser, Content: "do it"},
+			{ID: "a1", Role: tauchat.ChatRoleAssistant, ReasoningContent: "R1 first", ToolCalls: []tauchat.ChatToolCall{{
+				ID:   "c1",
+				Type: "function",
+				Function: tauchat.ChatFunctionCall{
+					Name:      "read",
+					Arguments: `{"path":"a.go"}`,
+				},
+			}}},
+			{ID: "t1", Role: tauchat.ChatRoleTool, ToolCallID: "c1", Content: "ok"},
+			{ID: "a2", Role: tauchat.ChatRoleAssistant, ReasoningContent: "R2 after", Content: "the answer"},
+		},
+	}})
+	expandLastReasoningBlock(t, m)
+	assertInOrder(t, stripANSI(strings.Join(m.renderedLines, "\n")),
+		"do it", "R1 first", "read", "R2 after", "the answer")
+}
+
+// expandLastReasoningBlock expands the most recently committed reasoning
+// block if it is folded. A snapshot rebuild restores a prior manual expand
+// (see committedReasoningKey's restore), so toggling unconditionally would
+// fold it back up again.
+func expandLastReasoningBlock(t *testing.T, m *model) {
+	t.Helper()
+	for _, b := range m.committedReasoning {
+		if b.key != m.lastReasoningKey {
+			continue
+		}
+		if b.collapsed && !m.toggleReasoningBlock(b.key) {
+			t.Fatalf("failed to expand reasoning block %q", b.key)
+		}
+		return
+	}
+	t.Fatalf("no committed reasoning block with key %q", m.lastReasoningKey)
+}
+
+// assertInOrder fails unless every needle occurs in haystack in the given
+// order, using each needle's first occurrence.
+func assertInOrder(t *testing.T, haystack string, needles ...string) {
+	t.Helper()
+	last := -1
+	for _, needle := range needles {
+		idx := strings.Index(haystack, needle)
+		if idx < 0 {
+			t.Fatalf("missing %q in:\n%s", needle, haystack)
+		}
+		if idx <= last {
+			t.Fatalf("%q at index %d is not after the previous component at index %d in:\n%s", needle, idx, last, haystack)
+		}
+		last = idx
+	}
+}
+
 func TestAgentStateReasoningAfterToolCompletionTransitionsToThinking(t *testing.T) {
 	m := newTestModel(&fakeRuntime{}, nil)
 	m.handleChatEvent(tauchat.ChatResponseStartedEvent{})

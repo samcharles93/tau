@@ -48,6 +48,16 @@ func (m *model) handleChatEvent(evt tauchat.ChatEvent) tea.Cmd {
 		m.streaming += e.Delta
 
 	case tauchat.ChatReasoningDeltaEvent:
+		// A settled tool batch is chronologically over. Commit it before
+		// appending reasoning that arrived after it: live reasoning is painted
+		// in the viewport while the live tool group is painted as chrome
+		// below the viewport, so without this the new reasoning renders above
+		// the tool box it followed and only jumps below it when response text
+		// later flushes the group. Pending/running calls stay live - see
+		// allToolsSettled.
+		if m.allToolsSettled() {
+			m.flushToolGroup()
+		}
 		m.reasoning += e.Delta
 		// Some providers can stream reasoning across tool boundaries. Keep the
 		// active tool visible until every tool in this batch has settled.
