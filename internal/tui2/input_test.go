@@ -394,3 +394,25 @@ func containsRawMsg(cmd tea.Cmd) bool {
 	}
 	return false
 }
+
+// Ctrl+Backspace arrives in several shapes depending on the terminal's
+// keyboard mode; each must delete the previous word.
+func TestWordDeleteKeyVariants(t *testing.T) {
+	variants := map[string]tea.KeyPressMsg{
+		"ctrl+backspace (enhanced keyboard)": key(tea.KeyBackspace, tea.ModCtrl),
+		"ctrl+h (legacy ^H)":                 key('h', tea.ModCtrl),
+		"alt+backspace":                      key(tea.KeyBackspace, tea.ModAlt),
+		"ctrl+w":                             key('w', tea.ModCtrl),
+	}
+	for name, k := range variants {
+		t.Run(name, func(t *testing.T) {
+			m := newTestModel(&fakeRuntime{}, nil)
+			m.input = "hello world"
+			m.inputCursor = len(m.input)
+			m.handleKey(k)
+			if m.input != "hello " {
+				t.Fatalf("input = %q, want %q", m.input, "hello ")
+			}
+		})
+	}
+}

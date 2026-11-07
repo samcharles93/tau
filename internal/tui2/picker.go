@@ -96,7 +96,7 @@ func (p *listPicker) HandleKey(msg tea.KeyPressMsg, rowCount int) (pickerAction,
 		p.query = string(runes[:p.cursor])
 		p.selected = 0
 		return pickerActionNone, true
-	case "ctrl+w", "ctrl+backspace":
+	case "ctrl+w", "ctrl+backspace", "ctrl+h", "alt+backspace":
 		start := pickerWordLeft(p.query, p.cursor)
 		runes := []rune(p.query)
 		p.query = string(append(runes[:start], runes[p.cursor:]...))

@@ -218,7 +218,9 @@ func (m *model) dispatchKey(msg tea.KeyPressMsg) tea.Cmd {
 	case "ctrl+k":
 		m.killToLineEnd()
 		return nil
-	case "ctrl+w", "ctrl+backspace":
+	// Most terminals send ^H for Ctrl+Backspace unless an enhanced keyboard
+	// protocol is active, which Bubble Tea reports as ctrl+h.
+	case "ctrl+w", "ctrl+backspace", "ctrl+h", "alt+backspace":
 		m.deleteWordBeforeCursor()
 		return nil
 
