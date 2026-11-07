@@ -7,9 +7,35 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
+	"github.com/dustin/go-humanize"
 
 	tauchat "github.com/samcharles93/tau/internal/chat"
 )
+
+// sessionDisplayTitle leads with the session's human-meaningful title,
+// falling back to the short ID when no title was derived (e.g. a session
+// with no user message yet).
+func sessionDisplayTitle(s tauchat.SessionSummary) string {
+	if s.Title != "" {
+		return s.Title
+	}
+	return shortSessionID(s.ID)
+}
+
+// shortSessionID returns the first 8 characters of a session UUID - enough
+// to tell sessions apart visually without the full opaque ID.
+func shortSessionID(id string) string {
+	if len(id) > 8 {
+		return id[:8]
+	}
+	return id
+}
+
+// relTime renders a timestamp as an easy-to-read relative age ("2 hours
+// ago") via go-humanize, replacing raw duration math at display sites.
+func relTime(t time.Time) string {
+	return humanize.Time(t)
+}
 
 // sessionTreeRow is one flattened row of the Ctrl+O session navigator: a
 // session summary plus its nesting depth (from ParentSessionID) and whether
@@ -81,17 +107,14 @@ func (m *model) sessionTreeRows() []sessionTreeRow {
 	}
 
 	var rows []sessionTreeRow
-	now := time.Now()
 	var walk func(s tauchat.SessionSummary, depth int)
 	walk = func(s tauchat.SessionSummary, depth int) {
 		parts := []string{s.ModelID}
 		if s.MessageCount > 0 {
 			parts = append(parts, fmt.Sprintf("%d msgs", s.MessageCount))
 		}
-		if age := now.Sub(s.UpdatedAt).Truncate(time.Second); age > 0 {
-			parts = append(parts, age.String())
-		}
-		label := s.ID + "  " + strings.Join(parts, " · ")
+		parts = append(parts, relTime(s.UpdatedAt))
+		label := sessionDisplayTitle(s) + "  " + strings.Join(parts, " · ")
 		agentInfo := agentAttribution(s.AgentSpecName, s.AgentInstanceID)
 		rows = append(rows, sessionTreeRow{id: s.ID, label: label, depth: depth, isActive: s.ID == m.sessionID, agentInfo: agentInfo})
 		for _, child := range childrenOf[s.ID] {

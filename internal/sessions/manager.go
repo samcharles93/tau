@@ -69,6 +69,7 @@ func (m *Manager) List(ctx context.Context, limit int, cursor string) ([]chat.Se
 	for i, s := range summaries {
 		result[i] = chat.SessionSummary{
 			ID:              s.ID,
+			Title:           s.Title,
 			ModelID:         s.ModelID,
 			Provider:        s.Provider,
 			CreatedAt:       s.CreatedAt,

@@ -20,6 +20,7 @@ var ErrSessionNotFound = errors.New("store: session not found")
 // type used for session listing - no full message content is included.
 type SessionSummary struct {
 	ID              string    `json:"id"`
+	Title           string    `json:"title,omitempty"` // derived from the first user message
 	ModelID         string    `json:"model_id"`
 	Provider        string    `json:"provider"`
 	CreatedAt       time.Time `json:"created_at"`
@@ -79,11 +80,11 @@ type SessionStore interface {
 	// Load reconstructs a full ChatSessionState from SQLite.
 	Load(ctx context.Context, id string) (chat.ChatSessionState, error)
 
-	// List returns paginated session summaries, newest first. Cursor is an
-	// opaque token from a previous nextCursor (empty for first page); the
-	// returned nextCursor is empty when there are no more pages. The cursor
-	// is a total order over (created_at, id), so rows sharing a timestamp
-	// are never skipped.
+	// List returns paginated session summaries, most recently active first
+	// (updated_at). Cursor is an opaque token from a previous nextCursor
+	// (empty for first page); the returned nextCursor is empty when there are
+	// no more pages. The cursor is a total order over (updated_at, id), so
+	// rows sharing a timestamp are never skipped.
 	List(ctx context.Context, limit int, cursor string) ([]SessionSummary, string, error)
 
 	// Delete removes a session and its messages (via CASCADE).

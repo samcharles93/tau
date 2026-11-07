@@ -5,6 +5,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/dustin/go-humanize"
+
 	tauchat "github.com/samcharles93/tau/internal/chat"
 	"github.com/samcharles93/tau/internal/theme"
 	"github.com/samcharles93/tau/internal/tui/notify"
@@ -446,7 +448,12 @@ func (c *inlineChat) printSessionSummaries(summaries []tauchat.SessionSummary, n
 	var b strings.Builder
 	b.WriteString("Sessions:\n")
 	for _, s := range summaries {
-		fmt.Fprintf(&b, "- %s · %d messages · %s\n", s.ID, s.MessageCount, s.ModelID)
+		title := s.Title
+		if title == "" {
+			title = shortID(s.ID)
+		}
+		fmt.Fprintf(&b, "- %s (%s) · %d messages · %s · %s\n",
+			title, shortID(s.ID), s.MessageCount, s.ModelID, humanize.Time(s.UpdatedAt))
 		if line := sessionSummaryMetricsLine(s); line != "" {
 			fmt.Fprintf(&b, "  %s\n", line)
 		}
@@ -497,12 +504,24 @@ func formatDurationCompact(ms int64) string {
 	}
 }
 
+// shortID trims a session UUID to its first 8 characters for display.
+func shortID(id string) string {
+	if len(id) > 8 {
+		return id[:8]
+	}
+	return id
+}
+
 func (c *inlineChat) printSessionInfo(s tauchat.SessionSummary) {
 	var b strings.Builder
-	fmt.Fprintf(&b, "Session %s\n", s.ID)
+	fmt.Fprintf(&b, "Session %s (%s)\n", shortID(s.ID), s.ID)
+	if s.Title != "" {
+		fmt.Fprintf(&b, "Title: %s\n", s.Title)
+	}
 	fmt.Fprintf(&b, "Model: %s\n", s.ModelID)
 	fmt.Fprintf(&b, "Provider: %s\n", s.Provider)
 	fmt.Fprintf(&b, "Messages: %d\n", s.MessageCount)
+	fmt.Fprintf(&b, "Created: %s\nLast accessed: %s\n", humanize.Time(s.CreatedAt), humanize.Time(s.UpdatedAt))
 	if s.TotalTokens > 0 {
 		fmt.Fprintf(&b, "Tokens: ↑%s ↓%s (total %s)\n",
 			humanizeTokens(s.InputTokens), humanizeTokens(s.OutputTokens),

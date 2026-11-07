@@ -9,7 +9,7 @@ import (
 
 // currentSchemaVersion is the latest migration number. Bump this when adding
 // new migrations and append the SQL to the migrations map below.
-const currentSchemaVersion = 8
+const currentSchemaVersion = 10
 
 // Migrate runs all pending schema migrations in order. It is idempotent -
 // already-applied migrations are skipped.
@@ -24,14 +24,16 @@ func Migrate(ctx context.Context, db *sql.DB) error {
 	}
 
 	migrations := map[int]string{
-		1: migrationV1,
-		2: migrationV2,
-		3: migrationV3,
-		4: migrationV4,
-		5: migrationV5,
-		6: migrationV6,
-		7: migrationV7,
-		8: migrationV8,
+		1:  migrationV1,
+		2:  migrationV2,
+		3:  migrationV3,
+		4:  migrationV4,
+		5:  migrationV5,
+		6:  migrationV6,
+		7:  migrationV7,
+		8:  migrationV8,
+		9:  migrationV9,
+		10: migrationV10,
 	}
 
 	for v := current + 1; v <= currentSchemaVersion; v++ {
@@ -178,4 +180,21 @@ ALTER TABLE agent_instances ADD COLUMN failure_reason TEXT;
 // queries that use the composite cursor stay indexed.
 var migrationV8 = strings.TrimSpace(`
 CREATE INDEX IF NOT EXISTS idx_sessions_created_id ON sessions(created_at DESC, id DESC);
+`)
+
+// migrationV9 adds a human-meaningful title column to sessions (populated by
+// Save from the first user message; List also derives it on the fly for rows
+// saved before this column existed) and a composite (updated_at, id) index
+// so List's last-activity ordering stays indexed.
+var migrationV9 = strings.TrimSpace(`
+ALTER TABLE sessions ADD COLUMN title TEXT NOT NULL DEFAULT '';
+CREATE INDEX IF NOT EXISTS idx_sessions_updated_id ON sessions(updated_at DESC, id DESC);
+`)
+
+// migrationV10 adds an attachments column to messages, holding a JSON array
+// of chat.ChatAttachment (inline image/file payloads referenced from the
+// message content via placeholder tokens like "[Image #1]"). Empty string
+// means no attachments, so pre-existing rows decode as nil.
+var migrationV10 = strings.TrimSpace(`
+ALTER TABLE messages ADD COLUMN attachments TEXT NOT NULL DEFAULT '';
 `)

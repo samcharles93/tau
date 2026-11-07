@@ -1018,6 +1018,7 @@ func (InteractivePromptRequestedEvent) IsChatEvent() {}
 // metadata without the full message history.
 type SessionSummary struct {
 	ID              string    `json:"id"`
+	Title           string    `json:"title,omitempty"` // derived from the first user message
 	ModelID         string    `json:"model_id"`
 	Provider        string    `json:"provider"`
 	CreatedAt       time.Time `json:"created_at"`

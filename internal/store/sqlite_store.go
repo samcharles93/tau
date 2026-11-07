@@ -82,8 +82,9 @@ func (s *SQLiteStore) Save(ctx context.Context, state chat.ChatSessionState, dur
 			id, model_id, provider, created_at, updated_at, status,
 			message_count, input_tokens, output_tokens, cache_read,
 			cache_write, total_tokens, cost, duration_ms, tool_calls,
-			tool_errors, system_prompt, parent_session_id, agent_instance_id
-		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+			tool_errors, system_prompt, parent_session_id, agent_instance_id,
+			title
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		ON CONFLICT(id) DO UPDATE SET
 			updated_at         = excluded.updated_at,
 			status             = excluded.status,
@@ -97,7 +98,8 @@ func (s *SQLiteStore) Save(ctx context.Context, state chat.ChatSessionState, dur
 			duration_ms        = excluded.duration_ms,
 			system_prompt      = excluded.system_prompt,
 			parent_session_id  = excluded.parent_session_id,
-			agent_instance_id  = excluded.agent_instance_id
+			agent_instance_id  = excluded.agent_instance_id,
+			title              = excluded.title
 	`,
 		state.SessionID,
 		state.Model.ID,
@@ -118,6 +120,7 @@ func (s *SQLiteStore) Save(ctx context.Context, state chat.ChatSessionState, dur
 		state.SystemPrompt,
 		nullString(state.ParentSessionID),
 		nullString(state.AgentInstanceID),
+		sessionTitle(state.Messages),
 	)
 	if err != nil {
 		return fmt.Errorf("store: upsert session: %w", err)
@@ -130,8 +133,8 @@ func (s *SQLiteStore) Save(ctx context.Context, state chat.ChatSessionState, dur
 	}
 
 	ins, err := tx.PrepareContext(ctx, `
-		INSERT INTO messages (session_id, seq, role, content, reasoning_content, tool_calls, tool_call_id, created_at, client_id, tool_result)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		INSERT INTO messages (session_id, seq, role, content, reasoning_content, tool_calls, tool_call_id, created_at, client_id, tool_result, attachments)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 	`)
 	if err != nil {
 		return fmt.Errorf("store: prepare message insert: %w", err)
@@ -141,6 +144,7 @@ func (s *SQLiteStore) Save(ctx context.Context, state chat.ChatSessionState, dur
 	for i, msg := range state.Messages {
 		tcJSON := encodeToolCalls(msg.ToolCalls)
 		resultJSON := encodeToolResult(msg.ToolResult)
+		attachmentsJSON := encodeAttachments(msg.Attachments)
 		msgTime := msg.CreatedAt
 		if msgTime.IsZero() {
 			// Fall back to synthesising from the session start for messages
@@ -159,6 +163,7 @@ func (s *SQLiteStore) Save(ctx context.Context, state chat.ChatSessionState, dur
 			formatTime(msgTime),
 			msg.ID,
 			resultJSON,
+			attachmentsJSON,
 		); err != nil {
 			return fmt.Errorf("store: insert message %d: %w", i, err)
 		}
@@ -201,7 +206,7 @@ func (s *SQLiteStore) Load(ctx context.Context, id string) (chat.ChatSessionStat
 	}
 
 	msgRows, err := s.db.QueryContext(ctx, `
-		SELECT seq, role, content, reasoning_content, tool_calls, tool_call_id, created_at, client_id, tool_result
+		SELECT seq, role, content, reasoning_content, tool_calls, tool_call_id, created_at, client_id, tool_result, attachments
 		FROM messages WHERE session_id = ? ORDER BY seq
 	`, id)
 	if err != nil {
@@ -212,11 +217,11 @@ func (s *SQLiteStore) Load(ctx context.Context, id string) (chat.ChatSessionStat
 	var messages []chat.ChatMessage
 	for msgRows.Next() {
 		var (
-			seq                                                             int
-			role, content, reasoning                                        string
-			toolCallsJSON, toolCallID, createdStr, clientID, toolResultJSON string
+			seq                                                                              int
+			role, content, reasoning                                                         string
+			toolCallsJSON, toolCallID, createdStr, clientID, toolResultJSON, attachmentsJSON string
 		)
-		if err := msgRows.Scan(&seq, &role, &content, &reasoning, &toolCallsJSON, &toolCallID, &createdStr, &clientID, &toolResultJSON); err != nil {
+		if err := msgRows.Scan(&seq, &role, &content, &reasoning, &toolCallsJSON, &toolCallID, &createdStr, &clientID, &toolResultJSON, &attachmentsJSON); err != nil {
 			return chat.ChatSessionState{}, fmt.Errorf("store: scan message: %w", err)
 		}
 		msgCreatedAt, err := parseStoredTime(fmt.Sprintf("message %d created_at", seq), createdStr)
@@ -232,6 +237,7 @@ func (s *SQLiteStore) Load(ctx context.Context, id string) (chat.ChatSessionStat
 			ToolCallID:       toolCallID,
 			CreatedAt:        msgCreatedAt,
 			ToolResult:       decodeToolResult(toolResultJSON),
+			Attachments:      decodeAttachments(attachmentsJSON),
 		}
 		messages = append(messages, msg)
 	}
@@ -267,11 +273,11 @@ func parseStoredTime(field, value string) (time.Time, error) {
 // a timestamp or session ID.
 const cursorSep = "\x1f"
 
-// List returns paginated session summaries, newest first. The cursor is an
-// opaque composite (created_at, id) token from a previous nextCursor (empty
-// for the first page); a legacy single-column created_at cursor is still
-// accepted. Returns up to limit summaries plus a nextCursor (empty when
-// there are no more pages).
+// List returns paginated session summaries, most recently active first
+// (updated_at). The cursor is an opaque composite (updated_at, id) token from
+// a previous nextCursor (empty for the first page); a legacy single-column
+// cursor is still accepted. Returns up to limit summaries plus a nextCursor
+// (empty when there are no more pages).
 func (s *SQLiteStore) List(ctx context.Context, limit int, cursor string) ([]SessionSummary, string, error) {
 	if limit <= 0 {
 		limit = 10
@@ -282,25 +288,31 @@ func (s *SQLiteStore) List(ctx context.Context, limit int, cursor string) ([]Ses
 		       s.message_count, s.input_tokens, s.output_tokens, s.total_tokens,
 		       s.cost, s.duration_ms, s.tool_calls, s.tool_errors,
 		       s.system_prompt, s.parent_session_id, s.agent_instance_id,
-		       COALESCE(ai.spec_name, '') as agent_spec_name
+		       COALESCE(ai.spec_name, '') as agent_spec_name,
+		       COALESCE(COALESCE(NULLIF(s.title, ''), (
+		           SELECT substr(replace(m.content, char(10), ' '), 1, 80)
+		           FROM messages m
+		           WHERE m.session_id = s.id AND m.role = 'user'
+		           ORDER BY m.seq ASC LIMIT 1
+		       )), '') AS title
 		FROM sessions s
 		LEFT JOIN agent_instances ai ON s.agent_instance_id = ai.id
 	`
 	var args []any
 
 	if cursor != "" {
-		if createdAt, id, ok := strings.Cut(cursor, cursorSep); ok {
-			// Composite cursor gives a total order, so rows sharing a
-			// created_at timestamp are never skipped between pages.
-			query += " WHERE (s.created_at < ?) OR (s.created_at = ? AND s.id < ?)"
-			args = append(args, createdAt, createdAt, id)
+		if updatedAt, id, ok := strings.Cut(cursor, cursorSep); ok {
+			// Composite cursor gives a total order, so rows sharing an
+			// updated_at timestamp are never skipped between pages.
+			query += " WHERE (s.updated_at < ?) OR (s.updated_at = ? AND s.id < ?)"
+			args = append(args, updatedAt, updatedAt, id)
 		} else {
-			// Legacy single-column created_at cursor.
-			query += " WHERE s.created_at < ?"
+			// Legacy single-column cursor.
+			query += " WHERE s.updated_at < ?"
 			args = append(args, cursor)
 		}
 	}
-	query += " ORDER BY s.created_at DESC, s.id DESC LIMIT ?"
+	query += " ORDER BY s.updated_at DESC, s.id DESC LIMIT ?"
 	args = append(args, limit+1) // extra row to detect next page
 
 	rows, err := s.db.QueryContext(ctx, query, args...)
@@ -321,7 +333,7 @@ func (s *SQLiteStore) List(ctx context.Context, limit int, cursor string) ([]Ses
 			&sum.TotalTokens, &sum.Cost, &sum.DurationMs,
 			&sum.ToolCalls, &sum.ToolErrors,
 			&sum.SystemPrompt, &parentID, &agentInstID,
-			&sum.AgentSpecName,
+			&sum.AgentSpecName, &sum.Title,
 		); err != nil {
 			return nil, "", fmt.Errorf("store: scan session row: %w", err)
 		}
@@ -340,9 +352,9 @@ func (s *SQLiteStore) List(ctx context.Context, limit int, cursor string) ([]Ses
 		// The extra row at index `limit` tells us there is a next page.
 		// Use the last *visible* row as the composite cursor so the
 		// extra row is included in the following page, even when rows
-		// share a created_at timestamp.
+		// share an updated_at timestamp.
 		last := summaries[limit-1]
-		nextCursor = last.CreatedAt.UTC().Format(time.RFC3339) + cursorSep + last.ID
+		nextCursor = last.UpdatedAt.UTC().Format(time.RFC3339) + cursorSep + last.ID
 		summaries = summaries[:limit]
 	}
 
@@ -383,7 +395,7 @@ func (s *SQLiteStore) ExportMessages(ctx context.Context, id string) (<-chan []b
 		}
 
 		rows, err := s.db.QueryContext(ctx, `
-			SELECT role, content, reasoning_content, tool_calls, tool_call_id, tool_result
+			SELECT role, content, reasoning_content, tool_calls, tool_call_id, tool_result, attachments
 			FROM messages WHERE session_id = ? ORDER BY seq
 		`, id)
 		if err != nil {
@@ -417,8 +429,8 @@ func (s *SQLiteStore) buildJSONLLine(scanner interface {
 	Scan(dest ...any) error
 },
 ) ([]byte, error) {
-	var role, content, reasoning, toolCallsJSON, toolCallID, toolResultJSON string
-	if err := scanner.Scan(&role, &content, &reasoning, &toolCallsJSON, &toolCallID, &toolResultJSON); err != nil {
+	var role, content, reasoning, toolCallsJSON, toolCallID, toolResultJSON, attachmentsJSON string
+	if err := scanner.Scan(&role, &content, &reasoning, &toolCallsJSON, &toolCallID, &toolResultJSON, &attachmentsJSON); err != nil {
 		return nil, err
 	}
 
@@ -442,6 +454,12 @@ func (s *SQLiteStore) buildJSONLLine(scanner interface {
 		var result chat.ToolResultMetadata
 		if err := json.Unmarshal([]byte(toolResultJSON), &result); err == nil {
 			line["tool_result"] = result
+		}
+	}
+	if attachmentsJSON != "" {
+		var attachments []json.RawMessage
+		if err := json.Unmarshal([]byte(attachmentsJSON), &attachments); err == nil && len(attachments) > 0 {
+			line["attachments"] = attachments
 		}
 	}
 
@@ -821,6 +839,31 @@ func formatTime(t time.Time) string {
 	return t.UTC().Format(time.RFC3339)
 }
 
+// maxTitleRunes caps the derived session title length.
+const maxTitleRunes = 80
+
+// sessionTitle derives a human-meaningful title from the session's first
+// user message: whitespace-collapsed (so the first line and any wrap survive)
+// and truncated to maxTitleRunes runes. Returns "" when there is no user
+// message yet.
+func sessionTitle(messages []chat.ChatMessage) string {
+	for _, m := range messages {
+		if m.Role != chat.ChatRoleUser {
+			continue
+		}
+		title := strings.Join(strings.Fields(m.Content), " ")
+		if title == "" {
+			continue
+		}
+		runes := []rune(title)
+		if len(runes) > maxTitleRunes {
+			title = strings.TrimSpace(string(runes[:maxTitleRunes])) + "…"
+		}
+		return title
+	}
+	return ""
+}
+
 func encodeToolCalls(calls []chat.ChatToolCall) string {
 	if len(calls) == 0 {
 		return ""
@@ -860,6 +903,31 @@ func decodeToolResult(jsonStr string) *chat.ToolResultMetadata {
 		return nil
 	}
 	return &result
+}
+
+// encodeAttachments serialises a message's inline attachments (images etc.)
+// as a JSON array for the messages.attachments column. Empty/nil encodes as
+// "" so pre-migration rows and attachment-free messages are indistinguishable.
+func encodeAttachments(attachments []chat.ChatAttachment) string {
+	if len(attachments) == 0 {
+		return ""
+	}
+	data, err := json.Marshal(attachments)
+	if err != nil {
+		return ""
+	}
+	return string(data)
+}
+
+func decodeAttachments(jsonStr string) []chat.ChatAttachment {
+	if jsonStr == "" {
+		return nil
+	}
+	var attachments []chat.ChatAttachment
+	if err := json.Unmarshal([]byte(jsonStr), &attachments); err != nil {
+		return nil
+	}
+	return attachments
 }
 
 // calculateCost estimates session cost from usage and model pricing.

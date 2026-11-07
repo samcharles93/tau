@@ -45,6 +45,34 @@ components:
                 - session_id
                 - requested_at
             type: object
+        ChatAttachment:
+            additionalProperties: false
+            description: ChatAttachment is a binary payload (typically an image) attached to a user prompt.
+            properties:
+                data:
+                    contentEncoding: base64
+                    description: |-
+                        Data holds the raw payload bytes. encoding/json marshals []byte as
+                        base64, so attachments round-trip through JSON (store, wire
+                        protocol) without extra encoding.
+                    type: string
+                media_type:
+                    description: MediaType is the IANA media type of Data (e.g. "image/png").
+                    type: string
+                name:
+                    description: Name is an optional original file name, for display only.
+                    type: string
+                placeholder:
+                    description: |-
+                        Placeholder is the inline reference token in the message content
+                        (e.g. "[Image #1]"). It is how the model (and the UI) tie the text
+                        position to this payload.
+                    type: string
+            required:
+                - placeholder
+                - media_type
+                - data
+            type: object
         ChatCommandEnvelope:
             properties:
                 payload:
@@ -130,6 +158,14 @@ components:
             additionalProperties: false
             description: ChatMessage is the canonical conversation item used for request history.
             properties:
+                attachments:
+                    description: |-
+                        Attachments carries binary payloads (e.g. pasted images) referenced
+                        inline from Content via placeholder tokens like "[Image #1]" - see
+                        ChatAttachment and ImagePlaceholderRefs.
+                    items:
+                        $ref: '#/components/schemas/ChatAttachment'
+                    type: array
                 content:
                     type: string
                 created_at:
@@ -1287,6 +1323,9 @@ components:
                     type: string
                 system_prompt:
                     type: string
+                title:
+                    description: derived from the first user message
+                    type: string
                 tool_calls:
                     type: integer
                 tool_errors:
@@ -1389,6 +1428,13 @@ components:
         SteerChatPromptCommand:
             additionalProperties: false
             properties:
+                attachments:
+                    description: |-
+                        Attachments follows the same inline-placeholder convention as
+                        SubmitChatPromptCommand.Attachments.
+                    items:
+                        $ref: '#/components/schemas/ChatAttachment'
+                    type: array
                 prompt:
                     type: string
                 request_id:
@@ -1425,6 +1471,13 @@ components:
         SubmitChatPromptCommand:
             additionalProperties: false
             properties:
+                attachments:
+                    description: |-
+                        Attachments are binary payloads referenced inline from Prompt via
+                        placeholder tokens (e.g. "[Image #1]"). Nil for text-only prompts.
+                    items:
+                        $ref: '#/components/schemas/ChatAttachment'
+                    type: array
                 prompt:
                     type: string
                 request_id:

@@ -9,6 +9,8 @@ import (
 	"testing"
 	"time"
 
+	_ "modernc.org/sqlite" // register the "sqlite" driver for raw-SQL tests
+
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
@@ -230,10 +232,66 @@ func TestSQLiteStore_ListAndPagination(t *testing.T) {
 	assert.Empty(t, cursor2) // no more pages
 }
 
-// TestSQLiteStore_ListPaginationDuplicateCreatedAt guards the composite
-// (created_at, id) cursor: when several sessions share the same created_at
+// TestSQLiteStore_ListOrdersByUpdatedAt guards the last-activity ordering:
+// rows sort by updated_at DESC, not created_at, and each row carries a title
+// derived from its first user message.
+func TestSQLiteStore_ListOrdersByUpdatedAt(t *testing.T) {
+	s := newTestStore(t)
+	ctx := context.Background()
+
+	now := time.Now().UTC()
+	// Created earlier but updated more recently: must sort first.
+	olderActive := chatSessionFixture("older-active", "model", "prov")
+	olderActive.CreatedAt = now.Add(-3 * time.Hour)
+	olderActive.UpdatedAt = now.Add(-30 * time.Minute)
+	olderActive.Messages = []chat.ChatMessage{{Role: chat.ChatRoleUser, Content: "  old but\nrecent  "}}
+	require.NoError(t, s.Save(ctx, olderActive, 0))
+	// Created later but updated earlier: sorts second despite newer creation.
+	newerIdle := chatSessionFixture("newer-idle", "model", "prov")
+	newerIdle.CreatedAt = now.Add(-1 * time.Hour)
+	newerIdle.UpdatedAt = now.Add(-2 * time.Hour)
+	newerIdle.Messages = []chat.ChatMessage{{Role: chat.ChatRoleUser, Content: "new but stale"}}
+	require.NoError(t, s.Save(ctx, newerIdle, 0))
+
+	page, cursor, err := s.List(ctx, 10, "")
+	require.NoError(t, err)
+	require.Empty(t, cursor)
+	require.Len(t, page, 2)
+	assert.Equal(t, "older-active", page[0].ID)
+	assert.Equal(t, "newer-idle", page[1].ID)
+	assert.Equal(t, "old but recent", page[0].Title)
+	assert.Equal(t, "new but stale", page[1].Title)
+}
+
+// TestSQLiteStore_ListTitleFallbackForLegacyRows guards the read-time title
+// derivation: rows saved before the title column existed (title = ”) still
+// get a title from their first user message when listed.
+func TestSQLiteStore_ListTitleFallbackForLegacyRows(t *testing.T) {
+	s, dbPath := newTestStoreAtPath(t)
+	ctx := context.Background()
+
+	// Simulate a pre-title-column row with a raw insert (title stays '').
+	db, err := sql.Open("sqlite", dbPath)
+	require.NoError(t, err)
+	defer db.Close()
+	_, err = db.Exec(`INSERT INTO sessions (id, model_id, provider, created_at, updated_at, status)
+		VALUES ('legacy-1', 'model', 'prov', '2026-01-01T00:00:00Z', '2026-01-02T00:00:00Z', 'idle')`)
+	require.NoError(t, err)
+	_, err = db.Exec(`INSERT INTO messages (session_id, seq, role, content, created_at)
+		VALUES ('legacy-1', 0, 'user', 'legacy first question' || char(10) || 'continued', '2026-01-01T00:00:00Z')`)
+	require.NoError(t, err)
+
+	page, _, err := s.List(ctx, 10, "")
+	require.NoError(t, err)
+	require.Len(t, page, 1)
+	assert.Equal(t, "legacy-1", page[0].ID)
+	assert.Equal(t, "legacy first question continued", page[0].Title)
+}
+
+// TestSQLiteStore_ListPaginationDuplicateTimestamps guards the composite
+// (updated_at, id) cursor: when several sessions share the same updated_at
 // timestamp, no row may be dropped across pages.
-func TestSQLiteStore_ListPaginationDuplicateCreatedAt(t *testing.T) {
+func TestSQLiteStore_ListPaginationDuplicateTimestamps(t *testing.T) {
 	s := newTestStore(t)
 	ctx := context.Background()
 

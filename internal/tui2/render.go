@@ -133,7 +133,8 @@ func sessionSummariesText(summaries []tauchat.SessionSummary, nextCursor string)
 		if depth > 0 {
 			glyph = "└─"
 		}
-		fmt.Fprintf(&b, "\n%s%s %s · %d messages · %s", indent, glyph, s.ID, s.MessageCount, s.ModelID)
+		fmt.Fprintf(&b, "\n%s%s %s (%s) · %d messages · %s · %s",
+			indent, glyph, sessionDisplayTitle(s), shortSessionID(s.ID), s.MessageCount, s.ModelID, relTime(s.UpdatedAt))
 		if s.AgentInstanceID != "" {
 			fmt.Fprintf(&b, " · agent %s", s.AgentInstanceID)
 		}

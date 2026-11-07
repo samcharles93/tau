@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"slices"
 	"strings"
-	"time"
 	"unicode/utf8"
 
 	tea "charm.land/bubbletea/v2"
@@ -396,17 +395,14 @@ func (m *model) sessionCompletions(argsBefore int) []compGroup {
 		return nil // only first arg
 	}
 	summaries := slices.Clone(m.sessionSummaries)
-	now := time.Now()
 	matches := make([]compMatch, 0, len(summaries))
 	for _, s := range summaries {
-		age := now.Sub(s.UpdatedAt).Truncate(time.Second)
-		parts := []string{s.ModelID}
+		parts := []string{sessionDisplayTitle(s), s.ModelID}
 		if s.MessageCount > 0 {
 			parts = append(parts, fmt.Sprintf("%d msgs", s.MessageCount))
 		}
-		if age > 0 {
-			parts = append(parts, age.String())
-		}
+		parts = append(parts, relTime(s.UpdatedAt))
+		// Word stays the full ID - it is what gets inserted as the argument.
 		matches = append(matches, compMatch{Word: s.ID, Description: strings.Join(parts, " · ")})
 	}
 	return []compGroup{{Title: "Sessions", Matches: matches}}

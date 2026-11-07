@@ -8,6 +8,7 @@ import (
 	"os"
 	"strings"
 
+	"github.com/dustin/go-humanize"
 	urfavecli "github.com/urfave/cli/v3"
 
 	"github.com/samcharles93/tau/internal/app"
@@ -153,20 +154,34 @@ func listSessions(ctx context.Context) error {
 		return nil
 	}
 
-	fmt.Printf("%-38s  %-20s  %4s  %10s  %8s  %s\n",
-		"ID", "MODEL", "MSGS", "TOKENS", "COST", "DATE")
+	fmt.Printf("%-40s  %-10s  %-20s  %4s  %10s  %8s  %-12s  %s\n",
+		"TITLE", "ID", "MODEL", "MSGS", "TOKENS", "COST", "CREATED", "LAST ACCESSED")
 	for _, s := range summaries {
+		title := s.Title
+		if title == "" {
+			title = "(untitled)"
+		}
 		fmt.Printf(
-			"%-38s  %-20s  %4d  %10s  $%6s  %s\n",
-			s.ID,
+			"%-40s  %-10s  %-20s  %4d  %10s  $%6s  %-12s  %s\n",
+			title,
+			shortID(s.ID),
 			truncateString(s.ModelID, 20),
 			s.MessageCount,
 			formatTokensCLI(s.TotalTokens),
 			formatCostCLI(s.Cost),
-			s.CreatedAt.Local().Format("2006-01-02 15:04"),
+			humanize.Time(s.CreatedAt),
+			humanize.Time(s.UpdatedAt),
 		)
 	}
 	return nil
+}
+
+// shortID trims a session UUID to its first 8 characters for display.
+func shortID(id string) string {
+	if len(id) > 8 {
+		return id[:8]
+	}
+	return id
 }
 
 func openSessionStore() (store.SessionStore, error) {
