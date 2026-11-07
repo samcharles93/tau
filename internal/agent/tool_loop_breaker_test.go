@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"strings"
 	"testing"
 	"time"
 
@@ -33,6 +34,28 @@ func TestParseToolCallKeyIgnoresJustificationField(t *testing.T) {
 	different, _ := parseToolCallKey("grep", `{"pattern":"y","path":"/a"}`)
 	if plain == different {
 		t.Fatal("parseToolCallKey should distinguish genuinely different arguments")
+	}
+}
+
+func TestParseToolCallKeyIgnoresSummaryField(t *testing.T) {
+	a, _ := parseToolCallKey("grep", `{"pattern":"x","summary":"Searching for the error handler"}`)
+	b, _ := parseToolCallKey("grep", `{"pattern":"x","summary":"Looking for the cancel function"}`)
+	if a != b {
+		t.Fatalf("a reworded summary must not change the loop key, got %q vs %q", a, b)
+	}
+}
+
+func TestLoopArgsPreview(t *testing.T) {
+	got := loopArgsPreview(`{"pattern":"x","summary":"s","repeat_justification":"j"}`)
+	if got != `{"pattern":"x"}` {
+		t.Fatalf("preview = %q, want summary and justification stripped", got)
+	}
+	long := loopArgsPreview(`{"pattern":"` + strings.Repeat("a", 500) + `"}`)
+	if r := []rune(long); len(r) != loopArgsPreviewMax+1 || !strings.HasSuffix(long, "…") {
+		t.Fatalf("long preview not truncated: %d runes", len(r))
+	}
+	if got := loopArgsPreview("not json"); got != "not json" {
+		t.Fatalf("non-JSON preview = %q", got)
 	}
 }
 

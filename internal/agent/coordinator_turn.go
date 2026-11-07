@@ -330,8 +330,9 @@ type toolLoopVerdict struct {
 }
 
 // parseToolCallKey unmarshals the tool call arguments once and returns both
-// the normalized comparison key (name+args, excluding repeat_justification)
-// and any non-empty repeat_justification string.
+// the normalized comparison key (name+args, excluding repeat_justification
+// and the injected summary, which a model can reword on every call without
+// changing what the call does) and any non-empty repeat_justification string.
 func parseToolCallKey(name, argsJSON string) (key, justification string) {
 	var m map[string]any
 	if err := json.Unmarshal([]byte(argsJSON), &m); err != nil {
@@ -340,11 +341,35 @@ func parseToolCallKey(name, argsJSON string) (key, justification string) {
 	s, _ := m["repeat_justification"].(string)
 	justification = strings.TrimSpace(s)
 	delete(m, "repeat_justification")
+	delete(m, toolCallSummaryProperty)
 	normalized, err := json.Marshal(m)
 	if err != nil {
 		return name + "\x00" + argsJSON, justification
 	}
 	return name + "\x00" + string(normalized), justification
+}
+
+// loopArgsPreviewMax bounds how much of a looping call's arguments the
+// hard-stop message quotes.
+const loopArgsPreviewMax = 120
+
+// loopArgsPreview renders a looping call's arguments for the hard-stop
+// message, without the summary and justification fields, so the user can
+// see what the model kept repeating.
+func loopArgsPreview(argsJSON string) string {
+	out := strings.TrimSpace(argsJSON)
+	var m map[string]any
+	if json.Unmarshal([]byte(argsJSON), &m) == nil {
+		delete(m, "repeat_justification")
+		delete(m, toolCallSummaryProperty)
+		if b, err := json.Marshal(m); err == nil {
+			out = string(b)
+		}
+	}
+	if r := []rune(out); len(r) > loopArgsPreviewMax {
+		out = string(r[:loopArgsPreviewMax]) + "…"
+	}
+	return out
 }
 
 // checkToolLoop tracks consecutive identical tool calls (same name+args,
@@ -391,8 +416,8 @@ func (c *Coordinator) checkToolLoop(sessionID string, tc chat.ChatToolCall) tool
 			streak:   sess.lastToolStreak,
 			blockedN: sess.lastToolBlocked,
 			message: fmt.Sprintf(
-				"tool %q was called %d times in a row with identical arguments and blocked %d times without ever being justified - stopping the turn to avoid a runaway loop",
-				tc.Function.Name, sess.lastToolStreak, sess.lastToolBlocked,
+				"tool %q was called %d times in a row with identical arguments (%s) and blocked %d times without ever being justified - stopping the turn to avoid a runaway loop",
+				tc.Function.Name, sess.lastToolStreak, loopArgsPreview(tc.Function.Arguments), sess.lastToolBlocked,
 			),
 		}
 	}
