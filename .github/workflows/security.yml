@@ -22,9 +22,9 @@ jobs:
         with:
           go-version-file: go.mod
 
-      # Scans every module in the workspace. The toolchain comes from the
-      # go directive in go.mod (currently 1.26.6, which covers the stdlib
-      # advisories). govulncheck exits non-zero only for reachable
+      # Scans every module in the workspace. setup-go installs the toolchain
+      # directive in go.mod (falling back to the go directive), so bump
+      # "toolchain" when a Go patch release fixes stdlib advisories. govulncheck exits non-zero only for reachable
       # vulnerabilities; unreachable findings (e.g. GO-2026-5932 openpgp via
       # minio/selfupdate) do not fail the build.
       - name: Scan all Go modules

@@ -2,6 +2,8 @@ module github.com/samcharles93/plugins/mcp
 
 go 1.26.6
 
+toolchain go1.27.3
+
 require (
 	github.com/hashicorp/go-hclog v1.6.3
 	github.com/hashicorp/go-plugin v1.8.0

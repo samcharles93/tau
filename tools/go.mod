@@ -2,6 +2,8 @@ module github.com/samcharles93/tau/tools
 
 go 1.26.6
 
+toolchain go1.27.3
+
 require (
 	github.com/invopop/jsonschema v0.14.0
 	github.com/samcharles93/tau v0.0.0-00010101000000-000000000000
