@@ -1,5 +1,20 @@
 # Changelog
 
+## [0.34.0](https://github.com/samcharles93/tau/compare/v0.33.4...v0.34.0) (2026-11-07)
+
+
+### Features
+
+* **store,tui2:** human session titles and last-activity ordering in session lists ([e2d5c90](https://github.com/samcharles93/tau/commit/e2d5c902aaac26e54cf490b26b3c42c6d244f2fa))
+* **tui2:** paste images as inline [Image #N] references ([7e03222](https://github.com/samcharles93/tau/commit/7e03222cb2c31267ef677ccd98a0300b6b69c178))
+
+
+### Bug Fixes
+
+* **agent:** stop the model re-asking 'want me to proceed?' after the user says go ([2e81d7d](https://github.com/samcharles93/tau/commit/2e81d7d649fb8c81acf3b21ba4389468de4a7627))
+* **app:** resume the current session when /update re-execs the binary ([35cd983](https://github.com/samcharles93/tau/commit/35cd9836b79f4fa2188b7321573fc17e1d7b4116))
+* **tui2:** keep post-tool reasoning chronological ([c86686e](https://github.com/samcharles93/tau/commit/c86686ea462363be499f697ab965bf07489dc557))
+
 ## [0.33.4](https://github.com/samcharles93/tau/compare/v0.33.3...v0.33.4) (2026-11-07)
 
 
