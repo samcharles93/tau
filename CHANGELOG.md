@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.33.1](https://github.com/samcharles93/tau/compare/v0.33.0...v0.33.1) (2026-11-07)
+
+
+### Bug Fixes
+
+* **updater:** stop phantom updates and replace the running binary ([02a830c](https://github.com/samcharles93/tau/commit/02a830ceaa551e4419ba988e79a412e7bf3dab7b))
+
 ## [0.33.0](https://github.com/samcharles93/tau/compare/v0.32.1...v0.33.0) (2026-11-07)
 
 
