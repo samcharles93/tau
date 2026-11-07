@@ -12,6 +12,7 @@ import (
 	"regexp"
 	"runtime"
 	"strings"
+	"syscall"
 	"time"
 )
 
@@ -101,7 +102,17 @@ func makeShellExecutor(cwd string, mq *MutationQueue) Executor {
 		defer cancel()
 
 		shell, args := shellCommand(p.Command)
+		// Run the command as a process-group leader and signal the whole
+		// group on cancellation. The CommandContext default (Process.Kill on
+		// the shell alone) orphans any children the command spawned - make,
+		// npm run, pipelines, servers - which keep running after the timeout
+		// (tau-iwh). cmd.Cancel replaces the default kill so ctx expiry kills
+		// the group instead.
 		cmd := exec.CommandContext(ctx, shell, args...)
+		setProcessGroup(cmd)
+		cmd.Cancel = func() error {
+			return signalProcessGroup(cmd, syscall.SIGKILL)
+		}
 		if cwd != "" {
 			cmd.Dir = cwd
 		}
