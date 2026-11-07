@@ -129,8 +129,23 @@ func (c *Coordinator) compactState(ctx context.Context, state chat.ChatSessionSt
 			}
 		}
 	}
-	if state.Model.Config.ContextWindow > 0 {
-		compactState.Parameters.MaxTokens = int(float64(state.Model.Config.ContextWindow) * cfg.TargetRatio)
+	// Derive the token budget from the *compaction* model's context window when
+	// it is known - the session model's window is wrong when cfg.Model resolves
+	// to a model with a different window (tau-6dn). Fall back to the session
+	// model's window, with a warning, when the compact model has no config.
+	window := compactState.Model.Config.ContextWindow
+	if window <= 0 {
+		window = state.Model.Config.ContextWindow
+		if cfg.Model != "" {
+			c.loggerWith(state.SessionID).Warn(
+				"auto-compact model has no known context window, falling back to session model's",
+				"compact_model", cfg.Model,
+				"fallback_context_window", window,
+			)
+		}
+	}
+	if window > 0 {
+		compactState.Parameters.MaxTokens = int(float64(window) * cfg.TargetRatio)
 	}
 
 	var summary strings.Builder
