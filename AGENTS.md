@@ -1,5 +1,13 @@
 # TAU Project Guidelines
 
+## Repository Profile
+
+This repository opts in to the **team-maintainer** Beads profile. Agents commit finished work in conventional-commit
+form and push it (`git push`, then `bd dolt push`) without asking first. Never force-push; if a push is rejected,
+stop and report it.
+
+Tau is a TUI-only terminal agent. The Web UI was removed on 2026-11-07; don't reintroduce browser or HTTP frontends.
+
 ## Git Commits IMPORTANT
 
 Use `git commit -m ""` for all commits to ensure proper signing.
@@ -362,9 +370,9 @@ Use this section to quickly find the right files for a given change.
   - **Command handlers**: `handleStart()`, `handleSubmit()`, `handleSteer()`, `handleUpdate()`, `handleCancel()`,
     `handleReset()`, `handleClose()`, `handleReloadExtensions()`, `handleRunExtensionCommand()`, `handleListSessions()`,
     `handleLoadSession()`, `handleDeleteSession()`, `handleExportSession()`, `handleInteractiveResponse()`
-  - **Cancel semantics** (`handleCancel`): the coordinator is permissive about request_id mismatches because the Web
-    UI's client-side `activeRequestId` can briefly diverge from the server's `state.ActiveRequestID` (reconnect,
-    double-submit, missed `ChatResponseStartedEvent`). A cancel with a non-matching id cancels the currently active turn
+  - **Cancel semantics** (`handleCancel`): the coordinator is permissive about request_id mismatches because a client's
+    `activeRequestId` can briefly diverge from the coordinator's `state.ActiveRequestID` (double-submit, missed
+    `ChatResponseStartedEvent`). A cancel with a non-matching id cancels the currently active turn
     and emits a `ChatNotificationEvent` warning. A cancel arriving with no active request succeeds silently (the user's
     intent is already satisfied) and re-emits a snapshot.
   - **Tool execution**: `executeToolsParallel()`, `mergeToolCallDelta()`, `emitToolCompleted()` (forwards
@@ -557,7 +565,6 @@ Use this section to quickly find the right files for a given change.
 | `"tui2-metrics"`      | -                           | `MetricEvent`                               | `tui2.Run`             | `metrics.NewUsageTracker`                  |
 | `"tui2-metrics-file"` | -                           | `MetricEvent`                               | `tui2.Run`             | `metrics.NewFileSubscriber`                |
 | `"tui"`               | -                           | `ChatEvent`                                 | `tui.RunInline`        | `inlineChat.eventLoop`                     |
-| `"web"`               | -                           | `ChatEvent`                                 | `bridge.NewBridge`     | `bridge.broadcastLoop` → WebSocket clients |
 | `"plugin-host"`       | `ChatEvent`                 | -                                           | `app.buildCoordinator` | - (plugin notifications)                   |
 | `"plugin-manager"`    | -                           | `PluginLifecycleEvent`, `ScheduleTickEvent` | `app.buildCoordinator` | plugin event dispatch                      |
 | `"skills"`            | `skills.Event`              | -                                           | `skills.NewManager`    | (nothing yet)                              |

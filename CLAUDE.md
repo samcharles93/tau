@@ -2,6 +2,14 @@
 
 This file provides instructions and context for AI coding agents working on this project.
 
+## Repository Profile
+
+This repository opts in to the **team-maintainer** Beads profile. Agents commit finished work in conventional-commit
+form and push it (`git push`, then `bd dolt push`) without asking first. Never force-push; if a push is rejected,
+stop and report it.
+
+Tau is a TUI-only terminal agent. The Web UI was removed on 2026-11-07; don't reintroduce browser or HTTP frontends.
+
 <!-- BEGIN BEADS INTEGRATION v:1 profile:minimal hash:970c3bf2 -->
 ## Beads Issue Tracker
 
@@ -61,13 +69,13 @@ This protocol applies when ending a Beads implementation workflow. It is subordi
 
 ## Build & Test
 
-_Add your build and test commands here_
-
 ```bash
-# Example:
-# npm install
-# npm test
+task           # build the Go binary
+task check     # gofumpt, go vet, go fix, golangci-lint, race tests, govulncheck, docs audit
+task test:race # tests with the race detector
 ```
+
+Run `task check` before calling work done. See `AGENTS.md` for commit conventions and package-level detail.
 
 ## Architecture Overview
 
@@ -81,4 +89,5 @@ Root and child agent callers share dependency-neutral lifecycle primitives:
 
 ## Conventions & Patterns
 
-_Add your project-specific conventions here_
+- Format Go with `gofumpt`, not `gofmt`.
+- Commit messages use conventional commits (release-please reads them); see `AGENTS.md`.
