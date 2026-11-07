@@ -2,10 +2,12 @@ package providerui
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"strings"
 	"sync"
+	"testing"
 
 	"github.com/pkg/browser"
 
@@ -66,8 +68,15 @@ var openURL = defaultOpenURL
 
 var browserMu sync.Mutex
 
+// errBrowserInTests stops any test that reaches a login flow from opening
+// tabs in the developer's real browser.
+var errBrowserInTests = errors.New("browser opening is disabled under go test")
+
 func defaultOpenURL(ctx context.Context, url string) error {
 	_ = ctx
+	if testing.Testing() {
+		return errBrowserInTests
+	}
 	return withDiscardedBrowserOutput(func() error {
 		return browser.OpenURL(url)
 	})

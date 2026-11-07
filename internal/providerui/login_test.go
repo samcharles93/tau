@@ -110,3 +110,11 @@ func TestWithDiscardedBrowserOutputSuppressesCommandNoise(t *testing.T) {
 		t.Fatalf("expected browser output to be discarded, got stdout=%q stderr=%q", stdout.String(), stderr.String())
 	}
 }
+
+// TestDefaultOpenURLNeverLaunchesBrowserInTests guards the developer's
+// desktop: login flows exercised by tests used to open real browser tabs.
+func TestDefaultOpenURLNeverLaunchesBrowserInTests(t *testing.T) {
+	if err := defaultOpenURL(context.Background(), "https://example.com/login"); !errors.Is(err, errBrowserInTests) {
+		t.Fatalf("defaultOpenURL under go test = %v, want errBrowserInTests", err)
+	}
+}
