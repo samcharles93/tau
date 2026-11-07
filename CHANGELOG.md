@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.34.2](https://github.com/samcharles93/tau/compare/v0.34.1...v0.34.2) (2026-11-07)
+
+
+### Bug Fixes
+
+* **agent:** wait for auto-export JSONL goroutines before Close returns ([d0a1aae](https://github.com/samcharles93/tau/commit/d0a1aaef7162bc62741f4d16c04cf60d03713260))
+
 ## [0.34.1](https://github.com/samcharles93/tau/compare/v0.34.0...v0.34.1) (2026-11-07)
 
 
