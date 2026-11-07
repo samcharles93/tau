@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.34.1](https://github.com/samcharles93/tau/compare/v0.34.0...v0.34.1) (2026-11-07)
+
+
+### Bug Fixes
+
+* **agent:** reset per-task turn budget at the start of each new turn ([62eb961](https://github.com/samcharles93/tau/commit/62eb9616357057cc11819f45480f7b98406a2daf))
+
 ## [0.34.0](https://github.com/samcharles93/tau/compare/v0.33.4...v0.34.0) (2026-11-07)
 
 
