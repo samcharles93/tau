@@ -386,3 +386,64 @@ func makeZip(t *testing.T, name string, contents []byte) []byte {
 	require.NoError(t, zw.Close())
 	return buf.Bytes()
 }
+
+// Release binaries report "0.33.0" while tags are "v0.33.0"; the mismatch
+// made every release build think an update was available.
+func TestRunNoUpdateWithoutVPrefix(t *testing.T) {
+	t.Parallel()
+
+	server := fakeReleaseServer(t, []byte("new-binary"))
+	_, err := Run(context.Background(), Options{
+		CurrentVersion: "1.2.3 (built 2026-11-07T12:51:31Z)",
+		Repo:           "samcharles93/tau",
+		GOOS:           "linux",
+		GOARCH:         "amd64",
+		HTTPClient:     server.Client(),
+		APIBaseURL:     server.URL,
+	})
+	require.ErrorIs(t, err, ErrNoUpdate)
+}
+
+// With no TargetPath the updater must replace the running binary, resolved
+// through symlinks, instead of renaming onto an empty path.
+func TestRunDefaultsTargetToExecutable(t *testing.T) {
+	goodBin := buildTestBinary(t, `package main
+import "os"
+func main() {
+	if len(os.Args) > 1 && os.Args[1] == "--version" {
+		os.Stdout.WriteString("test v1.2.3\n")
+		os.Exit(0)
+	}
+	os.Exit(1)
+}`)
+	server := fakeReleaseServer(t, goodBin)
+
+	dir := t.TempDir()
+	real := filepath.Join(dir, "tau-real")
+	require.NoError(t, os.WriteFile(real, []byte("old-binary"), 0o755))
+	link := filepath.Join(dir, "tau")
+	require.NoError(t, os.Symlink(real, link))
+
+	old := executablePath
+	t.Cleanup(func() { executablePath = old })
+	executablePath = func() (string, error) { return filepath.EvalSymlinks(link) }
+
+	result, err := Run(context.Background(), Options{
+		CurrentVersion:      "1.0.0",
+		Repo:                "samcharles93/tau",
+		GOOS:                "linux",
+		GOARCH:              "amd64",
+		HTTPClient:          server.Client(),
+		APIBaseURL:          server.URL,
+		VerifyBinaryTimeout: 5 * time.Second,
+	})
+	require.NoError(t, err)
+	require.True(t, result.Updated)
+
+	got, err := os.ReadFile(real)
+	require.NoError(t, err)
+	require.Equal(t, goodBin, got)
+	info, err := os.Lstat(link)
+	require.NoError(t, err)
+	require.NotZero(t, info.Mode()&os.ModeSymlink, "the symlink itself should be left in place")
+}

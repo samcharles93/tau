@@ -81,12 +81,19 @@ func Run(ctx context.Context, opts Options) (Result, error) {
 		TargetVersion:  rel.TagName,
 		ReleaseURL:     rel.HTMLURL,
 	}
-	if current == rel.TagName && !opts.Force {
+	if sameVersion(current, rel.TagName) && !opts.Force {
 		return result, ErrNoUpdate
 	}
 
 	if opts.CheckOnly {
 		return result, nil
+	}
+	if opts.TargetPath == "" {
+		target, err := executablePath()
+		if err != nil {
+			return Result{}, fmt.Errorf("locating the running tau binary: %w", err)
+		}
+		opts.TargetPath = target
 	}
 
 	assetName, err := ArchiveName(rel.TagName, opts.GOOS, opts.GOARCH)
@@ -151,6 +158,22 @@ func withDefaults(opts Options) Options {
 		opts.VerifyBinaryTimeout = 10 * time.Second
 	}
 	return opts
+}
+
+// sameVersion compares release versions ignoring a leading "v": goreleaser
+// stamps binaries with "0.33.0" while release tags are "v0.33.0".
+func sameVersion(a, b string) bool {
+	return strings.TrimPrefix(a, "v") == strings.TrimPrefix(b, "v")
+}
+
+// executablePath locates the binary to replace: the running executable with
+// symlinks resolved, so an update rewrites the real file rather than a link.
+var executablePath = func() (string, error) {
+	exe, err := os.Executable()
+	if err != nil {
+		return "", err
+	}
+	return filepath.EvalSymlinks(exe)
 }
 
 func currentTag(version string) string {
