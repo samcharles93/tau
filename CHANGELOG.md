@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.33.3](https://github.com/samcharles93/tau/compare/v0.33.2...v0.33.3) (2026-11-07)
+
+
+### Bug Fixes
+
+* **providers:** refresh the model catalog with the gpt-6 family ([7cb19fe](https://github.com/samcharles93/tau/commit/7cb19fe50644391249732543a80119e8a7e418e9))
+
 ## [0.33.2](https://github.com/samcharles93/tau/compare/v0.33.1...v0.33.2) (2026-11-07)
 
 
