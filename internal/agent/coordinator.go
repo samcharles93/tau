@@ -581,6 +581,15 @@ func (c *Coordinator) handleSubmit(cmd chat.SubmitChatPromptCommand) {
 		return
 	}
 
+	// Per-task budget counters reset at the start of every new turn.
+	// MaxTurns/MaxTokens/Timeout are documented as per-task limits, but
+	// turnCount/cumulativeTokens/startedAt accumulated over the coordinator's
+	// whole lifetime, so once the cap was hit every later turn - even on a
+	// brand-new session - failed immediately with budget_exhausted (tau-y4k).
+	c.turnCount = 0
+	c.cumulativeTokens = 0
+	c.startedAt = now
+
 	turnState := chat.CloneChatSessionState(session.state)
 	turnCtx, cancel := context.WithCancel(c.ctx)
 	session.cancel = cancel

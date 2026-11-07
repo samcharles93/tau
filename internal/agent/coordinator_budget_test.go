@@ -2,6 +2,8 @@ package agent
 
 import (
 	"context"
+	"encoding/json"
+	"fmt"
 	"testing"
 	"time"
 
@@ -36,17 +38,25 @@ func (f *fakeStreamer) StreamChatCompletionFull(_ context.Context, _ chat.ChatSe
 // command (e.g. coordinator_cancel_test.go), which this mirrors.
 func newBudgetCoordinator(t *testing.T, maxTurns int, timeout time.Duration, maxTokens int, deadline time.Time) (*Coordinator, *fakeStreamer, *eventbus.Subscriber[chat.ChatEvent]) {
 	t.Helper()
+	fs := &fakeStreamer{}
+	c, sub := newBudgetCoordinatorWith(t, fs, tools.NewRegistry(), maxTurns, timeout, maxTokens, deadline)
+	return c, fs, sub
+}
+
+// newBudgetCoordinatorWith is newBudgetCoordinator with caller-supplied
+// streamer/registry, for tests that need tool-calling iterations.
+func newBudgetCoordinatorWith(t *testing.T, streamer Streamer, registry *tools.Registry, maxTurns int, timeout time.Duration, maxTokens int, deadline time.Time) (*Coordinator, *eventbus.Subscriber[chat.ChatEvent]) {
+	t.Helper()
 	bus := eventbus.New()
 	t.Cleanup(bus.Close)
 	sub := eventbus.Subscribe[chat.ChatEvent](bus.Client("test"))
 	t.Cleanup(sub.Close)
 
-	fs := &fakeStreamer{}
 	c, err := NewCoordinator(context.Background(), CoordinatorConfig{
 		Bus:         bus,
 		TokenSource: func(_ context.Context, _ config.ProviderConfig) (string, error) { return "t", nil },
-		Streamer:    fs,
-		Registry:    tools.NewRegistry(),
+		Streamer:    streamer,
+		Registry:    registry,
 		MaxTurns:    maxTurns,
 		Timeout:     timeout,
 		MaxTokens:   maxTokens,
@@ -54,7 +64,7 @@ func newBudgetCoordinator(t *testing.T, maxTurns int, timeout time.Duration, max
 	})
 	require.NoError(t, err)
 	t.Cleanup(c.Close)
-	return c, fs, sub
+	return c, sub
 }
 
 func waitCompleted(t *testing.T, sub *eventbus.Subscriber[chat.ChatEvent], d time.Duration) *chat.ChatResponseCompletedEvent {
@@ -89,7 +99,12 @@ func startAndSubmit(t *testing.T, c *Coordinator, sid, rid string) {
 	}))
 }
 
-func TestMaxTurnsTrip(t *testing.T) {
+// TestMaxTurnsResetsPerTurn guards tau-y4k: MaxTurns is a per-task cap, so
+// the turn counter resets at the start of every new submitted turn. Two
+// sequential turns with maxTurns=1 must both complete - previously the
+// second turn failed immediately because turnCount accumulated coordinator-
+// wide.
+func TestMaxTurnsResetsPerTurn(t *testing.T) {
 	c, fs, sub := newBudgetCoordinator(t, 1, 0, 0, time.Time{})
 	startAndSubmit(t, c, "s1", "r1")
 	ce := waitCompleted(t, sub, 15*time.Second)
@@ -98,25 +113,88 @@ func TestMaxTurnsTrip(t *testing.T) {
 
 	startAndSubmit(t, c, "s2", "r2")
 	ce2 := waitCompleted(t, sub, 15*time.Second)
-	require.True(t, ce2.BudgetExhausted, "turn 2 with maxTurns=1 should trip")
-	require.True(t, ce2.Partial)
-	require.Equal(t, 1, fs.calls, "streamer should not be called on limit breach")
+	require.False(t, ce2.BudgetExhausted, "turn 2 gets a fresh per-task budget and must not trip")
+	require.Equal(t, 2, fs.calls, "streamer must be called for turn 2")
 }
 
-func TestTokenBudgetTrip(t *testing.T) {
-	c, _, sub := newBudgetCoordinator(t, 0, 0, 200, time.Time{})
+// TestMaxTurnsTripsWithinTurn guards the other half: the cap still applies
+// to agentic-loop iterations inside a single turn. A streamer that always
+// emits a tool call must trip mid-turn once turnCount exceeds maxTurns.
+func TestMaxTurnsTripsWithinTurn(t *testing.T) {
+	registry := tools.NewRegistry()
+	require.NoError(t, registry.Register(tools.Tool{
+		Schema: tools.Schema{Name: "search", Parameters: json.RawMessage(`{"type":"object"}`)},
+		Execute: func(context.Context, json.RawMessage, tools.UIBridge) (tools.Result, error) {
+			return tools.Result{Content: "ok"}, nil
+		},
+	}))
+	streamer := &repeatedToolCallStreamer{tool: "search", args: `{"pattern":"x"}`, max: 50}
+	c, sub := newBudgetCoordinatorWith(t, streamer, registry, 1, 0, 0, time.Time{})
+
+	startAndSubmit(t, c, "s1", "r1")
+	ce := waitCompleted(t, sub, 15*time.Second)
+	require.True(t, ce.BudgetExhausted, "tool-looping turn must trip once turnCount > maxTurns")
+	require.True(t, ce.Partial)
+	require.Equal(t, 1, streamer.calls, "streamer called once before the cap trips on iteration 2")
+}
+
+// TestTokenBudgetResetsPerTurn guards the token half of tau-y4k: cumulative
+// tokens reset per turn, so sequential turns never trip each other's budget.
+func TestTokenBudgetResetsPerTurn(t *testing.T) {
+	c, fs, sub := newBudgetCoordinator(t, 0, 0, 200, time.Time{})
 	startAndSubmit(t, c, "s1", "r1")
 	ce := waitCompleted(t, sub, 15*time.Second)
 	require.False(t, ce.BudgetExhausted, "150 < 200 should not trip")
 
 	startAndSubmit(t, c, "s2", "r2")
 	ce2 := waitCompleted(t, sub, 15*time.Second)
-	require.False(t, ce2.BudgetExhausted, "150 < 200 at start, passes, accumulates to 300")
+	require.False(t, ce2.BudgetExhausted, "fresh turn resets cumulative tokens; 150 < 200 again")
+	require.Equal(t, 2, fs.calls)
+}
 
-	startAndSubmit(t, c, "s3", "r3")
-	ce3 := waitCompleted(t, sub, 15*time.Second)
-	require.True(t, ce3.BudgetExhausted, "300 >= 200 should trip on turn 3")
-	require.True(t, ce3.Partial)
+// TestTokenBudgetTripsWithinTurn guards that the token budget still applies
+// across iterations of a single turn: a tool-looping turn accumulating 250
+// tokens per iteration with maxTokens=200 trips on iteration 2.
+func TestTokenBudgetTripsWithinTurn(t *testing.T) {
+	registry := tools.NewRegistry()
+	require.NoError(t, registry.Register(tools.Tool{
+		Schema: tools.Schema{Name: "search", Parameters: json.RawMessage(`{"type":"object"}`)},
+		Execute: func(context.Context, json.RawMessage, tools.UIBridge) (tools.Result, error) {
+			return tools.Result{Content: "ok"}, nil
+		},
+	}))
+	streamer := &tokenToolStreamer{tool: "search", args: `{"pattern":"x"}`, usage: 250}
+	c, sub := newBudgetCoordinatorWith(t, streamer, registry, 0, 0, 200, time.Time{})
+
+	startAndSubmit(t, c, "s1", "r1")
+	ce := waitCompleted(t, sub, 15*time.Second)
+	require.True(t, ce.BudgetExhausted, "250 >= 200 after iteration 1 must trip iteration 2")
+	require.True(t, ce.Partial)
+	require.Equal(t, 1, streamer.calls)
+}
+
+// tokenToolStreamer always emits the same tool call with a fixed usage, so a
+// single turn can accumulate token budget across iterations.
+type tokenToolStreamer struct {
+	calls int
+	tool  string
+	args  string
+	usage int
+}
+
+func (s *tokenToolStreamer) StreamChatCompletionFull(
+	context.Context, chat.ChatSessionState, string, map[string]string, chat.StreamCallbacks,
+) (chat.CompletionResult, error) {
+	s.calls++
+	return chat.CompletionResult{
+		FinishReason: "tool_calls",
+		Usage:        chat.ChatUsage{TotalTokens: s.usage},
+		ToolCalls: []chat.ChatToolCall{{
+			ID:       fmt.Sprintf("call_%d", s.calls),
+			Type:     "function",
+			Function: chat.ChatFunctionCall{Name: s.tool, Arguments: s.args},
+		}},
+	}, nil
 }
 
 func TestDeadlineTrip(t *testing.T) {
