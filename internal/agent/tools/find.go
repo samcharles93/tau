@@ -57,31 +57,37 @@ var findSchema = Schema{
 
 // NewFindTool creates the built-in find tool.
 func NewFindTool(cwd string) Tool {
+	return newFindTool(cwd, nil)
+}
+
+func newFindTool(cwd string, grants *PathGrants) Tool {
 	return Tool{
 		Schema:  findSchema,
 		Source:  "builtin",
-		Execute: makeFindExecutor(cwd),
+		Execute: makeFindExecutor(cwd, grants),
 	}
 }
 
-func makeFindExecutor(cwd string) Executor {
-	return func(ctx context.Context, params json.RawMessage, _ UIBridge) (Result, error) {
+func makeFindExecutor(cwd string, grants *PathGrants) Executor {
+	return func(ctx context.Context, params json.RawMessage, ui UIBridge) (Result, error) {
 		var p FindParams
 		if err := json.Unmarshal(params, &p); err != nil {
 			return Result{Content: fmt.Sprintf("invalid parameters: %v", err), IsError: true}, nil
 		}
-
-		ctx, cancel := context.WithTimeout(ctx, DefaultToolTimeout)
-		defer cancel()
 
 		searchPath := cwd
 		if p.Path != "" {
 			searchPath = resolvePath(cwd, p.Path)
 		}
 
-		if !isReadConfined(cwd, searchPath) {
+		// Checked before the tool timeout starts, so a permission prompt
+		// waits for the user instead of timing out as a denial.
+		if !grants.readable(ctx, ui, cwd, searchPath) {
 			return Result{Content: "error: path escapes working directory", IsError: true}, nil
 		}
+
+		ctx, cancel := context.WithTimeout(ctx, DefaultToolTimeout)
+		defer cancel()
 
 		info, err := os.Stat(searchPath)
 		if err != nil {

@@ -110,8 +110,17 @@ on the event bus. The TUI renders the prompt inline. The user's response comes b
 `internal/agent/tools/pathutil.go` provides safe path resolution:
 
 - All paths are resolved relative to the configured working directory
-- Path traversal (`../`) outside the working directory is blocked
+- Paths outside the working directory are blocked, including through symlinks; `read`, `grep` and `find` may also
+  read the Go module cache
 - Home directory expansion (`~/`) is supported
+
+### Access outside the project
+
+In an interactive session, when `read`, `grep`, `find`, `edit` or `write` reaches a path outside the project, Tau asks
+before allowing it (`path_grants.go`). A "yes" covers that directory, or the file's parent directory, for the rest of
+the session. An edit grant also covers reads, but a read grant doesn't cover edits. A "no" is remembered for the
+session, so the agent can't keep asking. Headless runs (`-p`) and child agents can't prompt, so for them these paths
+stay blocked.
 
 ## Content Truncation
 

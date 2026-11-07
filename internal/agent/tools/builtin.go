@@ -7,14 +7,15 @@ package tools
 func RegisterBuiltins(reg *Registry, cwd string, pluginDocs PluginDocsProvider, indexes ...GrepIndex) error {
 	mq := NewMutationQueue()
 	rt := NewReadTracker()
+	grants := NewPathGrants()
 
 	builtins := []Tool{
-		NewReadTool(cwd, rt),
-		NewWriteTool(cwd, mq, rt),
-		NewEditTool(cwd, mq, rt),
+		newReadTool(cwd, rt, grants),
+		newWriteTool(cwd, mq, rt, grants),
+		newEditTool(cwd, mq, rt, grants),
 		NewShellTool(cwd, mq),
-		NewGrepTool(cwd, indexes...),
-		NewFindTool(cwd),
+		newGrepTool(cwd, grants, indexes...),
+		newFindTool(cwd, grants),
 		NewDocsTool(pluginDocs),
 	}
 

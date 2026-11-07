@@ -101,6 +101,10 @@ var grepSchema = Schema{
 // NewGrepTool creates the built-in grep tool.
 
 func NewGrepTool(cwd string, indexes ...GrepIndex) Tool {
+	return newGrepTool(cwd, nil, indexes...)
+}
+
+func newGrepTool(cwd string, grants *PathGrants, indexes ...GrepIndex) Tool {
 	var workspaceIndex GrepIndex
 	if len(indexes) > 0 {
 		workspaceIndex = indexes[0]
@@ -108,12 +112,12 @@ func NewGrepTool(cwd string, indexes ...GrepIndex) Tool {
 	return Tool{
 		Schema:  grepSchema,
 		Source:  "builtin",
-		Execute: makeGrepExecutor(cwd, workspaceIndex),
+		Execute: makeGrepExecutor(cwd, workspaceIndex, grants),
 	}
 }
 
-func makeGrepExecutor(cwd string, workspaceIndex GrepIndex) Executor {
-	return func(ctx context.Context, params json.RawMessage, _ UIBridge) (Result, error) {
+func makeGrepExecutor(cwd string, workspaceIndex GrepIndex, grants *PathGrants) Executor {
+	return func(ctx context.Context, params json.RawMessage, ui UIBridge) (Result, error) {
 		var p GrepParams
 		if err := json.Unmarshal(params, &p); err != nil {
 			return Result{Content: fmt.Sprintf("invalid parameters: %v", err), IsError: true}, nil
@@ -123,9 +127,6 @@ func makeGrepExecutor(cwd string, workspaceIndex GrepIndex) Executor {
 			return Result{Content: "pattern is required", IsError: true}, nil
 		}
 
-		ctx, cancel := context.WithTimeout(ctx, DefaultToolTimeout)
-		defer cancel()
-
 		clamped := clampGrepContext(&p)
 
 		searchPath := cwd
@@ -133,9 +134,14 @@ func makeGrepExecutor(cwd string, workspaceIndex GrepIndex) Executor {
 			searchPath = resolvePath(cwd, p.Path)
 		}
 
-		if !isReadConfined(cwd, searchPath) {
+		// Checked before the tool timeout starts, so a permission prompt
+		// waits for the user instead of timing out as a denial.
+		if !grants.readable(ctx, ui, cwd, searchPath) {
 			return Result{Content: "error: path escapes working directory", IsError: true, ErrorKind: "sandbox_escape"}, nil
 		}
+
+		ctx, cancel := context.WithTimeout(ctx, DefaultToolTimeout)
+		defer cancel()
 
 		args := buildGrepArgs(p)
 		searchTargets := []string{searchPath}

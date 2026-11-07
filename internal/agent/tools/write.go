@@ -41,15 +41,19 @@ var writeSchema = Schema{
 
 // NewWriteTool creates the built-in write tool.
 func NewWriteTool(cwd string, mq *MutationQueue, rt *ReadTracker) Tool {
+	return newWriteTool(cwd, mq, rt, nil)
+}
+
+func newWriteTool(cwd string, mq *MutationQueue, rt *ReadTracker, grants *PathGrants) Tool {
 	return Tool{
 		Schema:  writeSchema,
 		Source:  "builtin",
-		Execute: makeWriteExecutor(cwd, mq, rt),
+		Execute: makeWriteExecutor(cwd, mq, rt, grants),
 	}
 }
 
-func makeWriteExecutor(cwd string, mq *MutationQueue, rt *ReadTracker) Executor {
-	return func(ctx context.Context, params json.RawMessage, _ UIBridge) (Result, error) {
+func makeWriteExecutor(cwd string, mq *MutationQueue, rt *ReadTracker, grants *PathGrants) Executor {
+	return func(ctx context.Context, params json.RawMessage, ui UIBridge) (Result, error) {
 		var p WriteParams
 		if err := json.Unmarshal(params, &p); err != nil {
 			return Result{Content: fmt.Sprintf("invalid parameters: %v", err), IsError: true}, nil
@@ -61,7 +65,7 @@ func makeWriteExecutor(cwd string, mq *MutationQueue, rt *ReadTracker) Executor 
 
 		path := resolvePath(cwd, p.Path)
 
-		if !isConfined(cwd, path) {
+		if !grants.writable(ctx, ui, cwd, path) {
 			return Result{Content: "path escapes working directory", IsError: true}, nil
 		}
 

@@ -62,10 +62,14 @@ var editSchema = Schema{
 
 // NewEditTool creates the built-in edit tool.
 func NewEditTool(cwd string, mq *MutationQueue, rt *ReadTracker) Tool {
+	return newEditTool(cwd, mq, rt, nil)
+}
+
+func newEditTool(cwd string, mq *MutationQueue, rt *ReadTracker, grants *PathGrants) Tool {
 	return Tool{
 		Schema:  editSchema,
 		Source:  "builtin",
-		Execute: makeEditExecutor(cwd, mq, rt),
+		Execute: makeEditExecutor(cwd, mq, rt, grants),
 	}
 }
 
@@ -111,8 +115,8 @@ func parseEditParams(params json.RawMessage) (EditParams, error) {
 	return p, nil
 }
 
-func makeEditExecutor(cwd string, mq *MutationQueue, rt *ReadTracker) Executor {
-	return func(ctx context.Context, params json.RawMessage, _ UIBridge) (Result, error) {
+func makeEditExecutor(cwd string, mq *MutationQueue, rt *ReadTracker, grants *PathGrants) Executor {
+	return func(ctx context.Context, params json.RawMessage, ui UIBridge) (Result, error) {
 		p, err := parseEditParams(params)
 		if err != nil {
 			return Result{Content: fmt.Sprintf("invalid parameters: %v", err), IsError: true}, nil
@@ -127,7 +131,7 @@ func makeEditExecutor(cwd string, mq *MutationQueue, rt *ReadTracker) Executor {
 
 		path := resolvePath(cwd, p.Path)
 
-		if !isConfined(cwd, path) {
+		if !grants.writable(ctx, ui, cwd, path) {
 			return Result{Content: "path escapes working directory", IsError: true}, nil
 		}
 

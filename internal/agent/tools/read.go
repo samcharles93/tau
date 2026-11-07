@@ -182,15 +182,19 @@ func listDirResult(path, display string) (Result, error) {
 
 // NewReadTool creates the built-in read tool.
 func NewReadTool(cwd string, rt *ReadTracker) Tool {
+	return newReadTool(cwd, rt, nil)
+}
+
+func newReadTool(cwd string, rt *ReadTracker, grants *PathGrants) Tool {
 	return Tool{
 		Schema:  readSchema,
 		Source:  "builtin",
-		Execute: makeReadExecutor(cwd, rt),
+		Execute: makeReadExecutor(cwd, rt, grants),
 	}
 }
 
-func makeReadExecutor(cwd string, rt *ReadTracker) Executor {
-	return func(ctx context.Context, params json.RawMessage, _ UIBridge) (Result, error) {
+func makeReadExecutor(cwd string, rt *ReadTracker, grants *PathGrants) Executor {
+	return func(ctx context.Context, params json.RawMessage, ui UIBridge) (Result, error) {
 		var p ReadParams
 		if err := json.Unmarshal(params, &p); err != nil {
 			return Result{Content: fmt.Sprintf("invalid parameters: %v", err), IsError: true}, nil
@@ -223,7 +227,7 @@ func makeReadExecutor(cwd string, rt *ReadTracker) Executor {
 
 		path := resolvePath(cwd, p.Path)
 
-		if !isReadConfined(cwd, path) {
+		if !grants.readable(ctx, ui, cwd, path) {
 			return Result{Content: "path escapes working directory", IsError: true, ErrorKind: "sandbox_escape"}, nil
 		}
 
