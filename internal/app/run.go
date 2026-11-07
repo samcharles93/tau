@@ -438,6 +438,22 @@ func RunChat(ctx context.Context, opts ChatOptions) error {
 	// Close coordinator first so it can persist sessions while the store is still open.
 	coordinator.Close()
 
+	// Decide the re-exec argv while the store is still open: /update's restart
+	// should resume the session that was just persisted, but empty sessions are
+	// deliberately never persisted, and ephemeral sessions neither - resuming
+	// a missing row would make the restarted process fail at startup.
+	var restartExtraArgs []string
+	if restartWanted.Load() && tuiErr == nil && !opts.Ephemeral && sessionManager != nil {
+		// Deliberately not ctx: this runs on the shutdown path where ctx may
+		// already be cancelled (same rationale as persistSession).
+		probeCtx, probeCancel := context.WithTimeout(context.Background(), 5*time.Second)
+		//nolint:contextcheck // shutdown-path probe, ctx may already be done
+		if _, err := sessionManager.Load(probeCtx, sessionID, nil); err == nil {
+			restartExtraArgs = resumeRestartArgs(sessionID)
+		}
+		probeCancel()
+	}
+
 	// Print session summary on exit.
 	if sessionManager != nil {
 		printExitSummary(ctx, sessionManager, sessionID, resumeSummary)
@@ -448,9 +464,11 @@ func RunChat(ctx context.Context, opts ChatOptions) error {
 
 	// /update replaced this binary on disk: re-exec so the session the user
 	// gets back is running the new code. Done last, after the TUI has restored
-	// the terminal and every resource above is released.
+	// the terminal and every resource above is released. The --resume pair in
+	// restartExtraArgs lands the restarted process back in the same
+	// conversation instead of a fresh one.
 	if restartWanted.Load() && tuiErr == nil {
-		if err := restartInPlace(); err != nil {
+		if err := restartInPlace(restartExtraArgs); err != nil {
 			fmt.Fprintf(os.Stderr, "tau updated but could not restart: %v\nrun tau again to use the new version\n", err)
 		}
 	}
