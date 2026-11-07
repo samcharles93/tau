@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.33.2](https://github.com/samcharles93/tau/compare/v0.33.1...v0.33.2) (2026-11-07)
+
+
+### Bug Fixes
+
+* **tui2:** make Ctrl+Backspace delete the previous word ([af3536f](https://github.com/samcharles93/tau/commit/af3536f74bd4057de879666994eef032b890a19d))
+
 ## [0.33.1](https://github.com/samcharles93/tau/compare/v0.33.0...v0.33.1) (2026-11-07)
 
 
