@@ -1,5 +1,26 @@
 # Changelog
 
+## [0.33.0](https://github.com/samcharles93/tau/compare/v0.32.1...v0.33.0) (2026-11-07)
+
+
+### ⚠ BREAKING CHANGES
+
+* the --web, --port and --no-web flags are gone.
+
+### Features
+
+* remove the Web UI and focus tau on the TUI ([3a384ea](https://github.com/samcharles93/tau/commit/3a384ea15b432fb388a8532aed8395eec7488d98))
+* **tools:** ask before touching paths outside the project ([65365dd](https://github.com/samcharles93/tau/commit/65365dd71957eee1b6c4be18323450fed993360a))
+* **tui2:** add reasoning peek mode as the default ([c40efc4](https://github.com/samcharles93/tau/commit/c40efc47878e4a98a27a9e20f748b52ea4000b23))
+* **tui2:** open the session navigator from /session and /resume ([ff0f076](https://github.com/samcharles93/tau/commit/ff0f076f9274312c80e39f4081ad24a415b620e5))
+
+
+### Bug Fixes
+
+* **agent:** stop a reworded summary from dodging the tool-loop breaker ([19e30a6](https://github.com/samcharles93/tau/commit/19e30a6d0c76d389558e3635629b8ea3d41adc42))
+* **ci:** pin Go toolchain 1.27.3 so govulncheck passes ([b0404d3](https://github.com/samcharles93/tau/commit/b0404d3e5a39d558e387692a23940b68f663c448))
+* **providerui:** never open a real browser under go test ([e1bb743](https://github.com/samcharles93/tau/commit/e1bb743f3f4e57c1e0522e6fa95d97e22a93d676))
+
 ## [0.32.1](https://github.com/samcharles93/tau/compare/v0.32.0...v0.32.1) (2026-08-22)
 
 
