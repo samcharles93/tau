@@ -81,6 +81,14 @@ func (m *model) dispatchKey(msg tea.KeyPressMsg) tea.Cmd {
 	case "ctrl+s":
 		return m.handleSteer()
 
+	case "ctrl+v":
+		// Fallback for terminals that don't deliver bracketed pastes for
+		// ctrl+v: ask for the clipboard via OSC 52; the ClipboardMsg reply
+		// is routed through the same image-aware handlePaste. Terminals
+		// with bracketed paste never send this key (it arrives as a
+		// PasteMsg instead), so the two paths don't double-insert.
+		return tea.ReadClipboard
+
 	case "ctrl+shift+g":
 		return m.cmdCopy("")
 
@@ -294,6 +302,12 @@ func (m *model) dispatchKey(msg tea.KeyPressMsg) tea.Cmd {
 // internal/tui/inline_chat.go's onSteer.
 func (m *model) handleSteer() tea.Cmd {
 	text := strings.TrimSpace(m.input)
+	attachments := m.liveAttachments(text)
+	// Same vision gate as submitInput - a steering message with images would
+	// hit the same text-only-model rejection mid-turn.
+	if msg := m.imageGateNotification(attachments); msg != "" {
+		return m.setNotification(msg)
+	}
 
 	if !m.inResponse() {
 		if text == "" {
@@ -302,7 +316,7 @@ func (m *model) handleSteer() tea.Cmd {
 		m.clearInput()
 		m.history = append(m.history, text)
 		m.historyIdx = -1
-		return m.startOrQueueTurn(text)
+		return m.startOrQueueTurn(text, attachments)
 	}
 
 	m.clearInput()
@@ -319,6 +333,7 @@ func (m *model) handleSteer() tea.Cmd {
 		SessionID:   m.sessionID,
 		RequestID:   tauchat.NewRequestID(),
 		Prompt:      text,
+		Attachments: attachments,
 		SubmittedAt: time.Now().UTC(),
 	})
 }

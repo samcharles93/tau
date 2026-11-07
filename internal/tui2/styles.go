@@ -45,6 +45,11 @@ var (
 	reasoningStyle      = lipgloss.NewStyle().Foreground(themeHex(theme.ToneMuted)).Faint(true).Italic(true)
 	streamStyle         = lipgloss.NewStyle()
 	inputStyle          = lipgloss.NewStyle().Foreground(inputColor)
+	// inputAttachmentStyle highlights inline "[Image #N]" placeholder tokens
+	// in the composer; attachmentLineStyle colors the "attached image:" rows
+	// listed at the bottom of the input box.
+	inputAttachmentStyle = lipgloss.NewStyle().Foreground(themeHex(theme.ToneInfo)).Bold(true)
+	attachmentLineStyle  = lipgloss.NewStyle().Foreground(themeHex(theme.ToneSuccess))
 
 	userContinuationStyle      = lipgloss.NewStyle().PaddingLeft(contentPadLeft)
 	assistantContinuationStyle = lipgloss.NewStyle().PaddingLeft(contentPadLeft)

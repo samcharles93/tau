@@ -21,6 +21,9 @@ func (m *model) clearInput() {
 	m.inputSel.clear()
 	m.compDismissed = false
 	m.compDismissedToken = ""
+	// Attachments are bound to the submitted text's placeholders; once the
+	// buffer is cleared they can no longer resolve, so drop them.
+	m.attachments = nil
 }
 
 // clearScreen wipes the visible scrollback (Ctrl+Shift+L) without touching the
@@ -229,54 +232,13 @@ func (m *model) renderInputArea() string {
 	innerWidth := max(boxWidth-2, 1)
 	body := make([]string, 0, len(lines))
 	cursorBodyIdx := 0
+	spans := m.imagePlaceholderSpans()
 	for i, ln := range lines {
-		prefix := inputPromptStyle.Render("> ")
-		if m.steering {
-			prefix = inputSteerPromptStyle.Render("(steer) > ")
+		rows, cursorRow := renderInputLineRows(m, lines, i, ln, curLine, curCol, selLoAbs, selHiAbs, hasSel, innerWidth, spans)
+		if cursorRow >= 0 {
+			cursorBodyIdx = len(body) + cursorRow
 		}
-		prefixWidth := visibleWidth(stripANSI(prefix))
-		contentWidth := max(innerWidth-prefixWidth, 1)
-		continuationPrefix := strings.Repeat(" ", prefixWidth)
-
-		// Selection bounds are absolute rune positions into m.input; convert
-		// to this line's own local rune range so per-chunk rendering below
-		// can treat them the same way it already treats curCol.
-		lineStartAbs := linePos(lines, i, 0)
-		selLo, selHi, lineHasSel := 0, 0, false
-		if hasSel {
-			lo := max(selLoAbs-lineStartAbs, 0)
-			hi := min(selHiAbs-lineStartAbs, len(ln))
-			lineHasSel = lo < hi
-			selLo, selHi = lo, hi
-		}
-
-		chunks := wrapInputLine(ln, contentWidth)
-		if i == curLine && curCol == len(ln) && len(chunks) > 0 {
-			last := chunks[len(chunks)-1]
-			if visibleWidth(string(ln[last.start:last.end])) >= contentWidth {
-				chunks = append(chunks, inputLineChunk{start: len(ln), end: len(ln)})
-			}
-		}
-		for j, chunk := range chunks {
-			rowPrefix := prefix
-			if i > 0 || j > 0 {
-				rowPrefix = continuationPrefix
-			}
-
-			hasCursor := i == curLine && curCol >= chunk.start && curCol < chunk.end
-			if i == curLine && curCol == len(ln) && j == len(chunks)-1 {
-				hasCursor = true
-			}
-			if hasCursor {
-				cursorBodyIdx = len(body)
-			}
-			switch {
-			case !hasCursor && !lineHasSel:
-				body = append(body, rowPrefix+inputStyle.Render(string(ln[chunk.start:chunk.end])))
-			default:
-				body = append(body, rowPrefix+renderInputChunk(ln, chunk.start, chunk.end, hasCursor, curCol, lineHasSel, selLo, selHi))
-			}
-		}
+		body = append(body, rows...)
 	}
 	if desc := m.inputModePlaceholder(); desc != "" {
 		prefixWidth := visibleWidth(stripANSI(inputPromptStyle.Render("> ")))
@@ -288,7 +250,65 @@ func (m *model) renderInputArea() string {
 
 	title := m.inputModeTitle()
 	body, hint := m.clipInputBody(body, cursorBodyIdx)
+	// Attachment rows always render below the (possibly clipped) input body,
+	// so a long buffer scrolling the input can never hide them.
+	body = append(body, m.renderAttachmentLines()...)
 	return renderInputBox(m.width, title, body, hint)
+}
+
+// lineSelectionBounds converts absolute selection bounds into this line's
+// local rune range, reporting whether any of the selection overlaps the line.
+func lineSelectionBounds(lineStartAbs, lineLen, selLoAbs, selHiAbs int, hasSel bool) (lo, hi int, has bool) {
+	if !hasSel {
+		return 0, 0, false
+	}
+	lo = max(selLoAbs-lineStartAbs, 0)
+	hi = min(selHiAbs-lineStartAbs, lineLen)
+	return lo, hi, lo < hi
+}
+
+// renderInputLineRows renders logical line i (runes ln) of the input into
+// wrapped body rows. It returns the rows plus the index of the row carrying
+// the cursor (-1 when the cursor is on another line), so renderInputArea can
+// keep clipInputBody's cursor window correct.
+func renderInputLineRows(m *model, lines [][]rune, i int, ln []rune, curLine, curCol, selLoAbs, selHiAbs int, hasSel bool, innerWidth int, spans []placeholderSpan) (rows []string, cursorRow int) {
+	prefix := inputPromptStyle.Render("> ")
+	if m.steering {
+		prefix = inputSteerPromptStyle.Render("(steer) > ")
+	}
+	prefixWidth := visibleWidth(stripANSI(prefix))
+	contentWidth := max(innerWidth-prefixWidth, 1)
+	continuationPrefix := strings.Repeat(" ", prefixWidth)
+
+	// Selection bounds are absolute rune positions into m.input; convert
+	// to this line's own local rune range so per-chunk rendering can treat
+	// them the same way it already treats curCol.
+	selLo, selHi, lineHasSel := lineSelectionBounds(linePos(lines, i, 0), len(ln), selLoAbs, selHiAbs, hasSel)
+
+	chunks := wrapInputLine(ln, contentWidth)
+	if i == curLine && curCol == len(ln) && len(chunks) > 0 {
+		last := chunks[len(chunks)-1]
+		if visibleWidth(string(ln[last.start:last.end])) >= contentWidth {
+			chunks = append(chunks, inputLineChunk{start: len(ln), end: len(ln)})
+		}
+	}
+	cursorRow = -1
+	for j, chunk := range chunks {
+		rowPrefix := prefix
+		if i > 0 || j > 0 {
+			rowPrefix = continuationPrefix
+		}
+
+		hasCursor := i == curLine && curCol >= chunk.start && curCol < chunk.end
+		if i == curLine && curCol == len(ln) && j == len(chunks)-1 {
+			hasCursor = true
+		}
+		if hasCursor {
+			cursorRow = len(rows)
+		}
+		rows = append(rows, renderInputChunkRow(ln, chunk, rowPrefix, spans, hasCursor, curCol, lineHasSel, selLo, selHi))
+	}
+	return rows, cursorRow
 }
 
 // inputPositionAt maps a (row, col) coordinate within the rendered input
@@ -383,6 +403,36 @@ func wrapInputLine(ln []rune, maxWidth int) []inputLineChunk {
 	}
 	chunks = append(chunks, inputLineChunk{start: start, end: len(ln)})
 	return chunks
+}
+
+// renderInputChunkRow renders one wrapped chunk of the input buffer as a
+// single body row, splitting at placeholder spans so "[Image #N]" tokens can
+// be styled distinctly from the surrounding text (see attachments.go).
+func renderInputChunkRow(ln []rune, chunk inputLineChunk, rowPrefix string, spans []placeholderSpan, hasCursor bool, curCol int, lineHasSel bool, selLo, selHi int) string {
+	segs := splitBySpans(chunk.start, chunk.end, spans)
+	if len(segs) == 1 && !segs[0].placeholder {
+		switch {
+		case !hasCursor && !lineHasSel:
+			return rowPrefix + inputStyle.Render(string(ln[chunk.start:chunk.end]))
+		default:
+			return rowPrefix + renderInputChunk(ln, chunk.start, chunk.end, inputStyle, hasCursor, curCol, lineHasSel, selLo, selHi)
+		}
+	}
+	var sb strings.Builder
+	sb.WriteString(rowPrefix)
+	for _, seg := range segs {
+		st := inputStyle
+		if seg.placeholder {
+			st = inputAttachmentStyle
+		}
+		switch {
+		case !hasCursor && !lineHasSel:
+			sb.WriteString(st.Render(string(ln[seg.start:seg.end])))
+		default:
+			sb.WriteString(renderInputChunk(ln, seg.start, seg.end, st, hasCursor, curCol, lineHasSel, selLo, selHi))
+		}
+	}
+	return sb.String()
 }
 
 func (m *model) inputModePlaceholder() string {
@@ -561,7 +611,7 @@ func renderInputBoxLine(innerWidth int, line string) string {
 // indices into the full ln, matching curCol's own convention. The cursor's
 // own highlight takes visual priority over selection for the one rune it
 // lands on.
-func renderInputChunk(ln []rune, chunkStart, chunkEnd int, hasCursor bool, cursorCol int, hasSel bool, selLo, selHi int) string {
+func renderInputChunk(ln []rune, chunkStart, chunkEnd int, st lipgloss.Style, hasCursor bool, cursorCol int, hasSel bool, selLo, selHi int) string {
 	var b strings.Builder
 	for p := chunkStart; p < chunkEnd; p++ {
 		switch {
@@ -569,10 +619,10 @@ func renderInputChunk(ln []rune, chunkStart, chunkEnd int, hasCursor bool, curso
 			b.WriteString(inputCursorStyle.Render(string(ln[p])))
 		case hasSel && p >= selLo && p < selHi:
 			b.WriteString("\x1b[7m")
-			b.WriteString(inputStyle.Render(string(ln[p])))
+			b.WriteString(st.Render(string(ln[p])))
 			b.WriteString("\x1b[27m")
 		default:
-			b.WriteString(inputStyle.Render(string(ln[p])))
+			b.WriteString(st.Render(string(ln[p])))
 		}
 	}
 	if hasCursor && cursorCol == chunkEnd && cursorCol >= chunkStart {
@@ -629,6 +679,33 @@ func (m *model) seedHistoryFromMessages(messages []tauchat.ChatMessage) {
 	}
 }
 
+// submitPreflight validates a submission before the composer is cleared.
+// ok is false when the submission must not proceed: text empty (a no-op),
+// the vision gate blocking image attachments on a text-only model, or an
+// unavailable agent mode - in those cases the returned Cmd carries the
+// notification (if any) and the composer is left intact.
+func (m *model) submitPreflight(text string, attachments []tauchat.ChatAttachment, modeCommand string) (cmd tea.Cmd, ok bool) {
+	if text == "" {
+		// Empty Enter is a no-op and keeps the selected agent mode active.
+		return nil, false
+	}
+	// Vision gate: a model known to be text-only would reject the image parts
+	// with a 400 on every turn (poisoning the session history), so block the
+	// submit here and leave the composer intact for a /model switch.
+	if msg := m.imageGateNotification(attachments); msg != "" {
+		return m.setNotification(msg), false
+	}
+	if modeCommand != "" && !strings.HasPrefix(text, "/") && !strings.HasPrefix(text, "!") {
+		entry, ok := slashIndex[modeCommand]
+		if !ok || !entry.isAgent || !entry.modeSwitch {
+			// Preserve the draft and selected mode when validation fails; the
+			// user can recover by cycling back to chat or another valid mode.
+			return m.setNotification("agent mode unavailable: " + modeCommand), false
+		}
+	}
+	return nil, true
+}
+
 func (m *model) submitInput() tea.Cmd {
 	// Interactive prompt active: handle prompt input.
 	if m.activePrompt != nil {
@@ -645,18 +722,12 @@ func (m *model) submitInput() tea.Cmd {
 	}
 
 	text := strings.TrimSpace(m.input)
+	// Resolve inline image attachments before clearInput drops them: only
+	// placeholders still present in the submitted text are sent.
+	attachments := m.liveAttachments(text)
 	modeCommand := m.inputModeCommand
-	if text == "" {
-		// Empty Enter is a no-op and keeps the selected agent mode active.
-		return nil
-	}
-	if modeCommand != "" && !strings.HasPrefix(text, "/") && !strings.HasPrefix(text, "!") {
-		entry, ok := slashIndex[modeCommand]
-		if !ok || !entry.isAgent || !entry.modeSwitch {
-			// Preserve the draft and selected mode when validation fails; the
-			// user can recover by cycling back to chat or another valid mode.
-			return m.setNotification("agent mode unavailable: " + modeCommand)
-		}
+	if cmd, ok := m.submitPreflight(text, attachments, modeCommand); !ok {
+		return cmd
 	}
 	m.clearInput()
 	m.historyIdx = -1  // reset history navigation
@@ -687,7 +758,7 @@ func (m *model) submitInput() tea.Cmd {
 	// only at submission so the composer contains exactly what the user
 	// typed and copied/history text never leaks a synthetic "/plan" prefix.
 	if modeCommand != "" {
-		return m.runAgentCommand(modeCommand, text)
+		return m.runAgentCommand(modeCommand, text, attachments)
 	}
 
 	// Debounce guard: 300ms between submits (P2 #27).
@@ -697,13 +768,13 @@ func (m *model) submitInput() tea.Cmd {
 	m.lastSubmit = time.Now()
 
 	// Queue or start a turn.
-	return m.startOrQueueTurn(text)
+	return m.startOrQueueTurn(text, attachments)
 }
 
 // startOrQueueTurn sends a prompt, queueing it behind a running turn.
-func (m *model) startOrQueueTurn(text string) tea.Cmd {
+func (m *model) startOrQueueTurn(text string, attachments []tauchat.ChatAttachment) tea.Cmd {
 	if m.inResponse() {
-		m.turnQueue = append(m.turnQueue, text)
+		m.turnQueue = append(m.turnQueue, queuedTurn{text: text, attachments: attachments})
 		return m.setNotification("queued - will send after current response")
 	}
 
@@ -721,6 +792,7 @@ func (m *model) startOrQueueTurn(text string) tea.Cmd {
 		SessionID:   m.sessionID,
 		RequestID:   tauchat.NewRequestID(),
 		Prompt:      text,
+		Attachments: attachments,
 		SubmittedAt: time.Now().UTC(),
 	})
 }
@@ -732,5 +804,5 @@ func (m *model) drainTurnQueue() tea.Cmd {
 	}
 	next := m.turnQueue[0]
 	m.turnQueue = m.turnQueue[1:]
-	return m.startOrQueueTurn(next)
+	return m.startOrQueueTurn(next.text, next.attachments)
 }

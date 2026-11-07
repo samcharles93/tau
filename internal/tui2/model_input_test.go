@@ -212,7 +212,7 @@ func TestSubmitInputDuringResponseQueuesByDefault(t *testing.T) {
 	if len(rt.sent) != 0 {
 		t.Fatalf("sent = %d commands, want 0 (queued locally, not sent yet)", len(rt.sent))
 	}
-	if len(m.turnQueue) != 1 || m.turnQueue[0] != "hello" {
+	if len(m.turnQueue) != 1 || m.turnQueue[0].text != "hello" {
 		t.Fatalf("turnQueue = %v, want [\"hello\"]", m.turnQueue)
 	}
 }
@@ -340,9 +340,9 @@ func TestStartOrQueueTurnQueuesBehindRunning(t *testing.T) {
 	m := newTestModel(&fakeRuntime{}, nil)
 	m.agentState = agentThinking
 
-	m.startOrQueueTurn("queued text")
+	m.startOrQueueTurn("queued text", nil)
 
-	if len(m.turnQueue) != 1 || m.turnQueue[0] != "queued text" {
+	if len(m.turnQueue) != 1 || m.turnQueue[0].text != "queued text" {
 		t.Fatalf("turnQueue = %v, want ['queued text']", m.turnQueue)
 	}
 }
@@ -352,7 +352,7 @@ func TestStartOrQueueTurnSendsWhenIdle(t *testing.T) {
 	m := newTestModel(rt, nil)
 	m.agentState = agentReady
 
-	cmd := m.startOrQueueTurn("send me")
+	cmd := m.startOrQueueTurn("send me", nil)
 	if cmd == nil {
 		t.Fatal("expected a Cmd when starting a turn")
 	}
@@ -388,7 +388,7 @@ func TestStartOrQueueTurnClearsPriorTerminalState(t *testing.T) {
 			m := newTestModel(&fakeRuntime{}, nil)
 			m.agentState = tt.state
 
-			m.startOrQueueTurn("try again")
+			m.startOrQueueTurn("try again", nil)
 
 			if m.agentState != agentThinking {
 				t.Fatalf("agentState = %v, want agentThinking after a new submission", m.agentState)
@@ -401,7 +401,7 @@ func TestStartOrQueueTurnAppendsUserMessage(t *testing.T) {
 	m := newTestModel(&fakeRuntime{}, nil)
 	m.agentState = agentReady
 
-	drainCmd(m.startOrQueueTurn("show this"))
+	drainCmd(m.startOrQueueTurn("show this", nil))
 
 	if len(m.renderedLines) == 0 {
 		t.Fatal("expected the user message to be appended to renderedLines")
@@ -421,11 +421,11 @@ func TestDrainTurnQueueEmpty(t *testing.T) {
 func TestDrainTurnQueuePopsAndSends(t *testing.T) {
 	rt := &fakeRuntime{}
 	m := newTestModel(rt, nil)
-	m.turnQueue = []string{"first", "second"}
+	m.turnQueue = []queuedTurn{{text: "first"}, {text: "second"}}
 
 	drainCmd(m.drainTurnQueue())
 
-	if len(m.turnQueue) != 1 || m.turnQueue[0] != "second" {
+	if len(m.turnQueue) != 1 || m.turnQueue[0].text != "second" {
 		t.Fatalf("turnQueue after drain = %v, want ['second']", m.turnQueue)
 	}
 	if len(rt.sent) != 1 {
@@ -851,7 +851,7 @@ func TestRenderInputAreaFitsWithoutClipping(t *testing.T) {
 
 func TestRenderInputChunkCursorOverCharacter(t *testing.T) {
 	ln := []rune("hello")
-	out := stripANSI(renderInputChunk(ln, 0, len(ln), true, 2, false, 0, 0))
+	out := stripANSI(renderInputChunk(ln, 0, len(ln), inputStyle, true, 2, false, 0, 0))
 	if out != "hello" {
 		t.Fatalf("cursor over character = %q, want %q", out, "hello")
 	}
@@ -859,7 +859,7 @@ func TestRenderInputChunkCursorOverCharacter(t *testing.T) {
 
 func TestRenderInputChunkCursorAtEnd(t *testing.T) {
 	ln := []rune("hi")
-	out := stripANSI(renderInputChunk(ln, 0, len(ln), true, 2, false, 0, 0))
+	out := stripANSI(renderInputChunk(ln, 0, len(ln), inputStyle, true, 2, false, 0, 0))
 	if out != "hi " {
 		t.Fatalf("cursor at end = %q, want 'hi '", out)
 	}
@@ -867,7 +867,7 @@ func TestRenderInputChunkCursorAtEnd(t *testing.T) {
 
 func TestRenderInputChunkCursorAtStart(t *testing.T) {
 	ln := []rune("abc")
-	out := stripANSI(renderInputChunk(ln, 0, len(ln), true, 0, false, 0, 0))
+	out := stripANSI(renderInputChunk(ln, 0, len(ln), inputStyle, true, 0, false, 0, 0))
 	if out != "abc" {
 		t.Fatalf("cursor at start = %q, want 'abc'", out)
 	}

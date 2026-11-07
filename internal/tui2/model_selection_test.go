@@ -383,11 +383,11 @@ func TestLogicalLineAtRowAcrossWrappedLines(t *testing.T) {
 
 func TestRenderInputChunkWithSelectionKeepsPlainText(t *testing.T) {
 	ln := []rune("hello world")
-	out := stripANSI(renderInputChunk(ln, 0, len(ln), false, -1, true, 2, 7))
+	out := stripANSI(renderInputChunk(ln, 0, len(ln), inputStyle, false, -1, true, 2, 7))
 	if out != "hello world" {
 		t.Fatalf("selected text = %q, want unchanged plain text %q", out, "hello world")
 	}
-	styled := renderInputChunk(ln, 0, len(ln), false, -1, true, 2, 7)
+	styled := renderInputChunk(ln, 0, len(ln), inputStyle, false, -1, true, 2, 7)
 	if !strings.Contains(styled, "\x1b[7m") {
 		t.Fatalf("expected the selected range to carry reverse video, got %q", styled)
 	}

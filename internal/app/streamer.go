@@ -184,9 +184,17 @@ func (s *Streamer) buildRequest(session tauchat.ChatSessionState, modelID string
 				})
 			}
 		}
-		// Preserve reasoning content for multi-turn replay on providers
-		// that support it (DeepSeek, Anthropic, etc.).
-		if m.ReasoningContent != "" {
+		// Inline attachments (pasted images) become content parts placed
+		// at the exact position of their placeholder token in the text, so
+		// the model sees each image where the prompt references it.
+		if parts := attachmentParts(m); len(parts) > 0 {
+			if m.ReasoningContent != "" {
+				parts = append(aisdkchat.Parts{aisdkchat.ReasoningPart{Text: m.ReasoningContent}}, parts...)
+			}
+			msg.Parts = parts
+		} else if m.ReasoningContent != "" {
+			// Preserve reasoning content for multi-turn replay on providers
+			// that support it (DeepSeek, Anthropic, etc.).
 			msg.Parts = append(msg.Parts, aisdkchat.ReasoningPart{Text: m.ReasoningContent})
 			if m.Content != "" {
 				msg.Parts = append(msg.Parts, aisdkchat.TextPart{Text: m.Content})
@@ -204,6 +212,66 @@ func (s *Streamer) buildRequest(session tauchat.ChatSessionState, modelID string
 	}
 
 	return req
+}
+
+// attachmentParts converts a message's inline attachments into ai-sdk content
+// parts, interleaved with text parts at the exact byte position of each
+// placeholder token ("[Image #1]"): the walk emits the preceding text, then
+// the image part, then continues - so the provider receives text and images
+// in the order the user wrote them. The placeholder token itself stays in
+// the text, keeping the reference explicit for the model. Returns nil when
+// the message has no attachments (the common case), letting callers keep the
+// plain Content string path.
+func attachmentParts(m tauchat.ChatMessage) aisdkchat.Parts {
+	if len(m.Attachments) == 0 {
+		return nil
+	}
+	byPlaceholder := make(map[string]tauchat.ChatAttachment, len(m.Attachments))
+	for _, a := range m.Attachments {
+		if a.Placeholder == "" || len(a.Data) == 0 || a.MediaType == "" {
+			continue
+		}
+		if _, ok := byPlaceholder[a.Placeholder]; !ok {
+			byPlaceholder[a.Placeholder] = a
+		}
+	}
+	if len(byPlaceholder) == 0 {
+		return nil
+	}
+
+	// Only placeholders that resolve to an attachment split the text - an
+	// unresolved token (e.g. typed literally, or a detached image) stays in
+	// the text untouched.
+	var resolved [][2]int
+	var atts []tauchat.ChatAttachment
+	for _, loc := range tauchat.ImagePlaceholderSpans(m.Content) {
+		if a, ok := byPlaceholder[m.Content[loc[0]:loc[1]]]; ok {
+			resolved = append(resolved, loc)
+			atts = append(atts, a)
+		}
+	}
+	if len(resolved) == 0 {
+		return nil
+	}
+
+	var parts aisdkchat.Parts
+	cur := 0
+	for i, sp := range resolved {
+		if text := m.Content[cur:sp[0]]; text != "" {
+			parts = append(parts, aisdkchat.NewTextPart(text))
+		}
+		a := atts[i]
+		if a.IsImage() {
+			parts = append(parts, aisdkchat.NewImageData(a.MediaType, a.Data))
+		} else {
+			parts = append(parts, aisdkchat.NewFileData(a.Name, a.MediaType, a.Data))
+		}
+		cur = sp[1]
+	}
+	if rest := m.Content[cur:]; rest != "" {
+		parts = append(parts, aisdkchat.NewTextPart(rest))
+	}
+	return parts
 }
 
 type assembledToolCall struct {

@@ -50,7 +50,7 @@ func buildAgentSlashEntry(invokeName string, def *agentspec.Definition) slashEnt
 		isAgent:     true,
 		modeSwitch:  def.ModeSwitcher,
 		run: func(m *model, args string) tea.Cmd {
-			return m.runAgentCommand(invokeName, args)
+			return m.runAgentCommand(invokeName, args, nil)
 		},
 	}
 }
@@ -812,8 +812,10 @@ func (m *model) cmdResume(args string) tea.Cmd {
 	})
 }
 
-// runAgentCommand activates a built-in agent (e.g. /plan) by name.
-func (m *model) runAgentCommand(name, args string) tea.Cmd {
+// runAgentCommand activates a built-in agent (e.g. /plan) by name. attachments
+// are inline image payloads captured from the composer before it was cleared
+// (nil when invoked as a typed slash command).
+func (m *model) runAgentCommand(name, args string, attachments []tauchat.ChatAttachment) tea.Cmd {
 	args = strings.TrimSpace(args)
 	cmd := sendCommand(m.runtime, tauchat.RunAgentCommand{
 		SessionID:   m.sessionID,
@@ -825,7 +827,7 @@ func (m *model) runAgentCommand(name, args string) tea.Cmd {
 	}
 	// When args are non-empty, also submit them as a prompt via the
 	// turn-queueing path so they interleave correctly with a running turn.
-	return tea.Batch(cmd, m.startOrQueueTurn(args))
+	return tea.Batch(cmd, m.startOrQueueTurn(args, attachments))
 }
 
 // --- helpers ---------------------------------------------------------------

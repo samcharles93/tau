@@ -471,6 +471,22 @@ type ModelConfig struct {
 	Compat             CompatConfig   `yaml:"compat,omitempty" json:"compat"`
 }
 
+// SupportsInputModality reports whether the model accepts the given input
+// modality (e.g. "image", "text", "pdf"). known is false when the model's
+// input modalities are unknown (empty list) - callers should fail open in
+// that case rather than guessing.
+func (m ModelConfig) SupportsInputModality(modality string) (supported, known bool) {
+	if len(m.Input) == 0 {
+		return false, false
+	}
+	for _, in := range m.Input {
+		if strings.EqualFold(strings.TrimSpace(in), modality) {
+			return true, true
+		}
+	}
+	return false, true
+}
+
 func (m *ModelConfig) UnmarshalYAML(value *yaml.Node) error {
 	type rawModelConfig struct {
 		ID                                               string            `yaml:"id"`

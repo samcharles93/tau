@@ -9,10 +9,9 @@ import (
 	"testing"
 	"time"
 
-	_ "modernc.org/sqlite" // register the "sqlite" driver for raw-SQL tests
-
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	_ "modernc.org/sqlite" // register the "sqlite" driver for raw-SQL tests
 
 	"github.com/samcharles93/tau/internal/chat"
 	"github.com/samcharles93/tau/internal/config"
@@ -616,4 +615,96 @@ func chatSessionFixture(id, modelID, provider string) chat.ChatSessionState {
 		CreatedAt:    now,
 		UpdatedAt:    now,
 	}
+}
+
+func TestSQLiteStore_MessageAttachmentsRoundTrip(t *testing.T) {
+	s := newTestStore(t)
+	ctx := context.Background()
+
+	png := []byte{0x89, 'P', 'N', 'G', 0x0D, 0x0A, 0x1A, 0x0A, 1, 2, 3}
+	state := chatSessionFixture("attach-session", "model", "prov")
+	state.Messages = []chat.ChatMessage{
+		{Role: chat.ChatRoleUser, Content: "what is in [Image #1]?"},
+		{
+			Role:    chat.ChatRoleUser,
+			Content: "compare [Image #1] and [Image #2]",
+			Attachments: []chat.ChatAttachment{
+				{Placeholder: "[Image #1]", MediaType: "image/png", Data: png},
+				{Placeholder: "[Image #2]", MediaType: "image/jpeg", Data: []byte{0xFF, 0xD8, 0xFF}, Name: "photo.jpg"},
+			},
+		},
+		{Role: chat.ChatRoleAssistant, Content: "They differ."},
+	}
+	require.NoError(t, s.Save(ctx, state, 0))
+
+	loaded, err := s.Load(ctx, "attach-session")
+	require.NoError(t, err)
+	require.Equal(t, 3, len(loaded.Messages))
+
+	msg := loaded.Messages[1]
+	require.Equal(t, "compare [Image #1] and [Image #2]", msg.Content)
+	require.Len(t, msg.Attachments, 2)
+	assert.Equal(t, "[Image #1]", msg.Attachments[0].Placeholder)
+	assert.Equal(t, "image/png", msg.Attachments[0].MediaType)
+	assert.Equal(t, png, msg.Attachments[0].Data)
+	assert.Equal(t, "photo.jpg", msg.Attachments[1].Name)
+	assert.Equal(t, []byte{0xFF, 0xD8, 0xFF}, msg.Attachments[1].Data)
+
+	// Messages without attachments decode as nil.
+	assert.Nil(t, loaded.Messages[0].Attachments)
+	assert.Nil(t, loaded.Messages[2].Attachments)
+}
+
+func TestSQLiteStore_ExportMessagesIncludesAttachments(t *testing.T) {
+	s := newTestStore(t)
+	ctx := context.Background()
+
+	state := chatSessionFixture("attach-export", "model", "prov")
+	state.Messages = []chat.ChatMessage{
+		{
+			Role:    chat.ChatRoleUser,
+			Content: "look at [Image #1]",
+			Attachments: []chat.ChatAttachment{
+				{Placeholder: "[Image #1]", MediaType: "image/png", Data: []byte{0x89, 'P', 'N', 'G'}},
+			},
+		},
+	}
+	require.NoError(t, s.Save(ctx, state, 0))
+
+	ch, errCh := s.ExportMessages(ctx, "attach-export")
+	var lines []string
+	for line := range ch {
+		lines = append(lines, string(line))
+	}
+	select {
+	case err := <-errCh:
+		require.NoError(t, err)
+	default:
+	}
+	require.Equal(t, 1, len(lines))
+	assert.Contains(t, lines[0], `"attachments"`)
+	assert.Contains(t, lines[0], `"placeholder":"[Image #1]"`)
+	assert.Contains(t, lines[0], `"media_type":"image/png"`)
+	// []byte marshals as base64 in JSON.
+	assert.Contains(t, lines[0], `"data":"iVBORw=="`)
+}
+
+func TestSQLiteStore_MigrationV10AddsAttachmentsColumn(t *testing.T) {
+	s, dbPath := newTestStoreAtPath(t)
+	_ = s
+	ctx := context.Background()
+	db, err := sql.Open("sqlite", dbPath)
+	require.NoError(t, err)
+	defer db.Close()
+
+	// The v10 migration must have added messages.attachments.
+	var col string
+	err = db.QueryRowContext(ctx, `SELECT name FROM pragma_table_info('messages') WHERE name = 'attachments'`).Scan(&col)
+	require.NoError(t, err)
+	assert.Equal(t, "attachments", col)
+
+	// And the schema version is recorded as 10.
+	var v int
+	require.NoError(t, db.QueryRowContext(ctx, `SELECT MAX(version) FROM schema_version`).Scan(&v))
+	assert.Equal(t, 10, v)
 }

@@ -79,6 +79,10 @@ type ChatMessage struct {
 	ToolCalls        []ChatToolCall      `json:"tool_calls,omitempty"`
 	ToolCallID       string              `json:"tool_call_id,omitempty"`
 	ToolResult       *ToolResultMetadata `json:"tool_result,omitempty"`
+	// Attachments carries binary payloads (e.g. pasted images) referenced
+	// inline from Content via placeholder tokens like "[Image #1]" - see
+	// ChatAttachment and ImagePlaceholderRefs.
+	Attachments []ChatAttachment `json:"attachments,omitempty"`
 	// CreatedAt records when the message was appended to the conversation.
 	// It is zero for the transient system message synthesised in
 	// RequestMessages and for messages persisted before per-message
@@ -341,10 +345,13 @@ type StartChatSessionCommand struct {
 func (StartChatSessionCommand) IsChatCommand() {}
 
 type SubmitChatPromptCommand struct {
-	SessionID   string    `json:"session_id"`
-	RequestID   string    `json:"request_id"`
-	Prompt      string    `json:"prompt"`
-	SubmittedAt time.Time `json:"submitted_at"`
+	SessionID string `json:"session_id"`
+	RequestID string `json:"request_id"`
+	Prompt    string `json:"prompt"`
+	// Attachments are binary payloads referenced inline from Prompt via
+	// placeholder tokens (e.g. "[Image #1]"). Nil for text-only prompts.
+	Attachments []ChatAttachment `json:"attachments,omitempty"`
+	SubmittedAt time.Time        `json:"submitted_at"`
 }
 
 func (SubmitChatPromptCommand) IsChatCommand() {}
@@ -393,10 +400,13 @@ type RunExtensionCommandCommand struct {
 func (RunExtensionCommandCommand) IsChatCommand() {}
 
 type SteerChatPromptCommand struct {
-	SessionID   string    `json:"session_id"`
-	RequestID   string    `json:"request_id"`
-	Prompt      string    `json:"prompt"`
-	SubmittedAt time.Time `json:"submitted_at"`
+	SessionID string `json:"session_id"`
+	RequestID string `json:"request_id"`
+	Prompt    string `json:"prompt"`
+	// Attachments follows the same inline-placeholder convention as
+	// SubmitChatPromptCommand.Attachments.
+	Attachments []ChatAttachment `json:"attachments,omitempty"`
+	SubmittedAt time.Time        `json:"submitted_at"`
 }
 
 func (SteerChatPromptCommand) IsChatCommand() {}
@@ -1262,6 +1272,14 @@ func (s ChatSessionState) HasActiveRequest() bool {
 }
 
 func (s *ChatSessionState) BeginTurn(requestID, prompt string, at time.Time) error {
+	return s.BeginTurnWithAttachments(requestID, prompt, nil, at)
+}
+
+// BeginTurnWithAttachments is BeginTurn plus inline attachments (images etc.)
+// referenced from the prompt via placeholder tokens. Only attachments whose
+// placeholder actually appears in the prompt are kept, so a detached
+// placeholder in the composer drops its payload.
+func (s *ChatSessionState) BeginTurnWithAttachments(requestID, prompt string, attachments []ChatAttachment, at time.Time) error {
 	if s.Status == ChatSessionClosed {
 		return errors.New("cannot start a turn on a closed session")
 	}
@@ -1276,7 +1294,13 @@ func (s *ChatSessionState) BeginTurn(requestID, prompt string, at time.Time) err
 	if prompt == "" {
 		return errors.New("prompt is required")
 	}
-	s.Messages = append(s.Messages, ChatMessage{ID: NewMessageID(), Role: ChatRoleUser, Content: prompt, CreatedAt: normalizeChatTime(at)})
+	s.Messages = append(s.Messages, ChatMessage{
+		ID:          NewMessageID(),
+		Role:        ChatRoleUser,
+		Content:     prompt,
+		Attachments: ResolveImageAttachments(prompt, attachments),
+		CreatedAt:   normalizeChatTime(at),
+	})
 	s.Status = ChatSessionStreaming
 	s.ActiveRequestID = requestID
 	s.PendingAssistant = ""
@@ -1436,6 +1460,25 @@ func (s *ChatSessionState) CancelTurn(at time.Time) error {
 	return nil
 }
 
+// RollbackLastUserMessage removes the trailing user message when it carries
+// attachments (e.g. a pasted image the model rejected), returning the removed
+// message. Used to keep a session usable after a media-rejection failure: the
+// offending message would otherwise poison every subsequent turn. ok is false
+// when there is nothing to roll back (no messages, last message isn't a user
+// message, or it has no attachments).
+func (s *ChatSessionState) RollbackLastUserMessage(at time.Time) (removed ChatMessage, ok bool) {
+	if len(s.Messages) == 0 {
+		return ChatMessage{}, false
+	}
+	last := s.Messages[len(s.Messages)-1]
+	if last.Role != ChatRoleUser || len(last.Attachments) == 0 {
+		return ChatMessage{}, false
+	}
+	s.Messages = s.Messages[:len(s.Messages)-1]
+	s.UpdatedAt = normalizeChatTime(at)
+	return last, true
+}
+
 func (s *ChatSessionState) FailTurn(err error, at time.Time) error {
 	if !s.HasActiveRequest() {
 		return errors.New("no active request")
@@ -1496,8 +1539,12 @@ func (s ChatSessionState) RequestMessages() []ChatMessage {
 		if len(messages) > 0 && m.Role == ChatRoleUser && messages[len(messages)-1].Role == ChatRoleUser {
 			// Merge consecutive user messages to guarantee alternating roles
 			// (system, user, assistant, user, assistant...) for providers that
-			// strictly enforce it (like OpenAI/Anthropic/DeepSeek).
-			messages[len(messages)-1].Content += "\n\n" + m.Content
+			// strictly enforce it (like OpenAI/Anthropic/DeepSeek). Attachments
+			// merge too - their placeholders stay inline in the concatenated
+			// content, so the references keep pointing at the right payloads.
+			last := &messages[len(messages)-1]
+			last.Content += "\n\n" + m.Content
+			last.Attachments = append(last.Attachments, m.Attachments...)
 		} else {
 			messages = append(messages, m)
 		}

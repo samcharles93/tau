@@ -214,34 +214,8 @@ func (s *SQLiteStore) Load(ctx context.Context, id string) (chat.ChatSessionStat
 	}
 	defer msgRows.Close()
 
-	var messages []chat.ChatMessage
-	for msgRows.Next() {
-		var (
-			seq                                                                              int
-			role, content, reasoning                                                         string
-			toolCallsJSON, toolCallID, createdStr, clientID, toolResultJSON, attachmentsJSON string
-		)
-		if err := msgRows.Scan(&seq, &role, &content, &reasoning, &toolCallsJSON, &toolCallID, &createdStr, &clientID, &toolResultJSON, &attachmentsJSON); err != nil {
-			return chat.ChatSessionState{}, fmt.Errorf("store: scan message: %w", err)
-		}
-		msgCreatedAt, err := parseStoredTime(fmt.Sprintf("message %d created_at", seq), createdStr)
-		if err != nil {
-			return chat.ChatSessionState{}, err
-		}
-		msg := chat.ChatMessage{
-			ID:               clientID,
-			Role:             chat.ChatRole(role),
-			Content:          content,
-			ReasoningContent: reasoning,
-			ToolCalls:        decodeToolCalls(toolCallsJSON),
-			ToolCallID:       toolCallID,
-			CreatedAt:        msgCreatedAt,
-			ToolResult:       decodeToolResult(toolResultJSON),
-			Attachments:      decodeAttachments(attachmentsJSON),
-		}
-		messages = append(messages, msg)
-	}
-	if err := msgRows.Err(); err != nil {
+	messages, err := scanMessageRows(msgRows)
+	if err != nil {
 		return chat.ChatSessionState{}, err
 	}
 
@@ -258,6 +232,41 @@ func (s *SQLiteStore) Load(ctx context.Context, id string) (chat.ChatSessionStat
 		CreatedAt:       createdAt,
 		UpdatedAt:       updatedAt,
 	}, nil
+}
+
+// scanMessageRows decodes all message rows (ordered by seq) into
+// chat.ChatMessage values, including the attachments JSON column.
+func scanMessageRows(rows *sql.Rows) ([]chat.ChatMessage, error) {
+	var messages []chat.ChatMessage
+	for rows.Next() {
+		var (
+			seq                                                                              int
+			role, content, reasoning                                                         string
+			toolCallsJSON, toolCallID, createdStr, clientID, toolResultJSON, attachmentsJSON string
+		)
+		if err := rows.Scan(&seq, &role, &content, &reasoning, &toolCallsJSON, &toolCallID, &createdStr, &clientID, &toolResultJSON, &attachmentsJSON); err != nil {
+			return nil, fmt.Errorf("store: scan message: %w", err)
+		}
+		msgCreatedAt, err := parseStoredTime(fmt.Sprintf("message %d created_at", seq), createdStr)
+		if err != nil {
+			return nil, err
+		}
+		messages = append(messages, chat.ChatMessage{
+			ID:               clientID,
+			Role:             chat.ChatRole(role),
+			Content:          content,
+			ReasoningContent: reasoning,
+			ToolCalls:        decodeToolCalls(toolCallsJSON),
+			ToolCallID:       toolCallID,
+			CreatedAt:        msgCreatedAt,
+			ToolResult:       decodeToolResult(toolResultJSON),
+			Attachments:      decodeAttachments(attachmentsJSON),
+		})
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return messages, nil
 }
 
 func parseStoredTime(field, value string) (time.Time, error) {

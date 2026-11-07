@@ -109,11 +109,18 @@ type Coordinator struct {
 	promptSeq atomic.Uint64
 }
 
+// steeringPrompt is a queued mid-turn steering message plus any inline
+// attachments (images) referenced from its text.
+type steeringPrompt struct {
+	prompt      string
+	attachments []chat.ChatAttachment
+}
+
 type coordinatorSession struct {
 	state           *chat.ChatSessionState
 	cancel          context.CancelFunc
 	steeringMu      sync.Mutex
-	pendingSteering []string
+	pendingSteering []steeringPrompt
 	turnStartedAt   time.Time
 
 	// bashCancel cancels the session's in-flight bash-mode ("!") command, if
@@ -558,7 +565,7 @@ func (c *Coordinator) handleSubmit(cmd chat.SubmitChatPromptCommand) {
 		})
 		return
 	}
-	if err := session.state.BeginTurn(cmd.RequestID, cmd.Prompt, now); err != nil {
+	if err := session.state.BeginTurnWithAttachments(cmd.RequestID, cmd.Prompt, cmd.Attachments, now); err != nil {
 		c.mu.Unlock()
 		if strings.Contains(err.Error(), "already in flight") {
 			// Silently drop duplicate submits - the real turn is already running.
@@ -781,7 +788,7 @@ func (c *Coordinator) handleSteer(cmd chat.SteerChatPromptCommand) {
 		return
 	}
 	session.steeringMu.Lock()
-	session.pendingSteering = append(session.pendingSteering, cmd.Prompt)
+	session.pendingSteering = append(session.pendingSteering, steeringPrompt{prompt: cmd.Prompt, attachments: cmd.Attachments})
 	session.steeringMu.Unlock()
 	c.mu.Unlock()
 }
@@ -804,12 +811,13 @@ func (c *Coordinator) injectSteering(sessionID string) {
 		return
 	}
 
-	for _, prompt := range steers {
+	for _, steer := range steers {
 		session.state.Messages = append(session.state.Messages, chat.ChatMessage{
-			ID:        chat.NewMessageID(),
-			Role:      chat.ChatRoleUser,
-			Content:   prompt,
-			CreatedAt: normalizedTime(time.Time{}),
+			ID:          chat.NewMessageID(),
+			Role:        chat.ChatRoleUser,
+			Content:     steer.prompt,
+			Attachments: chat.ResolveImageAttachments(steer.prompt, steer.attachments),
+			CreatedAt:   normalizedTime(time.Time{}),
 		})
 	}
 	snapshot := chat.CloneChatSessionState(session.state)

@@ -1408,8 +1408,25 @@ func (c *Coordinator) failTurn(sessionID, requestID string, err error, at time.T
 	session.steeringMu.Lock()
 	session.pendingSteering = nil
 	session.steeringMu.Unlock()
+	// If the provider rejected the turn's multimodal content (image parts on
+	// a text-only model), roll back the offending user message so the session
+	// stays usable - otherwise the attachment would be re-sent (and rejected)
+	// on every subsequent turn, effectively wedging the session.
+	var rollbackNote string
+	if isUnsupportedMediaError(err) {
+		if removed, ok := session.state.RollbackLastUserMessage(at); ok {
+			rollbackNote = fmt.Sprintf("rolled back the message with %d image attachment(s): the model rejected image input", len(removed.Attachments))
+		}
+	}
 	snapshot := chat.CloneChatSessionState(session.state)
 	c.mu.Unlock()
+	if rollbackNote != "" {
+		c.emit(chat.ChatNotificationEvent{
+			Message:    rollbackNote,
+			Level:      chat.ChatNotificationWarn,
+			OccurredAt: at,
+		})
+	}
 
 	c.loggerWithTurn(sessionID, requestID).Warn(
 		"turn failed",

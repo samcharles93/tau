@@ -101,5 +101,5 @@ func (f *textField) Render(width int) string {
 		start = max(end-width, 0)
 	}
 	hasCursor := f.cursor >= start && f.cursor <= end
-	return renderInputChunk(rs, start, end, hasCursor, f.cursor, false, 0, 0)
+	return renderInputChunk(rs, start, end, inputStyle, hasCursor, f.cursor, false, 0, 0)
 }

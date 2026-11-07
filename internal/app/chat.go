@@ -280,6 +280,9 @@ func modelInfoToModelConfig(m runtime.ModelInfo) tauconfig.ModelConfig {
 		DefaultMaxTokens: m.MaxOutputTokens,
 		MaxTokens:        m.MaxOutputTokens,
 		Reasoning:        m.Reasoning,
+		// Input modalities (e.g. "text", "image") drive the TUI's
+		// vision-capability gate for pasted images.
+		Input: append([]string(nil), m.InputModalities...),
 		Cost: tauconfig.CostConfig{
 			Input:      m.Cost.Input,
 			Output:     m.Cost.Output,

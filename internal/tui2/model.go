@@ -95,6 +95,12 @@ type model struct {
 	// pkg/taui/lineinput.go so both frontends behave identically.
 	input       string
 	inputCursor int
+	// attachments holds pasted images referenced inline in input via
+	// "[Image #N]" placeholders (see attachments.go). nextAttachmentID is
+	// monotonic for the lifetime of the model so a placeholder recalled
+	// from history can never collide with a fresh attachment's token.
+	attachments      []inputAttachment
+	nextAttachmentID int
 	// inputModeCommand is the active agent-mode command selected with
 	// Shift+Tab or the command palette. It is presentation/control state,
 	// never part of the editable input buffer.
@@ -204,7 +210,7 @@ type model struct {
 	sessionsFetchInFlight bool
 
 	// Turn management.
-	turnQueue    []string // queued prompts behind a running turn
+	turnQueue    []queuedTurn // queued prompts (with attachments) behind a running turn
 	lastSubmit   time.Time
 	spinnerFrame int // frame index for working indicator animation
 
@@ -485,8 +491,13 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case tea.PasteMsg:
-		m.insertAtCursor(msg.Content)
-		return m, nil
+		return m, m.handlePaste(msg.Content)
+
+	case tea.ClipboardMsg:
+		// Response to an explicit tea.ReadClipboard (ctrl+v fallback for
+		// terminals that don't deliver bracketed pastes): route through the
+		// same image-aware paste handling.
+		return m, m.handlePaste(msg.Content)
 
 	case tea.FocusMsg:
 		m.focused = true

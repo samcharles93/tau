@@ -30,6 +30,9 @@ func CloneChatSessionState(state *ChatSessionState) ChatSessionState {
 			if msg.ToolCalls != nil {
 				clone.Messages[i].ToolCalls = append([]ChatToolCall(nil), msg.ToolCalls...)
 			}
+			if msg.Attachments != nil {
+				clone.Messages[i].Attachments = append([]ChatAttachment(nil), msg.Attachments...)
+			}
 		}
 	}
 	if state.Tools != nil {

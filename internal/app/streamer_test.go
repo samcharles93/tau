@@ -285,3 +285,96 @@ func TestBuildToolCallsUsesPresentSparseIndexes(t *testing.T) {
 		t.Fatalf("tool call arguments = %q", calls[0].Function.Arguments)
 	}
 }
+
+func TestBuildRequestInterleavesImagePartsAtPlaceholderPositions(t *testing.T) {
+	s := NewStreamer(&channelTestProvider{}, "test-model")
+	session := tauchat.ChatSessionState{
+		Model: tauchat.ChatModelRef{ID: "test-model"},
+		Messages: []tauchat.ChatMessage{
+			{
+				Role:    tauchat.ChatRoleUser,
+				Content: "edit [Image #1] to match [Image #2] please",
+				Attachments: []tauchat.ChatAttachment{
+					{Placeholder: "[Image #1]", MediaType: "image/png", Data: []byte{1, 2, 3}},
+					{Placeholder: "[Image #2]", MediaType: "image/jpeg", Data: []byte{4, 5}},
+				},
+			},
+		},
+	}
+
+	req := s.buildRequest(session, "test-model", &channelTestProvider{})
+	if len(req.Messages) != 1 {
+		t.Fatalf("messages = %d, want 1", len(req.Messages))
+	}
+	msg := req.Messages[0]
+	// Text is split at each placeholder and the image part is interleaved at
+	// that exact position: text, image1, text, image2, text.
+	if len(msg.Parts) != 5 {
+		t.Fatalf("parts = %d, want 5: %+v", len(msg.Parts), msg.Parts)
+	}
+	wantText := []string{"edit ", " to match ", " please"}
+	textIdx := []int{0, 2, 4}
+	for i, want := range wantText {
+		p, ok := msg.Parts[textIdx[i]].(aisdkchat.TextPart)
+		if !ok || p.Text != want {
+			t.Fatalf("part %d = %#v, want TextPart %q", textIdx[i], msg.Parts[textIdx[i]], want)
+		}
+	}
+	img1, ok := msg.Parts[1].(aisdkchat.ImagePart)
+	if !ok || img1.MediaType != "image/png" || string(img1.Data) != string([]byte{1, 2, 3}) {
+		t.Fatalf("part 1 = %#v, want image/png with data [1 2 3]", msg.Parts[1])
+	}
+	img2, ok := msg.Parts[3].(aisdkchat.ImagePart)
+	if !ok || img2.MediaType != "image/jpeg" || string(img2.Data) != string([]byte{4, 5}) {
+		t.Fatalf("part 3 = %#v, want image/jpeg with data [4 5]", msg.Parts[3])
+	}
+}
+
+func TestBuildRequestTextOnlyMessageKeepsPlainContent(t *testing.T) {
+	s := NewStreamer(&channelTestProvider{}, "test-model")
+	session := tauchat.ChatSessionState{
+		Model:    tauchat.ChatModelRef{ID: "test-model"},
+		Messages: []tauchat.ChatMessage{{Role: tauchat.ChatRoleUser, Content: "hello"}},
+	}
+	req := s.buildRequest(session, "test-model", &channelTestProvider{})
+	if len(req.Messages) != 1 {
+		t.Fatalf("messages = %d", len(req.Messages))
+	}
+	msg := req.Messages[0]
+	if msg.Parts != nil {
+		t.Fatalf("Parts = %+v, want nil for text-only message", msg.Parts)
+	}
+	if msg.Content != "hello" {
+		t.Fatalf("Content = %q", msg.Content)
+	}
+}
+
+func TestBuildRequestUnreferencedPlaceholderStaysText(t *testing.T) {
+	s := NewStreamer(&channelTestProvider{}, "test-model")
+	session := tauchat.ChatSessionState{
+		Model: tauchat.ChatModelRef{ID: "test-model"},
+		Messages: []tauchat.ChatMessage{
+			{
+				Role:    tauchat.ChatRoleUser,
+				Content: "see [Image #1] and [Image #9]",
+				Attachments: []tauchat.ChatAttachment{
+					{Placeholder: "[Image #1]", MediaType: "image/png", Data: []byte{1}},
+				},
+			},
+		},
+	}
+	req := s.buildRequest(session, "test-model", &channelTestProvider{})
+	msg := req.Messages[0]
+	// [Image #9] has no attachment: it stays inside the text, and only one
+	// image part is emitted, at the position of [Image #1].
+	if len(msg.Parts) != 3 {
+		t.Fatalf("parts = %d, want 3: %+v", len(msg.Parts), msg.Parts)
+	}
+	if _, ok := msg.Parts[1].(aisdkchat.ImagePart); !ok {
+		t.Fatalf("part 1 = %#v, want ImagePart", msg.Parts[1])
+	}
+	last, ok := msg.Parts[2].(aisdkchat.TextPart)
+	if !ok || last.Text != " and [Image #9]" {
+		t.Fatalf("last part = %#v", msg.Parts[2])
+	}
+}

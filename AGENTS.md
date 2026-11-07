@@ -358,8 +358,16 @@ Use this section to quickly find the right files for a given change.
     `ChatCompletionResponse`, `ChatCompletionChunk`, `ChatToolCallDelta`, etc. Tool-result messages persist
     authoritative status, error kind, duration, truncation, byte count, and execution timestamps in
     `ToolResultMetadata`; analytics must prefer it over parsing result prose.
+  - **Attachments** (`internal/chat/attachments.go`): `ChatAttachment` (placeholder + media type + raw
+    bytes) rides on `ChatMessage.Attachments` and on `SubmitChatPromptCommand`/`SteerChatPromptCommand`.
+    Inline references like `[Image #1]` in the text are the placeholders (`ImagePlaceholder`,
+    `ResolveImageAttachments`); `BeginTurnWithAttachments` keeps only attachments whose placeholder is
+    still in the prompt. `RollbackLastUserMessage` removes a trailing attachment-bearing user message
+    after a media-rejection failure so the session isn't wedged.
 - `internal/chat/stream.go` - `CompletionResult`, `StreamCallbacks` (OnDelta, OnReasoningDelta, OnToolCallDelta),
   `CloneChatSessionState`
+- `internal/chat/attachments.go` - `ChatAttachment`, placeholder helpers (`ImagePlaceholder`,
+  `FindImagePlaceholder`/`ImagePlaceholderSpans`, `ImagePlaceholderRefs`, `ResolveImageAttachments`)
 
 ### Changing the Agent Coordinator (Turn Loop)
 
@@ -591,7 +599,8 @@ Use this section to quickly find the right files for a given change.
 - `internal/app/run.go` - `RunChat()` (interactive entry point), wires config → coordinator → TUI
 - `internal/app/stdin.go` - `RunStdIn()` (headless/stdin entry point); requires a model to be selected
 - `internal/app/streamer.go` - `Streamer`/`NewDynamicStreamer()`/`NewStreamer()` - ai-sdk adapter implementing
-  `agent.Streamer`; `buildRequest()` maps session state to ai-sdk request
+  `agent.Streamer`; `buildRequest()` maps session state to ai-sdk request. Message attachments become
+  `Parts` with the image part interleaved at its `[Image #N]` placeholder position (`attachmentParts`)
 - `internal/app/provider_runtime.go` - `providerRuntime` - mutex-guarded holder for ai-sdk `runtime.Runtime` + provider
   set; `reload()` rebuilds from current state (after `/provider`) and may install an empty provider set when the last
   provider is disabled; `snapshot()` returns a consistent runtime/provider view
@@ -620,7 +629,7 @@ Use this section to quickly find the right files for a given change.
 
 - `internal/store/sqlite_store.go` - `SQLiteStore` implementing `SessionStore`
 - `internal/store/session.go` - `SessionStore` interface: `Save()`, `Load()`, `List()`, `Delete()`, `ExportMessages()`
-- `internal/store/migrate.go` - Schema migrations
+- `internal/store/migrate.go` - Schema migrations (v10 adds `messages.attachments`, a JSON array of `chat.ChatAttachment`)
 - `internal/store/jsonl_export.go` - JSONL export: `ExportSessionAsJSONL()`
 - `internal/sessions/manager.go` - `Manager` struct: session lifecycle (create, update, close, branch), wraps
   coordinator and store
@@ -934,6 +943,7 @@ internal/tui2/
 ├── statusbar.go          # Rich segmented status bar with priority-drop and live metrics
 ├── views.go              # Plugin widget → lipgloss/v2 translation (all 8 widget kinds)
 ├── diff.go               # Unified diff viewer overlay (go-difflib + glamour + viewport)
+├── attachments.go        # Image paste: paste-content sniffing (file path / data URI / base64 / raw bytes), "[Image #N]" placeholder insertion + composer styling, "attached image:" rows under the input box, vision-capability submit gate
 ├── *.go (test files)     # Table-driven tests for commands, completions, models, status bar, fuzzy matching
 ```
 

@@ -1448,3 +1448,21 @@ func TestMergeUIConfigsReasoning(t *testing.T) {
 		t.Fatalf("local reasoning should win: %q", merged.Reasoning)
 	}
 }
+
+func TestModelConfigSupportsInputModality(t *testing.T) {
+	vision := ModelConfig{Input: []string{"text", "image", "pdf"}}
+	if supported, known := vision.SupportsInputModality("image"); !known || !supported {
+		t.Fatalf("vision model: supported=%v known=%v", supported, known)
+	}
+	if supported, known := vision.SupportsInputModality("IMAGE"); !known || !supported {
+		t.Fatalf("case-insensitive: supported=%v known=%v", supported, known)
+	}
+	textOnly := ModelConfig{Input: []string{"text"}}
+	if supported, known := textOnly.SupportsInputModality("image"); !known || supported {
+		t.Fatalf("text-only model: supported=%v known=%v, want (false, true)", supported, known)
+	}
+	unknown := ModelConfig{}
+	if supported, known := unknown.SupportsInputModality("image"); known || supported {
+		t.Fatalf("unknown model: supported=%v known=%v, want (false, false) fail-open", supported, known)
+	}
+}

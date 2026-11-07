@@ -80,7 +80,7 @@ func (m *model) appendMessage(role, content string) {
 func renderLine(role, content string) string {
 	switch role {
 	case "user":
-		return userGlyphStyle.Render("⏎") + " " + userStyle.Render(content)
+		return userGlyphStyle.Render("⏎") + " " + styleUserTextWithPlaceholders(content, userStyle)
 	case "assistant":
 		return assistantStyle.Render(content)
 	default:
@@ -91,7 +91,7 @@ func renderLine(role, content string) string {
 func renderContinuationLine(role, content string) string {
 	switch role {
 	case "user":
-		return userContinuationStyle.Render(content)
+		return styleUserTextWithPlaceholders(content, userContinuationStyle)
 	case "assistant":
 		return assistantContinuationStyle.Render(content)
 	default:
