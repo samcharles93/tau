@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.33.4](https://github.com/samcharles93/tau/compare/v0.33.3...v0.33.4) (2026-11-07)
+
+
+### Bug Fixes
+
+* **agent:** carry session export payload on the event instead of os.Stdout ([03de8b9](https://github.com/samcharles93/tau/commit/03de8b96f53d11ad2afb476da9d4626a3d3b4838))
+* **store:** paginate sessions with a composite (created_at, id) cursor ([27639fe](https://github.com/samcharles93/tau/commit/27639fe5b14a04ea641dbe65b37a3ac7232c97fd))
+
 ## [0.33.3](https://github.com/samcharles93/tau/compare/v0.33.2...v0.33.3) (2026-11-07)
 
 
