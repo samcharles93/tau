@@ -523,12 +523,10 @@ func friendlyGitHubCopilotExchangeError(err error) error {
 
 func hasHTTPStatus(err error, statuses ...int) bool {
 	var status int
-	var statusErr httpStatusError
-	if errors.As(err, &statusErr) {
+	if statusErr, ok := errors.AsType[httpStatusError](err); ok {
 		status = statusErr.StatusCode
 	} else {
-		var oauthErr oauthError
-		if errors.As(err, &oauthErr) {
+		if oauthErr, ok := errors.AsType[oauthError](err); ok {
 			status = oauthErr.StatusCode
 		}
 	}

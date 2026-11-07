@@ -390,10 +390,10 @@ func TestGitHubCopilotLoginEndToEnd(t *testing.T) {
 // initial login) stays pinned to the host recorded in creds.Extra at login
 // time, rather than reverting to github.com.
 func TestRefreshGitHubCopilotUsesStoredDomain(t *testing.T) {
-	var copilotCalls int32
+	var copilotCalls atomic.Int32
 	mux := http.NewServeMux()
 	mux.HandleFunc("/copilot_internal/v2/token", func(w http.ResponseWriter, r *http.Request) {
-		atomic.AddInt32(&copilotCalls, 1)
+		copilotCalls.Add(1)
 		if got := r.Header.Get("Authorization"); got != "Bearer gh-refresh-1" {
 			t.Errorf("Authorization = %q, want Bearer gh-refresh-1", got)
 		}
@@ -416,7 +416,7 @@ func TestRefreshGitHubCopilotUsesStoredDomain(t *testing.T) {
 	if creds.Access != "copilot-token-2" {
 		t.Fatalf("Access = %q, want copilot-token-2", creds.Access)
 	}
-	if got := atomic.LoadInt32(&copilotCalls); got != 1 {
+	if got := copilotCalls.Load(); got != 1 {
 		t.Fatalf("copilot token calls = %d, want 1", got)
 	}
 }

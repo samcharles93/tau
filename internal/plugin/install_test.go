@@ -246,7 +246,7 @@ func newTestRegistryAndDownloadServer(t *testing.T, binaryContent []byte, checks
 		case strings.Contains(r.URL.Path, "/versions/"):
 			w.Header().Set("Content-Type", "application/json")
 			json.NewEncoder(w).Encode(registry.VersionDetail{
-				VersionInfo: registry.VersionInfo{Version: "1.0.0"},
+				Version: "1.0.0",
 				Platforms: []registry.Platform{
 					{
 						OS:       runtime.GOOS,

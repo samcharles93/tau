@@ -96,7 +96,7 @@ func TestOverlayStackHandlePasteExclusiveSwallowsWithoutPasteHandler(t *testing.
 
 func TestOverlayStackHandlePasteRoutesToImplementer(t *testing.T) {
 	s := NewOverlayStack(nil)
-	p := &fakeOverlayWithPaste{fakeOverlay: fakeOverlay{pasteOK: true}}
+	p := &fakeOverlayWithPaste{pasteOK: true}
 	s.Push(p, false)
 
 	if !s.HandlePaste("hello") {

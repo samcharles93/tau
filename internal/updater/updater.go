@@ -352,8 +352,7 @@ func verifyBinaryRuns(binary []byte, goos string, timeout time.Duration) error {
 		if ctx.Err() == context.DeadlineExceeded {
 			return fmt.Errorf("downloaded binary did not respond to --version within %v — leaving existing install untouched", timeout)
 		}
-		var exitErr *exec.ExitError
-		if errors.As(err, &exitErr) {
+		if exitErr, ok := errors.AsType[*exec.ExitError](err); ok {
 			return fmt.Errorf("downloaded binary failed --version check: exit status %d — leaving existing install untouched", exitErr.ExitCode())
 		}
 		return fmt.Errorf("downloaded binary failed --version check: %w — leaving existing install untouched", err)

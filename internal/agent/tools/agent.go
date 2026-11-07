@@ -450,8 +450,7 @@ func spawnChildProcess(ctx context.Context, args agentToolArgs, cfg AgentToolCon
 	deadline := computeSpawnDeadline(args, instResult.Timeout)
 	release, admitErr := acquireSpawnSlot(ctx, cfg.ParentInstanceID, cfg.Agents, deadline)
 	if admitErr != nil {
-		var rej *spawnRejected
-		if errors.As(admitErr, &rej) {
+		if rej, ok := errors.AsType[*spawnRejected](admitErr); ok {
 			detailsJSON, _ := json.Marshal(map[string]any{
 				"status":         string(tauchat.ChildAgentFailed),
 				"failure_reason": rej.reason,

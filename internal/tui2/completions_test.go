@@ -336,8 +336,8 @@ func TestCompletionDropdownDoesNotInterceptWhenNotApplicable(t *testing.T) {
 
 func TestRenderCompletionsShowsChevronOnSelectedRowOnly(t *testing.T) {
 	rows := []compRow{
-		{compMatch: compMatch{Word: "aaa", Description: "first"}, group: "Models"},
-		{compMatch: compMatch{Word: "bbb", Description: "second"}, group: "Models"},
+		{Word: "aaa", Description: "first", group: "Models"},
+		{Word: "bbb", Description: "second", group: "Models"},
 	}
 	out := stripANSI(renderCompletions(rows, 1, 80))
 
@@ -793,7 +793,7 @@ func TestLongestCommonWordPrefixEmpty(t *testing.T) {
 
 func TestLongestCommonWordPrefixSingle(t *testing.T) {
 	rows := []compRow{{
-		compMatch: compMatch{Word: "gpt-4"},
+		Word: "gpt-4",
 	}}
 	prefix := longestCommonWordPrefix(rows)
 	if prefix != "gpt-4" {
@@ -803,9 +803,9 @@ func TestLongestCommonWordPrefixSingle(t *testing.T) {
 
 func TestLongestCommonWordPrefixShared(t *testing.T) {
 	rows := []compRow{
-		{compMatch: compMatch{Word: "gpt-4"}},
-		{compMatch: compMatch{Word: "gpt-4-turbo"}},
-		{compMatch: compMatch{Word: "gpt-3.5-turbo"}},
+		{Word: "gpt-4"},
+		{Word: "gpt-4-turbo"},
+		{Word: "gpt-3.5-turbo"},
 	}
 	prefix := longestCommonWordPrefix(rows)
 	if prefix != "gpt-" {
@@ -815,8 +815,8 @@ func TestLongestCommonWordPrefixShared(t *testing.T) {
 
 func TestLongestCommonWordPrefixNoCommon(t *testing.T) {
 	rows := []compRow{
-		{compMatch: compMatch{Word: "aaaa"}},
-		{compMatch: compMatch{Word: "bbbb"}},
+		{Word: "aaaa"},
+		{Word: "bbbb"},
 	}
 	prefix := longestCommonWordPrefix(rows)
 	if prefix != "" {
@@ -826,8 +826,8 @@ func TestLongestCommonWordPrefixNoCommon(t *testing.T) {
 
 func TestLongestCommonWordPrefixAllIdentical(t *testing.T) {
 	rows := []compRow{
-		{compMatch: compMatch{Word: "gpt-4"}},
-		{compMatch: compMatch{Word: "gpt-4"}},
+		{Word: "gpt-4"},
+		{Word: "gpt-4"},
 	}
 	prefix := longestCommonWordPrefix(rows)
 	if prefix != "gpt-4" {
@@ -907,8 +907,8 @@ func TestRenderCompletionsScrollingWindow(t *testing.T) {
 	rows := make([]compRow, 20)
 	for i := range rows {
 		rows[i] = compRow{
-			compMatch: compMatch{Word: fmt.Sprintf("model-%d", i)},
-			group:     "Models",
+			Word:  fmt.Sprintf("model-%d", i),
+			group: "Models",
 		}
 	}
 
@@ -928,7 +928,7 @@ func TestRenderCompletionsScrollingWindow(t *testing.T) {
 
 func TestRenderCompletionsTruncatedToWidth(t *testing.T) {
 	rows := []compRow{
-		{compMatch: compMatch{Word: "very-long-command-name-that-should-be-truncated", Description: "long description"}, group: "Cmd"},
+		{Word: "very-long-command-name-that-should-be-truncated", Description: "long description", group: "Cmd"},
 	}
 	out := renderCompletions(rows, 0, 40)
 	// Output lines should be <= 40 columns wide.
@@ -942,8 +942,8 @@ func TestRenderCompletionsTruncatedToWidth(t *testing.T) {
 
 func TestRenderCompletionsGroupHeadersVisible(t *testing.T) {
 	rows := []compRow{
-		{compMatch: compMatch{Word: "aaa"}, group: "GroupA"},
-		{compMatch: compMatch{Word: "bbb"}, group: "GroupB"},
+		{Word: "aaa", group: "GroupA"},
+		{Word: "bbb", group: "GroupB"},
 	}
 	out := stripANSI(renderCompletions(rows, 0, 80))
 	if !strings.Contains(out, "GroupA") || !strings.Contains(out, "GroupB") {
@@ -955,7 +955,7 @@ func TestRenderCompletionsGroupHeadersVisible(t *testing.T) {
 
 func TestCompletionDescColumnEmptyDescriptions(t *testing.T) {
 	rows := []compRow{
-		{compMatch: compMatch{Word: "cmd"}}, // no description
+		{Word: "cmd"}, // no description
 	}
 	col := completionDescColumn(rows)
 	if col != 0 {
@@ -966,7 +966,7 @@ func TestCompletionDescColumnEmptyDescriptions(t *testing.T) {
 func TestCompletionDescColumnCapped(t *testing.T) {
 	veryLong := strings.Repeat("x", 100)
 	rows := []compRow{
-		{compMatch: compMatch{Word: veryLong, Description: "desc"}},
+		{Word: veryLong, Description: "desc"},
 	}
 	col := completionDescColumn(rows)
 	if col > 44 {
@@ -1007,7 +1007,7 @@ func TestRenderHighlightedWordSingleSpan(t *testing.T) {
 
 func TestRenderCompletionRowSelected(t *testing.T) {
 	row := compRow{
-		compMatch: compMatch{Word: "gpt-4", Description: "OpenAI"},
+		Word: "gpt-4", Description: "OpenAI",
 		highlight: [][2]int{{0, 3}},
 	}
 	out := stripANSI(renderCompletionRow(row, true, 8))
@@ -1021,7 +1021,7 @@ func TestRenderCompletionRowSelected(t *testing.T) {
 
 func TestRenderCompletionRowUnselected(t *testing.T) {
 	row := compRow{
-		compMatch: compMatch{Word: "gpt-4"},
+		Word:      "gpt-4",
 		highlight: [][2]int{{0, 3}},
 	}
 	out := stripANSI(renderCompletionRow(row, false, 0))
@@ -1087,8 +1087,8 @@ func TestRenderCompletionsEmpty(t *testing.T) {
 
 func TestRenderCompletionsSelectionOutOfBounds(t *testing.T) {
 	rows := []compRow{
-		{compMatch: compMatch{Word: "aaa"}, group: "G"},
-		{compMatch: compMatch{Word: "bbb"}, group: "G"},
+		{Word: "aaa", group: "G"},
+		{Word: "bbb", group: "G"},
 	}
 	// Selected index 10 is out of bounds - should clamp to last row.
 	out := stripANSI(renderCompletions(rows, 10, 80))
@@ -1099,8 +1099,8 @@ func TestRenderCompletionsSelectionOutOfBounds(t *testing.T) {
 
 func TestRenderCompletionsHeaderCount(t *testing.T) {
 	rows := []compRow{
-		{compMatch: compMatch{Word: "a"}, group: "X"},
-		{compMatch: compMatch{Word: "b"}, group: "Y"},
+		{Word: "a", group: "X"},
+		{Word: "b", group: "Y"},
 	}
 	out := stripANSI(renderCompletions(rows, 0, 80))
 	// Both group headers should appear.

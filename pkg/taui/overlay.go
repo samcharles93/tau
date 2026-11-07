@@ -1,5 +1,7 @@
 package taui
 
+import "slices"
+
 import "sync"
 
 // Overlay is a component that can be pushed onto an OverlayStack to take
@@ -113,8 +115,8 @@ func (s *OverlayStack) syncBaseFocusLocked() {
 // caller to apply its own fallback.
 func (s *OverlayStack) HandleInput(data string) bool {
 	entries := s.snapshot()
-	for i := len(entries) - 1; i >= 0; i-- {
-		e := entries[i]
+	for _, e := range slices.Backward(entries) {
+
 		consumed := e.overlay.HandleInput(data)
 		if e.exclusive || consumed {
 			return true
@@ -130,8 +132,8 @@ func (s *OverlayStack) HandleInput(data string) bool {
 // through to the next overlay or the caller's own fallback.
 func (s *OverlayStack) HandlePaste(content string) bool {
 	entries := s.snapshot()
-	for i := len(entries) - 1; i >= 0; i-- {
-		e := entries[i]
+	for _, e := range slices.Backward(entries) {
+
 		h, ok := e.overlay.(PasteHandler)
 		if !ok {
 			if e.exclusive {
