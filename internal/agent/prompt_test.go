@@ -38,6 +38,19 @@ func TestBuildSystemPromptMinimal(t *testing.T) {
 	}
 }
 
+// TestBuildSystemPromptAntiReaskRules guards the affirmative-question loop
+// seen live (model re-asking "want me to proceed?" after the user says "do
+// it"): the rendered prompt must carry both rules.
+func TestBuildSystemPromptAntiReaskRules(t *testing.T) {
+	prompt := BuildSystemPrompt(PromptConfig{CWD: t.TempDir()})
+
+	assertPromptContains(
+		t, prompt,
+		"do not re-analyze, re-plan, or ask again",
+		"If your response starts repeating earlier analysis, stop and act on the user's request",
+	)
+}
+
 func TestBuildSystemPromptWithAllSections(t *testing.T) {
 	cwd := t.TempDir()
 	t.Setenv("SHELL", "/bin/tau-test-shell")
