@@ -12,7 +12,7 @@ func TestEmbeddedFS(t *testing.T) {
 	var foundReadme bool
 	var foundPlugins bool
 	var foundMCPExample bool
-	var foundWebUISpec bool
+	var foundStateSpec bool
 
 	err := fs.WalkDir(FS, ".", func(path string, d fs.DirEntry, err error) error {
 		if err != nil {
@@ -52,8 +52,8 @@ func TestEmbeddedFS(t *testing.T) {
 		if path == "examples/mcp-plugin.md" {
 			foundMCPExample = true
 		}
-		if path == "specs/web-ui.md" {
-			foundWebUISpec = true
+		if path == "specs/state-taxonomy.md" {
+			foundStateSpec = true
 		}
 
 		return nil
@@ -78,8 +78,8 @@ func TestEmbeddedFS(t *testing.T) {
 	if !foundMCPExample {
 		t.Error("expected examples/mcp-plugin.md to be embedded in FS, but it was not")
 	}
-	if !foundWebUISpec {
-		t.Error("expected specs/web-ui.md to be embedded in FS, but it was not")
+	if !foundStateSpec {
+		t.Error("expected specs/state-taxonomy.md to be embedded in FS, but it was not")
 	}
 }
 

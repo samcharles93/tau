@@ -1,7 +1,7 @@
 # Command Registry
 
 The command registry (`internal/registry/`) manages built-in slash commands, custom user commands, and skill commands.
-It publishes `CommandsChangedEvent` on the event bus so the TUI and Web UI can keep their autocomplete lists in sync.
+It publishes `CommandsChangedEvent` on the event bus so the TUI can keep its autocomplete list in sync.
 
 ## Architecture
 
@@ -127,7 +127,7 @@ type CommandsChangedEvent struct {
 ```
 
 Published on the event bus whenever the command set changes (plugins loaded/unloaded, commands discovered/refreshed).
-The TUI and Web UI subscribe to this event to update their autocomplete lists.
+The TUI subscribes to this event to update its autocomplete list.
 
 ## App Integration
 
@@ -137,7 +137,7 @@ In `internal/app/run.go`, the registry is created and wired:
 commandRegistry := commandreg.New(bus)
 commandRegistry.Discover()
 
-// Build initial command refs for the TUI and Web UI
+// Build initial command refs for the TUI
 initialCommands := commandRefsFromRegistry(commandRegistry.All())
 ```
 

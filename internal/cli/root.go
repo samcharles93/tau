@@ -123,22 +123,9 @@ func NewRootCommand(version string) *urfavecli.Command {
 				Usage:   "Deprecated: use -x/--execute instead. One-shot mode: process prompt and exit",
 			},
 			&urfavecli.BoolFlag{
-				Name:  "web",
-				Usage: "Start the web UI and open the browser",
-			},
-			&urfavecli.IntFlag{
-				Name:  "port",
-				Usage: "HTTP port for the web UI (0 = auto-assign)",
-				Value: 0,
-			},
-			&urfavecli.BoolFlag{
 				Name:    "legacy-tui",
 				Aliases: []string{"legacy"},
 				Usage:   "Use the legacy inline TUI instead of the default Bubbletea-based TUI",
-			},
-			&urfavecli.BoolFlag{
-				Name:  "no-web",
-				Usage: "Do not start the web UI",
 			},
 			&urfavecli.StringSliceFlag{
 				Name:  "skill-dir",
@@ -226,9 +213,6 @@ func NewRootCommand(version string) *urfavecli.Command {
 				return err
 			}
 			if prompt != "" {
-				// Execute mode never starts the web server.
-				opts.Web = false
-				opts.NoWeb = true
 				return app.RunStdIn(ctx, opts, prompt)
 			}
 			return app.RunChat(ctx, opts)
@@ -390,9 +374,6 @@ func chatOptionsFromCmd(cmd *urfavecli.Command, cfg tauconfig.Config, provider t
 		Version:              version,
 		ResumeSessionID:      cmd.String("resume"),
 		NewTUI:               !cmd.Bool("legacy-tui"),
-		Web:                  cmd.Bool("web"),
-		WebPort:              cmd.Int("port"),
-		NoWeb:                cmd.Bool("no-web"),
 		SkillDirs:            cmd.StringSlice("skill-dir"),
 		Ephemeral:            cmd.Bool("ephemeral"),
 		AllowedTools:         splitToolsFlag(cmd.StringSlice("tools")),

@@ -397,29 +397,6 @@ func RunChat(ctx context.Context, opts ChatOptions) error {
 	// and receives deltas via CommandsChangedEvent on the bus.
 	initialCommands := commandRefsFromRegistry(result.CommandRegistry.All())
 
-	// Extract the initial active skill set to seed the Web UI bridge.
-	initialSkills := skillsFromManager(skillsMgr)
-
-	// Optionally start the Web UI bridge and server.
-	var webURL string
-	var webShutdown func()
-	var webWait func()
-	if !opts.NoWeb {
-		webRes, err := startWebUI(ctx, coordinator, bus, opts, sessionID, model.ID, available, tauconfig.ProviderNames(opts.Config), initialCommands, initialSkills, result.ExtensionCommands, slog.Default())
-		if err != nil {
-			slog.Warn("web ui failed", "err", err)
-		} else if webRes != nil {
-			webURL = webRes.URL
-			webShutdown = webRes.Shutdown
-			webWait = webRes.Wait
-			if opts.Web {
-				if err := openBrowser(ctx, webURL); err != nil {
-					slog.Warn("open browser failed", "err", err)
-				}
-			}
-		}
-	}
-
 	// restartWanted is set by /update once a new binary is in place; the re-exec
 	// happens after the TUI exits (see the end of this function).
 	var restartWanted atomic.Bool
@@ -448,7 +425,6 @@ func RunChat(ctx context.Context, opts ChatOptions) error {
 		ShowReasoning:             opts.Config.UI.ShowReasoning,
 		ReasoningEffort:           opts.ReasoningEffort,
 		Debug:                     isDevel(opts.Version, opts.Config),
-		WebURL:                    webURL,
 		OnReady:                   onReady,
 		MetricsConfig:             opts.Config.Metrics,
 		ToolCallsDefaultCollapsed: opts.Config.UI.ToolCallsDefaultCollapsed,
@@ -457,14 +433,6 @@ func RunChat(ctx context.Context, opts ChatOptions) error {
 
 	logStartupPhase("after-tui", t0)
 	tuiErr := tui.Run(ctx, coordinator, tuiCfg)
-
-	// Shut down the web UI before closing the coordinator.
-	if webShutdown != nil {
-		webShutdown()
-		if webWait != nil {
-			webWait()
-		}
-	}
 
 	// Close coordinator first so it can persist sessions while the store is still open.
 	coordinator.Close()
@@ -503,19 +471,4 @@ func commandRefsFromRegistry(cmds []commandreg.Command) []tauchat.CommandRef {
 		})
 	}
 	return refs
-}
-
-// skillsFromManager extracts a lightweight SkillInfo slice from the skills
-// manager's active skill snapshot, suitable for seeding the Web UI bridge.
-func skillsFromManager(mgr *skills.Manager) []tauchat.SkillInfo {
-	snapshot := mgr.Snapshot()
-	out := make([]tauchat.SkillInfo, 0, len(snapshot.ActiveSkills))
-	for _, s := range snapshot.ActiveSkills {
-		out = append(out, tauchat.SkillInfo{
-			Name:        s.Name,
-			Description: s.Description,
-			Scope:       string(s.Scope),
-		})
-	}
-	return out
 }

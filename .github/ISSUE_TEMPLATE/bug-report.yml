@@ -46,7 +46,6 @@ body:
       options:
         - Core / Agent Coordinator (turn loop, prompt building)
         - Terminal UI (TUI layout, rendering, completions, keybindings)
-        - Web UI & HTTP/WS Bridge (browser UI, WS protocol, server)
         - Plugins & Tool Registry (gRPC SDK, custom tools)
         - Skills & Prompt Templates (markdown discovery, custom commands)
         - Providers, Models & Auth (ai-sdk, /login, api keys)

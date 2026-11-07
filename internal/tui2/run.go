@@ -40,7 +40,6 @@ func Run(
 	showReasoning bool,
 	reasoningEffort string,
 	toolCallsDefaultCollapsed bool,
-	webURL string,
 	debug bool,
 ) error {
 	if bus == nil {
@@ -82,7 +81,7 @@ func Run(
 		onReady()
 	}
 
-	m := newModel(ctx, runtime, chatSub, sessionID, modelName, provider, availableModels, refresh, updateFn, showReasoning, reasoningEffort, toolCallsDefaultCollapsed, tracker, webURL, debug)
+	m := newModel(ctx, runtime, chatSub, sessionID, modelName, provider, availableModels, refresh, updateFn, showReasoning, reasoningEffort, toolCallsDefaultCollapsed, tracker, debug)
 
 	// Derive the colour profile from the environment rather than letting Bubble
 	// Tea auto-detect it with OSC 10/11 queries. Those query responses can leak

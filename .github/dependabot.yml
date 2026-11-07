@@ -19,11 +19,7 @@ updates:
     schedule:
       interval: weekly
 
-  # npm workspaces (web UI SPA and VitePress docs)
-  - package-ecosystem: npm
-    directory: /internal/webui
-    schedule:
-      interval: weekly
+  # npm workspace (VitePress docs)
   - package-ecosystem: npm
     directory: /docs
     schedule:

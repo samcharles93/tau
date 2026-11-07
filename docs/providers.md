@@ -203,7 +203,7 @@ type ProviderRuntime struct {
 }
 ```
 
-When the user switches models (via `/model` or the Web UI), the dynamic streamer picks the correct ai-sdk provider per
+When the user switches models (via `/model`), the dynamic streamer picks the correct ai-sdk provider per
 turn from the session state's `Provider` and `Model.ID` fields. This means a single session can use OpenAI, then switch
 to Anthropic, then to DeepSeek - all without restarting.
 

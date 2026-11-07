@@ -37,7 +37,7 @@ func TestRenderStatusBar_PinsLeftAndJustifiesRight(t *testing.T) {
 	termkit.DisableColor()
 
 	left := []statusSeg{{Text: "τ tau", Prio: prioTransient}, {Text: "opus"}}
-	right := []statusSeg{{Text: "Open Browser", Prio: prioWeb}}
+	right := []statusSeg{{Text: "$0.42", Prio: prioCost}}
 
 	const width = 40
 	out := renderStatusBar(width, left, right)
@@ -45,7 +45,7 @@ func TestRenderStatusBar_PinsLeftAndJustifiesRight(t *testing.T) {
 	if !strings.HasPrefix(out, "τ tau · opus") {
 		t.Fatalf("left group not pinned left: %q", out)
 	}
-	if !strings.HasSuffix(out, "Open Browser") {
+	if !strings.HasSuffix(out, "$0.42") {
 		t.Fatalf("right group not flush-right: %q", out)
 	}
 }

@@ -102,7 +102,7 @@ type UIBridge interface {
 ```
 
 The bridge implementation (`internal/agent/ui_bridge.go`) translates these calls into `InteractivePromptRequestedEvent`
-on the event bus. The TUI renders the prompt inline; the Web UI shows a dialog. The user's response comes back as
+on the event bus. The TUI renders the prompt inline. The user's response comes back as
 `RespondInteractivePromptCommand`.
 
 ## Path Utilities

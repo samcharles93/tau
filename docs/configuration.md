@@ -172,9 +172,6 @@ CLI flags override configuration:
 | `--model <id>`      | `default_model`             |
 | `--max-tokens <n>`  | Session parameter           |
 | `--temperature <f>` | Session parameter           |
-| `--web`             | Start web UI + open browser |
-| `--port <n>`        | Web UI port (0 = auto)      |
-| `--no-web`          | Disable web UI              |
 | `--insecure`        | `TAU_INSECURE`              |
 | `--verbose`         | `TAU_VERBOSE`               |
 | `--prompt <text>`   | One-shot stdin mode         |

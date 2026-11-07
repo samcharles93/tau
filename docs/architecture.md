@@ -1,6 +1,6 @@
 # Tau Architecture
 
-Tau is a provider-agnostic, coding agent with an interactive terminal UI (TUI), an optional Web UI, session persistence,
+Tau is a provider-agnostic, coding agent with an interactive terminal UI (TUI), session persistence,
 plugin system, and skill discovery. This document describes the high-level architecture - how the pieces fit together,
 the communication patterns, and the design principles.
 
@@ -38,8 +38,7 @@ internal/app/ (orchestration: creates eventbus.Bus, wires subsystems as Clients)
         │       │
         │       └─► internal/tui/notify/ (queue-based notification system)
         │
-        ├─► internal/bridge/ (WebSocket fan-out for Web UI)
-        ├─► internal/server/ (HTTP server for embedded SPA)
+        ├─► internal/bridge/ (JSON wire types for agent processes and JSONL output)
         │
         └─► internal/sessions/ (session lifecycle management)
                 │
@@ -62,8 +61,6 @@ internal/app/ (orchestration: creates eventbus.Bus, wires subsystems as Clients)
 
 TUI ──Send(ChatCommand)──► Coordinator ──Publish(ChatEvent)──► Bus ──► TUI
   ▲                                                              │
-  │                                                              ├───► Bridge ──► Web UI
-  │                                                              │
   └──────────────── Subscribe(ChatEvent) ────────────────────────┘
 ```
 
@@ -75,7 +72,7 @@ TUI ──Send(ChatCommand)──► Coordinator ──Publish(ChatEvent)──�
 | CLI             | `internal/cli/`                                                                                                                | Command definitions & flag parsing (thin handlers)                |
 | Orchestration   | `internal/app/`                                                                                                                | Wires subsystems together for each use case (chat, token, models) |
 | Domain          | `internal/chat/`, `internal/skills/`, `internal/agent/`                                                                        | Core business logic, commands, events                             |
-| Presentation    | `internal/tui/`, `internal/bridge/`, `internal/server/`                                                                        | Terminal UI, WebSocket bridge, HTTP server                        |
+| Presentation    | `internal/tui/`, `internal/tui2/`                                                                                              | Terminal UI                                                       |
 | Infrastructure  | `internal/config/`, `internal/eventbus/`, `internal/store/`, `internal/sessions/`, `internal/indexing/`, `internal/providers/` | Config, event bus, persistence, search, provider management       |
 | Public packages | `pkg/taui/`, `pkg/plugin/`                                                                                                     | Standalone TUI framework, plugin API                              |
 
@@ -113,9 +110,7 @@ Tau is built on three pillars:
 | Chat Types        | `internal/chat/`                        | [Chat Types](chat-types.md)       |
 | Event Bus         | `internal/eventbus/`                    | [Event Bus](eventbus.md)          |
 | TUI               | `internal/tui/`                         | [TUI](tui.md)                     |
-| Web UI            | `internal/webui/`                       | [Web UI](webui.md)                |
-| WebSocket Bridge  | `internal/bridge/`                      | [Server & Bridge](server.md)      |
-| HTTP Server       | `internal/server/`                      | [Server & Bridge](server.md)      |
+| Wire Protocol     | `internal/bridge/`                      | [Chat Types](chat-types.md)       |
 | Tools             | `internal/agent/tools/`                 | [Tools](tools.md)                 |
 | Plugins           | `internal/plugin/`                      | [Plugin SDK](plugins.md)          |
 | Skills            | `internal/skills/`                      | [Skills](skills.md)               |
@@ -126,20 +121,3 @@ Tau is built on three pillars:
 | TUI Framework     | `pkg/taui/`                             | [taui](taui.md)                   |
 | Plugin API        | `pkg/plugin/api/`                       | [Plugin SDK](plugins.md)          |
 | AI SDK            | `github.com/samcharles93/ai-sdk`        | [AI SDK](ai-sdk.md)               |
-
-## Web UI Architecture
-
-The Web UI is a Vue 3 SPA embedded in the Go binary via `//go:embed`. It connects to the Go backend over a WebSocket on
-`127.0.0.1` and mirrors the TUI's command/event contract exactly:
-
-```
-Browser ──WebSocket──► internal/bridge/Bridge ──Send(ChatCommand)──► Coordinator
-Browser ◄──WebSocket── internal/bridge/Bridge ◄──Subscribe(ChatEvent)── Bus
-```
-
-The bridge subscribes to `ChatEvent` on the event bus and fans out every event to all connected WebSocket clients.
-Commands from the browser are unmarshalled from JSON and forwarded to the coordinator via `ChatRuntime.Send()`. The
-bridge caches the most recent `ChatSessionSnapshotEvent` and replays it to newly connected clients, so a browser joining
-mid-session sees the full conversation history.
-
-See [Web UI](webui.md) for frontend details and [Server & Bridge](server.md) for backend details.

@@ -13,7 +13,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/pkg/browser"
 	aisdkchat "github.com/samcharles93/ai-sdk/chat"
 	"github.com/samcharles93/ai-sdk/runtime"
 
@@ -46,9 +45,6 @@ type ChatOptions struct {
 	ReasoningEffort      string
 	Version              string
 	ResumeSessionID      string
-	Web                  bool     // --web: auto-open browser
-	WebPort              int      // --port: 0 = ephemeral
-	NoWeb                bool     // --no-web: do not start web UI
 	SkillDirs            []string // --skill-dir: additional skill directories
 	NewTUI               bool     // default true; --legacy-tui inverts to use the legacy inline TUI
 	Ephemeral            bool     // --ephemeral: do not persist this session to the session store
@@ -900,17 +896,4 @@ func isDevel(version string, cfg tauconfig.Config) bool {
 	}
 	v := strings.ToLower(version)
 	return strings.Contains(v, "dev") || strings.Contains(v, "none")
-}
-
-// openBrowser opens url in the user's default browser.
-func openBrowser(ctx context.Context, url string) error {
-	return browserOpenURL(ctx, url)
-}
-
-// browserOpenURL is a test seam.
-var browserOpenURL = defaultBrowserOpenURL
-
-func defaultBrowserOpenURL(ctx context.Context, url string) error {
-	_ = ctx
-	return browser.OpenURL(url)
 }

@@ -311,5 +311,5 @@ type Envelope struct {
 }
 ```
 
-The TypeScript protocol types are mirrored in `internal/webui/src/lib/protocol.ts`. See [Server & Bridge](server.md) for
-the wire format details.
+The JSON wire format is defined in `internal/bridge/wire.go` and documented in
+[`asyncapi/tau.yaml`](asyncapi/tau.yaml).

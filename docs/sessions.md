@@ -125,7 +125,7 @@ type SessionSummary struct {
 }
 ```
 
-Summaries are returned by `List()` for display in the TUI's `/sessions` command and the Web UI's SessionSwitcher.
+Summaries are returned by `List()` for display in the TUI's `/sessions` command.
 
 ## JSONL Export
 
@@ -183,12 +183,3 @@ Exports the current session as JSONL. The file is saved to the sessions director
 ### `/sessions` (TUI command)
 
 Lists saved sessions inline in the TUI with details.
-
-## Web UI Session Management
-
-The Web UI's `SessionSwitcher` component provides:
-
-- List saved sessions (model, message count, date).
-- Click to load a session (sends `LoadSessionCommand`).
-- Delete button with confirmation.
-- Export button (downloads JSONL via the bridge).

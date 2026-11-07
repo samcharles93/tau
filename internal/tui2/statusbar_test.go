@@ -10,7 +10,7 @@ import (
 	"github.com/samcharles93/tau/internal/metrics"
 )
 
-// The core layout/width-pressure algorithm (renderStatusBar/joinSegs), the
+// The core layout/width-pressure algorithm (renderStatusBar), the
 // shared formatters (humanizeTokens/formatCost/contextPct/formatContextPct),
 // and the width primitives (visibleWidth/truncateANSIToWidth/stripANSI) now
 // live in pkg/taui (statusline.go, utils.go) and are covered exhaustively
@@ -42,29 +42,6 @@ func TestContextStyle(t *testing.T) {
 		if tc.pct < 75 && style != nil {
 			t.Errorf("contextStyle(%d) = non-nil, wanted nil for %s", tc.pct, tc.name)
 		}
-	}
-}
-
-// TestWebSegWidthMath guards against webSeg baking its OSC 8 escape
-// directly into StatusLineSeg.Text: joinSegs uses .Text verbatim for width
-// math, so a segment whose text is itself an escape sequence makes every
-// width-pressure/truncation decision downstream wrong. webSeg must keep
-// .Text as the plain "web" label and carry the hyperlink via
-// StyledOverride instead.
-func TestWebSegWidthMath(t *testing.T) {
-	seg := webSeg("http://127.0.0.1:8080")
-	if seg.Text != "web" {
-		t.Fatalf("webSeg.Text = %q, want plain %q (styling belongs in StyledOverride)", seg.Text, "web")
-	}
-	if seg.StyledOverride == "" {
-		t.Fatal("webSeg.StyledOverride should carry the OSC8 hyperlink")
-	}
-	_, plain := joinSegs([]statusSeg{seg})
-	if plain != "web" {
-		t.Fatalf("joinSegs plain output = %q, want %q", plain, "web")
-	}
-	if w := visibleWidth(plain); w != 3 {
-		t.Fatalf("visibleWidth(%q) = %d, want 3", plain, w)
 	}
 }
 

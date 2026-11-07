@@ -1,7 +1,7 @@
 # Tau CLI Reference
 
 Tau is a provider-agnostic coding agent with an interactive terminal UI. It provides an extensible, personalised
-environment for working with AI models, featuring an interactive TUI, an optional Web UI, session history, token
+environment for working with AI models, featuring an interactive TUI, session history, token
 tracking, and plugin integration.
 
 ## Usage
@@ -10,8 +10,7 @@ tracking, and plugin integration.
 tau [global flags] [command]
 ```
 
-Running `tau` with no arguments starts an interactive chat session and also starts a local Web UI on `127.0.0.1`. You do
-not need a `--model` flag; if no model is configured the session starts unselected and you pick one with `/model`.
+Running `tau` with no arguments starts an interactive chat session. You do not need a `--model` flag; if no model is configured the session starts unselected and you pick one with `/model`.
 
 ## Global Flags
 
@@ -26,9 +25,6 @@ not need a `--model` flag; if no model is configured the session starts unselect
 | `--prompt`, `-p <text>`       | [deprecated] Use `-x`/`--execute` instead. One-shot / execute mode         |
 | `--jsonl`, `--stream-json`    | Output framed JSONL events on stdout instead of plain text (execute mode)   |
 | `--child`                     | Run as a headless agent child process (internal use; hidden)              |
-| `--web`                       | Start the Web UI and open it in the default browser                       |
-| `--port <n>`                  | HTTP port for the Web UI. Default `0` = OS-assigned ephemeral port        |
-| `--no-web`                    | Do not start the Web UI. TUI only                                         |
 | `--insecure`                  | Skip TLS certificate verification. Env: `TAU_INSECURE`                    |
 | `--verbose`                   | Show debug messages on stderr. Env: `TAU_VERBOSE`                         |
 
@@ -57,21 +53,6 @@ Tau discovers providers automatically. To enable a provider:
 5. **config.yaml:** Add a provider block (see Configuration below).
 
 Run `/model` in the TUI to pick from all enabled providers' models.
-
-## Web UI
-
-When tau starts interactively, it binds a local HTTP/WebSocket server on `127.0.0.1`. The URL is shown in the TUI status
-bar.
-
-```bash
-./tau              # TUI + Web UI, URL in status bar
-./tau --web        # TUI + Web UI, also opens the browser
-./tau --no-web     # TUI only
-./tau --port 9343  # Fixed port
-```
-
-The browser connects to `/ws` and receives the same event stream as the TUI. Commands sent from the browser are
-forwarded to the coordinator identically to TUI commands. Multiple browser tabs may connect to the same session.
 
 ## Slash Commands (TUI)
 
@@ -246,8 +227,6 @@ providers:
 ### UI Systems
 
 - [Terminal UI (TUI)](tui.md) - inline rendering, widget tree, slash commands, completions, notifications
-- [Web UI](webui.md) - Vue 3 SPA, state management, components, protocol, build
-- [Server & Bridge](server.md) - HTTP/WebSocket server, event fan-out, wire format
 - [taui Framework](taui.md) - standalone TUI rendering engine, widgets, color system
 
 ### Infrastructure

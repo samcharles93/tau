@@ -189,8 +189,7 @@ type model struct {
 	usage *metrics.UsageTracker
 
 	// Configuration.
-	webURL string
-	debug  bool
+	debug bool
 
 	// Session management.
 	sessionSummaries []tauchat.SessionSummary
@@ -339,7 +338,6 @@ func newModel(
 	reasoningEffort string,
 	toolCallsDefaultCollapsed bool,
 	usage *metrics.UsageTracker,
-	webURL string,
 	debug bool,
 ) *model {
 	vp := viewport.New(viewport.WithWidth(80), viewport.WithHeight(20))
@@ -377,7 +375,6 @@ func newModel(
 		toolCallsDefaultCollapsed: toolCallsDefaultCollapsed,
 		toolGroupCollapsed:        toolCallsDefaultCollapsed,
 		usage:                     usage,
-		webURL:                    webURL,
 		debug:                     debug,
 		extensionCommands:         make(map[string]tauchat.ExtensionCommand),
 		panels:                    make(map[string]pluginPanel),

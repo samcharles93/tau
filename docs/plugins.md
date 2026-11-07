@@ -71,7 +71,7 @@ you can re-run to update in place (`/hello close` closes it). See
 4. **Init** - Tau calls `Init()` and hands the plugin a broker ID so it can dial the host's `HostService` for config,
    session state, and notifications.
 5. **Metadata** - Tau calls `Metadata()` to learn the plugin's name and slash commands. Commands are registered in the
-   TUI/Web UI command palette.
+   TUI command palette.
 6. **Tool discovery** - If the plugin advertises `CapabilityTools`, Tau calls `Tools()` and registers each tool in the
    agent tool registry as `plugin:<plugin-name>:<tool-name>`. The agent sees only `<tool-name>`.
 7. **Runtime** - Tau forwards slash commands and tool calls to the plugin, and dispatches lifecycle events via
@@ -348,7 +348,7 @@ cancelled when the timeout is reached. Tools performing network calls or heavy I
 
 ## Slash Commands (User-Callable)
 
-Slash commands appear in the TUI's `/`-triggered autocomplete menu and the Web UI's command palette.
+Slash commands appear in the TUI's `/`-triggered autocomplete menu.
 
 ### Declaring Commands
 
@@ -642,7 +642,7 @@ type EventResponse struct {
     // meaningful from before_llm_call handlers.
     ModifiedModelId string
 
-    // Diagnostics are shown to the user in the TUI/Web UI.
+    // Diagnostics are shown to the user in the TUI.
     Diagnostics []*Diagnostic
 
     // SuppressDefault prevents Tau's default handling of this event.
@@ -698,7 +698,7 @@ type Host interface {
     // GetAvailableModels lists model IDs the host knows about.
     GetAvailableModels(ctx context.Context) ([]string, error)
 
-    // Notify pushes a user-visible notification to the TUI and Web UI.
+    // Notify pushes a user-visible notification to the TUI.
     Notify(ctx context.Context, level, message string) error
 
     // Log forwards a structured log line to the host logger.
@@ -758,7 +758,7 @@ func (p *MyPlugin) ExecuteTool(ctx context.Context, toolName, arguments string) 
   `config.yaml`. `SetConfig()` persists to `~/.config/tau/plugin-state.json`.
 - `GetSessionState()` with an empty `sessionID` targets the currently active session. The returned JSON matches
   `chat.ChatSessionState`.
-- `Notify()` pushes transient notifications to both the TUI (via the notify queue) and the Web UI (via toast container).
+- `Notify()` pushes transient notifications to the TUI via the notify queue.
   Valid levels: `"info"`, `"warn"`, `"error"`.
 - `Log()` forwards to tau's structured logger (`slog`). Use this instead of writing to stdout/stderr for log messages
   that should appear in the host's log output.
@@ -974,7 +974,7 @@ cp tau-plugin-myplugin ~/.config/tau/plugins/
 chmod +x ~/.config/tau/plugins/tau-plugin-myplugin
 ```
 
-Tau scans this directory at startup. Use `/reload` in the TUI or Web UI to rediscover plugins without restarting Tau.
+Tau scans this directory at startup. Use `/reload` in the TUI to rediscover plugins without restarting Tau.
 
 ### Required Dependencies
 

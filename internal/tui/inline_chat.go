@@ -81,7 +81,6 @@ type inlineChat struct {
 	notifyQueue       *notify.Queue
 	sessionID         string
 	modelName         string
-	webURL            string
 	showReasoning     bool
 	reasoningEffort   string
 	availableModels   []tauchat.ChatModelRef
@@ -154,7 +153,6 @@ func newInlineChat(
 		notifyQueue:       notify.NewQueue(),
 		sessionID:         cfg.SessionID,
 		modelName:         cfg.ModelName,
-		webURL:            cfg.WebURL,
 		showReasoning:     cfg.ShowReasoning,
 		reasoningEffort:   cfg.ReasoningEffort,
 		availableModels:   slices.Clone(cfg.AvailableModels),
@@ -357,7 +355,6 @@ func (c *inlineChat) computeStatus() string {
 	model := c.modelName
 	prov := c.provider
 	effort := c.reasoningEffort
-	webURL := c.webURL
 	var note string
 	if c.notifyQueue != nil {
 		if cur := c.notifyQueue.Current(); cur != nil {
@@ -416,14 +413,6 @@ func (c *inlineChat) computeStatus() string {
 			})
 		}
 	}
-	if webURL != "" {
-		right = append(right, statusSeg{
-			Text:           "Open Browser",
-			StyledOverride: termkit.FgOnly(termkit.Hyperlink("Open Browser", webURL), termkit.ColorGrey),
-			Prio:           prioWeb,
-		})
-	}
-
 	// Box Padding(1,1) leaves an inner content width of termWidth-2.
 	usable := max(c.width()-2, 1)
 	return renderStatusBar(usable, left, right)

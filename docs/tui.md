@@ -50,7 +50,6 @@ The `inlineChat` struct holds all UI state:
 | `activeTools`        | Map of in-progress tool calls               |
 | `working`            | Whether a request is in flight              |
 | `running`            | Whether the TUI is running                  |
-| `webURL`             | Web UI URL to display in status bar         |
 
 ## Event Handling
 
@@ -177,6 +176,5 @@ type TUIConfig struct {
     ShowReasoning      bool
     ReasoningEffort    string
     Debug              bool
-    WebURL             string           // Web UI URL to display
 }
 ```

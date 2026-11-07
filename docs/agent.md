@@ -15,7 +15,7 @@ type ChatRuntime interface {
 ```
 
 The coordinator receives `ChatCommand` values on an internal channel and publishes `ChatEvent` values on the event bus.
-It does not know or care whether commands come from the TUI, the Web UI, or a headless stdin client.
+It does not know or care whether commands come from the TUI or a headless stdin client.
 
 ## CoordinatorConfig
 

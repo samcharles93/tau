@@ -2,13 +2,12 @@
 
 [![Release](https://github.com/samcharles93/tau/actions/workflows/release.yml/badge.svg)](https://github.com/samcharles93/tau/actions/workflows/release.yml)
 
-Tau is a provider-agnostic, OpenAI-compatible coding agent with an interactive terminal UI, a built-in Web UI, agentic
-tool-calling, session persistence, skills, and a plugin system.
+Tau is a provider-agnostic, OpenAI-compatible coding agent with an interactive terminal UI, agentic tool-calling,
+session persistence, skills, and a plugin system.
 
 - **Provider-agnostic** - works with any OpenAI-compatible API (DeepSeek, OpenRouter, Ollama, self-hosted, etc.); config
   or env vars, no code changes.
-- **Terminal + Web UI** - a fast inline TUI by default, with an optional browser-based UI as a first-class peer over the
-  same event stream.
+- **Terminal-first** - a fast, keyboard-driven TUI built for long agentic sessions.
 - **Agentic tool use** - file read/write/edit/glob/grep, shell execution, and a plugin SDK for adding your own tools.
 - **Skills** - drop a `SKILL.md` into a project or your user config to give the agent reusable, project-specific
   instructions and context.
@@ -50,10 +49,8 @@ tau
 # Or use the setup command directly
 tau setup
 
-# Start chatting (TUI + Web UI, URL in status bar)
+# Start chatting
 tau
-tau --web                              # also opens the browser automatically
-tau --no-web                           # TUI only
 tau -p "Explain the architecture of this codebase"   # single-shot, no UI
 ```
 
@@ -73,15 +70,6 @@ API keys entered through setup are stored securely in `~/.config/tau/auth.yaml` 
 environment variables override them when both are present.
 
 Full flag reference: [`docs/README.md`](docs/README.md).
-
-## Web UI
-
-Running `tau` starts a local HTTP/WebSocket server on `127.0.0.1` alongside the terminal UI. The URL is printed at
-startup and shown in the TUI status bar. Pass `--web` to open it in your default browser automatically.
-
-The browser is a first-class peer to the TUI: it receives the same streaming events and can send the same commands.
-Everything uses the existing `ChatEvent`/`ChatCommand` contract over a WebSocket, documented in
-[`docs/asyncapi/tau.yaml`](docs/asyncapi/tau.yaml).
 
 ## Configuration
 
@@ -106,7 +94,7 @@ Browse the docs at **[docs.tau-ai.dev](https://docs.tau-ai.dev)**, or read the s
 
 | Topic                                              | Doc                                                |
 | -------------------------------------------------- | -------------------------------------------------- |
-| CLI reference (flags, commands, providers, Web UI) | [`docs/README.md`](docs/README.md)                 |
+| CLI reference (flags, commands, providers)         | [`docs/README.md`](docs/README.md)                 |
 | Architecture overview                              | [`docs/architecture.md`](docs/architecture.md)     |
 | Configuration reference                            | [`docs/configuration.md`](docs/configuration.md)   |
 | Provider system                                    | [`docs/providers.md`](docs/providers.md)           |
@@ -120,10 +108,7 @@ Browse the docs at **[docs.tau-ai.dev](https://docs.tau-ai.dev)**, or read the s
 | Chat event/command types                           | [`docs/chat-types.md`](docs/chat-types.md)         |
 | Terminal UI (taui) toolkit                         | [`docs/taui.md`](docs/taui.md)                     |
 | TUI implementation                                 | [`docs/tui.md`](docs/tui.md)                       |
-| Web UI protocol (AsyncAPI)                         | [`docs/asyncapi/tau.yaml`](docs/asyncapi/tau.yaml) |
-| Web UI technical spec                              | [`docs/specs/web-ui.md`](docs/specs/web-ui.md)     |
-| Web UI implementation                              | [`docs/webui.md`](docs/webui.md)                   |
-| HTTP server                                        | [`docs/server.md`](docs/server.md)                 |
+| Wire protocol (AsyncAPI)                           | [`docs/asyncapi/tau.yaml`](docs/asyncapi/tau.yaml) |
 | AI SDK integration & model catalog                 | [`docs/ai-sdk.md`](docs/ai-sdk.md)                 |
 
 ## Working on Tau with an AI agent
@@ -137,7 +122,6 @@ map of how the packages fit together before making structural changes.
 
 ```bash
 task           # build the Go binary
-task all       # build web UI SPA + Go binary (full build)
 task check     # gofumpt, go vet, go fix, golangci-lint, go test - run before every commit
 task test:race # run the test suite with the race detector
 task build:all # cross-compile all release targets

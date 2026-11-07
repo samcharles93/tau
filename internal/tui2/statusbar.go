@@ -71,7 +71,6 @@ const (
 	// turn time) is the most disposable of the usage segments - nice
 	// context, but cost/tokens/context% matter more under width pressure.
 	prioDuration = 1
-	prioWeb      = 2
 	prioCost     = 3
 	prioTokens   = 4
 	prioContext  = 5
@@ -103,10 +102,6 @@ func statusGrey(s string) string { return lipgloss.NewStyle().Faint(true).Render
 // layout/width-pressure algorithm).
 func renderStatusBar(width int, left, right []statusSeg) string {
 	return taui.RenderStatusLine(width, left, right, statusGrey)
-}
-
-func joinSegs(segs []statusSeg) (styled, plain string) {
-	return taui.JoinStatusLineSegs(segs, statusGrey)
 }
 
 // identitySegs returns the model/provider/reasoning-effort segments shared
@@ -163,20 +158,6 @@ func (m *model) sessionTokenSegs() []statusSeg {
 		})
 	}
 	return segs
-}
-
-// webSeg is the local web UI's status segment - a short "web" label as an
-// OSC 8 terminal hyperlink to the actual URL (clickable in supporting
-// terminals: iTerm2, kitty, WezTerm, modern VTE; falls back to plain "web"
-// text everywhere else, see termkit.Hyperlink) rather than spelling out the
-// full "web: http://127.0.0.1:NNNNN" every time, which was most of this
-// segment's width for no extra information a click doesn't already give.
-func webSeg(url string) statusSeg {
-	return statusSeg{
-		Text:           "web",
-		StyledOverride: termkit.Hyperlink("web", url),
-		Prio:           prioWeb,
-	}
 }
 
 // ctrlCStopSeg is the interrupt hint shown across every busy state
@@ -298,9 +279,6 @@ func (m *model) computeStatusBar() string {
 		})
 		right = append(right, m.identitySegs(true)...)
 		right = append(right, m.sessionTokenSegs()...)
-		if m.webURL != "" {
-			right = append(right, webSeg(m.webURL))
-		}
 
 	case agentError:
 		// Just the state, at a glance - the full message already has a home
@@ -317,9 +295,6 @@ func (m *model) computeStatusBar() string {
 		left = append(left, statusSeg{Text: "Ready", Prio: prioTransient})
 		right = append(right, m.identitySegs(true)...)
 		right = append(right, m.sessionTokenSegs()...)
-		if m.webURL != "" {
-			right = append(right, webSeg(m.webURL))
-		}
 	}
 
 	// Steering overlays whichever state is active - it's an orthogonal

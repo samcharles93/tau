@@ -3,7 +3,7 @@ import { defineConfig } from "vitepress";
 export default defineConfig({
   title: "Tau",
   description:
-    "A provider-agnostic, OpenAI-compatible coding agent with a terminal UI, Web UI, tool use, skills, and plugins.",
+    "A provider-agnostic, OpenAI-compatible coding agent with a terminal UI, tool use, skills, and plugins.",
   lastUpdated: true,
   cleanUrls: true,
   srcDir: ".",
@@ -72,17 +72,14 @@ export default defineConfig({
           { text: "Chat Event/Command Types", link: "/chat-types" },
           { text: "Terminal UI Toolkit (taui)", link: "/taui" },
           { text: "TUI Implementation", link: "/tui" },
-          { text: "HTTP Server", link: "/server" },
           { text: "AI SDK Integration", link: "/ai-sdk" },
         ],
       },
       {
-        text: "Web UI",
+        text: "Protocol",
         items: [
-          { text: "Implementation", link: "/webui" },
-          { text: "Technical Spec", link: "/specs/web-ui" },
           {
-            text: "Protocol (AsyncAPI)",
+            text: "Wire protocol (AsyncAPI)",
             link: "https://github.com/samcharles93/tau/blob/main/docs/asyncapi/tau.yaml",
           },
         ],

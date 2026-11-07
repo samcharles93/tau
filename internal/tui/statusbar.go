@@ -15,7 +15,6 @@ type statusSeg = taui.StatusLineSeg
 // pressure; prioTransient (shared with tui2 via taui.StatusLinePrioTransient)
 // is never dropped.
 const (
-	prioWeb       = 1
 	prioCost      = 2
 	prioTokens    = 3
 	prioContext   = 4

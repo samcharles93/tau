@@ -581,7 +581,7 @@ Use this section to quickly find the right files for a given change.
 - `internal/app/chat.go` - `ChatOptions`, `buildCoordinator()`, `buildSessionConfig()`, `buildAgentSystemPrompt()`,
   `pickModel()`, `buildModelRefresher()`, `buildDynamicStreamer()`, `aggregateModelRefs()`, `toolCapable()`,
   `newRuntimeForProviders()`, `modelInfoToRef()`, `resolveProviderClass()`, `printExitSummary()`
-- `internal/app/run.go` - `RunChat()` (interactive entry point), wires config → coordinator → TUI; starts web UI bridge
+- `internal/app/run.go` - `RunChat()` (interactive entry point), wires config → coordinator → TUI
 - `internal/app/stdin.go` - `RunStdIn()` (headless/stdin entry point); requires a model to be selected
 - `internal/app/streamer.go` - `Streamer`/`NewDynamicStreamer()`/`NewStreamer()` - ai-sdk adapter implementing
   `agent.Streamer`; `buildRequest()` maps session state to ai-sdk request
@@ -593,7 +593,6 @@ Use this section to quickly find the right files for a given change.
   `providers.Manage`
 - `internal/app/live_models.go` - `liveModelRefs()` / `liveModelIDs()` - queries a running provider's `/models` endpoint
   for local discovery (Ollama); `providerAPIKey()` resolves key from literal or env var
-- `internal/app/web.go` - `startWebUI()` - launches the WebSocket bridge and HTTP server for the browser client
 - `internal/app/platform.go` - `ResolveToken()`, `ModelsOptions`, model discovery via ai-sdk runtime
 - `internal/app/id.go` - Session ID generation
 - `internal/app/doc.go` - Package-level documentation
@@ -1102,129 +1101,11 @@ Pass `-input /path/to/models.json` to use a local models.dev dump instead of fet
 
 ---
 
-## Web UI Architecture
+## Wire Protocol (`internal/bridge/`)
 
-The web UI is a Vue 3 SPA served over WebSocket. Source lives in `internal/webui/`; the built bundle is embedded into
-the Go binary via `internal/spa/spa.go`.
-
-### Directory Layout
-
-```
-internal/webui/src/
-├── lib/
-│   └── protocol.ts          ← Wire types mirroring Go's chat types (MUST stay in sync with internal/bridge/wire.go)
-├── stores/
-│   └── session.ts           ← Pinia store: all mutable UI state; applies inbound events; sends commands
-├── composables/
-│   ├── useWebSocket.ts      ← WebSocket connection with JSON envelope send/receive
-│   └── useConnection.ts     ← Reconnect logic + bound sender
-├── pages/
-│   └── ChatPage.vue         ← Root page: mounts all components, feeds events into session store
-├── components/
-│   ├── SettingsDrawer.vue   ← Session settings sheet (model, provider, temperature, reasoning effort)
-│   ├── ChatMessage.vue      ← Renders DisplayMessage (text / reasoning / tool parts in order)
-│   ├── StatusBar.vue        ← Bottom bar: provider, model, token usage, cost
-│   ├── ChatInput.vue        ← Prompt input + send / cancel
-│   ├── SessionSwitcher.vue  ← Session list / load / delete panel
-│   ├── ReasoningPanel.vue   ← Collapsible reasoning content display
-│   ├── ToolCard.vue         ← Running/completed tool card
-│   └── ToastContainer.vue   ← Ephemeral notification toasts
-└── layouts/
-    └── ChatLayout.vue       ← Full-page layout shell
-
-internal/spa/
-└── spa.go                   ← //go:embed dist; http.FileSystem for serving the built SPA
-```
-
-### WebSocket Wire Protocol
-
-Every message is a JSON object `{ "type": "<discriminator>", "payload": { ... } }`. Types are defined in
-`internal/bridge/wire.go` (Go) and `internal/webui/src/lib/protocol.ts` (TypeScript). **Both files must be kept in
-sync.**
-
-**Connection init** (server → client, sent once on connect):
-
-```json
-{ "type": "init", "session_id": "…", "model": "…", "provider": "…", "models": […], "providers": […], "commands": […] }
-```
-
-**Server → client events** (wrapped in `{ "type": "ChatSessionSnapshotEvent", "payload": { … } }`):
-
-- `ChatSessionSnapshotEvent` - full authoritative session state; replayed to new connections
-- `ChatResponseDeltaEvent` / `ChatReasoningDeltaEvent` - streaming text/reasoning chunks
-- `ChatToolCallDeltaEvent` / `ChatToolExecutionStartedEvent` / `ChatToolExecutionCompletedEvent` / `ChatToolOutputEvent`
-  - tool lifecycle
-- `ChatResponseCompletedEvent` - turn end + final state
-- `ChatNotificationEvent` - info/warn/error toasts
-- `InteractivePromptRequestedEvent` - tool confirm/question dialogs
-- `SessionsListedEvent` / `SessionLoadedEvent` / `SessionDeletedEvent` - session management
-
-**Client → server commands** (same envelope format, e.g. `{ "type": "SubmitChatPromptCommand", "payload": { … } }`):
-
-- `SubmitChatPromptCommand` - send a user prompt
-- `UpdateChatSessionCommand` - patch session (model, provider, temperature, etc.)
-- `CancelChatRequestCommand` - cancel in-flight request; an empty or stale `request_id` is tolerated by the coordinator
-  (see [Cancel semantics](#cancel-semantics) above)
-- `ResetChatSessionCommand` - clear conversation
-- `ListSessionsCommand` / `LoadSessionCommand` / `DeleteSessionCommand` / `ExportSessionCommand`
-- `RespondInteractivePromptCommand` - answer a tool dialog
-
-**Stopping a running response** in the web UI:
-
-- The Stop button in `ChatInput.vue` calls `session.cancel()`, which sends a `CancelChatRequestCommand` with the locally
-  tracked `activeRequestId`.
-- Esc anywhere on the page (mounted by `ChatPage.vue`) also calls `session.cancel()` while a request is in flight,
-  mirroring Ctrl+C in the TUI. The handler is suppressed when an interactive prompt is open or focus is in an
-  `<input>`/`<textarea>`.
-- The store sets `streaming = true` from `ChatResponseStartedEvent` (not just the first delta) so the Stop button
-  appears immediately after submit, even during long model warm-ups. `activeRequestId` is kept in sync from both
-  `ChatResponseStartedEvent` and `ChatSessionSnapshotEvent.state.active_request_id` (snapshot is source of truth).
-
-### Session Store (`stores/session.ts`)
-
-The Pinia store is the single source of truth for all client-side state. Key flows:
-
-- **`apply(msg)`** - the main inbound event reducer; routes each `type` to state mutation
-- **`absorbState(state)`** - hydrates model, provider, parameters, usage from an authoritative `ChatSessionState`;
-  rebuilds `messages` from history on first connect or reconnect (`pendingResync`)
-- **`updateSettings(patch)`** - sends `UpdateChatSessionCommand`; also updates `model`/`provider`/`parameters`
-  optimistically
-- `DisplayMessage` uses ordered `parts: MessagePart[]` (`text | reasoning | tool`) to preserve the model's actual output
-  timeline
-
-### Model/Provider Switching (Web UI)
-
-`SettingsDrawer.vue` → `applyModelById(id)`:
-
-1. Look up `id` in `session.availableModels` (populated from `init.models` on connect).
-2. Build patch: `{ model: { id }, provider: ref.provider }`.
-3. Call `session.updateSettings(patch)` → sends `UpdateChatSessionCommand` over WebSocket.
-4. Backend `Coordinator.handleUpdate()` applies the patch to session state, emits `ChatSessionSnapshotEvent`.
-5. Client `absorbState()` updates `model` and `provider` refs, store reflects the change.
-
-**Critical**: always include `provider` in the patch when switching models. Omitting it leaves the session on the old
-provider (the same bug affected the web UI before the `applyModelById` refactor).
-
-### Building the Web UI
-
-```bash
-task all                            # pnpm install + pnpm build + go build
-```
-
-The SPA bundle is embedded in the binary at build time via `internal/spa/spa.go`. After any Vue/TS change, run
-`task all` to rebuild the web UI and Go binary in one step. `task` (default) only builds the Go binary.
-
-### Bridge (`internal/bridge/`)
-
-`bridge.Bridge` sits between the coordinator and browser clients:
-
-- Creates its own `"web"` bus client; subscribes to `ChatEvent`.
-- `broadcastLoop()` receives events and fans them out to all connected WebSocket `client`s.
-- Caches the last `ChatSessionSnapshotEvent` as `lastSnapshot`; replays it to newly connecting browsers so they see
-  existing conversation state immediately.
-- `UpgradeHTTP()` handles the WebSocket handshake; sends `initData` + `lastSnapshot` immediately.
-- `client.readLoop()` receives commands from the browser and forwards them to `bridge.runtime.Send()`.
-- Ping/pong keepalives every 30 s; 60 s read deadline extended on pong.
+`internal/bridge` holds the JSON wire types (`wire.go`, `agent_wire.go`): the `{ "type", "payload" }` envelope, the
+command/event type registries, and the agent-process messages used by child agents and `--output-format jsonl`.
+`task specgen` regenerates `docs/asyncapi/tau.yaml` from these registries.
 
 <!-- BEGIN BEADS INTEGRATION v:1 profile:minimal hash:970c3bf2 -->
 ## Beads Issue Tracker
