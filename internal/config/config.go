@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"slices"
 	"strings"
 	"time"
 
@@ -790,7 +791,7 @@ func LoadConfig() (Config, error) {
 // LoadConfigFrom loads and merges global config and .tau.yaml from cwd,
 // requiring at least one configured provider.
 func LoadConfigFrom(cwd string) (Config, error) {
-	return loadConfigFrom(cwd, true)
+	return loadConfigFrom(cwd, true, true)
 }
 
 // LoadConfigAllowEmpty loads and merges configuration without requiring any
@@ -799,10 +800,19 @@ func LoadConfigFrom(cwd string) (Config, error) {
 // is a valid starting point there rather than a fatal error.
 func LoadConfigAllowEmpty() (Config, error) {
 	cwd, _ := os.Getwd()
-	return loadConfigFrom(cwd, false)
+	return loadConfigFrom(cwd, false, true)
 }
 
-func loadConfigFrom(cwd string, requireProviders bool) (Config, error) {
+// LoadConfigUnvalidated loads and merges global and project-local config
+// like LoadConfigAllowEmpty but WITHOUT running Validate, so callers such as
+// `tau config check` can inspect a broken config and report every problem
+// instead of failing on the first one.
+func LoadConfigUnvalidated() (Config, error) {
+	cwd, _ := os.Getwd()
+	return loadConfigFrom(cwd, false, false)
+}
+
+func loadConfigFrom(cwd string, requireProviders, validate bool) (Config, error) {
 	globalPath := GlobalPath()
 	localPath := LocalPath(cwd)
 
@@ -829,8 +839,10 @@ func loadConfigFrom(cwd string, requireProviders bool) (Config, error) {
 		}
 		return Config{}, fmt.Errorf("no Tau providers configured in %s or %s", globalPath, localPath)
 	}
-	if err := Validate(cfg); err != nil {
-		return Config{}, err
+	if validate {
+		if err := Validate(cfg); err != nil {
+			return Config{}, err
+		}
 	}
 	return cfg, nil
 }
@@ -1408,114 +1420,218 @@ func mergeUpdatesConfigs(globalCfg, localCfg UpdatesConfig) UpdatesConfig {
 	return merged
 }
 
-// Validate checks that configured providers have the fields required by auth type.
-func Validate(cfg Config) error {
-	if err := validateProviders(cfg.Providers); err != nil {
-		return err
-	}
-	if err := validateModelModes(cfg.ModelModes); err != nil {
-		return err
-	}
-	if err := validateAgents(cfg.Agents); err != nil {
-		return err
-	}
-	return validateUpdatesMode(cfg.Updates.Mode)
+// Issue severity values used by ConfigIssue.Severity.
+const (
+	IssueSeverityError   = "error"
+	IssueSeverityWarning = "warning"
+)
+
+// ConfigIssue is one problem found by CheckAll. An error-severity issue
+// fails Validate (and therefore config load); a warning is informational
+// only - e.g. an API-key env var that isn't currently set, or a reference
+// to a provider that may be supplied by env auto-detection at runtime.
+type ConfigIssue struct {
+	Severity string `json:"severity" yaml:"severity"`
+	Message  string `json:"message" yaml:"message"`
 }
 
-func validateProviders(providers []ProviderConfig) error {
+// IsError reports whether this issue is an error (fails validation) rather
+// than a warning.
+func (i ConfigIssue) IsError() bool {
+	return i.Severity == IssueSeverityError
+}
+
+// Validate checks the config and returns the first problem found, if any.
+// Use ValidateAll (all errors) or CheckAll (errors + warnings) to get the
+// full report instead - load-time callers keep the fail-fast behaviour.
+func Validate(cfg Config) error {
+	if errs := ValidateAll(cfg); len(errs) > 0 {
+		return errs[0]
+	}
+	return nil
+}
+
+// ValidateAll collects EVERY validation error in cfg - not just the first -
+// in a stable domain order: providers, model_modes, agents, updates. The
+// per-domain messages are identical to what Validate used to return on
+// first failure; Validate is now ValidateAll's first element.
+func ValidateAll(cfg Config) []error {
+	var errs []error
+	errs = append(errs, validateProvidersAll(cfg.Providers)...)
+	errs = append(errs, validateModelModesAll(cfg.ModelModes)...)
+	errs = append(errs, validateAgentsAll(cfg.Agents)...)
+	errs = append(errs, validateUpdatesModeAll(cfg.Updates.Mode)...)
+	return errs
+}
+
+// CheckAll returns every config problem - all ValidateAll errors plus
+// warnings (unset API-key env vars, model_modes/default_provider references
+// to providers not in the explicit list, plugin path/dir values that don't
+// exist) - for the `tau config check` report and the /config check command.
+// Reference checks are warnings, not errors, because providers can also be
+// supplied by env auto-detection/OAuth state at runtime, which Validate
+// must not reject at load time.
+func CheckAll(cfg Config) []ConfigIssue {
+	issues := make([]ConfigIssue, 0, 8)
+	for _, err := range ValidateAll(cfg) {
+		issues = append(issues, ConfigIssue{Severity: IssueSeverityError, Message: err.Error()})
+	}
+	return append(issues, configWarnings(cfg)...)
+}
+
+// configWarnings collects the non-fatal diagnostics for CheckAll.
+func configWarnings(cfg Config) []ConfigIssue {
+	var issues []ConfigIssue
+	warn := func(format string, args ...any) {
+		issues = append(issues, ConfigIssue{Severity: IssueSeverityWarning, Message: fmt.Sprintf(format, args...)})
+	}
+
+	providerNames := make(map[string]bool, len(cfg.Providers))
+	for _, provider := range cfg.Providers {
+		providerNames[strings.TrimSpace(provider.Name)] = true
+		if env := strings.TrimSpace(provider.Auth.APIKeyEnv); env != "" &&
+			strings.TrimSpace(provider.Auth.APIKey) == "" && os.Getenv(env) == "" {
+			warn("provider %q api_key_env %s is not set in the environment", provider.Name, env)
+		}
+	}
+
+	for _, name := range sortedKeys(cfg.ModelModes) {
+		mode := cfg.ModelModes[name]
+		if strings.TrimSpace(mode.Provider) != "" && !providerNames[strings.TrimSpace(mode.Provider)] {
+			warn("model_mode %q references provider %q which is not in the providers list", name, mode.Provider)
+		}
+	}
+
+	if def := strings.TrimSpace(cfg.DefaultProvider); def != "" && !providerNames[def] {
+		warn("default_provider %q is not in the providers list", def)
+	}
+
+	// Plugin config blocks are free-form YAML, so only well-known path-like
+	// keys are checked, and only when they hold a string. Paths resolve
+	// against the process working directory.
+	for _, plugin := range sortedKeys(cfg.Plugins) {
+		block := cfg.Plugins[plugin]
+		for _, key := range []string{"path", "dir"} {
+			value, ok := block[key].(string)
+			if !ok || strings.TrimSpace(value) == "" {
+				continue
+			}
+			if _, err := os.Stat(value); err != nil {
+				warn("plugins.%s.%s points to %q which does not exist", plugin, key, value)
+			}
+		}
+	}
+	return issues
+}
+
+func sortedKeys[V any](m map[string]V) []string {
+	keys := make([]string, 0, len(m))
+	for k := range m {
+		keys = append(keys, k)
+	}
+	slices.Sort(keys)
+	return keys
+}
+
+func validateProvidersAll(providers []ProviderConfig) []error {
+	var errs []error
 	seen := make(map[string]struct{}, len(providers))
 	for _, provider := range providers {
 		name := strings.TrimSpace(provider.Name)
 		if name == "" {
-			return errors.New("provider name is required")
+			errs = append(errs, errors.New("provider name is required"))
+			continue
 		}
 		if _, exists := seen[name]; exists {
-			return fmt.Errorf("duplicate provider %q", name)
+			errs = append(errs, fmt.Errorf("duplicate provider %q", name))
 		}
 		seen[name] = struct{}{}
 		if strings.TrimSpace(provider.BaseURL) == "" {
-			return fmt.Errorf("provider %q base_url is required", name)
+			errs = append(errs, fmt.Errorf("provider %q base_url is required", name))
 		}
-		if err := validateProviderAuth(name, provider.Auth); err != nil {
-			return err
-		}
+		errs = append(errs, validateProviderAuthAll(name, provider.Auth)...)
 	}
-	return nil
+	return errs
 }
 
-func validateProviderAuth(name string, auth AuthConfig) error {
+func validateProviderAuthAll(name string, auth AuthConfig) []error {
+	var errs []error
 	switch strings.TrimSpace(auth.Type) {
 	case AuthTypeAPIKey:
 		if strings.TrimSpace(auth.APIKeyEnv) == "" && strings.TrimSpace(auth.APIKey) == "" {
-			return fmt.Errorf("provider %q api_key auth requires api_key_env or api_key", name)
+			errs = append(errs, fmt.Errorf("provider %q api_key auth requires api_key_env or api_key", name))
 		}
 	case AuthTypeNone:
 	case AuthTypeOAuthPKCE:
 		if strings.TrimSpace(auth.AuthorizeURL) == "" {
-			return fmt.Errorf("provider %q oauth_pkce auth requires authorize_url", name)
+			errs = append(errs, fmt.Errorf("provider %q oauth_pkce auth requires authorize_url", name))
 		}
 		if strings.TrimSpace(auth.TokenURL) == "" {
-			return fmt.Errorf("provider %q oauth_pkce auth requires token_url", name)
+			errs = append(errs, fmt.Errorf("provider %q oauth_pkce auth requires token_url", name))
 		}
 		if strings.TrimSpace(auth.ClientID) == "" {
-			return fmt.Errorf("provider %q oauth_pkce auth requires client_id", name)
+			errs = append(errs, fmt.Errorf("provider %q oauth_pkce auth requires client_id", name))
 		}
 	default:
-		return fmt.Errorf("provider %q has unsupported auth type %q", name, auth.Type)
+		errs = append(errs, fmt.Errorf("provider %q has unsupported auth type %q", name, auth.Type))
 	}
-	return nil
+	return errs
 }
 
-func validateModelModes(modes map[string]ModeConfig) error {
-	for name, mode := range modes {
+func validateModelModesAll(modes map[string]ModeConfig) []error {
+	var errs []error
+	for _, name := range sortedKeys(modes) {
+		mode := modes[name]
 		if strings.TrimSpace(name) == "" {
-			return errors.New("model_modes key must not be empty")
+			errs = append(errs, errors.New("model_modes key must not be empty"))
+			continue
 		}
 		if strings.TrimSpace(mode.Provider) == "" {
-			return fmt.Errorf("model_mode %q: provider is required", name)
+			errs = append(errs, fmt.Errorf("model_mode %q: provider is required", name))
 		}
 		if strings.TrimSpace(mode.Model) == "" {
-			return fmt.Errorf("model_mode %q: model is required", name)
+			errs = append(errs, fmt.Errorf("model_mode %q: model is required", name))
 		}
 	}
-	return nil
+	return errs
 }
 
-func validateAgents(a AgentsConfig) error {
+func validateAgentsAll(a AgentsConfig) []error {
+	var errs []error
 	if a.DefaultMaxDepth < 0 {
-		return errors.New("agents.default_max_depth must be >= 0")
+		errs = append(errs, errors.New("agents.default_max_depth must be >= 0"))
 	}
 	if a.DepthCeiling < 0 {
-		return errors.New("agents.depth_ceiling must be >= 0")
+		errs = append(errs, errors.New("agents.depth_ceiling must be >= 0"))
 	}
 	if a.DefaultMaxTurns < 0 {
-		return errors.New("agents.default_max_turns must be >= 0")
+		errs = append(errs, errors.New("agents.default_max_turns must be >= 0"))
 	}
 	if a.DefaultTimeout < 0 {
-		return errors.New("agents.default_timeout must be >= 0")
+		errs = append(errs, errors.New("agents.default_timeout must be >= 0"))
 	}
 	if a.DefaultMaxDepth > 0 && a.DepthCeiling > 0 && a.DefaultMaxDepth > a.DepthCeiling {
-		return fmt.Errorf("agents.default_max_depth (%d) must not exceed agents.depth_ceiling (%d)",
-			a.DefaultMaxDepth, a.DepthCeiling)
+		errs = append(errs, fmt.Errorf("agents.default_max_depth (%d) must not exceed agents.depth_ceiling (%d)",
+			a.DefaultMaxDepth, a.DepthCeiling))
 	}
 	if a.MaxActiveChildren < 0 {
-		return errors.New("agents.max_active_children must be >= 0")
+		errs = append(errs, errors.New("agents.max_active_children must be >= 0"))
 	}
 	if a.MaxTotalChildren < 0 {
-		return errors.New("agents.max_total_children must be >= 0")
+		errs = append(errs, errors.New("agents.max_total_children must be >= 0"))
 	}
 	if a.MaxQueuedSpawns < 0 {
-		return errors.New("agents.max_queued_spawns must be >= 0")
+		errs = append(errs, errors.New("agents.max_queued_spawns must be >= 0"))
 	}
 	if a.OrphanStaleAge < 0 {
-		return errors.New("agents.orphan_stale_age must be >= 0")
+		errs = append(errs, errors.New("agents.orphan_stale_age must be >= 0"))
 	}
-	return nil
+	return errs
 }
 
-// validateUpdatesMode checks updates.mode: warn (default), disabled, or auto
-// (reserved, behaves as warn).
-func validateUpdatesMode(mode string) error {
+// validateUpdatesModeAll checks updates.mode: warn (default), disabled, or
+// auto (reserved, behaves as warn).
+func validateUpdatesModeAll(mode string) []error {
 	switch mode {
 	case "":
 		// default
@@ -1523,7 +1639,7 @@ func validateUpdatesMode(mode string) error {
 	case "auto":
 		slog.Warn("updates.mode 'auto' is reserved; behaving as 'warn'")
 	default:
-		return fmt.Errorf("updates.mode: unsupported mode %q (valid: warn, disabled, auto)", mode)
+		return []error{fmt.Errorf("updates.mode: unsupported mode %q (valid: warn, disabled, auto)", mode)}
 	}
 	return nil
 }

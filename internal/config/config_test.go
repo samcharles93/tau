@@ -1466,3 +1466,178 @@ func TestModelConfigSupportsInputModality(t *testing.T) {
 		t.Fatalf("unknown model: supported=%v known=%v, want (false, false) fail-open", supported, known)
 	}
 }
+
+func TestValidateAllCollectsEveryError(t *testing.T) {
+	t.Parallel()
+	cfg := Config{
+		Providers: []ProviderConfig{
+			{Name: "", BaseURL: "https://a.example"}, // missing name
+			{Name: "dup", BaseURL: ""},               // missing base_url
+			{Name: "dup", BaseURL: "https://dup.example", Auth: AuthConfig{Type: AuthTypeAPIKey}},        // duplicate + missing key
+			{Name: "oauth", BaseURL: "https://oauth.example", Auth: AuthConfig{Type: AuthTypeOAuthPKCE}}, // missing all oauth fields
+			{Name: "bad", BaseURL: "https://bad.example", Auth: AuthConfig{Type: "kerberos"}},            // unsupported auth
+		},
+		ModelModes: map[string]ModeConfig{
+			"fast": {Provider: "", Model: ""}, // provider + model required
+		},
+		Agents:  AgentsConfig{DefaultMaxDepth: -1, MaxActiveChildren: -2},
+		Updates: UpdatesConfig{Mode: "sometimes"},
+	}
+
+	errs := ValidateAll(cfg)
+	msgs := make([]string, len(errs))
+	for i, err := range errs {
+		msgs[i] = err.Error()
+	}
+	want := []string{
+		"provider name is required",
+		`provider "dup" base_url is required`,
+		`provider "dup" has unsupported auth type ""`,
+		`duplicate provider "dup"`,
+		`provider "dup" api_key auth requires api_key_env or api_key`,
+		`provider "oauth" oauth_pkce auth requires authorize_url`,
+		`provider "oauth" oauth_pkce auth requires token_url`,
+		`provider "oauth" oauth_pkce auth requires client_id`,
+		`provider "bad" has unsupported auth type "kerberos"`,
+		`model_mode "fast": provider is required`,
+		`model_mode "fast": model is required`,
+		"agents.default_max_depth must be >= 0",
+		"agents.max_active_children must be >= 0",
+		`updates.mode: unsupported mode "sometimes" (valid: warn, disabled, auto)`,
+	}
+	if len(msgs) != len(want) {
+		t.Fatalf("ValidateAll returned %d errors, want %d:\n%s", len(msgs), len(want), strings.Join(msgs, "\n"))
+	}
+	for i, w := range want {
+		if msgs[i] != w {
+			t.Errorf("errs[%d] = %q, want %q", i, msgs[i], w)
+		}
+	}
+
+	// Validate still fails fast on the FIRST collected error.
+	if err := Validate(cfg); err == nil || err.Error() != want[0] {
+		t.Errorf("Validate() = %v, want first ValidateAll error %q", err, want[0])
+	}
+}
+
+func TestValidateAllEmptyForValidConfig(t *testing.T) {
+	t.Parallel()
+	cfg := Config{
+		Providers: []ProviderConfig{
+			{Name: "local", BaseURL: "http://localhost:11434", Auth: AuthConfig{Type: AuthTypeNone}},
+		},
+		ModelModes: map[string]ModeConfig{"fast": {Provider: "local", Model: "llama3"}},
+		Updates:    UpdatesConfig{Mode: "warn"},
+	}
+	if errs := ValidateAll(cfg); len(errs) != 0 {
+		t.Fatalf("ValidateAll() = %v, want no errors", errs)
+	}
+	if err := Validate(cfg); err != nil {
+		t.Fatalf("Validate() = %v, want nil", err)
+	}
+}
+
+func TestCheckAllReportsErrorsAndWarnings(t *testing.T) {
+	t.Setenv("TAU_TEST_UNSET_KEY", "")
+	_ = os.Unsetenv("TAU_TEST_UNSET_KEY")
+
+	missingPath := filepath.Join(t.TempDir(), "does-not-exist")
+	cfg := Config{
+		DefaultProvider: "ghost",
+		Providers: []ProviderConfig{
+			{
+				Name:    "needs-key",
+				BaseURL: "https://needs-key.example",
+				Auth:    AuthConfig{Type: AuthTypeAPIKey, APIKeyEnv: "TAU_TEST_UNSET_KEY"},
+			},
+			{Name: "broken", BaseURL: "", Auth: AuthConfig{Type: AuthTypeNone}}, // error: missing base_url
+		},
+		ModelModes: map[string]ModeConfig{
+			"fast": {Provider: "ghost", Model: "m"},
+		},
+		Plugins: map[string]map[string]any{
+			"my-plugin": {"path": missingPath, "endpoint": "https://x.example"},
+		},
+	}
+
+	issues := CheckAll(cfg)
+	var errs, warnings []ConfigIssue
+	for _, issue := range issues {
+		switch issue.Severity {
+		case IssueSeverityError:
+			errs = append(errs, issue)
+		case IssueSeverityWarning:
+			warnings = append(warnings, issue)
+		default:
+			t.Errorf("unexpected severity %q", issue.Severity)
+		}
+	}
+
+	if len(errs) != 1 || errs[0].Message != `provider "broken" base_url is required` {
+		t.Errorf("error issues = %+v, want the single base_url error", errs)
+	}
+
+	warningTexts := make([]string, len(warnings))
+	for i, w := range warnings {
+		warningTexts[i] = w.Message
+	}
+	wantWarnings := []string{
+		`provider "needs-key" api_key_env TAU_TEST_UNSET_KEY is not set in the environment`,
+		`model_mode "fast" references provider "ghost" which is not in the providers list`,
+		`default_provider "ghost" is not in the providers list`,
+		"plugins.my-plugin.path points to \"" + missingPath + "\" which does not exist",
+	}
+	if strings.Join(warningTexts, "\n") != strings.Join(wantWarnings, "\n") {
+		t.Errorf("warnings =\n%s\nwant:\n%s", strings.Join(warningTexts, "\n"), strings.Join(wantWarnings, "\n"))
+	}
+}
+
+func TestCheckAllNoIssuesForCleanConfig(t *testing.T) {
+	t.Setenv("TAU_TEST_SET_KEY", "secret")
+	cfg := Config{
+		DefaultProvider: "local",
+		Providers: []ProviderConfig{
+			{
+				Name:    "local",
+				BaseURL: "http://localhost:11434",
+				Auth:    AuthConfig{Type: AuthTypeAPIKey, APIKeyEnv: "TAU_TEST_SET_KEY"},
+			},
+		},
+	}
+	if issues := CheckAll(cfg); len(issues) != 0 {
+		t.Fatalf("CheckAll() = %+v, want no issues", issues)
+	}
+}
+
+func TestLoadConfigUnvalidatedReportsAllIssuesInsteadOfFirst(t *testing.T) {
+	configDir := t.TempDir()
+	projectDir := t.TempDir()
+	t.Setenv("TAU_CONFIG_DIR", configDir)
+
+	// Two independent validation errors: missing base_url AND bad updates mode.
+	cfgYAML := "providers:\n  - name: broken\n    auth:\n      type: none\nupdates:\n  mode: bogus\n"
+	if err := os.WriteFile(filepath.Join(configDir, "config.yaml"), []byte(cfgYAML), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	// The validating loader still fails on the first error only.
+	if _, err := LoadConfigFrom(projectDir); err == nil {
+		t.Fatal("LoadConfigFrom() error = nil, want validation error")
+	}
+
+	// The unvalidated loader succeeds and CheckAll surfaces BOTH problems.
+	cfg, err := LoadConfigUnvalidated()
+	if err != nil {
+		t.Fatalf("LoadConfigUnvalidated() error = %v, want nil", err)
+	}
+	errs := ValidateAll(cfg)
+	if len(errs) != 2 {
+		t.Fatalf("ValidateAll() returned %d errors, want 2: %v", len(errs), errs)
+	}
+	if errs[0].Error() != `provider "broken" base_url is required` {
+		t.Errorf("errs[0] = %q, want base_url error", errs[0])
+	}
+	if !strings.Contains(errs[1].Error(), "unsupported mode") {
+		t.Errorf("errs[1] = %q, want updates mode error", errs[1])
+	}
+}
