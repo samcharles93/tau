@@ -240,3 +240,70 @@ func assertPromptContains(t *testing.T, prompt string, values ...string) {
 		}
 	}
 }
+
+// TestDiscoverContextFilesClampedToWorkspace (tau-8qq): discovery must scan
+// only the workspace root (cwd). Context files in ancestor directories (home
+// dir, filesystem root) belong to other tools and must not leak into the
+// system prompt.
+func TestDiscoverContextFilesClampedToWorkspace(t *testing.T) {
+	// Simulate a filesystem layout: <base> acts as the "home/system" area
+	// holding context files for other tools; <base>/project is the workspace.
+	base := t.TempDir()
+	write := func(rel, content string) {
+		t.Helper()
+		full := filepath.Join(base, rel)
+		if err := os.MkdirAll(filepath.Dir(full), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(full, []byte(content), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	write("AGENTS.md", "root-level agents file - must not be picked up")
+	write(".cursorrules", "cursor rules - must not be picked up")
+	write("project/AGENTS.md", "project agents file")
+	write("project/.tau/AGENTS.md", "tau project agents file")
+	write("project/sub/.github/copilot-instructions.md", "nested file - must not be picked up")
+
+	cwd := filepath.Join(base, "project")
+	got := DiscoverContextFiles(cwd)
+
+	byPath := make(map[string]string, len(got))
+	for _, f := range got {
+		if strings.HasPrefix(f.Path, "..") {
+			t.Errorf("context file path %q escapes the workspace", f.Path)
+		}
+		byPath[f.Path] = f.Content
+	}
+	if byPath["AGENTS.md"] != "project agents file" {
+		t.Errorf("AGENTS.md = %q, want the workspace one", byPath["AGENTS.md"])
+	}
+	if byPath[filepath.Join(".tau", "AGENTS.md")] != "tau project agents file" {
+		t.Errorf(".tau/AGENTS.md = %q, want the workspace one", byPath[filepath.Join(".tau", "AGENTS.md")])
+	}
+	if len(got) != 2 {
+		t.Errorf("discovered %d files %v, want exactly the 2 in the workspace root", len(got), byPath)
+	}
+
+	// A deeper cwd finds only its own context file - the ancestors'
+	// AGENTS.md/.cursorrules must not leak in (walk clamped to workspace root).
+	sub := DiscoverContextFiles(filepath.Join(base, "project", "sub"))
+	if len(sub) != 1 || sub[0].Path != filepath.Join(".github", "copilot-instructions.md") {
+		t.Errorf("deeper cwd discovered %v, want only its own copilot-instructions.md", sub)
+	}
+
+	// A workspace root with no context files finds nothing, even though
+	// ancestors contain AGENTS.md/.cursorrules.
+	empty := filepath.Join(base, "project", "empty")
+	if err := os.MkdirAll(empty, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if got := DiscoverContextFiles(empty); len(got) != 0 {
+		t.Errorf("empty workspace discovered %v, want none (ancestors must not leak in)", got)
+	}
+
+	// Empty cwd stays nil.
+	if got := DiscoverContextFiles(""); got != nil {
+		t.Errorf("empty cwd = %v, want nil", got)
+	}
+}
