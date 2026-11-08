@@ -157,8 +157,8 @@ const maxDirEntries = 200
 
 // listDirResult renders a bounded directory listing. display is the path as
 // the caller wrote it, so the notice echoes their own spelling.
-func listDirResult(path, display string) (Result, error) {
-	entries, err := os.ReadDir(path)
+func listDirResult(ctx context.Context, path, display string) (Result, error) {
+	entries, err := readDirWithContext(ctx, path)
 	if err != nil {
 		return Result{Content: fmt.Sprintf("error reading directory: %v", err), IsError: true}, nil
 	}
@@ -222,16 +222,18 @@ func makeReadExecutor(cwd string, rt *ReadTracker, grants *PathGrants) Executor 
 			p.Limit = DefaultReadLines
 		}
 
-		_, cancel := context.WithTimeout(ctx, DefaultToolTimeout)
-		defer cancel()
-
 		path := resolvePath(cwd, p.Path)
 
+		// Checked before the tool timeout starts, so a permission prompt
+		// waits for the user instead of timing out as a denial.
 		if !grants.readable(ctx, ui, cwd, path) {
 			return Result{Content: "path escapes working directory", IsError: true, ErrorKind: "sandbox_escape"}, nil
 		}
 
-		info, err := os.Stat(path)
+		ctx, cancel := context.WithTimeout(ctx, DefaultToolTimeout)
+		defer cancel()
+
+		info, err := statWithContext(ctx, path)
 		if err != nil {
 			msg := fmt.Sprintf("error stating file: %v", err)
 			if hint := suggestPaths(cwd, path); hint != "" {
@@ -243,13 +245,13 @@ func makeReadExecutor(cwd string, rt *ReadTracker, grants *PathGrants) Executor 
 			// The intent is unambiguous, so answer it rather than spending a
 			// round trip on an error. Deliberately returned before MarkRead:
 			// a directory must never satisfy the read-before-write check.
-			return listDirResult(path, p.Path)
+			return listDirResult(ctx, path, p.Path)
 		}
 		if info.Size() > maxReadBytes {
 			return Result{Content: fmt.Sprintf("file too large (%s > %s)", FormatSize(int(info.Size())), FormatSize(maxReadBytes)), IsError: true}, nil
 		}
 
-		data, err := os.ReadFile(path)
+		data, err := readFileWithContext(ctx, path)
 		if err != nil {
 			return Result{Content: fmt.Sprintf("error reading file: %v", err), IsError: true}, nil
 		}

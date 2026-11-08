@@ -30,6 +30,47 @@ func runWithContext(ctx context.Context, fn func() error) error {
 	}
 }
 
+// statWithContext is os.Stat bounded by ctx (see runWithContext).
+func statWithContext(ctx context.Context, path string) (os.FileInfo, error) {
+	var info os.FileInfo
+	err := runWithContext(ctx, func() error {
+		var err error
+		info, err = os.Stat(path)
+		return err
+	})
+	return info, err
+}
+
+// readFileWithContext is os.ReadFile bounded by ctx (see runWithContext).
+func readFileWithContext(ctx context.Context, path string) ([]byte, error) {
+	var data []byte
+	err := runWithContext(ctx, func() error {
+		var err error
+		data, err = os.ReadFile(path)
+		return err
+	})
+	return data, err
+}
+
+// readDirWithContext is os.ReadDir bounded by ctx (see runWithContext).
+func readDirWithContext(ctx context.Context, path string) ([]os.DirEntry, error) {
+	var entries []os.DirEntry
+	err := runWithContext(ctx, func() error {
+		var err error
+		entries, err = os.ReadDir(path)
+		return err
+	})
+	return entries, err
+}
+
+// writeFileAtomicWithContext is writeFileAtomic bounded by ctx (see
+// runWithContext).
+func writeFileAtomicWithContext(ctx context.Context, path string, data []byte, mode os.FileMode) error {
+	return runWithContext(ctx, func() error {
+		return writeFileAtomic(path, data, mode)
+	})
+}
+
 // writeFileAtomic replaces path atomically using a temp file in the same directory.
 func writeFileAtomic(path string, data []byte, mode os.FileMode) error {
 	dir := filepath.Dir(path)

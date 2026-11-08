@@ -63,22 +63,25 @@ func NewDocsTool(pluginDocs PluginDocsProvider) Tool {
 				return Result{Content: fmt.Sprintf("invalid parameters: %v", err), IsError: true}, nil
 			}
 
-			_, cancel := context.WithTimeout(ctx, DefaultToolTimeout)
+			ctx, cancel := context.WithTimeout(ctx, DefaultToolTimeout)
 			defer cancel()
 
 			switch {
 			case strings.TrimSpace(p.Path) != "":
-				return readDoc(p.Path, pluginDocs), nil
+				return readDoc(ctx, p.Path, pluginDocs), nil
 			case strings.TrimSpace(p.Query) != "":
-				return searchDocs(p.Query, pluginDocs), nil
+				return searchDocs(ctx, p.Query, pluginDocs), nil
 			default:
-				return listDocs(pluginDocs), nil
+				return listDocs(ctx, pluginDocs), nil
 			}
 		},
 	}
 }
 
-func readDoc(path string, pluginDocs PluginDocsProvider) Result {
+func readDoc(ctx context.Context, path string, pluginDocs PluginDocsProvider) Result {
+	if err := ctx.Err(); err != nil {
+		return Result{Content: fmt.Sprintf("docs read cancelled: %v", err), IsError: true}
+	}
 	cleanPath := filepath.Clean(path)
 	// Prevent escaping the documentation filesystem.
 	if strings.HasPrefix(cleanPath, "..") || strings.HasPrefix(cleanPath, "/") {
@@ -101,7 +104,7 @@ func readDoc(path string, pluginDocs PluginDocsProvider) Result {
 	return Result{Content: string(content)}
 }
 
-func searchDocs(query string, pluginDocs PluginDocsProvider) Result {
+func searchDocs(ctx context.Context, query string, pluginDocs PluginDocsProvider) Result {
 	query = strings.ToLower(strings.TrimSpace(query))
 
 	var matches []string
@@ -114,12 +117,15 @@ func searchDocs(query string, pluginDocs PluginDocsProvider) Result {
 		}
 	}
 
-	err := walkDocs(search)
+	err := walkDocs(ctx, search)
 	if err != nil {
 		return Result{Content: fmt.Sprintf("error walking documentation: %v", err), IsError: true}
 	}
 	if pluginDocs != nil {
 		for name, content := range pluginDocs() {
+			if err := ctx.Err(); err != nil {
+				return Result{Content: fmt.Sprintf("docs search cancelled: %v", err), IsError: true}
+			}
 			search(pluginDocPath(name), []byte(content))
 		}
 	}
@@ -132,9 +138,9 @@ func searchDocs(query string, pluginDocs PluginDocsProvider) Result {
 	return Result{Content: tr.Content, Truncated: tr.Truncated, ResultBytes: tr.OriginalSize}
 }
 
-func listDocs(pluginDocs PluginDocsProvider) Result {
+func listDocs(ctx context.Context, pluginDocs PluginDocsProvider) Result {
 	var paths []string
-	err := walkDocs(func(path string, _ []byte) {
+	err := walkDocs(ctx, func(path string, _ []byte) {
 		paths = append(paths, path)
 	})
 	if err != nil {
@@ -151,10 +157,13 @@ func listDocs(pluginDocs PluginDocsProvider) Result {
 }
 
 // walkDocs visits every documentation file in the embedded FS, skipping
-// directories and Go source files.
-func walkDocs(visit func(path string, content []byte)) error {
+// directories and Go source files. It stops early when ctx is done.
+func walkDocs(ctx context.Context, visit func(path string, content []byte)) error {
 	return fs.WalkDir(docs.FS, ".", func(path string, d fs.DirEntry, err error) error {
 		if err != nil {
+			return err
+		}
+		if err := ctx.Err(); err != nil {
 			return err
 		}
 		if d.IsDir() || filepath.Ext(path) == ".go" {

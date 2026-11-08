@@ -89,7 +89,7 @@ func makeFindExecutor(cwd string, grants *PathGrants) Executor {
 		ctx, cancel := context.WithTimeout(ctx, DefaultToolTimeout)
 		defer cancel()
 
-		info, err := os.Stat(searchPath)
+		info, err := statWithContext(ctx, searchPath)
 		if err != nil {
 			return Result{Content: fmt.Sprintf("error accessing path: %v", err), IsError: true}, nil
 		}
@@ -291,7 +291,18 @@ func buildFindArgs(binary string, p FindParams, searchPath string) []string {
 		args = append(args, "-maxdepth", fmt.Sprintf("%d", p.MaxDepth))
 	}
 	if p.Exclude != "" {
-		args = append(args, "-not", "-path", fmt.Sprintf("*/%s/*", p.Exclude))
+		// The exclude value is passed as a single argv element, so it cannot
+		// break out into find expression tokens (-o, -prune, ...); glob
+		// metacharacters inside it are the intended pattern semantics.
+		// Match both the entry itself and anything beneath it, at any depth,
+		// so file excludes ("*.test.go") and directory excludes
+		// ("node_modules") both behave like fd's --exclude. The old
+		// "*/%s/*" wrapper only matched entries strictly inside an excluded
+		// directory component, so excluding a file never worked.
+		args = append(args,
+			"-not", "(", "-path", fmt.Sprintf("*/%s", p.Exclude), "-o",
+			"-path", fmt.Sprintf("*/%s/*", p.Exclude), ")",
+		)
 	}
 	if p.Pattern != "" {
 		args = append(args, "-name", p.Pattern)

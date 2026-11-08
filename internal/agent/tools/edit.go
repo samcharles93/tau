@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"os"
 	"sort"
 	"strings"
 )
@@ -126,14 +125,16 @@ func makeEditExecutor(cwd string, mq *MutationQueue, rt *ReadTracker, grants *Pa
 			return Result{Content: "at least one edit is required", IsError: true}, nil
 		}
 
-		_, cancel := context.WithTimeout(ctx, DefaultToolTimeout)
-		defer cancel()
-
 		path := resolvePath(cwd, p.Path)
 
+		// Checked before the tool timeout starts, so a permission prompt
+		// waits for the user instead of timing out as a denial.
 		if !grants.writable(ctx, ui, cwd, path) {
 			return Result{Content: "path escapes working directory", IsError: true}, nil
 		}
+
+		ctx, cancel := context.WithTimeout(ctx, DefaultToolTimeout)
+		defer cancel()
 
 		// Enforce read-before-write check.
 		if rt != nil {
@@ -143,7 +144,7 @@ func makeEditExecutor(cwd string, mq *MutationQueue, rt *ReadTracker, grants *Pa
 		}
 
 		// Check file size before reading to avoid OOM on large files.
-		info, err := os.Stat(path)
+		info, err := statWithContext(ctx, path)
 		if err != nil {
 			return Result{Content: fmt.Sprintf("error stating file: %v", err), IsError: true}, nil
 		}
@@ -154,7 +155,7 @@ func makeEditExecutor(cwd string, mq *MutationQueue, rt *ReadTracker, grants *Pa
 		release := mq.Acquire(path)
 		defer release()
 
-		data, err := os.ReadFile(path)
+		data, err := readFileWithContext(ctx, path)
 		if err != nil {
 			return Result{Content: fmt.Sprintf("error reading file: %v", err), IsError: true}, nil
 		}
@@ -191,7 +192,7 @@ func makeEditExecutor(cwd string, mq *MutationQueue, rt *ReadTracker, grants *Pa
 			newContent = strings.ReplaceAll(newContent, "\n", "\r\n")
 		}
 
-		if err := writeFileAtomic(path, []byte(bom+newContent), 0o644); err != nil {
+		if err := writeFileAtomicWithContext(ctx, path, []byte(bom+newContent), 0o644); err != nil {
 			return Result{Content: fmt.Sprintf("error writing file: %v", err), IsError: true}, nil
 		}
 
