@@ -181,8 +181,11 @@ func (m *model) handleStatusEvent(evt tauchat.ChatEvent) (tea.Cmd, bool) {
 	case tauchat.ChatRuntimeErrorEvent:
 		// A failed background session-list prefetch (see
 		// maybePrefetchSessions) must not leave sessionsFetchInFlight stuck
-		// true forever with no retry - harmless no-op otherwise.
+		// true forever with no retry - harmless no-op otherwise. The same
+		// failure also abandons a pending "/session info <id>" lookup (the
+		// error itself is surfaced by the notification below).
 		m.finishSessionsFetch()
+		m.pendingSessionInfo = ""
 		// A failed child-transcript load is not a failed chat turn - it must
 		// not fall through into the turn-interruption logic below. Close the
 		// stuck "Loading…" overlay (if this error matches it) and notify,
@@ -225,8 +228,10 @@ func (m *model) handleStatusEvent(evt tauchat.ChatEvent) (tea.Cmd, bool) {
 	case tauchat.ChatNotificationEvent:
 		// Covers the "session persistence unavailable" path a background
 		// session-list prefetch can hit - see the ChatRuntimeErrorEvent case
-		// above for why this reset matters.
+		// above for why this reset matters; a pending "/session info" lookup
+		// is abandoned for the same reason.
 		m.finishSessionsFetch()
+		m.pendingSessionInfo = ""
 		msg := truncateErrorText(e.Message)
 		cmd := m.setNotificationWithLevel(msg, notifyLevelFromChat(e.Level), notifyDurationFromChat(e.Level))
 		if e.Level == tauchat.ChatNotificationError {
@@ -296,8 +301,22 @@ func (m *model) handleChildAgentEvent(evt tauchat.ChatEvent) (tea.Cmd, bool) {
 func (m *model) handleSessionEvent(evt tauchat.ChatEvent) (tea.Cmd, bool) {
 	switch e := evt.(type) {
 	case tauchat.SessionsListedEvent:
-		m.sessionSummaries = e.Sessions
+		if m.sessionsFetchAppend {
+			// A continuation page of a paged fetch (e.g. the "/session info"
+			// refresh following NextCursor): accumulate instead of replacing
+			// so the cache holds every page fetched so far.
+			m.sessionSummaries = append(m.sessionSummaries, e.Sessions...)
+			m.sessionsFetchAppend = false
+		} else {
+			m.sessionSummaries = e.Sessions
+		}
 		m.finishSessionsFetch()
+		if m.pendingSessionInfo != "" {
+			// A "/session info <id>" refresh is in flight: resolve the ID
+			// against this fresh page (paging on via NextCursor) rather than
+			// printing a list - see requestSessionInfo/resolveSessionInfo.
+			return m.resolveSessionInfo(e), true
+		}
 		if e.Silent {
 			// A background cache-refresh for the /session and /resume
 			// argument-completion dropdowns (see maybePrefetchSessions) -
