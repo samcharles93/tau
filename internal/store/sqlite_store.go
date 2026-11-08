@@ -536,6 +536,73 @@ func (s *SQLiteStore) Count(ctx context.Context) (int, error) {
 	return count, err
 }
 
+// defaultSearchLimit is applied when Search gets a non-positive limit.
+const defaultSearchLimit = 20
+
+// Search full-text searches message content across all sessions via the
+// messages_fts index (kept in sync by triggers - see migrationV11). Hits are
+// best-ranked first; snippet terms are wrapped in SnippetMark.
+func (s *SQLiteStore) Search(ctx context.Context, query string, limit, offset int) ([]SearchHit, error) {
+	match := ftsMatchQuery(query)
+	if match == "" {
+		return nil, nil
+	}
+	if limit <= 0 {
+		limit = defaultSearchLimit
+	}
+	if offset < 0 {
+		offset = 0
+	}
+
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT f.session_id, f.seq, f.role,
+		       snippet(messages_fts, 0, ?, ?, '…', 12),
+		       m.created_at,
+		       rank
+		FROM messages_fts f
+		JOIN messages m ON m.id = f.rowid
+		WHERE messages_fts MATCH ?
+		ORDER BY rank
+		LIMIT ? OFFSET ?
+	`, SnippetMark, SnippetMark, match, limit, offset)
+	if err != nil {
+		return nil, fmt.Errorf("store: search messages: %w", err)
+	}
+	defer rows.Close()
+
+	var hits []SearchHit
+	for rows.Next() {
+		var h SearchHit
+		var createdStr string
+		if err := rows.Scan(&h.SessionID, &h.Seq, &h.Role, &h.Snippet, &createdStr, &h.Rank); err != nil {
+			return nil, fmt.Errorf("store: scan search hit: %w", err)
+		}
+		h.CreatedAt, _ = time.Parse(time.RFC3339, createdStr)
+		hits = append(hits, h)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("store: search messages: %w", err)
+	}
+	return hits, nil
+}
+
+// ftsMatchQuery converts free-text input into a safe FTS5 MATCH expression:
+// each whitespace-separated term becomes a double-quoted phrase (embedded
+// quotes doubled) restricted to the content column, and terms are ANDed.
+// Quoting neutralizes FTS5 syntax characters (parens, colons, operators) in
+// user input, so a malformed query can never produce a syntax error.
+func ftsMatchQuery(query string) string {
+	terms := strings.Fields(query)
+	if len(terms) == 0 {
+		return ""
+	}
+	quoted := make([]string, 0, len(terms))
+	for _, t := range terms {
+		quoted = append(quoted, `content:"`+strings.ReplaceAll(t, `"`, `""`)+`"`)
+	}
+	return strings.Join(quoted, " ")
+}
+
 // SessionJSONLPath returns the canonical JSONL export file path for a session.
 func (s *SQLiteStore) SessionJSONLPath(sessionID string, createdAt time.Time) string {
 	filename := fmt.Sprintf(

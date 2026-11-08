@@ -2,6 +2,7 @@ package tui2
 
 import (
 	"fmt"
+	"strconv"
 	"strings"
 	"time"
 
@@ -272,6 +273,9 @@ func (m *model) handleChatEvent(evt tauchat.ChatEvent) tea.Cmd {
 		}
 		return m.setNotification("session exported: " + e.Path)
 
+	case tauchat.SearchResultsEvent:
+		return m.renderSearchResults(e)
+
 	// Extension / plugin events.
 	case tauchat.ExtensionsReloadedEvent:
 		return m.setNotification(fmt.Sprintf("extensions: %d loaded, %d diagnostics", e.Result.ExtensionCount, len(e.Result.Diagnostics)))
@@ -334,6 +338,25 @@ func (m *model) handleChatEvent(evt tauchat.ChatEvent) tea.Cmd {
 	default:
 		return nil
 	}
+	return nil
+}
+
+// renderSearchResults presents full-text search hits as a system message:
+// one line per hit with session ID, role, relative time, and the snippet
+// (matched terms wrapped in ** by the store).
+func (m *model) renderSearchResults(e tauchat.SearchResultsEvent) tea.Cmd {
+	if len(e.Hits) == 0 {
+		return m.setNotification("no matches for " + strconv.Quote(e.Query))
+	}
+	var b strings.Builder
+	fmt.Fprintf(&b, "%d match(es) for %s:", len(e.Hits), strconv.Quote(e.Query))
+	for _, h := range e.Hits {
+		fmt.Fprintf(&b, "\n• `%s` · %s · %s\n  %s", h.SessionID, h.Role, relTime(h.CreatedAt), h.Snippet)
+	}
+	if e.NextCursor != "" {
+		b.WriteString("\n(more available)")
+	}
+	m.appendMessage("system", b.String())
 	return nil
 }
 

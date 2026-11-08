@@ -628,8 +628,13 @@ Use this section to quickly find the right files for a given change.
 ### Changing Session Persistence
 
 - `internal/store/sqlite_store.go` - `SQLiteStore` implementing `SessionStore`
-- `internal/store/session.go` - `SessionStore` interface: `Save()`, `Load()`, `List()`, `Summary()`, `Delete()`, `ExportMessages()`
-- `internal/store/migrate.go` - Schema migrations (v10 adds `messages.attachments`, a JSON array of `chat.ChatAttachment`)
+- `internal/store/session.go` - `SessionStore` interface: `Save()`, `Load()`, `List()`, `Summary()`, `Search()`, `Delete()`, `ExportMessages()`
+- `internal/store/migrate.go` - Schema migrations (v10 adds `messages.attachments`, a JSON array of `chat.ChatAttachment`;
+  v11 adds the `messages_fts` FTS5 index over message content with sync triggers and a backfill)
+- `internal/store/sqlite_store.go` - `Search()` runs quoted-term AND queries against `messages_fts` (porter-stemmed),
+  returning `SearchHit`{session_id, seq, role, snippet with `**` markers, created_at, rank} best-ranked first;
+  user input is always term-quoted so FTS5 syntax characters can never error. Surfaced as `/search <query>`
+  (`SearchSessionsCommand` → `SearchResultsEvent`, offset-cursor pagination) in both TUIs
 - `internal/store/jsonl_export.go` - JSONL export: `ExportSessionAsJSONL()`
 - `internal/store/markdown_export.go` - Markdown export: `ExportSessionAsMarkdown()` / `ExportSessionAsMarkdownFile()` render
   a session with YAML frontmatter (model, provider, usage, cost, duration), role-headed message sections, reasoning in
@@ -785,7 +790,8 @@ type ChatCommand interface{ IsChatCommand() }
 // SteerChatPromptCommand, UpdateChatSessionCommand, CancelChatRequestCommand,
 // ResetChatSessionCommand, CloseChatSessionCommand, ReloadExtensionsCommand,
 // RunExtensionCommandCommand, RespondInteractivePromptCommand,
-// ListSessionsCommand, LoadSessionCommand, DeleteSessionCommand, ExportSessionCommand
+// ListSessionsCommand, SearchSessionsCommand, LoadSessionCommand,
+// DeleteSessionCommand, ExportSessionCommand
 ```
 
 ### ChatEvent (Runtime → TUI)
@@ -799,7 +805,7 @@ type ChatEvent interface{ IsChatEvent() }
 // ChatResponseCancelledEvent, ChatRuntimeErrorEvent, ChatNotificationEvent,
 // ExtensionsReloadedEvent, ExtensionCommandsChangedEvent,
 // CommandsChangedEvent, ExtensionCommandResultEvent,
-// InteractivePromptRequestedEvent, SessionsListedEvent,
+// InteractivePromptRequestedEvent, SessionsListedEvent, SearchResultsEvent,
 // SessionLoadedEvent, SessionDeletedEvent, SessionExportedEvent
 ```
 
@@ -859,6 +865,7 @@ type SessionStore interface {
     Load(ctx context.Context, sessionID string) (chat.ChatSessionState, error)
     List(ctx context.Context, limit int, cursor string) ([]SessionSummary, string, error)
     Summary(ctx context.Context, id string) (SessionSummary, error)
+    Search(ctx context.Context, query string, limit, offset int) ([]SearchHit, error)
     Delete(ctx context.Context, sessionID string) error
     ExportMessages(ctx context.Context, sessionID string) (<-chan []byte, <-chan error)
     Close() error

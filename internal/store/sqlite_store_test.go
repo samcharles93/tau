@@ -703,8 +703,8 @@ func TestSQLiteStore_MigrationV10AddsAttachmentsColumn(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, "attachments", col)
 
-	// And the schema version is recorded as 10.
+	// And the schema version is recorded as the latest migration.
 	var v int
 	require.NoError(t, db.QueryRowContext(ctx, `SELECT MAX(version) FROM schema_version`).Scan(&v))
-	assert.Equal(t, 10, v)
+	assert.Equal(t, store.CurrentSchemaVersion(), v)
 }

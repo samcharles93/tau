@@ -121,6 +121,10 @@ func init() {
 			run: (*model).cmdSession,
 		},
 		{
+			name: "search", usage: "<query>", description: "full-text search across all saved sessions",
+			run: (*model).cmdSearch,
+		},
+		{
 			name: "resume", usage: "[id]", description: "resume a saved session",
 			run: (*model).cmdResume,
 		},
@@ -816,6 +820,14 @@ func (m *model) cmdSession(args string) tea.Cmd {
 			SessionID: args,
 		})
 	}
+}
+
+func (m *model) cmdSearch(args string) tea.Cmd {
+	args = strings.TrimSpace(args)
+	if args == "" {
+		return m.setNotification("usage: /search <query>")
+	}
+	return sendCommand(m.runtime, tauchat.SearchSessionsCommand{Query: args, Limit: 20})
 }
 
 func (m *model) cmdResume(args string) tea.Cmd {

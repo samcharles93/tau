@@ -9,7 +9,11 @@ import (
 
 // currentSchemaVersion is the latest migration number. Bump this when adding
 // new migrations and append the SQL to the migrations map below.
-const currentSchemaVersion = 10
+const currentSchemaVersion = 11
+
+// CurrentSchemaVersion returns the latest migration number the store migrates
+// to on open.
+func CurrentSchemaVersion() int { return currentSchemaVersion }
 
 // Migrate runs all pending schema migrations in order. It is idempotent -
 // already-applied migrations are skipped.
@@ -34,6 +38,7 @@ func Migrate(ctx context.Context, db *sql.DB) error {
 		8:  migrationV8,
 		9:  migrationV9,
 		10: migrationV10,
+		11: migrationV11,
 	}
 
 	for v := current + 1; v <= currentSchemaVersion; v++ {
@@ -197,4 +202,34 @@ CREATE INDEX IF NOT EXISTS idx_sessions_updated_id ON sessions(updated_at DESC, 
 // means no attachments, so pre-existing rows decode as nil.
 var migrationV10 = strings.TrimSpace(`
 ALTER TABLE messages ADD COLUMN attachments TEXT NOT NULL DEFAULT '';
+`)
+
+// migrationV11 adds a full-text search index over message content. The FTS5
+// table duplicates content/role (porter stemming + unicode61 tokenizer) and
+// keeps session_id/seq as unindexed columns for grouping; triggers keep it in
+// sync with messages on insert/delete/update, and the final INSERT backfills
+// rows persisted before this migration. messages.id is the rowid alias, so
+// the FTS rowid joins back to messages for created_at.
+var migrationV11 = strings.TrimSpace(`
+CREATE VIRTUAL TABLE IF NOT EXISTS messages_fts USING fts5(
+    content,
+    role,
+    session_id UNINDEXED,
+    seq UNINDEXED,
+    tokenize = 'porter unicode61'
+);
+CREATE TRIGGER IF NOT EXISTS messages_fts_ai AFTER INSERT ON messages BEGIN
+    INSERT INTO messages_fts(rowid, content, role, session_id, seq)
+    VALUES (new.id, new.content, new.role, new.session_id, new.seq);
+END;
+CREATE TRIGGER IF NOT EXISTS messages_fts_ad AFTER DELETE ON messages BEGIN
+    DELETE FROM messages_fts WHERE rowid = old.id;
+END;
+CREATE TRIGGER IF NOT EXISTS messages_fts_au AFTER UPDATE ON messages BEGIN
+    DELETE FROM messages_fts WHERE rowid = old.id;
+    INSERT INTO messages_fts(rowid, content, role, session_id, seq)
+    VALUES (new.id, new.content, new.role, new.session_id, new.seq);
+END;
+INSERT INTO messages_fts(rowid, content, role, session_id, seq)
+    SELECT id, content, role, session_id, seq FROM messages;
 `)

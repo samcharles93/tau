@@ -75,6 +75,10 @@ func init() {
 			run: (*inlineChat).handleSessionCommand, complete: argSession,
 		},
 		{
+			name: "search", usage: "<query>", description: "full-text search across all saved sessions",
+			run: (*inlineChat).handleSearchCommand,
+		},
+		{
 			name: "resume", usage: "[id]", description: "resume a saved session",
 			run: (*inlineChat).handleResumeCommand, complete: argSessions,
 		},
@@ -656,6 +660,15 @@ func (c *inlineChat) loadSession(id string) {
 		return
 	}
 	c.send(tauchat.LoadSessionCommand{SessionID: id, RuntimeSessionID: c.sid()})
+}
+
+func (c *inlineChat) handleSearchCommand(rest string) {
+	query := strings.TrimSpace(rest)
+	if query == "" {
+		c.engine.PrintAbove("%s %s", c.grey("✗"), "usage: /search <query>")
+		return
+	}
+	c.send(tauchat.SearchSessionsCommand{Query: query, Limit: 20})
 }
 
 func (c *inlineChat) handleSessionInfo(parts []string) {

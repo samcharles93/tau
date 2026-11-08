@@ -92,6 +92,26 @@ func (m *Manager) List(ctx context.Context, limit int, cursor string) ([]chat.Se
 	return result, nextCursor, nil
 }
 
+// Search full-text searches message content across all saved sessions,
+// converting store hits to chat-level wire types.
+func (m *Manager) Search(ctx context.Context, query string, limit, offset int) ([]chat.SearchHit, error) {
+	hits, err := m.store.Search(ctx, query, limit, offset)
+	if err != nil {
+		return nil, err
+	}
+	result := make([]chat.SearchHit, len(hits))
+	for i, h := range hits {
+		result[i] = chat.SearchHit{
+			SessionID: h.SessionID,
+			Seq:       h.Seq,
+			Role:      h.Role,
+			Snippet:   h.Snippet,
+			CreatedAt: h.CreatedAt,
+		}
+	}
+	return result, nil
+}
+
 // Load loads a session from the store and optionally merges runtime config.
 // In-flight fields (Status, ActiveRequestID, PendingAssistant, LastError)
 // are always reset to idle. If runtimeCfg is non-nil, the Provider, Model

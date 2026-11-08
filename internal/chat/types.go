@@ -434,6 +434,17 @@ type ListSessionsCommand struct {
 
 func (ListSessionsCommand) IsChatCommand() {}
 
+// SearchSessionsCommand full-text searches message content across all saved
+// sessions. Cursor is an opaque pagination token (a decimal hit offset);
+// empty starts at the beginning.
+type SearchSessionsCommand struct {
+	Query  string `json:"query"`
+	Limit  int    `json:"limit,omitempty"`
+	Cursor string `json:"cursor,omitempty"`
+}
+
+func (SearchSessionsCommand) IsChatCommand() {}
+
 // LoadSessionCommand requests loading a saved session by ID. RuntimeSessionID
 // optionally identifies the currently-running session whose provider/model
 // config should be used as a template when activating a loaded session from the
@@ -1088,6 +1099,27 @@ type SessionsListedEvent struct {
 }
 
 func (SessionsListedEvent) IsChatEvent() {}
+
+// SearchHit is one full-text match in a saved session. Snippet carries the
+// matched content with terms wrapped in "**" markers.
+type SearchHit struct {
+	SessionID string    `json:"session_id"`
+	Seq       int       `json:"seq"`
+	Role      string    `json:"role"`
+	Snippet   string    `json:"snippet"`
+	CreatedAt time.Time `json:"created_at"`
+}
+
+// SearchResultsEvent carries full-text search hits back to the TUI.
+// NextCursor is set when more hits may be available (opaque; pass back to
+// SearchSessionsCommand.Cursor).
+type SearchResultsEvent struct {
+	Query      string      `json:"query"`
+	Hits       []SearchHit `json:"hits"`
+	NextCursor string      `json:"next_cursor,omitempty"`
+}
+
+func (SearchResultsEvent) IsChatEvent() {}
 
 // SessionLoadedEvent carries a fully reconstructed session state.
 type SessionLoadedEvent struct {

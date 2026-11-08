@@ -482,6 +482,8 @@ func (c *Coordinator) handleCommand(cmd chat.ChatCommand) {
 		c.handleInteractivePromptResponse(command)
 	case chat.ListSessionsCommand:
 		c.handleListSessions(command)
+	case chat.SearchSessionsCommand:
+		c.handleSearchSessions(command)
 	case chat.LoadSessionCommand:
 		c.handleLoadSession(command)
 	case chat.LoadChildTranscriptCommand:

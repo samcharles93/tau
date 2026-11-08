@@ -69,6 +69,21 @@ type AgentInstance struct {
 	UsageJSON     string `json:"usage_json,omitempty"`
 }
 
+// SearchHit is one full-text match in a saved session's messages. Snippet is
+// the matched content with terms wrapped in SnippetMark markers; CreatedAt is
+// the message's timestamp (joined from the messages table via the FTS rowid).
+type SearchHit struct {
+	SessionID string    `json:"session_id"`
+	Seq       int       `json:"seq"`
+	Role      string    `json:"role"`
+	Snippet   string    `json:"snippet"`
+	CreatedAt time.Time `json:"created_at"`
+	Rank      float64   `json:"rank"`
+}
+
+// SnippetMark wraps matched terms in search snippets (Markdown bold).
+const SnippetMark = "**"
+
 // SessionStore persists and retrieves chat sessions. SQLite is the single
 // source of truth. JSONL export files are a derived artifact - the app never
 // reads them for its own operations.
@@ -90,6 +105,13 @@ type SessionStore interface {
 	// Summary returns the metadata summary for a single session. It returns
 	// ErrSessionNotFound when the session does not exist.
 	Summary(ctx context.Context, id string) (SessionSummary, error)
+
+	// Search full-text searches message content across all sessions
+	// (FTS5, porter-stemmed) and returns hits best-ranked first. limit
+	// defaults to 20 when <= 0; offset skips that many leading hits, so
+	// callers can paginate with offset-based cursors. An empty or
+	// whitespace-only query returns no hits and no error.
+	Search(ctx context.Context, query string, limit, offset int) ([]SearchHit, error)
 
 	// Delete removes a session and its messages (via CASCADE).
 	Delete(ctx context.Context, id string) error

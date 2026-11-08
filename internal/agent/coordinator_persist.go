@@ -3,6 +3,8 @@ package agent
 import (
 	"context"
 	"fmt"
+	"strconv"
+	"strings"
 	"time"
 
 	"github.com/samcharles93/tau/internal/chat"
@@ -62,6 +64,67 @@ func (c *Coordinator) handleListSessions(cmd chat.ListSessionsCommand) {
 		Sessions:   summaries,
 		NextCursor: nextCursor,
 		Silent:     cmd.Silent,
+	})
+}
+
+// searchDefaultLimit matches the store's default page size.
+const searchDefaultLimit = 20
+
+// handleSearchSessions runs a full-text search over saved session messages.
+// The cursor is an opaque decimal hit offset, mirroring List's pagination.
+func (c *Coordinator) handleSearchSessions(cmd chat.SearchSessionsCommand) {
+	if c.sessionManager == nil {
+		c.emit(chat.ChatNotificationEvent{
+			Message:    "Session persistence is not available",
+			Level:      chat.ChatNotificationWarn,
+			OccurredAt: time.Now().UTC(),
+		})
+		return
+	}
+	if strings.TrimSpace(cmd.Query) == "" {
+		c.emit(chat.ChatNotificationEvent{
+			Message:    "usage: /search <query>",
+			Level:      chat.ChatNotificationWarn,
+			OccurredAt: time.Now().UTC(),
+		})
+		return
+	}
+	offset, err := strconv.Atoi(cmd.Cursor)
+	if cmd.Cursor != "" && err != nil {
+		c.emit(chat.ChatRuntimeErrorEvent{
+			Message:    fmt.Sprintf("invalid search cursor %q", cmd.Cursor),
+			Fatal:      false,
+			OccurredAt: time.Now().UTC(),
+		})
+		return
+	}
+	limit := cmd.Limit
+	if limit <= 0 {
+		limit = searchDefaultLimit
+	}
+
+	ctx, cancel := context.WithTimeout(c.ctx, 5*time.Second)
+	defer cancel()
+	// Fetch one extra row to detect a next page, mirroring List.
+	hits, err := c.sessionManager.Search(ctx, cmd.Query, limit+1, offset)
+	if err != nil {
+		c.emit(chat.ChatRuntimeErrorEvent{
+			Message:    fmt.Sprintf("searching sessions: %v", err),
+			Fatal:      false,
+			OccurredAt: time.Now().UTC(),
+		})
+		return
+	}
+
+	nextCursor := ""
+	if len(hits) > limit {
+		hits = hits[:limit]
+		nextCursor = strconv.Itoa(offset + limit)
+	}
+	c.emit(chat.SearchResultsEvent{
+		Query:      cmd.Query,
+		Hits:       hits,
+		NextCursor: nextCursor,
 	})
 }
 

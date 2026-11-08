@@ -2,6 +2,7 @@ package tui
 
 import (
 	"fmt"
+	"strconv"
 	"strings"
 	"time"
 
@@ -372,6 +373,11 @@ func (c *inlineChat) handleEvent(ev tauchat.ChatEvent) {
 		c.engine.PrintAbove("%s", c.grey(msg))
 		c.mu.Lock()
 
+	case tauchat.SearchResultsEvent:
+		c.mu.Unlock()
+		c.printSearchResults(e)
+		c.mu.Lock()
+
 	case tauchat.SessionExportedEvent:
 		msg := "Session exported to stdout"
 		if e.Path != "" {
@@ -439,6 +445,25 @@ func (c *inlineChat) setExtensionCommands(commands []tauchat.ExtensionCommand) {
 }
 
 // ── Scrollback rendering of events ────────────────────────────────────────────
+
+// printSearchResults renders full-text search hits above the input: a header
+// line, then per hit the session ID, role, and seq plus the snippet (matched
+// terms wrapped in ** by the store).
+func (c *inlineChat) printSearchResults(e tauchat.SearchResultsEvent) {
+	if len(e.Hits) == 0 {
+		c.pushNotice("no matches for " + strconv.Quote(e.Query))
+		return
+	}
+	var b strings.Builder
+	fmt.Fprintf(&b, "%d match(es) for %s:\n", len(e.Hits), strconv.Quote(e.Query))
+	for _, h := range e.Hits {
+		fmt.Fprintf(&b, "- %s · %s · seq %d\n  %s\n", h.SessionID, h.Role, h.Seq, h.Snippet)
+	}
+	if e.NextCursor != "" {
+		b.WriteString("(more available)")
+	}
+	c.engine.PrintAbove("%s", c.grey(strings.TrimRight(b.String(), "\n")))
+}
 
 func (c *inlineChat) printSessionSummaries(summaries []tauchat.SessionSummary, nextCursor string) {
 	if len(summaries) == 0 {

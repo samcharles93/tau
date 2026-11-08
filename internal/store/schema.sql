@@ -50,3 +50,29 @@ CREATE TABLE IF NOT EXISTS messages (
 
 CREATE INDEX idx_messages_session ON messages(session_id, seq);
 CREATE INDEX idx_messages_client_id ON messages(session_id, client_id);
+
+-- messages_fts is the full-text search index over message content (migration
+-- v11). Regular (not external-content) FTS5 table: content/role are indexed
+-- with the porter stemmer, session_id/seq are stored unindexed for grouping.
+-- Triggers keep it in sync with messages on insert/delete/update; the FTS
+-- rowid is messages.id, so search hits join back to messages for created_at.
+CREATE VIRTUAL TABLE IF NOT EXISTS messages_fts USING fts5(
+    content,
+    role,
+    session_id UNINDEXED,
+    seq UNINDEXED,
+    tokenize = 'porter unicode61'
+);
+
+CREATE TRIGGER IF NOT EXISTS messages_fts_ai AFTER INSERT ON messages BEGIN
+    INSERT INTO messages_fts(rowid, content, role, session_id, seq)
+    VALUES (new.id, new.content, new.role, new.session_id, new.seq);
+END;
+CREATE TRIGGER IF NOT EXISTS messages_fts_ad AFTER DELETE ON messages BEGIN
+    DELETE FROM messages_fts WHERE rowid = old.id;
+END;
+CREATE TRIGGER IF NOT EXISTS messages_fts_au AFTER UPDATE ON messages BEGIN
+    DELETE FROM messages_fts WHERE rowid = old.id;
+    INSERT INTO messages_fts(rowid, content, role, session_id, seq)
+    VALUES (new.id, new.content, new.role, new.session_id, new.seq);
+END;
