@@ -86,6 +86,11 @@ type Coordinator struct {
 	effectiveTools    map[string]bool // immutable ceiling (set at construction); nil = unrestricted
 	allowedTools      map[string]bool // active filter (intersected with effectiveTools); nil = no mode restriction
 	autoCompact       tauconfig.AutoCompactConfig
+	// appConfig is the loaded (merged, effective) runtime config, used by
+	// ConfigCheckCommand to run a full validation report. Nil when the
+	// caller didn't supply one (tests, headless children) - the check then
+	// reports itself unavailable instead of panicking.
+	appConfig *tauconfig.Config
 
 	// Budget/limit enforcement (per-task, used by child processes).
 	maxTurns         int
@@ -235,6 +240,11 @@ type CoordinatorConfig struct {
 	// window.
 	AutoCompact tauconfig.AutoCompactConfig
 
+	// AppConfig is the loaded (merged, effective) runtime configuration.
+	// It backs ConfigCheckCommand's full validation report (/config check).
+	// Nil means the check reports itself unavailable.
+	AppConfig *tauconfig.Config
+
 	// MaxTurns is a structural cap on agentic-loop iterations per assigned
 	// task (from spec or config). Zero means no cap.
 	MaxTurns int
@@ -316,6 +326,7 @@ func newCoordinatorStruct(ctx context.Context, cancel context.CancelFunc, cfg Co
 		commandRegistry:   cfg.CommandRegistry,
 		lastSkillsConfig:  cfg.SkillsDiscoveryConfig,
 		autoCompact:       cfg.AutoCompact,
+		appConfig:         cfg.AppConfig,
 		maxTurns:          cfg.MaxTurns,
 		timeout:           cfg.Timeout,
 		maxTokens:         cfg.MaxTokens,
@@ -489,6 +500,9 @@ func (c *Coordinator) handleCommand(ctx context.Context, cmd chat.ChatCommand) {
 	if c.handleSkillAgentBashCommand(ctx, cmd) {
 		return
 	}
+	if c.handleUtilityCommand(ctx, cmd) {
+		return
+	}
 	c.emit(chat.ChatRuntimeErrorEvent{
 		Message:    fmt.Sprintf("unsupported command %T", cmd),
 		Fatal:      true,
@@ -574,6 +588,21 @@ func (c *Coordinator) handleSkillAgentBashCommand(ctx context.Context, cmd chat.
 		c.handleReloadSkills(ctx, command)
 	case chat.ListSkillsCommand:
 		c.handleListSkills(ctx, command)
+	default:
+		return false
+	}
+	return true
+}
+
+// handleUtilityCommand dispatches cross-cutting utility commands that don't
+// fit the session-lifecycle/extension/persist/skill groups: the
+// non-destructive conversation summary and the config validation report.
+func (c *Coordinator) handleUtilityCommand(ctx context.Context, cmd chat.ChatCommand) bool {
+	switch command := cmd.(type) {
+	case chat.SummarizeSessionCommand:
+		c.handleSummarizeSession(ctx, command)
+	case chat.ConfigCheckCommand:
+		c.handleConfigCheck(ctx, command)
 	default:
 		return false
 	}
@@ -1053,6 +1082,20 @@ func chatCommandLogAttrs(cmd chat.ChatCommand) []any {
 	attrs := []any{"command_type", shortTypeName(cmd)}
 	attrs = append(attrs, sessionCommandLogAttrs(cmd)...)
 	attrs = append(attrs, skillAgentBashCommandLogAttrs(cmd)...)
+	attrs = append(attrs, utilityCommandLogAttrs(cmd)...)
+	return attrs
+}
+
+// utilityCommandLogAttrs returns log attrs for the summarize/config-check
+// commands, or nil when cmd is not one of them.
+func utilityCommandLogAttrs(cmd chat.ChatCommand) []any {
+	var attrs []any
+	switch c := cmd.(type) {
+	case chat.SummarizeSessionCommand:
+		attrs = append(attrs, "session_id", c.SessionID, "last_n", c.LastN)
+	case chat.ConfigCheckCommand:
+		attrs = append(attrs, "requested_at", c.RequestedAt)
+	}
 	return attrs
 }
 
@@ -1212,6 +1255,10 @@ func pluginSessionEventLogAttrs(event chat.ChatEvent) []any {
 		attrs = append(attrs, "session_id", e.SessionID)
 	case chat.SessionExportedEvent:
 		attrs = append(attrs, "session_id", e.SessionID, "format", e.Format, "path_set", e.Path != "")
+	case chat.SessionSummarizedEvent:
+		attrs = append(attrs, "session_id", e.SessionID, "summary_bytes", len(e.Summary), "message_count", e.MessageCount)
+	case chat.ConfigCheckedEvent:
+		attrs = append(attrs, "valid", e.Valid, "issue_count", len(e.Issues))
 	}
 	return attrs
 }

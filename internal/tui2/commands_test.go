@@ -3,6 +3,7 @@ package tui2
 import (
 	"context"
 	"reflect"
+	"strings"
 	"testing"
 
 	tea "charm.land/bubbletea/v2"
@@ -282,4 +283,105 @@ func TestCmdCopyEmptyHistory(t *testing.T) {
 //nolint:unused // used by copy command tests
 func newTestModelCopy(rt tauchat.ChatRuntime) *model {
 	return newModel(context.Background(), rt, nil, "sess", "gpt", "openai", nil, nil, nil, reasoningModeFull, "medium", false, nil, false)
+}
+
+func TestCmdSummarizeSendsCommand(t *testing.T) {
+	rt := &fakeRuntime{}
+	m := newTestModel(rt, nil)
+
+	cmd := m.cmdSummarize("5")
+	if cmd == nil {
+		t.Fatal("expected non-nil Cmd")
+	}
+	msgs := drainCmd(cmd)
+	found := false
+	for _, msg := range msgs {
+		if _, ok := msg.(sendResultMsg); ok {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("expected a sendResultMsg in %#v", msgs)
+	}
+	if len(rt.sent) != 1 {
+		t.Fatalf("sent %d commands, want 1", len(rt.sent))
+	}
+	sumCmd, ok := rt.sent[0].(tauchat.SummarizeSessionCommand)
+	if !ok {
+		t.Fatalf("sent command = %T, want SummarizeSessionCommand", rt.sent[0])
+	}
+	if sumCmd.SessionID != "sess" || sumCmd.LastN != 5 {
+		t.Errorf("command = %+v, want session sess lastN 5", sumCmd)
+	}
+	if m.notification == "" {
+		t.Error("expected a 'summarizing' notification while the summary runs")
+	}
+}
+
+func TestCmdSummarizeDefaultsToWholeConversation(t *testing.T) {
+	rt := &fakeRuntime{}
+	m := newTestModel(rt, nil)
+	drainCmd(m.cmdSummarize(""))
+	if len(rt.sent) != 1 {
+		t.Fatalf("sent %d commands, want 1", len(rt.sent))
+	}
+	sumCmd, ok := rt.sent[0].(tauchat.SummarizeSessionCommand)
+	if !ok {
+		t.Fatalf("sent command = %T, want SummarizeSessionCommand", rt.sent[0])
+	}
+	if sumCmd.LastN != 0 {
+		t.Errorf("LastN = %d, want 0 (all messages)", sumCmd.LastN)
+	}
+}
+
+func TestCmdSummarizeInvalidArg(t *testing.T) {
+	rt := &fakeRuntime{}
+	m := newTestModel(rt, nil)
+	for _, arg := range []string{"abc", "0", "-3"} {
+		m.cmdSummarize(arg)
+		if !strings.Contains(m.notification, "usage: /summarize") {
+			t.Errorf("cmdSummarize(%q): notification = %q, want usage hint", arg, m.notification)
+		}
+	}
+	if len(rt.sent) != 0 {
+		t.Errorf("sent %d commands, want 0 for invalid args", len(rt.sent))
+	}
+}
+
+func TestCmdConfigCheckSendsCommand(t *testing.T) {
+	rt := &fakeRuntime{}
+	m := newTestModel(rt, nil)
+
+	for _, arg := range []string{"", "check", "validate"} {
+		drainCmd(m.cmdConfig(arg))
+	}
+	if len(rt.sent) != 3 {
+		t.Fatalf("sent %d commands, want 3", len(rt.sent))
+	}
+	for i, c := range rt.sent {
+		if _, ok := c.(tauchat.ConfigCheckCommand); !ok {
+			t.Errorf("sent[%d] = %T, want ConfigCheckCommand", i, c)
+		}
+	}
+}
+
+func TestCmdConfigInvalidArg(t *testing.T) {
+	rt := &fakeRuntime{}
+	m := newTestModel(rt, nil)
+	m.cmdConfig("bogus")
+	if !strings.Contains(m.notification, "usage: /config") {
+		t.Errorf("notification = %q, want usage hint", m.notification)
+	}
+	if len(rt.sent) != 0 {
+		t.Errorf("sent %d commands, want 0", len(rt.sent))
+	}
+}
+
+func TestSummarizeAndConfigCommandsRegistered(t *testing.T) {
+	if _, ok := slashIndex["summarize"]; !ok {
+		t.Error("slashIndex missing /summarize")
+	}
+	if _, ok := slashIndex["config"]; !ok {
+		t.Error("slashIndex missing /config")
+	}
 }

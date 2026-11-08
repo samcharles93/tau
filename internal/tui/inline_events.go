@@ -126,7 +126,45 @@ func (c *inlineChat) handleSessionEvent(ev tauchat.ChatEvent) {
 		c.handleSearchResults(e)
 	case tauchat.SessionExportedEvent:
 		c.handleSessionExported(e)
+	case tauchat.SessionSummarizedEvent:
+		c.handleSessionSummarized(e)
+	case tauchat.ConfigCheckedEvent:
+		c.handleConfigChecked(e)
 	}
+}
+
+// handleSessionSummarized prints the ephemeral /summarize result. The session
+// history is untouched, so there is no state to sync. The caller holds c.mu.
+func (c *inlineChat) handleSessionSummarized(e tauchat.SessionSummarizedEvent) {
+	text := fmt.Sprintf("Summary (%d messages, history unchanged):\n\n%s", e.MessageCount, e.Summary)
+	c.mu.Unlock()
+	c.engine.PrintAbove("%s", c.grey(text))
+	c.mu.Lock()
+}
+
+// handleConfigChecked prints the full /config check report - every issue, not
+// just the first. The caller holds c.mu.
+func (c *inlineChat) handleConfigChecked(e tauchat.ConfigCheckedEvent) {
+	var b strings.Builder
+	if len(e.Issues) == 0 {
+		b.WriteString("Config check: no issues found.")
+	} else {
+		errCount, warnCount := 0, 0
+		for _, issue := range e.Issues {
+			if issue.IsError() {
+				errCount++
+			} else {
+				warnCount++
+			}
+		}
+		fmt.Fprintf(&b, "Config check: %d error(s), %d warning(s)", errCount, warnCount)
+		for _, issue := range e.Issues {
+			fmt.Fprintf(&b, "\n  [%s] %s", issue.Severity, issue.Message)
+		}
+	}
+	c.mu.Unlock()
+	c.engine.PrintAbove("%s", c.grey(b.String()))
+	c.mu.Lock()
 }
 
 // ── Turn lifecycle handlers (caller holds c.mu) ────────────────────────────

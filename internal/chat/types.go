@@ -578,6 +578,30 @@ type ListSkillsCommand struct {
 
 func (ListSkillsCommand) IsChatCommand() {}
 
+// SummarizeSessionCommand requests a NON-destructive summary of a session's
+// conversation (user-invoked via /summarize). LastN optionally limits the
+// summary to the last N messages; 0 means the whole conversation. The
+// coordinator answers with a SessionSummarizedEvent and never modifies the
+// session's message history - unlike auto-compaction, the summary is
+// ephemeral and display-only.
+type SummarizeSessionCommand struct {
+	SessionID   string    `json:"session_id"`
+	LastN       int       `json:"last_n,omitempty"` // 0 = all messages
+	RequestedAt time.Time `json:"requested_at"`
+}
+
+func (SummarizeSessionCommand) IsChatCommand() {}
+
+// ConfigCheckCommand requests a full validation report of the loaded
+// configuration (user-invoked via /config check, or `tau config check` on
+// the CLI). Unlike load-time validation, which stops at the first error,
+// the report lists every issue found.
+type ConfigCheckCommand struct {
+	RequestedAt time.Time `json:"requested_at"`
+}
+
+func (ConfigCheckCommand) IsChatCommand() {}
+
 // ChatEvent is the output contract from the runtime back to the UI.
 type ChatEvent interface{ IsChatEvent() }
 
@@ -1155,6 +1179,32 @@ type SessionExportedEvent struct {
 }
 
 func (SessionExportedEvent) IsChatEvent() {}
+
+// SessionSummarizedEvent carries the ephemeral summary produced by a
+// SummarizeSessionCommand. It is display-only: the coordinator never appends
+// it to the session's message history, so the conversation is unchanged.
+type SessionSummarizedEvent struct {
+	SessionID string `json:"session_id"`
+	Summary   string `json:"summary"`
+	// MessageCount is the number of session messages included in the
+	// summarized window (the whole conversation, or the last LastN).
+	MessageCount int       `json:"message_count"`
+	Usage        ChatUsage `json:"usage"`
+	OccurredAt   time.Time `json:"occurred_at"`
+}
+
+func (SessionSummarizedEvent) IsChatEvent() {}
+
+// ConfigCheckedEvent carries the full config validation report produced by a
+// ConfigCheckCommand. Issues lists every problem found (errors and
+// warnings); Valid is true when no error-severity issue was found.
+type ConfigCheckedEvent struct {
+	Issues     []config.ConfigIssue `json:"issues,omitempty"`
+	Valid      bool                 `json:"valid"`
+	OccurredAt time.Time            `json:"occurred_at"`
+}
+
+func (ConfigCheckedEvent) IsChatEvent() {}
 
 // ScheduleTickEvent is published on the event bus at a configurable
 // interval (TAU_SCHEDULE_INTERVAL). Subscribers (e.g. plugin manager)

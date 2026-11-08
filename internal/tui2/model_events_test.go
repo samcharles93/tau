@@ -8,6 +8,7 @@ import (
 	tea "charm.land/bubbletea/v2"
 
 	tauchat "github.com/samcharles93/tau/internal/chat"
+	"github.com/samcharles93/tau/internal/config"
 	"github.com/samcharles93/tau/internal/tui/notify"
 )
 
@@ -1086,5 +1087,68 @@ func TestSkillsChangedRenderedOnceAfterRequest(t *testing.T) {
 	}})
 	if len(m.renderedLines) != before {
 		t.Errorf("catalog re-rendered on a later event: %d -> %d lines", before, len(m.renderedLines))
+	}
+}
+
+func TestHandleSessionSummarizedEvent(t *testing.T) {
+	m := newTestModel(&fakeRuntime{}, nil)
+	before := len(m.renderedLines)
+
+	m.handleChatEvent(tauchat.SessionSummarizedEvent{
+		SessionID:    "sess",
+		Summary:      "We fixed the login bug in auth.go.",
+		MessageCount: 4,
+		OccurredAt:   time.Now(),
+	})
+
+	joined := stripANSI(strings.Join(m.renderedLines, "\n"))
+	if !strings.Contains(joined, "We fixed the login bug in auth.go.") {
+		t.Errorf("scrollback missing summary text:\n%s", joined)
+	}
+	if !strings.Contains(joined, "4 messages") {
+		t.Errorf("scrollback missing message count:\n%s", joined)
+	}
+	if len(m.renderedLines) <= before {
+		t.Error("expected rendered lines to grow")
+	}
+	if m.notification == "" {
+		t.Error("expected a 'summary ready' notification")
+	}
+}
+
+func TestHandleConfigCheckedEventInvalid(t *testing.T) {
+	m := newTestModel(&fakeRuntime{}, nil)
+
+	m.handleChatEvent(tauchat.ConfigCheckedEvent{
+		Issues: []config.ConfigIssue{
+			{Severity: config.IssueSeverityError, Message: `provider "x" base_url is required`},
+			{Severity: config.IssueSeverityWarning, Message: `default_provider "ghost" is not in the providers list`},
+		},
+		Valid:      false,
+		OccurredAt: time.Now(),
+	})
+
+	joined := stripANSI(strings.Join(m.renderedLines, "\n"))
+	for _, want := range []string{"1 error(s), 1 warning(s)", "base_url is required", "default_provider", "[error]", "[warning]"} {
+		if !strings.Contains(joined, want) {
+			t.Errorf("scrollback missing %q:\n%s", want, joined)
+		}
+	}
+	if !strings.Contains(m.notification, "1 error(s)") {
+		t.Errorf("notification = %q, want error count", m.notification)
+	}
+}
+
+func TestHandleConfigCheckedEventValid(t *testing.T) {
+	m := newTestModel(&fakeRuntime{}, nil)
+
+	m.handleChatEvent(tauchat.ConfigCheckedEvent{Valid: true, OccurredAt: time.Now()})
+
+	joined := stripANSI(strings.Join(m.renderedLines, "\n"))
+	if !strings.Contains(joined, "no issues found") {
+		t.Errorf("scrollback missing clean report:\n%s", joined)
+	}
+	if !strings.Contains(m.notification, "no issues") {
+		t.Errorf("notification = %q, want clean notification", m.notification)
 	}
 }

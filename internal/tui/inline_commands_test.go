@@ -86,3 +86,56 @@ func TestPrintHelpListsEveryCommand(t *testing.T) {
 		}
 	}
 }
+
+func TestHandleSummarizeCommandSendsNonDestructiveCommand(t *testing.T) {
+	c, rt := newTestChat(t)
+
+	c.handleSummarizeCommand("3")
+	cmd, ok := rt.last().(tauchat.SummarizeSessionCommand)
+	if !ok {
+		t.Fatalf("last command = %T, want SummarizeSessionCommand", rt.last())
+	}
+	if cmd.SessionID != "sess-1" || cmd.LastN != 3 {
+		t.Errorf("command = %+v, want session sess-1 lastN 3", cmd)
+	}
+
+	c.handleSummarizeCommand("")
+	cmd, ok = rt.last().(tauchat.SummarizeSessionCommand)
+	if !ok || cmd.LastN != 0 {
+		t.Errorf("bare /summarize = %+v, want LastN 0 (whole conversation)", rt.last())
+	}
+
+	before := len(rt.commands)
+	c.handleSummarizeCommand("nope")
+	if len(rt.commands) != before {
+		t.Error("invalid arg should not send a command")
+	}
+}
+
+func TestHandleConfigCommandSendsCheckCommand(t *testing.T) {
+	c, rt := newTestChat(t)
+
+	c.handleConfigCommand("check")
+	if _, ok := rt.last().(tauchat.ConfigCheckCommand); !ok {
+		t.Fatalf("last command = %T, want ConfigCheckCommand", rt.last())
+	}
+
+	before := len(rt.commands)
+	c.handleConfigCommand("bogus")
+	if len(rt.commands) != before {
+		t.Error("invalid arg should not send a command")
+	}
+}
+
+func TestSummarizeAndConfigInCommandTable(t *testing.T) {
+	for _, name := range []string{"summarize", "config"} {
+		entry, ok := slashByName[name]
+		if !ok {
+			t.Errorf("slashByName missing %q", name)
+			continue
+		}
+		if entry.run == nil {
+			t.Errorf("command %q has nil run", name)
+		}
+	}
+}

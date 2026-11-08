@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"strings"
 
 	urfavecli "github.com/urfave/cli/v3"
 
@@ -75,9 +76,10 @@ func formatConfigReport(issues []config.ConfigIssue) string {
 			warnCount++
 		}
 	}
-	out := fmt.Sprintf("Config check: %d issue(s) - %d error(s), %d warning(s)\n", len(issues), errCount, warnCount)
+	var out strings.Builder
+	fmt.Fprintf(&out, "Config check: %d issue(s) - %d error(s), %d warning(s)\n", len(issues), errCount, warnCount)
 	for _, issue := range issues {
-		out += fmt.Sprintf("  [%s] %s\n", issue.Severity, issue.Message)
+		fmt.Fprintf(&out, "  [%s] %s\n", issue.Severity, issue.Message)
 	}
-	return out
+	return out.String()
 }
