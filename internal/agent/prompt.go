@@ -4,7 +4,6 @@ import (
 	_ "embed"
 	"os"
 	"path/filepath"
-	"slices"
 	"strings"
 	"time"
 
@@ -124,8 +123,11 @@ func RenderAgentPrompt(def *agentspec.Definition, cwd string) string {
 }
 
 // DiscoverContextFiles finds project-level context documents (AGENTS.md, etc.)
-// by walking parent directories from CWD up to the filesystem root and
-// collecting every matching file in root→CWD order.
+// in the workspace root (cwd). The scan is deliberately clamped to the
+// workspace: walking ancestors up to the filesystem root would silently
+// inject files meant for other tools (e.g. ~/.cursorrules, /AGENTS.md) into
+// the system prompt (tau-8qq). The workspace root is the session's working
+// directory - the same root the file tools are confined to.
 func DiscoverContextFiles(cwd string) []ContextFile {
 	if cwd == "" {
 		return nil
@@ -138,45 +140,21 @@ func DiscoverContextFiles(cwd string) []ContextFile {
 		".cursorrules",
 	}
 
-	// Build the list of directories from filesystem root down to CWD (inclusive).
-	var dirs []string
-	for d := cwd; ; {
-		dirs = append(dirs, d)
-		parent := filepath.Dir(d)
-		if parent == d {
-			break
-		}
-		d = parent
-	}
-	// Reverse so we go root→CWD.
-	slices.Reverse(dirs)
-
 	var found []ContextFile
-	seen := make(map[string]bool)
-	for _, d := range dirs {
-		for _, relPath := range candidates {
-			fullPath := filepath.Join(d, relPath)
-			if seen[fullPath] {
-				continue
-			}
-			seen[fullPath] = true
-			content, err := os.ReadFile(fullPath)
-			if err != nil {
-				continue
-			}
-			trimmed := strings.TrimSpace(string(content))
-			if trimmed == "" {
-				continue
-			}
-			displayPath, _ := filepath.Rel(cwd, fullPath)
-			if displayPath == "" {
-				displayPath = relPath
-			}
-			found = append(found, ContextFile{
-				Path:    displayPath,
-				Content: trimmed,
-			})
+	for _, relPath := range candidates {
+		fullPath := filepath.Join(cwd, relPath)
+		content, err := os.ReadFile(fullPath)
+		if err != nil {
+			continue
 		}
+		trimmed := strings.TrimSpace(string(content))
+		if trimmed == "" {
+			continue
+		}
+		found = append(found, ContextFile{
+			Path:    relPath,
+			Content: trimmed,
+		})
 	}
 
 	return found

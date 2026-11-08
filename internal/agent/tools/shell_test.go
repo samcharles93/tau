@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
 	"syscall"
 	"testing"
 	"time"
@@ -58,4 +59,60 @@ func TestShellTimeoutKillsWholeProcessGroup(t *testing.T) {
 		}
 		time.Sleep(50 * time.Millisecond)
 	}
+}
+
+// logRecordingBridge is a UIBridge that records Log chunks, for asserting
+// the shell tool still forwards output when a bridge is supplied.
+type logRecordingBridge struct {
+	NonInteractiveBridge
+	mu   sync.Mutex
+	logs []string
+}
+
+func (b *logRecordingBridge) Log(chunk string) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	b.logs = append(b.logs, chunk)
+}
+
+func (b *logRecordingBridge) joined() string {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return strings.Join(b.logs, "")
+}
+
+// TestShellExecutorNilBridge (tau-sn6): the shell tool must tolerate a nil
+// UIBridge - run the command and return its output instead of panicking in
+// bridgeWriter.Write. Every other builtin tool already ignores a nil bridge.
+func TestShellExecutorNilBridge(t *testing.T) {
+	dir := t.TempDir()
+	executor := makeShellExecutor(dir, nil)
+	params, err := json.Marshal(ShellParams{Command: "echo tau-sn6-nil-bridge"})
+	require.NoError(t, err)
+
+	res, err := executor(context.Background(), params, nil)
+	require.NoError(t, err)
+	require.False(t, res.IsError)
+	require.Contains(t, res.Content, "tau-sn6-nil-bridge")
+}
+
+// TestShellExecutorForwardsToBridge: with a non-nil bridge, stdout/stderr
+// chunks are still forwarded via Log (behaviour unchanged by the tau-sn6
+// nil guard).
+func TestShellExecutorForwardsToBridge(t *testing.T) {
+	dir := t.TempDir()
+	executor := makeShellExecutor(dir, nil)
+	params, err := json.Marshal(ShellParams{Command: "echo tau-sn6-fwd; echo err-line >&2"})
+	require.NoError(t, err)
+
+	bridge := &logRecordingBridge{}
+	res, err := executor(context.Background(), params, bridge)
+	require.NoError(t, err)
+	require.False(t, res.IsError)
+	require.Contains(t, res.Content, "tau-sn6-fwd")
+	require.Contains(t, res.Content, "err-line")
+
+	forwarded := bridge.joined()
+	require.Contains(t, forwarded, "tau-sn6-fwd")
+	require.Contains(t, forwarded, "err-line")
 }
