@@ -1,6 +1,7 @@
 package chat
 
 import (
+	"encoding/json"
 	"errors"
 	"testing"
 	"time"
@@ -403,5 +404,61 @@ func TestAppendStandaloneMessageRequiresNoActiveRequest(t *testing.T) {
 	}
 	if !session.UpdatedAt.Equal(now.Add(time.Second)) {
 		t.Fatalf("UpdatedAt = %v, want %v", session.UpdatedAt, now.Add(time.Second))
+	}
+}
+
+func TestSummarizeAndConfigCheckTypesImplementContracts(t *testing.T) {
+	// Assigning to the interface types proves the marker methods exist.
+	cmds := []ChatCommand{
+		SummarizeSessionCommand{SessionID: "s-1", LastN: 3, RequestedAt: time.Now()},
+		ConfigCheckCommand{RequestedAt: time.Now()},
+	}
+	for _, cmd := range cmds {
+		if cmd == nil {
+			t.Fatal("nil command in ChatCommand slice")
+		}
+	}
+
+	events := []ChatEvent{
+		SessionSummarizedEvent{SessionID: "s-1", Summary: "s", MessageCount: 2},
+		ConfigCheckedEvent{Valid: true},
+	}
+	for _, ev := range events {
+		if ev == nil {
+			t.Fatal("nil event in ChatEvent slice")
+		}
+	}
+}
+
+func TestSummarizeAndConfigCheckJSONRoundTrip(t *testing.T) {
+	orig := SummarizeSessionCommand{SessionID: "s-1", LastN: 9, RequestedAt: time.Date(2026, 7, 23, 1, 2, 3, 0, time.UTC)}
+	data, err := json.Marshal(orig)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var back SummarizeSessionCommand
+	if err := json.Unmarshal(data, &back); err != nil {
+		t.Fatal(err)
+	}
+	if back != orig {
+		t.Errorf("round trip = %+v, want %+v", back, orig)
+	}
+
+	ev := ConfigCheckedEvent{
+		Issues:     []config.ConfigIssue{{Severity: config.IssueSeverityWarning, Message: "w"}},
+		Valid:      false,
+		OccurredAt: time.Date(2026, 7, 23, 1, 2, 3, 0, time.UTC),
+	}
+	data, err = json.Marshal(ev)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var evBack ConfigCheckedEvent
+	if err := json.Unmarshal(data, &evBack); err != nil {
+		t.Fatal(err)
+	}
+	if evBack.Valid || len(evBack.Issues) != 1 ||
+		evBack.Issues[0].Message != "w" || evBack.Issues[0].Severity != config.IssueSeverityWarning {
+		t.Errorf("event round trip = %+v, want %+v", evBack, ev)
 	}
 }

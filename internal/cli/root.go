@@ -71,6 +71,7 @@ func rootCommands(version string) []*urfavecli.Command {
 		sessionsCmd(),
 		skillsCmd(),
 		pluginsCmd(),
+		configCmd(),
 		updateCmd(version),
 		workspaceCodesearchCmd(),
 	}

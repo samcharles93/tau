@@ -8,6 +8,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	tauchat "github.com/samcharles93/tau/internal/chat"
+	"github.com/samcharles93/tau/internal/config"
 )
 
 func TestAgentWireRoundTrip(t *testing.T) {
@@ -276,4 +277,53 @@ func TestAgentResultUsage_CumulativeSemantics(t *testing.T) {
 	if acc.InputTokens != 900 {
 		t.Errorf("InputTokens = %d, want 900", acc.InputTokens)
 	}
+}
+
+func TestSummarizeAndConfigCheckWireRoundTrip(t *testing.T) {
+	// Events: marshal carries the registered discriminator name.
+	sumEvt := tauchat.SessionSummarizedEvent{
+		SessionID:    "s-1",
+		Summary:      "we discussed config validation",
+		MessageCount: 7,
+		Usage:        tauchat.ChatUsage{TotalTokens: 42},
+		OccurredAt:   time.Now().UTC().Truncate(time.Second),
+	}
+	raw, err := MarshalEvent(sumEvt)
+	require.NoError(t, err)
+	require.Contains(t, string(raw), `"type":"SessionSummarizedEvent"`)
+
+	cfgEvt := tauchat.ConfigCheckedEvent{
+		Issues: []config.ConfigIssue{
+			{Severity: config.IssueSeverityError, Message: `provider "x" base_url is required`},
+			{Severity: config.IssueSeverityWarning, Message: "provider \"x\" api_key_env X is not set"},
+		},
+		Valid:      false,
+		OccurredAt: time.Now().UTC().Truncate(time.Second),
+	}
+	raw, err = MarshalEvent(cfgEvt)
+	require.NoError(t, err)
+	require.Contains(t, string(raw), `"type":"ConfigCheckedEvent"`)
+
+	// Commands: unmarshal from the registered discriminator name.
+	cmdRaw, err := json.Marshal(Envelope{
+		Type:    "SummarizeSessionCommand",
+		Payload: json.RawMessage(`{"session_id":"s-1","last_n":5,"requested_at":"2026-07-23T00:00:00Z"}`),
+	})
+	require.NoError(t, err)
+	cmd, err := UnmarshalCommand(cmdRaw)
+	require.NoError(t, err)
+	sumCmd, ok := cmd.(tauchat.SummarizeSessionCommand)
+	require.True(t, ok)
+	require.Equal(t, "s-1", sumCmd.SessionID)
+	require.Equal(t, 5, sumCmd.LastN)
+
+	cmdRaw, err = json.Marshal(Envelope{
+		Type:    "ConfigCheckCommand",
+		Payload: json.RawMessage(`{"requested_at":"2026-07-23T00:00:00Z"}`),
+	})
+	require.NoError(t, err)
+	cmd, err = UnmarshalCommand(cmdRaw)
+	require.NoError(t, err)
+	_, ok = cmd.(tauchat.ConfigCheckCommand)
+	require.True(t, ok)
 }

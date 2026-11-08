@@ -21,6 +21,8 @@ func builtinCommands(cwd string) []Command {
 		{Name: "reload", Label: "/reload", Description: "reload extensions", AcceptsArgs: false},
 		{Name: "clear", Label: "/clear", Description: "start a fresh session [alias: /new, /reset]", AcceptsArgs: false},
 		{Name: "help", Label: "/help", Description: "show available commands", AcceptsArgs: false},
+		{Name: "summarize", Label: "/summarize", Description: "summarize the conversation (optionally the last N messages) without changing it", AcceptsArgs: true},
+		{Name: "config", Label: "/config", Description: "validate the loaded configuration and report all issues (check)", AcceptsArgs: true},
 	}
 	cmds = append(cmds, agentCommands(cwd)...)
 	return cmds

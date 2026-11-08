@@ -99,9 +99,28 @@ var slashTable []slashEntry
 var slashIndex map[string]*slashEntry
 
 func init() {
-	slashTable = builtinSlashCommands()
+	slashTable = append(builtinSlashCommands(), utilitySlashCommands()...)
 	slashTable = appendAgentSlashEntries(slashTable)
 	buildSlashIndex()
+}
+
+// utilitySlashCommands returns the cross-cutting utility slash entries
+// (/summarize, /config), kept in their own function so builtinSlashCommands
+// stays within the function-length budget.
+func utilitySlashCommands() []slashEntry {
+	return []slashEntry{
+		{
+			// No "summarise" alias: that name is taken by the built-in
+			// summarise agent slash command (appendAgentSlashEntries).
+			name: "summarize", usage: "[N]",
+			description: "summarize the conversation (optionally the last N messages) without changing it",
+			run:         (*model).cmdSummarize,
+		},
+		{
+			name: "config", usage: "[check]", description: "validate the loaded configuration and report all issues",
+			run: (*model).cmdConfig,
+		},
+	}
 }
 
 // builtinSlashCommands returns the static tui2 command table.
@@ -764,6 +783,47 @@ func providerCfg(ctx context.Context) config.Config {
 func providerState() providers.State {
 	s, _ := providers.LoadState()
 	return s
+}
+
+// cmdSummarize sends a non-destructive SummarizeSessionCommand - the summary
+// comes back as a SessionSummarizedEvent and is rendered to scrollback there,
+// so the session history is never modified. An optional numeric argument
+// limits the summary to the last N messages.
+func (m *model) cmdSummarize(args string) tea.Cmd {
+	args = strings.TrimSpace(args)
+	lastN := 0
+	if args != "" {
+		n, err := strconv.Atoi(args)
+		if err != nil || n < 1 {
+			return m.setNotification("usage: /summarize [N] - N must be a positive message count")
+		}
+		lastN = n
+	}
+	return tea.Batch(
+		sendCommand(m.runtime, tauchat.SummarizeSessionCommand{
+			SessionID:   m.sessionID,
+			LastN:       lastN,
+			RequestedAt: time.Now().UTC(),
+		}),
+		m.setNotification("summarizing conversation…"),
+	)
+}
+
+// cmdConfig handles /config check: it asks the coordinator for a full config
+// validation report (all issues, not just the first) via ConfigCheckCommand.
+// The report arrives as a ConfigCheckedEvent and is rendered to scrollback.
+func (m *model) cmdConfig(args string) tea.Cmd {
+	switch strings.ToLower(strings.TrimSpace(args)) {
+	case "", "check", "validate":
+		return tea.Batch(
+			sendCommand(m.runtime, tauchat.ConfigCheckCommand{
+				RequestedAt: time.Now().UTC(),
+			}),
+			m.setNotification("checking configuration…"),
+		)
+	default:
+		return m.setNotification("usage: /config check")
+	}
 }
 
 func (m *model) cmdSkills(args string) tea.Cmd {

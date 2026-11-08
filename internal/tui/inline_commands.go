@@ -53,7 +53,26 @@ var (
 )
 
 func init() {
-	slashCommands = []slashCommand{
+	slashCommands = append(builtinSlashCommands(), utilitySlashCommands()...)
+	slashCommands = append(slashCommands, agentSlashCommands()...)
+
+	// Index by primary name and alias for O(1) dispatch.
+	slashByName = make(map[string]*slashCommand, len(slashCommands)*2)
+	for i := range slashCommands {
+		cmd := &slashCommands[i]
+		slashByName[cmd.name] = cmd
+		for _, a := range cmd.aliases {
+			slashByName[a] = cmd
+		}
+	}
+}
+
+// builtinSlashCommands returns the static core of the inline chat's command
+// table. Split from init (and from the utility entries) so each function
+// stays within the length budget - see the comment on slashCommand for why
+// the table must stay the single source of truth for dispatch/completion/help.
+func builtinSlashCommands() []slashCommand {
+	return []slashCommand{
 		{
 			name: "model", usage: "<id>", description: "switch model",
 			run: (*inlineChat).handleModelCommand, complete: argModels,
@@ -126,16 +145,24 @@ func init() {
 			run: func(c *inlineChat, _ string) { go c.engine.Stop() },
 		},
 	}
-	slashCommands = append(slashCommands, agentSlashCommands()...)
+}
 
-	// Index by primary name and alias for O(1) dispatch.
-	slashByName = make(map[string]*slashCommand, len(slashCommands)*2)
-	for i := range slashCommands {
-		cmd := &slashCommands[i]
-		slashByName[cmd.name] = cmd
-		for _, a := range cmd.aliases {
-			slashByName[a] = cmd
-		}
+// utilitySlashCommands returns the cross-cutting utility entries (/summarize,
+// /config), kept separate from builtinSlashCommands so each stays within the
+// function-length budget.
+func utilitySlashCommands() []slashCommand {
+	return []slashCommand{
+		{
+			// No "summarise" alias: that name is taken by the built-in
+			// summarise agent slash command (agentSlashCommands).
+			name: "summarize", usage: "[N]",
+			description: "summarize the conversation (optionally the last N messages) without changing it",
+			run:         (*inlineChat).handleSummarizeCommand,
+		},
+		{
+			name: "config", usage: "[check]", description: "validate the loaded configuration and report all issues",
+			run: (*inlineChat).handleConfigCommand,
+		},
 	}
 }
 
@@ -669,6 +696,39 @@ func (c *inlineChat) handleSearchCommand(rest string) {
 		return
 	}
 	c.send(tauchat.SearchSessionsCommand{Query: query, Limit: 20})
+}
+
+// handleSummarizeCommand sends a non-destructive SummarizeSessionCommand; the
+// summary arrives as a SessionSummarizedEvent (see inline_events.go) and the
+// session history is never modified. An optional numeric argument limits the
+// summary to the last N messages.
+func (c *inlineChat) handleSummarizeCommand(rest string) {
+	rest = strings.TrimSpace(rest)
+	lastN := 0
+	if rest != "" {
+		n, err := strconv.Atoi(rest)
+		if err != nil || n < 1 {
+			c.engine.PrintAbove("%s %s", c.grey("✗"), "usage: /summarize [N] - N must be a positive message count")
+			return
+		}
+		lastN = n
+	}
+	c.send(tauchat.SummarizeSessionCommand{
+		SessionID:   c.sid(),
+		LastN:       lastN,
+		RequestedAt: time.Now().UTC(),
+	})
+}
+
+// handleConfigCommand sends a ConfigCheckCommand (/config check); the full
+// validation report arrives as a ConfigCheckedEvent (see inline_events.go).
+func (c *inlineChat) handleConfigCommand(rest string) {
+	switch strings.ToLower(strings.TrimSpace(rest)) {
+	case "", "check", "validate":
+		c.send(tauchat.ConfigCheckCommand{RequestedAt: time.Now().UTC()})
+	default:
+		c.engine.PrintAbove("%s %s", c.grey("✗"), "usage: /config check")
+	}
 }
 
 func (c *inlineChat) handleSessionInfo(parts []string) {

@@ -770,6 +770,7 @@ func buildAgentCoordinatorConfig(ctx context.Context, cfg coordinatorConfig, reg
 		MaxTokens:        cfg.MaxTokens,
 		Deadline:         cfg.Deadline,
 		AutoCompact:      cfg.ChatOptions.Config.AutoCompact,
+		AppConfig:        &cfg.ChatOptions.Config,
 	}
 }
 

@@ -342,14 +342,20 @@ Use this section to quickly find the right files for a given change.
     `SteerChatPromptCommand`, `UpdateChatSessionCommand`, `CancelChatRequestCommand`, `ResetChatSessionCommand`,
     `CloseChatSessionCommand`, `ReloadExtensionsCommand`, `RunExtensionCommandCommand`,
     `RespondInteractivePromptCommand`, `ListSessionsCommand`, `LoadSessionCommand`, `DeleteSessionCommand`,
-    `ExportSessionCommand`
+    `ExportSessionCommand`, `SummarizeSessionCommand` (non-destructive `/summarize [N]` - summarizes the
+    conversation, optionally the last N messages, without touching session state), `ConfigCheckCommand`
+    (`/config check` - full config validation report, all issues not just the first)
   - **Events** (Runtime → TUI): `ChatEvent` interface, `ChatSessionSnapshotEvent`, `ChatResponseStartedEvent`,
     `ChatResponseDeltaEvent`, `ChatReasoningDeltaEvent`, `ChatToolCallDeltaEvent`, `ChatToolOutputEvent`,
     `ChatToolExecutionStartedEvent`, `ChatToolExecutionCompletedEvent`, `ChatResponseCompletedEvent`,
     `ChatResponseCancelledEvent`, `ChatRuntimeErrorEvent`, `ChatNotificationEvent`, `ExtensionsReloadedEvent`,
     `ExtensionCommandsChangedEvent`, `CommandsChangedEvent`, `ExtensionCommandResultEvent`,
     `InteractivePromptRequestedEvent`, `SessionsListedEvent`, `SessionLoadedEvent`, `SessionDeletedEvent`,
-    `SessionExportedEvent`
+    `SessionExportedEvent`, `SessionSummarizedEvent` (ephemeral `/summarize` result - display-only, never
+    appended to session history), `ConfigCheckedEvent` (`/config check` report: `[]config.ConfigIssue` +
+    `Valid`)
+  - Every new command/event type MUST also be registered in `internal/bridge/wire.go`'s `CommandTypes` /
+    `EventTypes` (and `task specgen` re-run) so browser/bridge clients can marshal it.
   - **Non-ChatEvent bus types** (same file): `ScheduleTickEvent`, `PluginLifecycleEvent`
   - **ChatRuntime** interface: `Send(cmd ChatCommand) error`, `Close()`
   - **Core types**: `ChatMessage`, `ToolResultMetadata`, `ChatRole`, `ChatSessionState`, `ChatSessionConfig`,
@@ -377,7 +383,11 @@ Use this section to quickly find the right files for a given change.
   - **Lifecycle**: `NewCoordinator()`, `Send()`, `Close()`, `loop()`, `runTurn()`
   - **Command handlers**: `handleStart()`, `handleSubmit()`, `handleSteer()`, `handleUpdate()`, `handleCancel()`,
     `handleReset()`, `handleClose()`, `handleReloadExtensions()`, `handleRunExtensionCommand()`, `handleListSessions()`,
-    `handleLoadSession()`, `handleDeleteSession()`, `handleExportSession()`, `handleInteractiveResponse()`
+    `handleLoadSession()`, `handleDeleteSession()`, `handleExportSession()`, `handleInteractiveResponse()`,
+    `handleSummarizeSession()` (in `coordinator_summarize.go` - non-destructive summary via the "summarise" agent
+    spec prompt, tools disabled, session state never written back; result emitted as `SessionSummarizedEvent`),
+    `handleConfigCheck()` (in `coordinator_config.go` - runs `config.CheckAll` on `CoordinatorConfig.AppConfig`
+    and emits `ConfigCheckedEvent` + a summary notification)
   - **Cancel semantics** (`handleCancel`): the coordinator is permissive about request_id mismatches because a client's
     `activeRequestId` can briefly diverge from the coordinator's `state.ActiveRequestID` (double-submit, missed
     `ChatResponseStartedEvent`). A cancel with a non-matching id cancels the currently active turn
@@ -525,7 +535,14 @@ Use this section to quickly find the right files for a given change.
 
 - `internal/config/config.go` - `Config` struct, `ProviderConfig`, `AuthConfig`, `ModelConfig`, `UIConfig`,
   `AutoCompactConfig`:
-  - **Loading**: `LoadConfig()`, `LoadConfigFrom()`, `mergeConfigs()`, `Validate()`
+  - **Loading**: `LoadConfig()`, `LoadConfigFrom()`, `LoadConfigAllowEmpty()`, `LoadConfigUnvalidated()`
+    (skips `Validate` so `tau config check` can report a broken config instead of failing on the first error),
+    `mergeConfigs()`, `Validate()`
+  - **Validation**: `Validate()` returns the FIRST error (load-time fail-fast); `ValidateAll()` collects every
+    error; `CheckAll()` returns all issues as `[]ConfigIssue` (error + warning severities - unset `api_key_env`
+    vars, `model_modes`/`default_provider` references to providers not in the explicit list, missing plugin
+    `path`/`dir` values). Reference checks are warnings only, because providers can also come from env
+    auto-detection at runtime and must not fail load.
   - **Paths**: `Dir()`, `GlobalPath()`, `LocalPath()`, `SessionsDir()`, `SessionsDBPath()`
   - **Selection**: `ResolveProvider()`, `ProviderNames()`
   - **YAML unmarshaling**: Supports both kebab-case and camelCase variants for all fields
@@ -617,6 +634,9 @@ Use this section to quickly find the right files for a given change.
 
 - `internal/cli/root.go` - `NewRootCommand()`, flag definitions, provider/model resolution
 - `internal/cli/commands.go` - Provider/session subcommands (`token`, `models`, `refresh`, `sessions`)
+- `internal/cli/config.go` - `tau config check` (alias `validate`): loads the merged config WITHOUT
+  fail-fast validation (`config.LoadConfigUnvalidated`) and prints every issue from `config.CheckAll`
+  (errors + warnings); exits 1 when error-severity issues exist
 - `internal/cli/provider.go` - thin `tau provider list/login/logout` command and terminal adapters; delegates provider
   use cases to `internal/app`
 - `internal/cli/update.go` and `internal/updater/` - `tau update` self-update command, GitHub release lookup, checksum

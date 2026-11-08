@@ -299,6 +299,9 @@ func (m *model) handleChildAgentEvent(evt tauchat.ChatEvent) (tea.Cmd, bool) {
 
 // handleSessionEvent handles the session list/load/delete/export and search results. Returns (cmd, true) when the event was handled.
 func (m *model) handleSessionEvent(evt tauchat.ChatEvent) (tea.Cmd, bool) {
+	if cmd, ok := m.handleSummarizeConfigEvent(evt); ok {
+		return cmd, true
+	}
 	switch e := evt.(type) {
 	case tauchat.SessionsListedEvent:
 		if m.sessionsFetchAppend {
@@ -353,6 +356,73 @@ func (m *model) handleSessionEvent(evt tauchat.ChatEvent) (tea.Cmd, bool) {
 		// Extension / plugin events.
 	}
 	return nil, false
+}
+
+// handleSummarizeConfigEvent handles the /summarize and /config check result
+// events. Returns (cmd, true) when the event was handled.
+func (m *model) handleSummarizeConfigEvent(evt tauchat.ChatEvent) (tea.Cmd, bool) {
+	switch e := evt.(type) {
+	case tauchat.SessionSummarizedEvent:
+		// Non-destructive /summarize result: render the ephemeral summary to
+		// scrollback as a system block. The session history is untouched, so
+		// there is no snapshot to apply.
+		m.appendMessage("system", sessionSummarizedText(e))
+		return m.setNotification(fmt.Sprintf("summary ready (%d messages)", e.MessageCount)), true
+
+	case tauchat.ConfigCheckedEvent:
+		// /config check report: full list of issues in scrollback, plus a
+		// banner summarising the counts (error level when invalid).
+		m.appendMessage("system", configCheckedText(e))
+		if e.Valid {
+			if len(e.Issues) == 0 {
+				return m.setNotification("config OK - no issues found"), true
+			}
+			return m.setNotification(fmt.Sprintf("config OK - %d warning(s)", len(e.Issues))), true
+		}
+		errCount := 0
+		for _, issue := range e.Issues {
+			if issue.IsError() {
+				errCount++
+			}
+		}
+		return m.setNotificationWithLevel(
+			fmt.Sprintf("config check: %d error(s), %d issue(s) total", errCount, len(e.Issues)),
+			notify.LevelError,
+			notificationClearDelay,
+		), true
+	}
+	return nil, false
+}
+
+// sessionSummarizedText renders a SessionSummarizedEvent as a scrollback block.
+func sessionSummarizedText(e tauchat.SessionSummarizedEvent) string {
+	var b strings.Builder
+	fmt.Fprintf(&b, "Summary (%d messages, history unchanged):", e.MessageCount)
+	b.WriteString("\n\n")
+	b.WriteString(e.Summary)
+	return b.String()
+}
+
+// configCheckedText renders a ConfigCheckedEvent as a scrollback report:
+// one line per issue with its severity, or a clean bill of health.
+func configCheckedText(e tauchat.ConfigCheckedEvent) string {
+	if len(e.Issues) == 0 {
+		return "Config check: no issues found."
+	}
+	var b strings.Builder
+	errCount, warnCount := 0, 0
+	for _, issue := range e.Issues {
+		if issue.IsError() {
+			errCount++
+		} else {
+			warnCount++
+		}
+	}
+	fmt.Fprintf(&b, "Config check: %d error(s), %d warning(s)", errCount, warnCount)
+	for _, issue := range e.Issues {
+		fmt.Fprintf(&b, "\n  [%s] %s", issue.Severity, issue.Message)
+	}
+	return b.String()
 }
 
 // handleExtensionEvent handles the extension/plugin events (reload, commands, results, views). Returns (cmd, true) when the event was handled.

@@ -79,6 +79,7 @@ components:
                     oneOf:
                         - $ref: '#/components/schemas/CancelChatRequestCommand'
                         - $ref: '#/components/schemas/CloseChatSessionCommand'
+                        - $ref: '#/components/schemas/ConfigCheckCommand'
                         - $ref: '#/components/schemas/DeleteSessionCommand'
                         - $ref: '#/components/schemas/ExportSessionCommand'
                         - $ref: '#/components/schemas/ListSessionsCommand'
@@ -92,9 +93,11 @@ components:
                         - $ref: '#/components/schemas/RunAgentCommand'
                         - $ref: '#/components/schemas/RunExtensionCommandCommand'
                         - $ref: '#/components/schemas/RunSkillCommand'
+                        - $ref: '#/components/schemas/SearchSessionsCommand'
                         - $ref: '#/components/schemas/StartChatSessionCommand'
                         - $ref: '#/components/schemas/SteerChatPromptCommand'
                         - $ref: '#/components/schemas/SubmitChatPromptCommand'
+                        - $ref: '#/components/schemas/SummarizeSessionCommand'
                         - $ref: '#/components/schemas/UpdateChatSessionCommand'
                 type:
                     description: Concrete ChatCommand type name (e.g. SubmitChatPromptCommand).
@@ -123,15 +126,18 @@ components:
                         - $ref: '#/components/schemas/ChildAgentStateEvent'
                         - $ref: '#/components/schemas/ChildTranscriptLoadedEvent'
                         - $ref: '#/components/schemas/CommandsChangedEvent'
+                        - $ref: '#/components/schemas/ConfigCheckedEvent'
                         - $ref: '#/components/schemas/ExtensionCommandResultEvent'
                         - $ref: '#/components/schemas/ExtensionCommandsChangedEvent'
                         - $ref: '#/components/schemas/ExtensionViewClosedEvent'
                         - $ref: '#/components/schemas/ExtensionViewRenderedEvent'
                         - $ref: '#/components/schemas/ExtensionsReloadedEvent'
                         - $ref: '#/components/schemas/InteractivePromptRequestedEvent'
+                        - $ref: '#/components/schemas/SearchResultsEvent'
                         - $ref: '#/components/schemas/SessionDeletedEvent'
                         - $ref: '#/components/schemas/SessionExportedEvent'
                         - $ref: '#/components/schemas/SessionLoadedEvent'
+                        - $ref: '#/components/schemas/SessionSummarizedEvent'
                         - $ref: '#/components/schemas/SessionsListedEvent'
                         - $ref: '#/components/schemas/SkillsChangedEvent'
                 type:
@@ -817,6 +823,44 @@ components:
                 - commands
                 - occurred_at
             type: object
+        ConfigCheckCommand:
+            additionalProperties: false
+            description: ConfigCheckCommand requests a full validation report of the loaded configuration (user-invoked via /config check, or `tau config check` on the CLI).
+            properties:
+                requested_at:
+                    format: date-time
+                    type: string
+            required:
+                - requested_at
+            type: object
+        ConfigCheckedEvent:
+            additionalProperties: false
+            description: ConfigCheckedEvent carries the full config validation report produced by a ConfigCheckCommand.
+            properties:
+                issues:
+                    items:
+                        $ref: '#/components/schemas/ConfigIssue'
+                    type: array
+                occurred_at:
+                    format: date-time
+                    type: string
+                valid:
+                    type: boolean
+            required:
+                - valid
+                - occurred_at
+            type: object
+        ConfigIssue:
+            additionalProperties: false
+            properties:
+                message:
+                    type: string
+                severity:
+                    type: string
+            required:
+                - severity
+                - message
+            type: object
         DeleteSessionCommand:
             additionalProperties: false
             description: DeleteSessionCommand deletes a saved session and its messages.
@@ -849,7 +893,7 @@ components:
             description: ExportSessionCommand exports a session to a file or stdout.
             properties:
                 format:
-                    description: '"jsonl" or "html"'
+                    description: ExportFormat* ("jsonl", "markdown"); see NormalizeExportFormat
                     type: string
                 output:
                     description: file path, empty = stdout
@@ -1254,6 +1298,57 @@ components:
                 - skill_name
                 - requested_at
             type: object
+        SearchHit:
+            additionalProperties: false
+            description: SearchHit is one full-text match in a saved session.
+            properties:
+                created_at:
+                    format: date-time
+                    type: string
+                role:
+                    type: string
+                seq:
+                    type: integer
+                session_id:
+                    type: string
+                snippet:
+                    type: string
+            required:
+                - session_id
+                - seq
+                - role
+                - snippet
+                - created_at
+            type: object
+        SearchResultsEvent:
+            additionalProperties: false
+            description: SearchResultsEvent carries full-text search hits back to the TUI.
+            properties:
+                hits:
+                    items:
+                        $ref: '#/components/schemas/SearchHit'
+                    type: array
+                next_cursor:
+                    type: string
+                query:
+                    type: string
+            required:
+                - query
+                - hits
+            type: object
+        SearchSessionsCommand:
+            additionalProperties: false
+            description: SearchSessionsCommand full-text searches message content across all saved sessions.
+            properties:
+                cursor:
+                    type: string
+                limit:
+                    type: integer
+                query:
+                    type: string
+            required:
+                - query
+            type: object
         SessionDeletedEvent:
             additionalProperties: false
             description: SessionDeletedEvent confirms that a session was deleted.
@@ -1289,6 +1384,30 @@ components:
                     $ref: '#/components/schemas/ChatSessionState'
             required:
                 - state
+            type: object
+        SessionSummarizedEvent:
+            additionalProperties: false
+            description: SessionSummarizedEvent carries the ephemeral summary produced by a SummarizeSessionCommand.
+            properties:
+                message_count:
+                    description: |-
+                        MessageCount is the number of session messages included in the
+                        summarized window (the whole conversation, or the last LastN).
+                    type: integer
+                occurred_at:
+                    format: date-time
+                    type: string
+                session_id:
+                    type: string
+                summary:
+                    type: string
+                usage:
+                    $ref: '#/components/schemas/ChatUsage'
+            required:
+                - session_id
+                - summary
+                - message_count
+                - occurred_at
             type: object
         SessionSummary:
             additionalProperties: false
@@ -1492,6 +1611,22 @@ components:
                 - request_id
                 - prompt
                 - submitted_at
+            type: object
+        SummarizeSessionCommand:
+            additionalProperties: false
+            description: SummarizeSessionCommand requests a NON-destructive summary of a session's conversation (user-invoked via /summarize).
+            properties:
+                last_n:
+                    description: 0 = all messages
+                    type: integer
+                requested_at:
+                    format: date-time
+                    type: string
+                session_id:
+                    type: string
+            required:
+                - session_id
+                - requested_at
             type: object
         TableRow:
             additionalProperties: false

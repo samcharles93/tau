@@ -78,6 +78,8 @@ var EventTypes = []EventTypeInfo{
 	{"ChildTranscriptLoadedEvent", reflect.TypeFor[tauchat.ChildTranscriptLoadedEvent]()},
 	{"SessionDeletedEvent", reflect.TypeFor[tauchat.SessionDeletedEvent]()},
 	{"SessionExportedEvent", reflect.TypeFor[tauchat.SessionExportedEvent]()},
+	{"SessionSummarizedEvent", reflect.TypeFor[tauchat.SessionSummarizedEvent]()},
+	{"ConfigCheckedEvent", reflect.TypeFor[tauchat.ConfigCheckedEvent]()},
 	{"CommandsChangedEvent", reflect.TypeFor[tauchat.CommandsChangedEvent]()},
 	{"SkillsChangedEvent", reflect.TypeFor[tauchat.SkillsChangedEvent]()},
 	{"ChildAgentStateEvent", reflect.TypeFor[tauchat.ChildAgentStateEvent]()},
@@ -114,6 +116,8 @@ var CommandTypes = []CommandTypeInfo{
 	{"RunAgentCommand", reflect.TypeFor[tauchat.RunAgentCommand]()},
 	{"ReloadSkillsCommand", reflect.TypeFor[tauchat.ReloadSkillsCommand]()},
 	{"ListSkillsCommand", reflect.TypeFor[tauchat.ListSkillsCommand]()},
+	{"SummarizeSessionCommand", reflect.TypeFor[tauchat.SummarizeSessionCommand]()},
+	{"ConfigCheckCommand", reflect.TypeFor[tauchat.ConfigCheckCommand]()},
 }
 
 var eventNameByType = func() map[reflect.Type]string {
