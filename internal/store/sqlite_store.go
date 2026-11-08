@@ -414,6 +414,13 @@ func (s *SQLiteStore) ExportMessages(ctx context.Context, id string) (<-chan []b
 		defer rows.Close()
 
 		for rows.Next() {
+			// Check before the send so cancellation is prompt even while the
+			// consumer is still draining (select would otherwise pick randomly
+			// between a ready send and a ready ctx.Done).
+			if err := ctx.Err(); err != nil {
+				errs <- err
+				return
+			}
 			line, err := s.buildJSONLLine(rows)
 			if err != nil {
 				errs <- err
