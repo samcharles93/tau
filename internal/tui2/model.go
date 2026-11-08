@@ -209,6 +209,20 @@ type model struct {
 	// via finishSessionsFetch - see docs/specs/state-taxonomy.md, Category 5.
 	sessionsFetchInFlight bool
 
+	// pendingSessionInfo holds the ID from "/session info <id>" while the
+	// silent list refresh that command triggers is in flight. It is resolved
+	// page-by-page against fresh SessionsListedEvent data in handleSessionEvent
+	// (events.go) - paging through NextCursor - so the lookup never answers
+	// from the stale m.sessionSummaries cache (tau-px4). Cleared on success,
+	// on exhaustion of all pages, and on fetch failure.
+	pendingSessionInfo string
+
+	// sessionsFetchAppend marks an outstanding silent list fetch as a
+	// continuation page (requested with a NextCursor), so the
+	// SessionsListedEvent handler appends that page to m.sessionSummaries
+	// instead of replacing the cache.
+	sessionsFetchAppend bool
+
 	// Turn management.
 	turnQueue    []queuedTurn // queued prompts (with attachments) behind a running turn
 	lastSubmit   time.Time
@@ -649,6 +663,12 @@ func (m *model) handleResultMsg(msg tea.Msg) (tea.Cmd, bool) {
 		if msg.err != nil {
 			m.agentState = agentReady
 			m.notification = fmt.Sprintf("send failed: %v", msg.err)
+			// A failed Send means no event will arrive for an outstanding
+			// session-list fetch (or a pending "/session info" lookup): clear
+			// both so neither sticks - same contract as the error-event paths
+			// in handleStatusEvent.
+			m.finishSessionsFetch()
+			m.pendingSessionInfo = ""
 		}
 		return nil, true
 

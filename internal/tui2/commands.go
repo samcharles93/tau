@@ -807,13 +807,13 @@ func (m *model) cmdSession(args string) tea.Cmd {
 		if id == "" {
 			return m.setNotification("usage: /session info <id>")
 		}
-		for _, s := range m.sessionSummaries {
-			if s.ID == id {
-				m.appendMessage("system", sessionInfoText(s))
-				return nil
-			}
-		}
-		return m.setNotification("session not found: " + id + " (try /session list first)")
+		// Refresh the session list before looking the ID up: the
+		// m.sessionSummaries cache is only a side effect of an explicit
+		// "/session list" or a completion prefetch, so reading it here
+		// reported valid sessions as "not found" in a fresh or stale TUI
+		// (tau-px4). requestSessionInfo resolves the ID against the fresh
+		// pages as they arrive.
+		return m.requestSessionInfo(id)
 	case strings.HasPrefix(args, "export"):
 		// /session export [id] [format] - defaults to the current session
 		// and JSONL when args are omitted.

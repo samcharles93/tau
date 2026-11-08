@@ -19,7 +19,7 @@ import (
 // first word is "login" or "logout", offers the catalog provider IDs again
 // as that sub-verb's argument.
 func argProvider(c *inlineChat, fields []string, argsBefore int) (string, []taui.Match) {
-	menu := providers.Menu(c.providerCfg(), c.providerState(), nil)
+	menu := providers.Menu(providerCfg(c.ctx), providerState(), nil)
 	providerMatches := make([]taui.Match, 0, len(menu))
 	for _, e := range menu {
 		desc := e.DisplayName
@@ -176,7 +176,7 @@ func (c *inlineChat) handleProviderLogout(name string) {
 // printProviderMenu renders the catalog with each provider's current state,
 // mirroring the selector pi shows for /provider.
 func (c *inlineChat) printProviderMenu() {
-	menu := providers.Menu(c.providerCfg(), c.providerState(), nil)
+	menu := providers.Menu(providerCfg(c.ctx), providerState(), nil)
 	var b strings.Builder
 	b.WriteString("Providers (use /provider <name> to toggle, /provider login <name> for OAuth):")
 	for _, e := range menu {
@@ -233,14 +233,24 @@ func (c *inlineChat) refreshAfterProviderChange(displayName string, enabled bool
 	}()
 }
 
-// providerCfg re-resolves provider config. inlineChat (the legacy TUI) has no
-// request-scoped context to thread through, so this uses Background directly.
-func (c *inlineChat) providerCfg() config.Config {
-	cfg, _, _ := providers.NewManage(nil).Effective(context.Background())
+// providerEffective is the provider-resolution seam behind providerCfg - a
+// var so tests can observe exactly which context the TUI threads through (see
+// TestProviderCfgThreadsCallerCtx in inline_providers_test.go).
+var providerEffective = func(ctx context.Context) config.Config {
+	cfg, _, _ := providers.NewManage(nil).Effective(ctx)
 	return cfg
 }
 
-func (c *inlineChat) providerState() providers.State {
+// providerCfg re-resolves provider config with the caller's ctx - the TUI's
+// app-lifetime c.ctx at every call site - so provider config I/O (e.g. OAuth
+// token refresh during Effective) honours shutdown cancellation instead of
+// running on context.Background(). Mirrors tui2's providerCfg(ctx).
+func providerCfg(ctx context.Context) config.Config {
+	return providerEffective(ctx)
+}
+
+// providerState mirrors tui2's providerState.
+func providerState() providers.State {
 	s, _ := providers.LoadState()
 	return s
 }

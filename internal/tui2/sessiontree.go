@@ -86,6 +86,47 @@ func (m *model) openSessionTreeFresh() tea.Cmd {
 	return sendCommand(m.runtime, tauchat.ListSessionsCommand{Silent: true})
 }
 
+// sessionInfoPageLimit is the page size for the "/session info <id>" list
+// refresh - larger than the store's default page so the common case resolves
+// in a single round trip; sessions beyond it are reached by following
+// NextCursor (see resolveSessionInfo).
+const sessionInfoPageLimit = 100
+
+// requestSessionInfo starts answering "/session info <id>" from a freshly
+// fetched session list instead of the m.sessionSummaries cache, which can be
+// stale or empty in a fresh TUI process (tau-px4). The ID rides in
+// pendingSessionInfo; each SessionsListedEvent page resolves it in
+// handleSessionEvent (events.go) via resolveSessionInfo.
+func (m *model) requestSessionInfo(id string) tea.Cmd {
+	m.pendingSessionInfo = id
+	m.sessionsFetchAppend = false
+	m.startSessionsFetch()
+	return sendCommand(m.runtime, tauchat.ListSessionsCommand{Silent: true, Limit: sessionInfoPageLimit})
+}
+
+// resolveSessionInfo resolves a pending "/session info <id>" against one
+// freshly delivered page of sessions. When the ID is not in this page and a
+// next page exists, it fetches that page (appending it to the cache); when
+// all pages are exhausted it prints the session's info or a now-trustworthy
+// "not found" notification.
+func (m *model) resolveSessionInfo(e tauchat.SessionsListedEvent) tea.Cmd {
+	id := m.pendingSessionInfo
+	for _, s := range e.Sessions {
+		if s.ID == id {
+			m.pendingSessionInfo = ""
+			m.appendMessage("system", sessionInfoText(s))
+			return nil
+		}
+	}
+	if e.NextCursor != "" {
+		m.sessionsFetchAppend = true
+		m.startSessionsFetch()
+		return sendCommand(m.runtime, tauchat.ListSessionsCommand{Silent: true, Limit: sessionInfoPageLimit, Cursor: e.NextCursor})
+	}
+	m.pendingSessionInfo = ""
+	return m.setNotification("session not found: " + id)
+}
+
 // sessionTreeRows flattens m.sessionSummaries into a depth-first
 // parent/child tree, mirroring sessionSummariesText's childrenOf/roots walk
 // (render.go) but emitting rows for interactive navigation instead of a
