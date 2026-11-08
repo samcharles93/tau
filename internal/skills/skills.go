@@ -520,38 +520,127 @@ func UnmarshalFrontmatter(frontmatter string, out any) error {
 	return yaml.Unmarshal([]byte(normalized), out)
 }
 
+// quoteColonValues quotes unquoted values that contain a colon so the line
+// parses as a single scalar (e.g. `description: Handles X: Y`). Continuation
+// lines of multi-line values (block scalars, multi-line plain or quoted
+// scalars) are left untouched so their content is never mis-quoted.
 func quoteColonValues(frontmatter string) string {
 	lines := strings.Split(frontmatter, "\n")
+	scanner := &frontmatterScanner{blockIndent: -1, scalarIndent: -1}
 	for index, line := range lines {
-		trimmed := strings.TrimSpace(line)
-		if trimmed == "" || strings.HasPrefix(trimmed, "#") {
-			continue
-		}
-
-		separator := strings.Index(line, ":")
-		if separator <= 0 {
-			continue
-		}
-
-		key := strings.TrimSpace(line[:separator])
-		value := strings.TrimSpace(line[separator+1:])
-		if value == "" || value == "|" || value == ">" {
-			continue
-		}
-		if strings.HasPrefix(value, "\"") || strings.HasPrefix(value, "'") {
-			continue
-		}
-		if !strings.Contains(value, ":") {
-			continue
-		}
-		if key == "metadata" {
-			continue
-		}
-
-		escaped := strings.ReplaceAll(value, "\"", "\\\"")
-		lines[index] = line[:separator+1] + " \"" + escaped + "\""
+		lines[index] = scanner.process(line)
 	}
 	return strings.Join(lines, "\n")
+}
+
+// frontmatterScanner tracks multi-line YAML constructs across the lines of a
+// frontmatter block so continuation lines are not mistaken for key/value
+// pairs.
+type frontmatterScanner struct {
+	blockIndent  int // indent of the line that opened a | or > block scalar, -1 when none
+	scalarIndent int // indent of a line whose plain/quoted scalar may continue, -1 when none
+}
+
+// process handles one frontmatter line, returning it with an unquoted
+// colon-containing value quoted when needed. Blank lines, comments, and
+// continuation lines of multi-line values are returned unchanged.
+func (s *frontmatterScanner) process(line string) string {
+	trimmed := strings.TrimSpace(line)
+	if trimmed == "" || strings.HasPrefix(trimmed, "#") {
+		return line
+	}
+	indent := len(line) - len(strings.TrimLeft(line, " "))
+	if s.insideValue(indent) {
+		return line
+	}
+	separator := strings.Index(line, ":")
+	if separator <= 0 {
+		s.trackSequenceBlock(trimmed, indent)
+		return line
+	}
+	return s.quoteEntry(line, separator, indent)
+}
+
+// insideValue reports whether a non-blank line at the given indent continues a
+// multi-line value, closing the tracked construct once the line dedents.
+func (s *frontmatterScanner) insideValue(indent int) bool {
+	switch {
+	case s.blockIndent >= 0 && indent > s.blockIndent:
+		return true
+	case s.blockIndent >= 0:
+		s.blockIndent = -1
+	case s.scalarIndent >= 0 && indent > s.scalarIndent:
+		return true
+	}
+	return false
+}
+
+// trackSequenceBlock records a block scalar opened by a bare sequence item
+// such as "- |" (a line with no key of its own).
+func (s *frontmatterScanner) trackSequenceBlock(trimmed string, indent int) {
+	item := strings.TrimSpace(strings.TrimPrefix(trimmed, "-"))
+	if strings.HasPrefix(trimmed, "-") && blockScalarHeader(item) {
+		s.blockIndent = indent
+	}
+}
+
+// quoteEntry handles a "key: value" line: a value containing an unquoted colon
+// is wrapped in double quotes so the line parses as a single scalar.
+func (s *frontmatterScanner) quoteEntry(line string, separator, indent int) string {
+	key := strings.TrimSpace(line[:separator])
+	value := strings.TrimSpace(line[separator+1:])
+	s.scalarIndent = -1
+	switch {
+	case value == "":
+		// Key opens a nested mapping or sequence; children are separate lines.
+	case blockScalarHeader(value):
+		s.blockIndent = indent
+	case strings.HasPrefix(value, "\""), strings.HasPrefix(value, "'"):
+		if !quoteClosed(value) {
+			s.scalarIndent = indent
+		}
+	case !strings.Contains(value, ":"):
+		s.scalarIndent = indent
+	case key == "metadata":
+		// Metadata values are left alone.
+	default:
+		escaped := strings.ReplaceAll(value, "\"", "\\\"")
+		s.scalarIndent = indent
+		return line[:separator+1] + " \"" + escaped + "\""
+	}
+	return line
+}
+
+// blockScalarHeader reports whether a value is a YAML block scalar header:
+// "|" or ">" optionally followed by indentation/chomping indicators
+// (e.g. "|-", ">+", "|2") and an optional trailing comment.
+func blockScalarHeader(value string) bool {
+	if idx := strings.Index(value, " #"); idx >= 0 {
+		value = strings.TrimSpace(value[:idx])
+	}
+	if value == "" || (value[0] != '|' && value[0] != '>') {
+		return false
+	}
+	return strings.Trim(value[1:], "0123456789+-") == ""
+}
+
+// quoteClosed reports whether a value's opening quote is closed on the same
+// line, i.e. the scalar does not continue onto following indented lines.
+func quoteClosed(value string) bool {
+	quote := value[0]
+	for i := 1; i < len(value); {
+		switch {
+		case value[i] == '\\' && quote == '"':
+			i += 2 // skip escaped character in a double-quoted scalar
+		case value[i] == quote && quote == '\'' && i+1 < len(value) && value[i+1] == '\'':
+			i += 2 // '' is an escaped quote in a single-quoted scalar
+		case value[i] == quote:
+			return true
+		default:
+			i++
+		}
+	}
+	return false
 }
 
 func shouldSkipDir(path, root, name string) bool {
