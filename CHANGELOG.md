@@ -1,5 +1,35 @@
 # Changelog
 
+## [0.35.0](https://github.com/samcharles93/tau/compare/v0.34.3...v0.35.0) (2026-11-08)
+
+
+### Features
+
+* **chat,agent,tui:** non-destructive /summarize and /config check commands (tau-hr8, tau-1w9) ([a394aad](https://github.com/samcharles93/tau/commit/a394aad49b91716850d07871eadf5297c5d26aee))
+* **config,cli:** add full config validation report and tau config check (tau-1w9) ([3e13b57](https://github.com/samcharles93/tau/commit/3e13b5792a55d2827142295691ab99ed06759ef1))
+* **store:** add full-text search across all saved sessions ([0f5061f](https://github.com/samcharles93/tau/commit/0f5061f0991683b2fbff84611f3de99f7325f9b4))
+* **store:** add Markdown session export format ([7c749fb](https://github.com/samcharles93/tau/commit/7c749fba60cb5335c36c4e0616084f5fccb85af1))
+
+
+### Bug Fixes
+
+* **agent:** clamp context-file discovery to the workspace root (tau-8qq) ([d6624df](https://github.com/samcharles93/tau/commit/d6624df3f4f9c3595b09c4f8527ca55aefa26602))
+* **agent:** reject malformed spawn budget at admission time (tau-kk4) ([8364bfa](https://github.com/samcharles93/tau/commit/8364bfa7f11708c952acac1243d729cdb1e3a6ba))
+* **agent:** tolerate nil UIBridge in shell tool (tau-sn6) ([9c9f763](https://github.com/samcharles93/tau/commit/9c9f763547d1860a45daa59096660c08a48f8655))
+* **app:** persist refreshed models.dev catalog; thread ctx; clear lint in touched files ([6b52601](https://github.com/samcharles93/tau/commit/6b52601137cd10ea0017f5f0e58bffde43ece1b2))
+* **skills:** stop quoteColonValues from corrupting block-scalar continuations ([6ac9fd4](https://github.com/samcharles93/tau/commit/6ac9fd40a05c0b2460ef6eb8dffea9b776340b31))
+* **store:** cancel ExportMessages producer on JSONL write error ([d55b0a1](https://github.com/samcharles93/tau/commit/d55b0a1305fb3c7ae2708bbaacc83aa6859f1747))
+* **tools:** apply tool timeouts in read/edit/find/docs; fix POSIX find exclude ([25a622a](https://github.com/samcharles93/tau/commit/25a622a0fa300d7d89dcc5b3037037979d791849))
+* **trust:** make Store.Save atomic to prevent crash corruption ([426565a](https://github.com/samcharles93/tau/commit/426565afe63d5d001d45112a9936bb1f29b38ffe))
+* **tui2:** refresh the session list before /session info lookup (tau-px4) ([2bfbeef](https://github.com/samcharles93/tau/commit/2bfbeefcfed2b7c6f4197726391906d2a35c6ac9))
+* **tui:** thread the app-lifetime ctx through providerCfg (tau-bk7) ([198ac3a](https://github.com/samcharles93/tau/commit/198ac3a3f88ac7cdd734c48b91c6af353a347bd2))
+
+
+### Code Refactoring
+
+* clear golangci-lint backlog to zero (tau-qin) ([544b66b](https://github.com/samcharles93/tau/commit/544b66ba47f6ea6a0db17685b90733825bf91245))
+* **tools,store:** clear lint findings in touched files ([225934c](https://github.com/samcharles93/tau/commit/225934c398d2e390dd5d0518c0b8d65882c5e704))
+
 ## [0.34.3](https://github.com/samcharles93/tau/compare/v0.34.2...v0.34.3) (2026-11-07)
 
 
