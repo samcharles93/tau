@@ -121,6 +121,7 @@ func refreshCmd() *urfavecli.Command {
 			for _, model := range models {
 				fmt.Printf("%-*s  %s\n", nameW, model.ID, model.URL)
 			}
+			fmt.Printf("catalog persisted to %s (preferred over the embedded snapshot at startup)\n", config.ModelsCatalogPath())
 			return nil
 		},
 	}
@@ -137,7 +138,7 @@ func sessionsCmd() *urfavecli.Command {
 }
 
 func listSessions(ctx context.Context) error {
-	s, err := openSessionStore()
+	s, err := openSessionStore(ctx)
 	if err != nil {
 		return err
 	}
@@ -184,8 +185,8 @@ func shortID(id string) string {
 	return id
 }
 
-func openSessionStore() (store.SessionStore, error) {
-	return sessions.OpenStore()
+func openSessionStore(ctx context.Context) (store.SessionStore, error) {
+	return sessions.OpenStore(ctx)
 }
 
 func formatTokensCLI(n int) string {

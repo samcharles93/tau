@@ -695,6 +695,12 @@ LLM provider integration is handled through the external `github.com/samcharles9
 - `internal/providers/snapshot/models.json` is the single authoritative model catalogue for snapshot-backed providers at
   runtime. Dynamic providers such as Ollama and OpenAI Codex query live endpoints instead. `~/.config/tau/models.json`
   is no longer used.
+- A successful `tau refresh` (or the TUI `/refresh`) fetches models.dev live and persists the raw catalog to
+  `~/.config/tau/models-catalog.json` (`config.ModelsCatalogPath()`, wired as the ai-sdk catalog `CachePath`). At
+  startup `loadModelCatalog` (`internal/app/chat.go`) merges that file over the embedded snapshot, re-keying models.dev
+  provider IDs onto tau provider IDs via `CatalogEntry.SnapshotID()` (e.g. models.dev `google` → tau `gemini`), so
+  newly published models appear in the picker between releases. A missing or corrupt cache file falls back to the
+  embedded snapshot.
 
 ### Changing Provider Management (Manage service)
 
@@ -860,7 +866,7 @@ type SessionStore interface {
 // internal/chat/types.go
 type ExtensionReloader interface {
     ReloadExtensions(ctx context.Context, idle bool) (ExtensionReloadResult, error)
-    ExtensionCommands() []ExtensionCommand
+    ExtensionCommands(ctx context.Context) []ExtensionCommand
     RunExtensionCommand(ctx context.Context, name, args string, uiBridge any) (string, error)
 }
 ```

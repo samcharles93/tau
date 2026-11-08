@@ -150,12 +150,14 @@ func TestCoordinatorSteeringInjection(t *testing.T) {
 	}
 
 	reg := tools.NewRegistry()
-	reg.Register(tools.Tool{
+	if err := reg.Register(tools.Tool{
 		Schema: tools.Schema{Name: "test_tool"},
 		Execute: func(ctx context.Context, args json.RawMessage, bridge tools.UIBridge) (tools.Result, error) {
 			return tools.Result{Content: "tool result"}, nil
 		},
-	})
+	}); err != nil {
+		t.Fatalf("registering test tool: %v", err)
+	}
 
 	c, err := NewCoordinator(ctx, CoordinatorConfig{
 		Bus: bus,
@@ -587,7 +589,8 @@ func TestCoordinatorConfirmBridgeResponseAndCancel(t *testing.T) {
 	}()
 	select {
 	case event := <-sub.Events():
-		request := event.(chat.InteractivePromptRequestedEvent)
+		request, ok := event.(chat.InteractivePromptRequestedEvent)
+		require.True(t, ok, "expected InteractivePromptRequestedEvent, got %T", event)
 		require.NoError(t, coordinator.Send(chat.RespondInteractivePromptCommand{
 			RequestID: request.RequestID,
 			Canceled:  true,
@@ -809,7 +812,7 @@ func (r *fakeExtensionReloader) ReloadExtensions(_ context.Context, idle bool) (
 	return r.result, r.err
 }
 
-func (r *fakeExtensionReloader) ExtensionCommands() []chat.ExtensionCommand {
+func (r *fakeExtensionReloader) ExtensionCommands(_ context.Context) []chat.ExtensionCommand {
 	return r.result.Commands
 }
 

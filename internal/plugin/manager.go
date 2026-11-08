@@ -276,7 +276,7 @@ func (m *Manager) Load(ctx context.Context) error {
 		m.cfg.Logger.Info(
 			"plugin manager: loaded plugin",
 			"name", name,
-			"commands", len(grpcClient.ExtensionCommands()),
+			"commands", len(grpcClient.ExtensionCommands(ctx)),
 			"tools", toolCount,
 		)
 
@@ -342,7 +342,7 @@ func (m *Manager) ReloadExtensions(ctx context.Context, idle bool) (chat.Extensi
 			if pe == nil {
 				continue
 			}
-			cmds := pe.grpc.ExtensionCommands()
+			cmds := pe.grpc.ExtensionCommands(ctx)
 			result.ExtensionCount++
 			result.Commands = append(result.Commands, cmds...)
 		}
@@ -351,7 +351,7 @@ func (m *Manager) ReloadExtensions(ctx context.Context, idle bool) (chat.Extensi
 }
 
 // ExtensionCommands implements chat.ExtensionReloader.
-func (m *Manager) ExtensionCommands() []chat.ExtensionCommand {
+func (m *Manager) ExtensionCommands(ctx context.Context) []chat.ExtensionCommand {
 	snap := m.snapshot.Load()
 	if snap == nil {
 		return nil
@@ -363,7 +363,7 @@ func (m *Manager) ExtensionCommands() []chat.ExtensionCommand {
 		if pe == nil {
 			continue
 		}
-		all = append(all, pe.grpc.ExtensionCommands()...)
+		all = append(all, pe.grpc.ExtensionCommands(ctx)...)
 	}
 	return all
 }
@@ -377,7 +377,7 @@ func (m *Manager) RunExtensionCommand(ctx context.Context, name, args string, ui
 			if pe == nil {
 				continue
 			}
-			for _, cmd := range pe.grpc.ExtensionCommands() {
+			for _, cmd := range pe.grpc.ExtensionCommands(ctx) {
 				if commandHandles(cmd, name) {
 					return pe.grpc.RunExtensionCommand(ctx, name, args, uiBridge)
 				}
@@ -622,11 +622,13 @@ func (m *Manager) registerPluginTools(ctx context.Context, pluginName string, c 
 	}
 
 	for _, td := range toolsResp.GetTools() {
-		m.cfg.ToolRegistry.RegisterPluginTool(pluginName, tools.PluginToolDef{
+		if err := m.cfg.ToolRegistry.RegisterPluginTool(pluginName, tools.PluginToolDef{
 			Name:        td.GetName(),
 			Description: td.GetDescription(),
 			InputSchema: td.GetInputSchema(),
-		})
+		}); err != nil {
+			m.cfg.Logger.Warn("plugin manager: failed to register plugin tool", "plugin", pluginName, "tool", td.GetName(), "err", err)
+		}
 	}
 
 	return len(toolsResp.GetTools())

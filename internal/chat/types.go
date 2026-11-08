@@ -562,7 +562,7 @@ type ExtensionReloadResult struct {
 
 type ExtensionReloader interface {
 	ReloadExtensions(ctx context.Context, idle bool) (ExtensionReloadResult, error)
-	ExtensionCommands() []ExtensionCommand
+	ExtensionCommands(ctx context.Context) []ExtensionCommand
 	RunExtensionCommand(ctx context.Context, name, args string, uiBridge any) (output string, view *ExtensionView, err error)
 }
 
@@ -1267,7 +1267,7 @@ func (s *ChatSessionState) ApplyPatch(patch ChatSessionPatch, at time.Time) erro
 	return nil
 }
 
-func (s ChatSessionState) HasActiveRequest() bool {
+func (s *ChatSessionState) HasActiveRequest() bool {
 	return s.ActiveRequestID != ""
 }
 
@@ -1526,7 +1526,7 @@ func (s *ChatSessionState) Close(at time.Time) error {
 	return nil
 }
 
-func (s ChatSessionState) RequestMessages() []ChatMessage {
+func (s *ChatSessionState) RequestMessages() []ChatMessage {
 	messages := make([]ChatMessage, 0, len(s.Messages)+1)
 	if strings.TrimSpace(s.SystemPrompt) != "" {
 		messages = append(messages, ChatMessage{
@@ -1552,7 +1552,7 @@ func (s ChatSessionState) RequestMessages() []ChatMessage {
 	return messages
 }
 
-func (s ChatSessionState) CompletionRequest() ChatCompletionRequest {
+func (s *ChatSessionState) CompletionRequest() ChatCompletionRequest {
 	return ChatCompletionRequest{
 		Model:       s.Model.ID,
 		Messages:    s.RequestMessages(),

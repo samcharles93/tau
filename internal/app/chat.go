@@ -113,6 +113,15 @@ func buildModelRefresher(pr *providerRuntime) tui.ModelRefresher {
 			return nil, err
 		}
 		rt, provs := pr.snapshot()
+		// Best-effort live refresh of models.dev: on success the fresh catalog
+		// is persisted to the config-dir cache (via the catalog's CachePath) so
+		// the next launch prefers it over the embedded snapshot; on failure we
+		// fall back to whatever is already loaded (persisted cache or snapshot).
+		if cat := rt.Catalog(); cat != nil {
+			if err := cat.Fetch(ctx); err != nil {
+				slog.Debug("live model catalog fetch failed; using persisted/embedded catalog", "err", err)
+			}
+		}
 		return aggregateModelRefs(ctx, rt, pr.insecure, provs), nil
 	}
 }
@@ -463,17 +472,57 @@ func newRuntimeForProviders(providers []tauconfig.ProviderConfig, insecure bool)
 		}
 	}
 
-	cfg := runtime.Config{Providers: cfgs}
+	cfg := runtime.Config{Providers: cfgs, CatalogCachePath: tauconfig.ModelsCatalogPath()}
 	// Prefer the embedded, curated model snapshot so discovery works offline and
 	// is restricted to tool-capable models from providers tau knows about. Fall
 	// back to a catalogue-less runtime (callers may still LoadCatalog from the
 	// network) if the embed somehow fails to load.
-	if cat, err := snapshot.Catalog(); err != nil {
+	cat, err := loadModelCatalog(tauconfig.ModelsCatalogPath())
+	if err != nil {
 		slog.Warn("embedded model snapshot unavailable, falling back to network catalog", "err", err)
 		return runtime.NewRuntime(cfg)
-	} else {
-		return runtime.NewRuntimeWithCatalog(cfg, cat)
 	}
+	return runtime.NewRuntimeWithCatalog(cfg, cat)
+}
+
+// loadModelCatalog builds the runtime's model catalog from the embedded
+// snapshot, then merges in the persisted models.dev catalog at cachePath when
+// it exists and parses - that file is only written by a successful `tau
+// refresh` (or the TUI /refresh), so its presence means it is newer than the
+// snapshot baked into the binary. The persisted file is keyed by models.dev
+// provider IDs, so entries are re-keyed onto tau provider IDs before merging
+// (e.g. models.dev "google" → tau "gemini") to keep rt.Models(tauID) working.
+// The catalog is also given cachePath as its ai-sdk CachePath, so a later
+// Catalog().Fetch persists the fresh catalog back to the same file. A missing
+// or corrupt cache file falls back to the embedded snapshot without error.
+func loadModelCatalog(cachePath string) (*runtime.Catalog, error) {
+	cat, err := snapshot.Catalog()
+	if err != nil {
+		return nil, err
+	}
+	if cachePath != "" {
+		cat.SetOptions(runtime.CatalogOptions{CachePath: cachePath})
+		data, rerr := os.ReadFile(cachePath)
+		if rerr != nil {
+			return cat, nil //nolint:nilerr // a missing cache file just means "use the embedded snapshot"
+		}
+		fresh := runtime.NewCatalog(runtime.CatalogOptions{})
+		if lerr := fresh.LoadFromJSON(data); lerr != nil {
+			slog.Warn("persisted model catalog unreadable, using embedded snapshot", "path", cachePath, "err", lerr)
+			return cat, nil
+		}
+		merged := make(map[string]runtime.CatalogProvider, len(providers.Catalog()))
+		for _, entry := range providers.Catalog() {
+			if p, ok := fresh.Provider(entry.SnapshotID()); ok {
+				merged[entry.ID] = p
+			}
+		}
+		if len(merged) > 0 {
+			cat.MergeProviders(merged)
+			slog.Debug("merged persisted models.dev catalog over embedded snapshot", "path", cachePath, "providers", len(merged))
+		}
+	}
+	return cat, nil
 }
 
 // newCoordinatorResult bundles a coordinator with its command registry so
@@ -609,72 +658,20 @@ func buildCoordinator(ctx context.Context, cfg coordinatorConfig) (*agent.Coordi
 	pluginHostClient := cfg.Bus.Client("plugin-host")
 	notifyPub := eventbus.Publish[tauchat.ChatEvent](pluginHostClient)
 	pluginNotify := func(level, message string) {
-		lvl := tauchat.ChatNotificationInfo
-		switch level {
-		case "warn":
-			lvl = tauchat.ChatNotificationWarn
-		case "error":
-			lvl = tauchat.ChatNotificationError
-		}
-		notifyPub.Publish(tauchat.ChatNotificationEvent{
-			Message:    message,
-			Level:      lvl,
-			OccurredAt: time.Now().UTC(),
-		})
+		publishPluginNotification(notifyPub, level, message)
 	}
 
 	// Plugin manager - discovers and manages extension binaries.
-	pluginLogger := slog.Default()
-	if cfg.ChatOptions.Logger != nil {
-		pluginLogger = cfg.ChatOptions.Logger
-	}
-	pluginLogger = pluginLogger.With("component", "plugin.manager")
-
-	pluginMgr, err := plugin.NewManager(plugin.Config{
-		ToolRegistry: registry,
-		Logger:       pluginLogger,
-		// go-plugin's own hclog output goes to the tau log file, never stderr:
-		// stderr is the terminal the TUI is drawing on.
-		LogOutput: taulogger.Sink(),
-		Plugins:   cfg.ChatOptions.Config.Plugins,
-		Notify:    pluginNotify,
-	})
+	pluginMgr, err := newPluginManager(cfg, registry, pluginNotify)
 	if err != nil {
 		return nil, nil, nil, fmt.Errorf("plugin manager: %w", err)
 	}
-
-	registry.SetPluginToolExecutor(func(ctx context.Context, pluginName, toolName string, args json.RawMessage) (tools.Result, error) {
-		return pluginMgr.ExecutePluginTool(ctx, pluginName, toolName, args)
-	})
 
 	// loadPlugins starts plugin binaries, publishes extension commands,
 	// and notifies the user. Extracted so interactive callers can defer
 	// this step until after the TUI subscribes to bus events.
 	loadPlugins := func() {
-		if err := pluginMgr.Load(ctx); err != nil {
-			log.Warn("plugin manager load failed", "err", err)
-			notifyPub.Publish(tauchat.ChatNotificationEvent{
-				Message:    "Plugin load failed: " + err.Error(),
-				Level:      tauchat.ChatNotificationError,
-				OccurredAt: time.Now().UTC(),
-			})
-			return
-		}
-		extCmds := pluginMgr.ExtensionCommands()
-		if len(extCmds) > 0 {
-			notifyPub.Publish(tauchat.ExtensionCommandsChangedEvent{
-				Commands:   extCmds,
-				OccurredAt: time.Now().UTC(),
-			})
-		}
-		loadedMsg := pluginLoadMessage(pluginMgr)
-		if loadedMsg != "" {
-			notifyPub.Publish(tauchat.ChatNotificationEvent{
-				Message:    loadedMsg,
-				Level:      tauchat.ChatNotificationInfo,
-				OccurredAt: time.Now().UTC(),
-			})
-		}
+		loadPluginExtensions(ctx, pluginMgr, notifyPub, log)
 	}
 
 	if cfg.DeferPluginLoad {
@@ -696,26 +693,7 @@ func buildCoordinator(ctx context.Context, cfg coordinatorConfig) (*agent.Coordi
 	// Plugin hot reload: poll for sentinel file written by CLI install/uninstall.
 	// Runs independently of the schedule tick so plugin changes are picked up
 	// even when TAU_SCHEDULE_INTERVAL is not set.
-	go func() {
-		ticker := time.NewTicker(10 * time.Second)
-		defer ticker.Stop()
-		sentinelPath := filepath.Join(tauconfig.Dir(), plugin.SentinelFile)
-		for {
-			select {
-			case <-ctx.Done():
-				return
-			case <-ticker.C:
-				if _, err := os.Stat(sentinelPath); err == nil {
-					if _, reloadErr := pluginMgr.ReloadExtensions(ctx, false); reloadErr != nil {
-						slog.Warn("plugin reload failed", "error", reloadErr)
-					}
-					if err := os.Remove(sentinelPath); err != nil {
-						slog.Warn("failed to remove plugin sentinel", "error", err)
-					}
-				}
-			}
-		}
-	}()
+	go watchPluginSentinel(ctx, pluginMgr)
 
 	// Schedule ticks: if TAU_SCHEDULE_INTERVAL is set, publish a
 	// ScheduleTickEvent on the bus at that interval. The plugin manager
@@ -723,42 +701,34 @@ func buildCoordinator(ctx context.Context, cfg coordinatorConfig) (*agent.Coordi
 	scheduleInterval := tauconfig.ScheduleIntervalFromEnv()
 	if scheduleInterval > 0 {
 		slog.Info("schedule events enabled", "interval", scheduleInterval)
-		schedulePub := eventbus.Publish[tauchat.ScheduleTickEvent](pluginBusClient)
-		eventbus.SubscribeFunc(pluginBusClient, func(evt tauchat.ScheduleTickEvent) {
-			pluginMgr.DispatchEvent(ctx, "schedule", "", nil)
-		})
-		go func() {
-			ticker := time.NewTicker(scheduleInterval)
-			defer ticker.Stop()
-			for {
-				select {
-				case <-ctx.Done():
-					return
-				case now := <-ticker.C:
-					schedulePub.Publish(tauchat.ScheduleTickEvent{OccurredAt: now.UTC()})
-				}
-			}
-		}()
+		go publishScheduleTicks(ctx, pluginBusClient, scheduleInterval, pluginMgr)
 	}
 
 	// Command registry - the caller creates this and passes it in so the
 	// initial command snapshot can be seeded into the TUI before the bus
 	// delivers the first CommandsChangedEvent.
-	if cfg.CommandRegistry != nil {
-		cfg.CommandRegistry.Discover()
-		// Discover skills once and share with the registry to avoid
-		// redundant filesystem walks (the prompt builder also uses
-		// skill discovery).
-		var allSkills []*skills.Skill
-		if cfg.SkillsManager != nil {
-			allSkills = cfg.SkillsManager.Snapshot().AllSkills
-		} else {
-			allSkills, _ = skills.Discover(skills.DefaultSources(cwd))
-		}
-		cfg.CommandRegistry.MergeSkills(allSkills)
+	seedCommandRegistry(cfg, cwd)
+
+	coordinator, err := agent.NewCoordinator(ctx, buildAgentCoordinatorConfig(ctx, cfg, registry, skillTracker, pluginMgr, pluginBusClient, pluginHostClient, cwd))
+	if err != nil {
+		return nil, nil, nil, err
 	}
 
-	coordinator, err := agent.NewCoordinator(ctx, agent.CoordinatorConfig{
+	// Wire up the allowed-tools callback now that the coordinator exists.
+	setAllowedToolsFn = coordinator.SetAllowedTools
+
+	wirePluginBridges(pluginMgr, coordinator)
+	if err := registerAgentTool(registry, cfg, cwd); err != nil {
+		return nil, nil, nil, err
+	}
+
+	return coordinator, pluginMgr.ExtensionCommands(ctx), pluginMgr, nil
+}
+
+// buildAgentCoordinatorConfig assembles the agent.CoordinatorConfig for the
+// root coordinator, wiring the plugin manager's event dispatch and shutdown.
+func buildAgentCoordinatorConfig(ctx context.Context, cfg coordinatorConfig, registry *tools.Registry, skillTracker *skills.Tracker, pluginMgr *plugin.Manager, pluginBusClient, pluginHostClient *eventbus.Client, cwd string) agent.CoordinatorConfig {
+	return agent.CoordinatorConfig{
 		Bus:                   cfg.Bus,
 		Logger:                cfg.ChatOptions.Logger,
 		TokenSource:           staticTokenSource(cfg.BearerToken),
@@ -779,7 +749,8 @@ func buildCoordinator(ctx context.Context, cfg coordinatorConfig) (*agent.Coordi
 		OnPluginEvent: func(event, sessionID string, payload *api.EventPayload) *api.EventResponse {
 			return pluginMgr.DispatchEvent(ctx, event, sessionID, payload)
 		},
-		OnClose: func() {
+		// Shutdown must run even if the parent ctx is already cancelled.
+		OnClose: func() { //nolint:contextcheck // deliberate: outlive the cancelled parent ctx
 			pluginMgr.Unload(context.Background())
 			pluginBusClient.Close()
 			pluginHostClient.Close()
@@ -799,31 +770,45 @@ func buildCoordinator(ctx context.Context, cfg coordinatorConfig) (*agent.Coordi
 		MaxTokens:        cfg.MaxTokens,
 		Deadline:         cfg.Deadline,
 		AutoCompact:      cfg.ChatOptions.Config.AutoCompact,
-	})
-	if err != nil {
-		return nil, nil, nil, err
 	}
+}
 
-	// Wire up the allowed-tools callback now that the coordinator exists.
-	setAllowedToolsFn = coordinator.SetAllowedTools
+// seedCommandRegistry discovers commands and shares the skill catalog with the
+// registry, avoiding redundant filesystem walks (the prompt builder also uses
+// skill discovery).
+func seedCommandRegistry(cfg coordinatorConfig, cwd string) {
+	if cfg.CommandRegistry == nil {
+		return
+	}
+	cfg.CommandRegistry.Discover()
+	var allSkills []*skills.Skill
+	if cfg.SkillsManager != nil {
+		allSkills = cfg.SkillsManager.Snapshot().AllSkills
+	} else {
+		allSkills, _ = skills.Discover(skills.DefaultSources(cwd))
+	}
+	cfg.CommandRegistry.MergeSkills(allSkills)
+}
 
-	// Wire the coordinator's interactive UI bridge to the plugin host so
-	// plugin slash commands can call Host.Confirm / Host.Input.
+// wirePluginBridges connects the coordinator's UI bridge to the plugin host so
+// plugin slash commands can call Host.Confirm / Host.Input. The same bridge
+// also implements plugin.ViewRenderer (RenderView/CloseView), but
+// tools.UIBridge - the interface Coordinator.UIBridge() is statically typed
+// as - doesn't declare those methods, so a type assertion is needed to
+// recover them.
+func wirePluginBridges(pluginMgr *plugin.Manager, coordinator *agent.Coordinator) {
 	pluginMgr.SetInteractiveHandler(coordinator.UIBridge())
-
-	// The same bridge also implements plugin.ViewRenderer (RenderView/
-	// CloseView), but tools.UIBridge - the interface Coordinator.UIBridge()
-	// is statically typed as - doesn't declare those methods, so a type
-	// assertion is needed to recover them.
 	if viewRenderer, ok := coordinator.UIBridge().(plugin.ViewRenderer); ok {
 		pluginMgr.SetViewRenderer(viewRenderer)
 	}
+}
 
-	// Register the agent tool for spawning child processes. Store/Bus/
-	// ParentInstanceID are this coordinator's own identity (it's always
-	// the root - depth 0, no parent ceiling); SessionID is deliberately
-	// left empty here since it's per-call, not per-coordinator - see
-	// executeAgentTool, which reads it from the UIBridge instead.
+// registerAgentTool registers the built-in agent (subagent) tool on the
+// registry. Store/Bus/ParentInstanceID are this coordinator's own identity
+// (it's always the root - depth 0, no parent ceiling); SessionID is
+// deliberately left empty since it's per-call, not per-coordinator - see
+// executeAgentTool, which reads it from the UIBridge instead.
+func registerAgentTool(registry *tools.Registry, cfg coordinatorConfig, cwd string) error {
 	var agentStore store.SessionStore
 	if cfg.SessionManager != nil {
 		agentStore = cfg.SessionManager.Store()
@@ -848,16 +833,102 @@ func buildCoordinator(ctx context.Context, cfg coordinatorConfig) (*agent.Coordi
 		Bus:                  cfg.Bus,
 	}
 	if err := registry.Register(tools.NewAgentTool(agentCfg)); err != nil {
-		return nil, nil, nil, fmt.Errorf("registering agent tool: %w", err)
+		return fmt.Errorf("registering agent tool: %w", err)
 	}
+	return nil
+}
 
-	return coordinator, pluginMgr.ExtensionCommands(), pluginMgr, nil
+// publishPluginNotification maps a plugin notify level onto a chat
+// notification level and publishes it.
+func publishPluginNotification(pub *eventbus.Publisher[tauchat.ChatEvent], level, message string) {
+	lvl := tauchat.ChatNotificationInfo
+	switch level {
+	case "warn":
+		lvl = tauchat.ChatNotificationWarn
+	case "error":
+		lvl = tauchat.ChatNotificationError
+	}
+	pub.Publish(tauchat.ChatNotificationEvent{
+		Message:    message,
+		Level:      lvl,
+		OccurredAt: time.Now().UTC(),
+	})
+}
+
+// loadPluginExtensions starts plugin binaries and publishes the resulting
+// extension commands and a load summary as chat events.
+func loadPluginExtensions(ctx context.Context, mgr *plugin.Manager, pub *eventbus.Publisher[tauchat.ChatEvent], log *slog.Logger) {
+	if err := mgr.Load(ctx); err != nil {
+		log.Warn("plugin manager load failed", "err", err)
+		pub.Publish(tauchat.ChatNotificationEvent{
+			Message:    "Plugin load failed: " + err.Error(),
+			Level:      tauchat.ChatNotificationError,
+			OccurredAt: time.Now().UTC(),
+		})
+		return
+	}
+	if extCmds := mgr.ExtensionCommands(ctx); len(extCmds) > 0 {
+		pub.Publish(tauchat.ExtensionCommandsChangedEvent{
+			Commands:   extCmds,
+			OccurredAt: time.Now().UTC(),
+		})
+	}
+	if msg := pluginLoadMessage(ctx, mgr); msg != "" {
+		pub.Publish(tauchat.ChatNotificationEvent{
+			Message:    msg,
+			Level:      tauchat.ChatNotificationInfo,
+			OccurredAt: time.Now().UTC(),
+		})
+	}
+}
+
+// watchPluginSentinel polls for the plugin-install sentinel file and reloads
+// extensions when it appears, so plugin changes are picked up without a
+// restart even when TAU_SCHEDULE_INTERVAL is not set.
+func watchPluginSentinel(ctx context.Context, mgr *plugin.Manager) {
+	ticker := time.NewTicker(10 * time.Second)
+	defer ticker.Stop()
+	sentinelPath := filepath.Join(tauconfig.Dir(), plugin.SentinelFile)
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			if _, err := os.Stat(sentinelPath); err == nil {
+				if _, reloadErr := mgr.ReloadExtensions(ctx, false); reloadErr != nil {
+					slog.Warn("plugin reload failed", "error", reloadErr)
+				}
+				if err := os.Remove(sentinelPath); err != nil {
+					slog.Warn("failed to remove plugin sentinel", "error", err)
+				}
+			}
+		}
+	}
+}
+
+// publishScheduleTicks publishes ScheduleTickEvent on the bus at the given
+// interval and dispatches each tick to the plugin manager.
+func publishScheduleTicks(ctx context.Context, client *eventbus.Client, interval time.Duration, mgr *plugin.Manager) {
+	pub := eventbus.Publish[tauchat.ScheduleTickEvent](client)
+	eventbus.SubscribeFunc(client, func(evt tauchat.ScheduleTickEvent) {
+		mgr.DispatchEvent(ctx, "schedule", "", nil)
+	})
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case now := <-ticker.C:
+			pub.Publish(tauchat.ScheduleTickEvent{OccurredAt: now.UTC()})
+		}
+	}
 }
 
 // pluginLoadMessage builds a human-readable summary of loaded plugins
 // for the startup notification. Returns empty string when no plugins loaded.
-func pluginLoadMessage(mgr *plugin.Manager) string {
-	extCmds := mgr.ExtensionCommands()
+func pluginLoadMessage(ctx context.Context, mgr *plugin.Manager) string {
+	extCmds := mgr.ExtensionCommands(ctx)
 	if len(extCmds) == 0 {
 		return ""
 	}
@@ -899,4 +970,31 @@ func isDevel(version string, cfg tauconfig.Config) bool {
 	}
 	v := strings.ToLower(version)
 	return strings.Contains(v, "dev") || strings.Contains(v, "none")
+}
+
+// newPluginManager creates the plugin manager and wires its tool executor into
+// the registry. go-plugin's own hclog output goes to the tau log file, never
+// stderr: stderr is the terminal the TUI is drawing on.
+func newPluginManager(cfg coordinatorConfig, registry *tools.Registry, notify func(level, message string)) (*plugin.Manager, error) {
+	pluginLogger := slog.Default()
+	if cfg.ChatOptions.Logger != nil {
+		pluginLogger = cfg.ChatOptions.Logger
+	}
+	pluginLogger = pluginLogger.With("component", "plugin.manager")
+
+	pluginMgr, err := plugin.NewManager(plugin.Config{
+		ToolRegistry: registry,
+		Logger:       pluginLogger,
+		LogOutput:    taulogger.Sink(),
+		Plugins:      cfg.ChatOptions.Config.Plugins,
+		Notify:       notify,
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	registry.SetPluginToolExecutor(func(ctx context.Context, pluginName, toolName string, args json.RawMessage) (tools.Result, error) {
+		return pluginMgr.ExecutePluginTool(ctx, pluginName, toolName, args)
+	})
+	return pluginMgr, nil
 }

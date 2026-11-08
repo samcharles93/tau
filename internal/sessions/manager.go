@@ -50,13 +50,13 @@ func (m *Manager) Store() store.SessionStore {
 // config paths. It creates the sessions directory if needed.
 // Returns an error when the store cannot be opened - callers should warn
 // and proceed without persistence.
-func OpenStore() (store.SessionStore, error) {
+func OpenStore(ctx context.Context) (store.SessionStore, error) {
 	sessionsDir := config.SessionsDir()
 	if err := os.MkdirAll(sessionsDir, 0o755); err != nil {
 		return nil, fmt.Errorf("creating sessions directory: %w", err)
 	}
 	dbPath := config.SessionsDBPath()
-	return store.NewSQLiteStore(context.Background(), dbPath, sessionsDir)
+	return store.NewSQLiteStore(ctx, dbPath, sessionsDir)
 }
 
 // List returns paginated session summaries as chat types, newest first.

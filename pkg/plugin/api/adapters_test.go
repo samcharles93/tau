@@ -562,7 +562,7 @@ func TestGRPCClientExtensionCommandsCaching(t *testing.T) {
 	_, err := c.ReloadExtensions(context.Background(), false)
 	require.NoError(t, err)
 
-	cmds := c.ExtensionCommands()
+	cmds := c.ExtensionCommands(context.Background())
 	require.Len(t, cmds, 1)
 	require.Equal(t, "cached", cmds[0].Name)
 }

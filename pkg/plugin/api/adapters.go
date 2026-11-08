@@ -130,11 +130,11 @@ func (c *GRPCClient) ReloadExtensions(ctx context.Context, idle bool) (chat.Exte
 	}, nil
 }
 
-func (c *GRPCClient) ExtensionCommands() []chat.ExtensionCommand {
+func (c *GRPCClient) ExtensionCommands(ctx context.Context) []chat.ExtensionCommand {
 	if c.cmds != nil {
 		return c.cmds
 	}
-	resp, err := c.Client.GetMetadata(context.Background(), &GetMetadataRequest{})
+	resp, err := c.Client.GetMetadata(ctx, &GetMetadataRequest{})
 	if err != nil {
 		return nil
 	}
@@ -226,37 +226,11 @@ func ProtoWidgetToChat(w *Widget) chat.Widget {
 	}
 	switch k := w.GetKind().(type) {
 	case *Widget_Text:
-		return chat.Widget{
-			Kind: chat.WidgetKindText,
-			Text: &chat.TextWidget{Text: k.Text.GetText(), Style: protoStyleToChat(k.Text.GetStyle())},
-		}
+		return textWidgetToChat(k.Text)
 	case *Widget_Stack:
-		children := make([]chat.Widget, 0, len(k.Stack.GetChildren()))
-		for _, c := range k.Stack.GetChildren() {
-			children = append(children, ProtoWidgetToChat(c))
-		}
-		direction := chat.StackVertical
-		if k.Stack.GetDirection() == StackWidget_DIRECTION_HORIZONTAL {
-			direction = chat.StackHorizontal
-		}
-		return chat.Widget{
-			Kind: chat.WidgetKindStack,
-			Stack: &chat.StackWidget{
-				Direction: direction,
-				Children:  children,
-				Gap:       int(k.Stack.GetGap()),
-			},
-		}
+		return stackWidgetToChat(k.Stack)
 	case *Widget_KeyValue:
-		entries := make([]chat.KeyValueEntry, 0, len(k.KeyValue.GetEntries()))
-		for _, e := range k.KeyValue.GetEntries() {
-			entries = append(entries, chat.KeyValueEntry{
-				Key:        e.GetKey(),
-				Value:      e.GetValue(),
-				ValueStyle: protoStyleToChat(e.GetValueStyle()),
-			})
-		}
-		return chat.Widget{Kind: chat.WidgetKindKeyValue, KeyValue: &chat.KeyValueWidget{Entries: entries}}
+		return keyValueWidgetToChat(k.KeyValue)
 	case *Widget_List:
 		return chat.Widget{
 			Kind: chat.WidgetKindList,
@@ -267,14 +241,7 @@ func ProtoWidgetToChat(w *Widget) chat.Widget {
 			},
 		}
 	case *Widget_Table:
-		rows := make([]chat.TableRow, 0, len(k.Table.GetRows()))
-		for _, r := range k.Table.GetRows() {
-			rows = append(rows, chat.TableRow{Cells: r.GetCells()})
-		}
-		return chat.Widget{
-			Kind:  chat.WidgetKindTable,
-			Table: &chat.TableWidget{Headers: k.Table.GetHeaders(), Rows: rows},
-		}
+		return tableWidgetToChat(k.Table)
 	case *Widget_Progress:
 		return chat.Widget{
 			Kind: chat.WidgetKindProgress,
@@ -287,25 +254,78 @@ func ProtoWidgetToChat(w *Widget) chat.Widget {
 	case *Widget_Divider:
 		return chat.Widget{Kind: chat.WidgetKindDivider, Divider: &chat.DividerWidget{Label: k.Divider.GetLabel()}}
 	case *Widget_Status:
-		state := chat.StatusNeutral
-		switch k.Status.GetState() {
-		case StatusWidget_STATE_RUNNING:
-			state = chat.StatusRunning
-		case StatusWidget_STATE_SUCCESS:
-			state = chat.StatusSuccess
-		case StatusWidget_STATE_FAILED:
-			state = chat.StatusFailed
-		}
-		return chat.Widget{
-			Kind: chat.WidgetKindStatus,
-			Status: &chat.StatusWidget{
-				State:  state,
-				Label:  k.Status.GetLabel(),
-				Detail: k.Status.GetDetail(),
-			},
-		}
+		return statusWidgetToChat(k.Status)
 	default:
 		return chat.Widget{}
+	}
+}
+
+func textWidgetToChat(t *TextWidget) chat.Widget {
+	return chat.Widget{
+		Kind: chat.WidgetKindText,
+		Text: &chat.TextWidget{Text: t.GetText(), Style: protoStyleToChat(t.GetStyle())},
+	}
+}
+
+func stackWidgetToChat(s *StackWidget) chat.Widget {
+	children := make([]chat.Widget, 0, len(s.GetChildren()))
+	for _, c := range s.GetChildren() {
+		children = append(children, ProtoWidgetToChat(c))
+	}
+	direction := chat.StackVertical
+	if s.GetDirection() == StackWidget_DIRECTION_HORIZONTAL {
+		direction = chat.StackHorizontal
+	}
+	return chat.Widget{
+		Kind: chat.WidgetKindStack,
+		Stack: &chat.StackWidget{
+			Direction: direction,
+			Children:  children,
+			Gap:       int(s.GetGap()),
+		},
+	}
+}
+
+func keyValueWidgetToChat(kv *KeyValueWidget) chat.Widget {
+	entries := make([]chat.KeyValueEntry, 0, len(kv.GetEntries()))
+	for _, e := range kv.GetEntries() {
+		entries = append(entries, chat.KeyValueEntry{
+			Key:        e.GetKey(),
+			Value:      e.GetValue(),
+			ValueStyle: protoStyleToChat(e.GetValueStyle()),
+		})
+	}
+	return chat.Widget{Kind: chat.WidgetKindKeyValue, KeyValue: &chat.KeyValueWidget{Entries: entries}}
+}
+
+func tableWidgetToChat(t *TableWidget) chat.Widget {
+	rows := make([]chat.TableRow, 0, len(t.GetRows()))
+	for _, r := range t.GetRows() {
+		rows = append(rows, chat.TableRow{Cells: r.GetCells()})
+	}
+	return chat.Widget{
+		Kind:  chat.WidgetKindTable,
+		Table: &chat.TableWidget{Headers: t.GetHeaders(), Rows: rows},
+	}
+}
+
+func statusWidgetToChat(s *StatusWidget) chat.Widget {
+	state := chat.StatusNeutral
+	switch s.GetState() {
+	case StatusWidget_STATE_RUNNING:
+		state = chat.StatusRunning
+	case StatusWidget_STATE_SUCCESS:
+		state = chat.StatusSuccess
+	case StatusWidget_STATE_FAILED:
+		state = chat.StatusFailed
+	}
+	return chat.Widget{
+		Kind: chat.WidgetKindStatus,
+		Status: &chat.StatusWidget{
+			State:  state,
+			Label:  s.GetLabel(),
+			Detail: s.GetDetail(),
+		},
 	}
 }
 

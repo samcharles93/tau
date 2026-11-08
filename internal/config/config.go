@@ -475,7 +475,7 @@ type ModelConfig struct {
 // modality (e.g. "image", "text", "pdf"). known is false when the model's
 // input modalities are unknown (empty list) - callers should fail open in
 // that case rather than guessing.
-func (m ModelConfig) SupportsInputModality(modality string) (supported, known bool) {
+func (m *ModelConfig) SupportsInputModality(modality string) (supported, known bool) {
 	if len(m.Input) == 0 {
 		return false, false
 	}
@@ -487,49 +487,59 @@ func (m ModelConfig) SupportsInputModality(modality string) (supported, known bo
 	return false, true
 }
 
+// rawModelConfig is the YAML wire form of ModelConfig, carrying both kebab-case
+// and camelCase spellings of every field.
+type rawModelConfig struct {
+	ID                                               string            `yaml:"id"`
+	Name                                             string            `yaml:"name"`
+	URL                                              string            `yaml:"url"`
+	ContextWindow                                    int               `yaml:"context_window"`
+	ContextWindowCamel                               int               `yaml:"contextWindow"`
+	DefaultMaxTokens                                 int               `yaml:"default_max_tokens"`
+	DefaultMaxTokensCamel                            int               `yaml:"defaultMaxTokens"`
+	MaxTokens                                        int               `yaml:"max_tokens"`
+	MaxTokensCamel                                   int               `yaml:"maxTokens"`
+	Input                                            []string          `yaml:"input"`
+	Reasoning                                        bool              `yaml:"reasoning"`
+	CanReason                                        bool              `yaml:"can_reason"`
+	CanReasonCamel                                   bool              `yaml:"canReason"`
+	ReasoningEfforts                                 []string          `yaml:"reasoning_efforts"`
+	ReasoningEffortsCamel                            []string          `yaml:"reasoningEfforts"`
+	Thinking                                         ThinkingConfig    `yaml:"thinking"`
+	ReasoningEffort                                  string            `yaml:"reasoning_effort"`
+	ReasoningEffortCamel                             string            `yaml:"reasoningEffort"`
+	Cost                                             CostConfig        `yaml:"cost"`
+	Compat                                           CompatConfig      `yaml:"compat"`
+	MaxTokensField                                   string            `yaml:"max_tokens_field"`
+	MaxTokensFieldCamel                              string            `yaml:"maxTokensField"`
+	SupportsToolChoice                               *bool             `yaml:"supports_tool_choice"`
+	SupportsToolChoiceCamel                          *bool             `yaml:"supportsToolChoice"`
+	RequiresAssistantContentForToolCalls             bool              `yaml:"requires_assistant_content_for_tool_calls"`
+	RequiresAssistantContentForToolCallsCamel        bool              `yaml:"requiresAssistantContentForToolCalls"`
+	RequiresReasoningContentForToolCalls             bool              `yaml:"requires_reasoning_content_for_tool_calls"`
+	RequiresReasoningContentForToolCallsCamel        bool              `yaml:"requiresReasoningContentForToolCalls"`
+	RequiresReasoningContentOnAssistantMessages      bool              `yaml:"requires_reasoning_content_on_assistant_messages"`
+	RequiresReasoningContentOnAssistantMessagesCamel bool              `yaml:"requiresReasoningContentOnAssistantMessages"`
+	ThinkingFormat                                   string            `yaml:"thinking_format"`
+	ThinkingFormatCamel                              string            `yaml:"thinkingFormat"`
+	ReasoningEffortMap                               map[string]string `yaml:"reasoning_effort_map"`
+	ReasoningEffortMapCamel                          map[string]string `yaml:"reasoningEffortMap"`
+	ExtraBody                                        map[string]any    `yaml:"extra_body"`
+	ExtraBodyCamel                                   map[string]any    `yaml:"extraBody"`
+}
+
 func (m *ModelConfig) UnmarshalYAML(value *yaml.Node) error {
-	type rawModelConfig struct {
-		ID                                               string            `yaml:"id"`
-		Name                                             string            `yaml:"name"`
-		URL                                              string            `yaml:"url"`
-		ContextWindow                                    int               `yaml:"context_window"`
-		ContextWindowCamel                               int               `yaml:"contextWindow"`
-		DefaultMaxTokens                                 int               `yaml:"default_max_tokens"`
-		DefaultMaxTokensCamel                            int               `yaml:"defaultMaxTokens"`
-		MaxTokens                                        int               `yaml:"max_tokens"`
-		MaxTokensCamel                                   int               `yaml:"maxTokens"`
-		Input                                            []string          `yaml:"input"`
-		Reasoning                                        bool              `yaml:"reasoning"`
-		CanReason                                        bool              `yaml:"can_reason"`
-		CanReasonCamel                                   bool              `yaml:"canReason"`
-		ReasoningEfforts                                 []string          `yaml:"reasoning_efforts"`
-		ReasoningEffortsCamel                            []string          `yaml:"reasoningEfforts"`
-		Thinking                                         ThinkingConfig    `yaml:"thinking"`
-		ReasoningEffort                                  string            `yaml:"reasoning_effort"`
-		ReasoningEffortCamel                             string            `yaml:"reasoningEffort"`
-		Cost                                             CostConfig        `yaml:"cost"`
-		Compat                                           CompatConfig      `yaml:"compat"`
-		MaxTokensField                                   string            `yaml:"max_tokens_field"`
-		MaxTokensFieldCamel                              string            `yaml:"maxTokensField"`
-		SupportsToolChoice                               *bool             `yaml:"supports_tool_choice"`
-		SupportsToolChoiceCamel                          *bool             `yaml:"supportsToolChoice"`
-		RequiresAssistantContentForToolCalls             bool              `yaml:"requires_assistant_content_for_tool_calls"`
-		RequiresAssistantContentForToolCallsCamel        bool              `yaml:"requiresAssistantContentForToolCalls"`
-		RequiresReasoningContentForToolCalls             bool              `yaml:"requires_reasoning_content_for_tool_calls"`
-		RequiresReasoningContentForToolCallsCamel        bool              `yaml:"requiresReasoningContentForToolCalls"`
-		RequiresReasoningContentOnAssistantMessages      bool              `yaml:"requires_reasoning_content_on_assistant_messages"`
-		RequiresReasoningContentOnAssistantMessagesCamel bool              `yaml:"requiresReasoningContentOnAssistantMessages"`
-		ThinkingFormat                                   string            `yaml:"thinking_format"`
-		ThinkingFormatCamel                              string            `yaml:"thinkingFormat"`
-		ReasoningEffortMap                               map[string]string `yaml:"reasoning_effort_map"`
-		ReasoningEffortMapCamel                          map[string]string `yaml:"reasoningEffortMap"`
-		ExtraBody                                        map[string]any    `yaml:"extra_body"`
-		ExtraBodyCamel                                   map[string]any    `yaml:"extraBody"`
-	}
 	var raw rawModelConfig
 	if err := value.Decode(&raw); err != nil {
 		return err
 	}
+	m.applyRaw(raw)
+	return nil
+}
+
+// applyRaw copies the decoded wire form onto m, preferring the kebab-case
+// spelling and falling back to the camelCase one.
+func (m *ModelConfig) applyRaw(raw rawModelConfig) {
 	m.ID = raw.ID
 	m.Name = raw.Name
 	m.URL = raw.URL
@@ -544,6 +554,11 @@ func (m *ModelConfig) UnmarshalYAML(value *yaml.Node) error {
 	m.Thinking = raw.Thinking
 	m.ReasoningEffort = firstNonEmpty(raw.ReasoningEffort, raw.ReasoningEffortCamel)
 	m.Cost = raw.Cost
+	m.applyCompat(raw)
+}
+
+// applyCompat merges the compat fields from the wire form into m.Compat.
+func (m *ModelConfig) applyCompat(raw rawModelConfig) {
 	m.Compat = raw.Compat
 	if field := firstNonEmpty(raw.MaxTokensField, raw.MaxTokensFieldCamel); field != "" {
 		m.Compat.MaxTokensField = field
@@ -569,7 +584,6 @@ func (m *ModelConfig) UnmarshalYAML(value *yaml.Node) error {
 	if extraBody := firstNonNilAnyMap(raw.ExtraBody, raw.ExtraBodyCamel); extraBody != nil {
 		m.Compat.ExtraBody = extraBody
 	}
-	return nil
 }
 
 // ThinkingConfig stores provider-specific thinking controls without applying them.
@@ -735,6 +749,14 @@ func WorkspaceIndexDBPath() string {
 // in an existing config file.
 func MetricsDir() string {
 	return filepath.Join(Dir(), "metrics")
+}
+
+// ModelsCatalogPath returns the path of the persisted models.dev catalog. It
+// is written by a successful `tau refresh` (or the TUI /refresh) and preferred
+// over the embedded snapshot at startup when present, so the model picker sees
+// freshly published models between releases.
+func ModelsCatalogPath() string {
+	return filepath.Join(Dir(), "models-catalog.json")
 }
 
 // ScheduleIntervalFromEnv returns the schedule interval from TAU_SCHEDULE_INTERVAL.
@@ -1388,8 +1410,21 @@ func mergeUpdatesConfigs(globalCfg, localCfg UpdatesConfig) UpdatesConfig {
 
 // Validate checks that configured providers have the fields required by auth type.
 func Validate(cfg Config) error {
-	seen := make(map[string]struct{}, len(cfg.Providers))
-	for _, provider := range cfg.Providers {
+	if err := validateProviders(cfg.Providers); err != nil {
+		return err
+	}
+	if err := validateModelModes(cfg.ModelModes); err != nil {
+		return err
+	}
+	if err := validateAgents(cfg.Agents); err != nil {
+		return err
+	}
+	return validateUpdatesMode(cfg.Updates.Mode)
+}
+
+func validateProviders(providers []ProviderConfig) error {
+	seen := make(map[string]struct{}, len(providers))
+	for _, provider := range providers {
 		name := strings.TrimSpace(provider.Name)
 		if name == "" {
 			return errors.New("provider name is required")
@@ -1401,30 +1436,38 @@ func Validate(cfg Config) error {
 		if strings.TrimSpace(provider.BaseURL) == "" {
 			return fmt.Errorf("provider %q base_url is required", name)
 		}
-		switch strings.TrimSpace(provider.Auth.Type) {
-		case AuthTypeAPIKey:
-			if strings.TrimSpace(provider.Auth.APIKeyEnv) == "" && strings.TrimSpace(provider.Auth.APIKey) == "" {
-				return fmt.Errorf("provider %q api_key auth requires api_key_env or api_key", name)
-			}
-		case AuthTypeNone:
-		case AuthTypeOAuthPKCE:
-			if strings.TrimSpace(provider.Auth.AuthorizeURL) == "" {
-				return fmt.Errorf("provider %q oauth_pkce auth requires authorize_url", name)
-			}
-			if strings.TrimSpace(provider.Auth.TokenURL) == "" {
-				return fmt.Errorf("provider %q oauth_pkce auth requires token_url", name)
-			}
-			if strings.TrimSpace(provider.Auth.ClientID) == "" {
-				return fmt.Errorf("provider %q oauth_pkce auth requires client_id", name)
-			}
-		default:
-			return fmt.Errorf("provider %q has unsupported auth type %q", name, provider.Auth.Type)
+		if err := validateProviderAuth(name, provider.Auth); err != nil {
+			return err
 		}
 	}
+	return nil
+}
 
-	// Validate model_modes: keys must be non-empty; provider/model required
-	// for each entry; keys are case-insensitive unique (enforced above).
-	for name, mode := range cfg.ModelModes {
+func validateProviderAuth(name string, auth AuthConfig) error {
+	switch strings.TrimSpace(auth.Type) {
+	case AuthTypeAPIKey:
+		if strings.TrimSpace(auth.APIKeyEnv) == "" && strings.TrimSpace(auth.APIKey) == "" {
+			return fmt.Errorf("provider %q api_key auth requires api_key_env or api_key", name)
+		}
+	case AuthTypeNone:
+	case AuthTypeOAuthPKCE:
+		if strings.TrimSpace(auth.AuthorizeURL) == "" {
+			return fmt.Errorf("provider %q oauth_pkce auth requires authorize_url", name)
+		}
+		if strings.TrimSpace(auth.TokenURL) == "" {
+			return fmt.Errorf("provider %q oauth_pkce auth requires token_url", name)
+		}
+		if strings.TrimSpace(auth.ClientID) == "" {
+			return fmt.Errorf("provider %q oauth_pkce auth requires client_id", name)
+		}
+	default:
+		return fmt.Errorf("provider %q has unsupported auth type %q", name, auth.Type)
+	}
+	return nil
+}
+
+func validateModelModes(modes map[string]ModeConfig) error {
+	for name, mode := range modes {
 		if strings.TrimSpace(name) == "" {
 			return errors.New("model_modes key must not be empty")
 		}
@@ -1435,49 +1478,53 @@ func Validate(cfg Config) error {
 			return fmt.Errorf("model_mode %q: model is required", name)
 		}
 	}
+	return nil
+}
 
-	// Validate agents block: defaults must be positive, ceiling >= default depth.
-	if cfg.Agents.DefaultMaxDepth < 0 {
+func validateAgents(a AgentsConfig) error {
+	if a.DefaultMaxDepth < 0 {
 		return errors.New("agents.default_max_depth must be >= 0")
 	}
-	if cfg.Agents.DepthCeiling < 0 {
+	if a.DepthCeiling < 0 {
 		return errors.New("agents.depth_ceiling must be >= 0")
 	}
-	if cfg.Agents.DefaultMaxTurns < 0 {
+	if a.DefaultMaxTurns < 0 {
 		return errors.New("agents.default_max_turns must be >= 0")
 	}
-	if cfg.Agents.DefaultTimeout < 0 {
+	if a.DefaultTimeout < 0 {
 		return errors.New("agents.default_timeout must be >= 0")
 	}
-	if cfg.Agents.DefaultMaxDepth > 0 && cfg.Agents.DepthCeiling > 0 &&
-		cfg.Agents.DefaultMaxDepth > cfg.Agents.DepthCeiling {
+	if a.DefaultMaxDepth > 0 && a.DepthCeiling > 0 && a.DefaultMaxDepth > a.DepthCeiling {
 		return fmt.Errorf("agents.default_max_depth (%d) must not exceed agents.depth_ceiling (%d)",
-			cfg.Agents.DefaultMaxDepth, cfg.Agents.DepthCeiling)
+			a.DefaultMaxDepth, a.DepthCeiling)
 	}
-	if cfg.Agents.MaxActiveChildren < 0 {
+	if a.MaxActiveChildren < 0 {
 		return errors.New("agents.max_active_children must be >= 0")
 	}
-	if cfg.Agents.MaxTotalChildren < 0 {
+	if a.MaxTotalChildren < 0 {
 		return errors.New("agents.max_total_children must be >= 0")
 	}
-	if cfg.Agents.MaxQueuedSpawns < 0 {
+	if a.MaxQueuedSpawns < 0 {
 		return errors.New("agents.max_queued_spawns must be >= 0")
 	}
-	if cfg.Agents.OrphanStaleAge < 0 {
+	if a.OrphanStaleAge < 0 {
 		return errors.New("agents.orphan_stale_age must be >= 0")
 	}
+	return nil
+}
 
-	// Validate updates.mode: warn (default), disabled, or auto (reserved, behaves as warn).
-	switch cfg.Updates.Mode {
+// validateUpdatesMode checks updates.mode: warn (default), disabled, or auto
+// (reserved, behaves as warn).
+func validateUpdatesMode(mode string) error {
+	switch mode {
 	case "":
 		// default
 	case "warn", "disabled":
 	case "auto":
 		slog.Warn("updates.mode 'auto' is reserved; behaving as 'warn'")
 	default:
-		return fmt.Errorf("updates.mode: unsupported mode %q (valid: warn, disabled, auto)", cfg.Updates.Mode)
+		return fmt.Errorf("updates.mode: unsupported mode %q (valid: warn, disabled, auto)", mode)
 	}
-
 	return nil
 }
 
