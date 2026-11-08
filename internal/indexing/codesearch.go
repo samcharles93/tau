@@ -93,8 +93,19 @@ func (m *Manager) Candidates(ctx context.Context, pattern string, literal, caseS
 		return nil, false
 	}
 
-	// The sidecar is a snapshot. Include files changed or created since the
-	// build began so indexed search cannot miss live workspace edits.
+	merged, ok := m.mergeCandidates(ctx, state.IndexedAt, files)
+	if !ok {
+		return nil, false
+	}
+	slices.Sort(merged)
+	return merged, true
+}
+
+// mergeCandidates merges the index candidates with live workspace files
+// changed or created since the index was built, confined to the workspace and
+// deduplicated. ok is false when the result is empty or exceeds the argv
+// budget (callers then fall back to a direct walk).
+func (m *Manager) mergeCandidates(ctx context.Context, indexedAt time.Time, files []string) ([]string, bool) {
 	workspaceFiles, err := WorkspaceFiles(ctx, m.root)
 	if err != nil {
 		return nil, false
@@ -121,14 +132,13 @@ func (m *Manager) Candidates(ctx context.Context, pattern string, literal, caseS
 	for _, path := range workspaceFiles {
 		info, statErr := os.Stat(path)
 		_, changed := changedFiles[path]
-		if statErr == nil && (changed || !info.ModTime().Before(state.IndexedAt)) {
+		if statErr == nil && (changed || !info.ModTime().Before(indexedAt)) {
 			add(path)
 		}
 	}
 	if len(merged) == 0 || len(merged) > MaxCandidateFiles || argumentBytes > maxCandidateArgBytes {
 		return nil, false
 	}
-	slices.Sort(merged)
 	return merged, true
 }
 
@@ -446,7 +456,7 @@ func WorkspaceFiles(ctx context.Context, root string) ([]string, error) {
 	var files []string
 	err = filepath.WalkDir(root, func(path string, entry os.DirEntry, walkErr error) error {
 		if walkErr != nil {
-			return nil
+			return nil //nolint:nilerr // skip inaccessible entry; WalkDir contract
 		}
 		if path != root && strings.HasPrefix(entry.Name(), ".") {
 			if entry.IsDir() {

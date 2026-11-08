@@ -297,22 +297,14 @@ func TestComputeSpawnDeadline_EarliestOfTimeoutAndBudget(t *testing.T) {
 	}
 
 	// budget.timeout shorter than the spec timeout wins.
-	args := agentToolArgs{Budget: &struct {
-		MaxTokens int    `json:"max_tokens"`
-		Timeout   string `json:"timeout"`
-		Deadline  string `json:"deadline"`
-	}{Timeout: "1m"}}
+	args := agentToolArgs{Budget: &agentBudgetArgs{Timeout: "1m"}}
 	got = computeSpawnDeadline(args, 5*time.Minute)
 	if got.After(time.Now().Add(90 * time.Second)) {
 		t.Errorf("budget.timeout should win over longer spec timeout: got %v", got)
 	}
 
 	// budget.deadline (absolute) earlier than the spec timeout wins.
-	args = agentToolArgs{Budget: &struct {
-		MaxTokens int    `json:"max_tokens"`
-		Timeout   string `json:"timeout"`
-		Deadline  string `json:"deadline"`
-	}{Deadline: time.Now().Add(30 * time.Second).Format(time.RFC3339)}}
+	args = agentToolArgs{Budget: &agentBudgetArgs{Deadline: time.Now().Add(30 * time.Second).Format(time.RFC3339)}}
 	got = computeSpawnDeadline(args, 5*time.Minute)
 	if got.After(time.Now().Add(90 * time.Second)) {
 		t.Errorf("budget.deadline should win over longer spec timeout: got %v", got)

@@ -77,7 +77,7 @@ func TestFirstRenderIsInline(t *testing.T) {
 }
 
 // TestUpdateUsesRelativePositioning is the regression test for the cursor-jump
-// bug: re-rendering after a content change must move the cursor only relative
+// defect: re-rendering after a content change must move the cursor only relative
 // to its current row (CUU/CUD), never via absolute positioning, so the frame
 // stays where it was first drawn.
 func TestUpdateUsesRelativePositioning(t *testing.T) {

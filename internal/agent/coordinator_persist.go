@@ -37,7 +37,7 @@ func (c *Coordinator) persistDefaultsOnUpdate(patch chat.ChatSessionPatch, snaps
 	}
 }
 
-func (c *Coordinator) handleListSessions(cmd chat.ListSessionsCommand) {
+func (c *Coordinator) handleListSessions(ctx context.Context, cmd chat.ListSessionsCommand) {
 	if c.sessionManager == nil {
 		c.emit(chat.ChatNotificationEvent{
 			Message:    "Session persistence is not available",
@@ -47,7 +47,7 @@ func (c *Coordinator) handleListSessions(cmd chat.ListSessionsCommand) {
 		return
 	}
 
-	ctx, cancel := context.WithTimeout(c.ctx, 5*time.Second)
+	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
 
 	summaries, nextCursor, err := c.sessionManager.List(ctx, cmd.Limit, cmd.Cursor)
@@ -72,7 +72,7 @@ const searchDefaultLimit = 20
 
 // handleSearchSessions runs a full-text search over saved session messages.
 // The cursor is an opaque decimal hit offset, mirroring List's pagination.
-func (c *Coordinator) handleSearchSessions(cmd chat.SearchSessionsCommand) {
+func (c *Coordinator) handleSearchSessions(ctx context.Context, cmd chat.SearchSessionsCommand) {
 	if c.sessionManager == nil {
 		c.emit(chat.ChatNotificationEvent{
 			Message:    "Session persistence is not available",
@@ -103,7 +103,7 @@ func (c *Coordinator) handleSearchSessions(cmd chat.SearchSessionsCommand) {
 		limit = searchDefaultLimit
 	}
 
-	ctx, cancel := context.WithTimeout(c.ctx, 5*time.Second)
+	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
 	// Fetch one extra row to detect a next page, mirroring List.
 	hits, err := c.sessionManager.Search(ctx, cmd.Query, limit+1, offset)
@@ -128,7 +128,7 @@ func (c *Coordinator) handleSearchSessions(cmd chat.SearchSessionsCommand) {
 	})
 }
 
-func (c *Coordinator) handleLoadSession(cmd chat.LoadSessionCommand) {
+func (c *Coordinator) handleLoadSession(ctx context.Context, cmd chat.LoadSessionCommand) {
 	if c.sessionManager == nil {
 		c.emit(chat.ChatRuntimeErrorEvent{
 			Message:    "Session persistence is not available",
@@ -156,7 +156,7 @@ func (c *Coordinator) handleLoadSession(cmd chat.LoadSessionCommand) {
 	}
 	c.mu.Unlock()
 
-	ctx, cancel := context.WithTimeout(c.ctx, 10*time.Second)
+	ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
 	defer cancel()
 
 	loaded, err := c.sessionManager.Load(ctx, cmd.SessionID, runtimeCfg)
@@ -183,7 +183,7 @@ func (c *Coordinator) handleLoadSession(cmd chat.LoadSessionCommand) {
 // handleLoadChildTranscript loads a finished child agent's session for
 // read-only drill-down. Unlike handleLoadSession, it never touches
 // c.sessions - the child is never the runtime's active session.
-func (c *Coordinator) handleLoadChildTranscript(cmd chat.LoadChildTranscriptCommand) {
+func (c *Coordinator) handleLoadChildTranscript(ctx context.Context, cmd chat.LoadChildTranscriptCommand) {
 	if c.sessionManager == nil {
 		c.emit(chat.ChatRuntimeErrorEvent{
 			SessionID:  cmd.SessionID,
@@ -194,7 +194,7 @@ func (c *Coordinator) handleLoadChildTranscript(cmd chat.LoadChildTranscriptComm
 		return
 	}
 
-	ctx, cancel := context.WithTimeout(c.ctx, 10*time.Second)
+	ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
 	defer cancel()
 
 	loaded, err := c.sessionManager.Load(ctx, cmd.SessionID, nil)
@@ -214,7 +214,7 @@ func (c *Coordinator) handleLoadChildTranscript(cmd chat.LoadChildTranscriptComm
 	})
 }
 
-func (c *Coordinator) handleDeleteSession(cmd chat.DeleteSessionCommand) {
+func (c *Coordinator) handleDeleteSession(ctx context.Context, cmd chat.DeleteSessionCommand) {
 	if c.sessionManager == nil {
 		c.emit(chat.ChatRuntimeErrorEvent{
 			Message:    "Session persistence is not available",
@@ -224,7 +224,7 @@ func (c *Coordinator) handleDeleteSession(cmd chat.DeleteSessionCommand) {
 		return
 	}
 
-	ctx, cancel := context.WithTimeout(c.ctx, 5*time.Second)
+	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
 
 	if err := c.sessionManager.Delete(ctx, cmd.SessionID); err != nil {
@@ -251,7 +251,7 @@ func (c *Coordinator) handleDeleteSession(cmd chat.DeleteSessionCommand) {
 	c.emit(chat.SessionDeletedEvent(cmd))
 }
 
-func (c *Coordinator) handleExportSession(cmd chat.ExportSessionCommand) {
+func (c *Coordinator) handleExportSession(ctx context.Context, cmd chat.ExportSessionCommand) {
 	if c.sessionManager == nil {
 		c.emit(chat.ChatRuntimeErrorEvent{
 			Message:    "Session persistence is not available",
@@ -262,7 +262,7 @@ func (c *Coordinator) handleExportSession(cmd chat.ExportSessionCommand) {
 	}
 
 	format := chat.NormalizeExportFormat(cmd.Format)
-	ctx, cancel := context.WithTimeout(c.ctx, 30*time.Second)
+	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
 
 	// With no output file the rendered payload is collected for the event;
@@ -292,7 +292,7 @@ func (c *Coordinator) handleExportSession(cmd chat.ExportSessionCommand) {
 // persistSession saves the session state to the store. It is called on graceful
 // close and on forced shutdown. Errors are logged but not surfaced to the TUI -
 // persistence is best-effort.
-func (c *Coordinator) persistSession(state chat.ChatSessionState, duration time.Duration) {
+func (c *Coordinator) persistSession(ctx context.Context, state chat.ChatSessionState, duration time.Duration) {
 	if c.sessionManager == nil || c.noPersist {
 		return
 	}
@@ -303,10 +303,10 @@ func (c *Coordinator) persistSession(state chat.ChatSessionState, duration time.
 		return
 	}
 
-	// Deliberately not c.ctx: this runs from cancelAllSessions on the
-	// c.ctx.Done() shutdown path, so a context derived from c.ctx would
-	// already be cancelled and the final save would never happen.
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	// Runs from cancelAllSessions on the shutdown path, where the passed-in
+	// ctx is already cancelled - detach cancellation so the final save can
+	// still happen (WithoutCancel keeps values, drops the Done channel).
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 10*time.Second)
 	defer cancel()
 
 	if err := c.sessionManager.Save(ctx, state, duration); err != nil {
@@ -332,7 +332,7 @@ func (c *Coordinator) persistSession(state chat.ChatSessionState, duration time.
 	// and the caller closes the session store (tau-eub).
 	c.exportWG.Go(func() {
 		exportPath := c.sessionManager.SessionJSONLPath(state.SessionID, state.CreatedAt)
-		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 30*time.Second)
 		defer cancel()
 		if err := c.sessionManager.ExportToJSONL(ctx, state.SessionID, exportPath); err != nil {
 			c.loggerWith(state.SessionID).Warn(

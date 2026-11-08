@@ -48,7 +48,7 @@ func TestCoordinatorSubagentToolResolvesSessionModel(t *testing.T) {
 			Model:    chat.ChatModelRef{ID: "test-model", URL: "https://example.test"},
 		},
 	}))
-	drainUntil(t, sub, time.Second, func(e chat.ChatEvent) bool {
+	drainUntil[chat.ChatSessionSnapshotEvent](t, sub, time.Second, func(e chat.ChatEvent) bool {
 		snap, ok := e.(chat.ChatSessionSnapshotEvent)
 		return ok && snap.State.SessionID == sessionID
 	})

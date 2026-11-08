@@ -46,18 +46,7 @@ func (m *model) dispatchKey(msg tea.KeyPressMsg) tea.Cmd {
 	if cmd, ok := m.dispatchExclusiveOverlayKey(msg); ok {
 		return cmd
 	}
-
-	// Pure cursor-movement keys don't edit the buffer, so they'd otherwise
-	// leave a stale selection highlighted while the cursor visibly moves
-	// away from it. Insert/backspace/delete consume the selection
-	// themselves (deleteInputSelection) and must NOT be cleared here first.
-	if m.inputSel.armed() {
-		switch msg.String() {
-		case "up", "down", "left", "right", "home", "end",
-			"ctrl+a", "ctrl+e", "ctrl+left", "ctrl+right", "alt+left", "alt+right":
-			m.inputSel.clear()
-		}
-	}
+	m.clearInputSelOnCursorMove(msg)
 
 	// The completions dropdown gets first refusal on every keystroke while
 	// visible - matches taui's OverlayStack precedence (a "soft" overlay
@@ -67,176 +56,202 @@ func (m *model) dispatchKey(msg tea.KeyPressMsg) tea.Cmd {
 		return cmd
 	}
 
-	switch msg.String() {
-	case "ctrl+c":
-		return m.handleCtrlC()
+	if cmd, handled := m.dispatchActionKey(msg); handled {
+		return cmd
+	}
+	if cmd, handled := m.dispatchViewKey(msg); handled {
+		return cmd
+	}
+	if cmd, handled := m.dispatchVerticalKey(msg); handled {
+		return cmd
+	}
+	if cmd, handled := m.dispatchToggleKey(msg); handled {
+		return cmd
+	}
+	if cmd, handled := m.dispatchSubmitKey(msg); handled {
+		return cmd
+	}
+	if cmd, handled := m.dispatchCursorKey(msg); handled {
+		return cmd
+	}
+	return m.dispatchEditKey(msg)
+}
 
-	case "ctrl+d":
-		if m.input == "" {
-			return tea.Quit
+// clearInputSelOnCursorMove clears a stale input selection when a pure
+// cursor-movement key arrives (those keys don't edit the buffer, so they'd
+// otherwise leave the selection highlighted while the cursor visibly moves
+// away from it). Insert/backspace/delete consume the selection themselves
+// (deleteInputSelection) and must NOT be cleared here first.
+func (m *model) clearInputSelOnCursorMove(msg tea.KeyPressMsg) {
+	if !m.inputSel.armed() {
+		return
+	}
+	switch msg.String() {
+	case "up", "down", "left", "right", "home", "end",
+		"ctrl+a", "ctrl+e", "ctrl+left", "ctrl+right", "alt+left", "alt+right":
+		m.inputSel.clear()
+	}
+}
+
+// handleCtrlRKey implements Ctrl+R: in peek mode while reasoning is still
+// streaming, widen the live tail to the full trace (and back) for the rest
+// of this turn; otherwise toggle the reasoning block from the turn that just
+// finished (a no-op while reasoning is off, before any turn has completed,
+// or while the current turn's reasoning is still streaming).
+func (m *model) handleCtrlRKey() tea.Cmd { // In peek mode, while reasoning is still streaming, widen the live
+	// tail to the full trace (and back) for the rest of this turn.
+	if m.reasoningPeek && m.reasoning != "" {
+		m.peekExpanded = !m.peekExpanded
+		return nil
+	}
+	// Otherwise toggle the reasoning block from the turn that just finished -
+	// there's no per-block focus-navigation the way tools have
+	// (focusNextTool), so this always reaches the most recent one
+	// (m.lastReasoningKey). A no-op while reasoning is off, before any
+	// turn has completed, or while the current turn's reasoning is
+	// still streaming (nothing committed yet to toggle).
+	if m.showReasoning && m.lastReasoningKey != "" {
+		if m.toggleReasoningBlock(m.lastReasoningKey) {
+			m.clearAllSelections()
 		}
+	}
+	return nil
+}
+
+// handleEscKey implements Esc: cancel a running bash command, clear any
+// armed selection, step out of an expanded/focused tool, or clear the
+// input - in that order.
+func (m *model) handleEscKey() tea.Cmd {
+	if m.bashRunning {
+		return m.cancelBash()
+	}
+	if m.viewportSel.armed() || m.inputSel.armed() || m.statusSel.armed() || m.toolsSel.armed() {
+		m.clearAllSelections()
+		return nil
+	}
+	// Phase 1: collapse expanded tool or clear tool focus before
+	// clearing input, so Esc steps out of tool interaction first.
+	if m.expandedID != "" {
+		m.expandedID = ""
+		return nil
+	}
+	if m.focusedTool >= 0 {
+		m.focusedTool = -1
+		return nil
+	}
+	if m.input != "" {
 		m.clearInput()
 		return nil
+	}
+	return nil
+}
 
+// dispatchActionKey handles the app-level action bindings (quit/steer/paste/copy, scroll, palette/help openers, Ctrl+R peek toggle, Esc). Returns (cmd, handled).
+// dispatchActionKey handles the turn-level action bindings (Ctrl+C/D/S/V, copy, Ctrl+R peek toggle, Esc). Returns (cmd, handled).
+func (m *model) dispatchActionKey(msg tea.KeyPressMsg) (tea.Cmd, bool) {
+	switch msg.String() {
+	case "ctrl+c":
+		return m.handleCtrlC(), true
+	case "ctrl+d":
+		if m.input == "" {
+			return tea.Quit, true
+		}
+		m.clearInput()
+		return nil, true
 	case "ctrl+s":
-		return m.handleSteer()
-
+		return m.handleSteer(), true
 	case "ctrl+v":
 		// Fallback for terminals that don't deliver bracketed pastes for
 		// ctrl+v: ask for the clipboard via OSC 52; the ClipboardMsg reply
 		// is routed through the same image-aware handlePaste. Terminals
 		// with bracketed paste never send this key (it arrives as a
 		// PasteMsg instead), so the two paths don't double-insert.
-		return tea.ReadClipboard
-
+		return tea.ReadClipboard, true
 	case "ctrl+shift+g":
-		return m.cmdCopy("")
-
+		return m.cmdCopy(""), true
 	case "ctrl+r":
-		// In peek mode, while reasoning is still streaming, widen the live
-		// tail to the full trace (and back) for the rest of this turn.
-		if m.reasoningPeek && m.reasoning != "" {
-			m.peekExpanded = !m.peekExpanded
-			return nil
-		}
-		// Otherwise toggle the reasoning block from the turn that just finished -
-		// there's no per-block focus-navigation the way tools have
-		// (focusNextTool), so this always reaches the most recent one
-		// (m.lastReasoningKey). A no-op while reasoning is off, before any
-		// turn has completed, or while the current turn's reasoning is
-		// still streaming (nothing committed yet to toggle).
-		if m.showReasoning && m.lastReasoningKey != "" {
-			if m.toggleReasoningBlock(m.lastReasoningKey) {
-				m.clearAllSelections()
-			}
-		}
-		return nil
+		return m.handleCtrlRKey(), true
+	case "esc":
+		return m.handleEscKey(), true
+	}
+	return nil, false
+}
 
+// dispatchViewKey handles the view bindings: viewport scrolling (pgup/pgdown/home/end), clear screen, and the palette/help/session-tree openers. Returns (cmd, handled).
+func (m *model) dispatchViewKey(msg tea.KeyPressMsg) (tea.Cmd, bool) {
+	switch msg.String() {
 	case "pgup":
 		m.viewport.HalfPageUp()
 		m.autoFollow = false
-		return nil
-
+		return nil, true
 	case "pgdown":
 		m.viewport.HalfPageDown()
 		if m.viewport.AtBottom() {
 			m.autoFollow = true
 		}
-		return nil
-
+		return nil, true
 	case "ctrl+home":
 		m.viewport.GotoTop()
 		m.autoFollow = false
-		return nil
-
+		return nil, true
 	case "ctrl+end":
 		m.viewport.GotoBottom()
 		m.autoFollow = true
-		return nil
-
+		return nil, true
 	case "ctrl+shift+l":
 		m.clearScreen()
-		return nil
-
+		return nil, true
 	case "ctrl+p":
-		return m.openCommandPalette()
-
+		return m.openCommandPalette(), true
 	case "ctrl+l":
-		return m.openModelPalette()
-
+		return m.openModelPalette(), true
 	case "ctrl+o":
-		return m.openSessionTree()
-
+		return m.openSessionTree(), true
 	case "ctrl+?", "ctrl+shift+/":
-		return m.cmdHelp("")
+		return m.cmdHelp(""), true
+	}
+	return nil, false
+}
 
-	case "esc":
-		if m.bashRunning {
-			return m.cancelBash()
-		}
-		if m.viewportSel.armed() || m.inputSel.armed() || m.statusSel.armed() || m.toolsSel.armed() {
-			m.clearAllSelections()
-			return nil
-		}
-		// Phase 1: collapse expanded tool or clear tool focus before
-		// clearing input, so Esc steps out of tool interaction first.
-		if m.expandedID != "" {
-			m.expandedID = ""
-			return nil
-		}
-		if m.focusedTool >= 0 {
-			m.focusedTool = -1
-			return nil
-		}
-		if m.input != "" {
-			m.clearInput()
-			return nil
-		}
-		return nil
-
-	// Up/Down recall history from the first/last logical line, and move the
-	// cursor vertically within a multi-line buffer otherwise - matching
-	// pkg/taui/lineinput.go's atFirstLineStart/atLastLineEnd gate.
-	// Phase 1: when input is empty and history is exhausted, Up/Down navigate
-	// tool focus among completed tools.
+// dispatchVerticalKey handles Up/Down: history recall at the first/last logical line, tool-focus navigation when history is exhausted, vertical cursor movement otherwise. Returns (cmd, handled).
+func (m *model) dispatchVerticalKey(msg tea.KeyPressMsg) (tea.Cmd, bool) {
+	switch msg.String() {
 	case "up":
+
+		// Up/Down recall history from the first/last logical line, and move the
+		// cursor vertically within a multi-line buffer otherwise - matching
+		// pkg/taui/lineinput.go's atFirstLineStart/atLastLineEnd gate.
+		// Phase 1: when input is empty and history is exhausted, Up/Down navigate
+		// tool focus among completed tools.
+
 		if m.atFirstLineStart() {
 			m.recallHistory(-1)
 			// No history to recall - navigate tool focus.
 			if m.shouldNavigateTools() {
 				m.focusNextTool(-1)
 			}
-			return nil
+			return nil, true
 		}
 		m.moveCursorVert(-1)
-		return nil
+		return nil, true
 	case "down":
 		if m.atLastLineEnd() {
 			m.recallHistory(1)
 			if m.shouldNavigateTools() {
 				m.focusNextTool(1)
 			}
-			return nil
+			return nil, true
 		}
 		m.moveCursorVert(1)
-		return nil
+		return nil, true
+	}
+	return nil, false
+}
 
-	case "left":
-		m.moveCursorLeft()
-		return nil
-	case "right":
-		m.moveCursorRight()
-		return nil
-	case "ctrl+left", "alt+left":
-		m.inputCursor = m.wordLeft()
-		return nil
-	case "ctrl+right", "alt+right":
-		m.inputCursor = m.wordRight()
-		return nil
-	case "home", "ctrl+a":
-		m.inputCursor = 0
-		return nil
-	case "end", "ctrl+e":
-		m.inputCursor = utf8.RuneCountInString(m.input)
-		return nil
-
-	case "ctrl+u":
-		m.killToLineStart()
-		return nil
-	case "ctrl+k":
-		m.killToLineEnd()
-		return nil
-	// Most terminals send ^H for Ctrl+Backspace unless an enhanced keyboard
-	// protocol is active, which Bubble Tea reports as ctrl+h.
-	case "ctrl+w", "ctrl+backspace", "ctrl+h", "alt+backspace":
-		m.deleteWordBeforeCursor()
-		return nil
-
-	// Shift+Enter/Ctrl+J inserts a newline; bare Enter submits.
-	case "shift+enter", "ctrl+j":
-		m.insertAtCursor("\n")
-		return nil
-
+// dispatchToggleKey handles Tab/Shift+Tab/Enter/Space: tool-focus and child cycling, input-mode cycling, tool expansion, transcript drill-down, submit. Returns (cmd, handled).
+// dispatchToggleKey handles Tab/Shift+Tab: tool-focus and child cycling, input-mode cycling. Returns (cmd, handled).
+func (m *model) dispatchToggleKey(msg tea.KeyPressMsg) (tea.Cmd, bool) {
+	switch msg.String() {
 	case "tab":
 		// Tab is only meaningful while the completions dropdown is visible
 		// (handleCompletionKey, checked before this switch, handles that
@@ -250,39 +265,93 @@ func (m *model) dispatchKey(msg tea.KeyPressMsg) tea.Cmd {
 				m.focusNextChild(1)
 			}
 		}
-		return nil
-
+		return nil, true
 	case "shift+tab":
 		m.cycleInputMode()
-		return nil
+		return nil, true
+	}
+	return nil, false
+}
 
+// dispatchSubmitKey handles Enter/Space: tool expansion on a focused tool, child transcript drill-down, insert-space, or submit. Returns (cmd, handled).
+func (m *model) dispatchSubmitKey(msg tea.KeyPressMsg) (tea.Cmd, bool) {
+	switch msg.String() {
 	case "enter":
 		// Phase 1: toggle tool expansion when a tool is focused.
 		if m.focusedTool >= 0 && m.input == "" && !m.inResponse() && m.activePrompt == nil {
-			return m.toggleToolExpansion()
+			return m.toggleToolExpansion(), true
 		}
 		// Drill down into a focused finished child agent's transcript.
 		if m.focusedChild >= 0 && m.input == "" && !m.inResponse() && m.activePrompt == nil {
-			return m.openChildTranscriptViewer(m.childAgentOrder[m.focusedChild])
+			return m.openChildTranscriptViewer(m.childAgentOrder[m.focusedChild]), true
 		}
-		return m.submitInput()
-
+		return m.submitInput(), true
 	case "space":
 		// Space also toggles expansion on a focused tool; otherwise it's a
 		// normal printable character handled by the default case below.
 		if m.focusedTool >= 0 && m.input == "" && !m.inResponse() && m.activePrompt == nil {
-			return m.toggleToolExpansion()
+			return m.toggleToolExpansion(), true
 		}
 		m.insertAtCursor(" ")
-		return nil
+		return nil, true
+	}
+	return nil, false
+}
 
+// dispatchCursorKey handles pure cursor movement within the input buffer. Returns (cmd, handled).
+func (m *model) dispatchCursorKey(msg tea.KeyPressMsg) (tea.Cmd, bool) {
+	switch msg.String() {
+	case "left":
+		m.moveCursorLeft()
+		return nil, true
+	case "right":
+		m.moveCursorRight()
+		return nil, true
+	case "ctrl+left", "alt+left":
+		m.inputCursor = m.wordLeft()
+		return nil, true
+	case "ctrl+right", "alt+right":
+		m.inputCursor = m.wordRight()
+		return nil, true
+	case "home", "ctrl+a":
+		m.inputCursor = 0
+		return nil, true
+	case "end", "ctrl+e":
+		m.inputCursor = utf8.RuneCountInString(m.input)
+		return nil, true
+	}
+	return nil, false
+}
+
+// dispatchEditKey handles buffer-editing keys (kill to line start/end, kill
+// word, newline, backspace/delete) and, by default, printable-character
+// insertion. Always consumes the key (returns nil when it was a no-op).
+func (m *model) dispatchEditKey(msg tea.KeyPressMsg) tea.Cmd {
+	switch msg.String() {
+	case "ctrl+u":
+		m.killToLineStart()
+		return nil
+	case "ctrl+k":
+		m.killToLineEnd()
+		return nil
+	case "ctrl+w", "ctrl+backspace", "ctrl+h", "alt+backspace":
+		// Most terminals send ^H for Ctrl+Backspace unless an enhanced keyboard
+		// protocol is active, which Bubble Tea reports as ctrl+h.
+
+		m.deleteWordBeforeCursor()
+		return nil
+	case "shift+enter", "ctrl+j":
+
+		// Shift+Enter/Ctrl+J inserts a newline; bare Enter submits.
+
+		m.insertAtCursor("\n")
+		return nil
 	case "backspace":
 		m.backspaceAtCursor()
 		return nil
 	case "delete":
 		m.deleteAtCursor()
 		return nil
-
 	default:
 		// Append printable characters using rune-based check so multi-byte
 		// UTF-8 (accented chars, emoji, CJK) is not silently dropped (N3).

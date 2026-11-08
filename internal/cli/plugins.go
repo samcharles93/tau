@@ -100,77 +100,93 @@ func pluginSearchCmd() *urfavecli.Command {
 
 func pluginInfoCmd() *urfavecli.Command {
 	return &urfavecli.Command{
-		Name:  "info",
-		Usage: "Show details for a plugin",
-		Action: func(ctx context.Context, cmd *urfavecli.Command) error {
-			if cmd.Args().Len() == 0 {
-				return fmt.Errorf("plugin ID is required: tau plugin info <id>")
-			}
-			id := cmd.Args().First()
-
-			client, err := newRegistryClient()
-			if err != nil {
-				return err
-			}
-
-			ext, err := client.GetExtension(ctx, id)
-			if err != nil {
-				if registry.IsNotFound(err) {
-					return fmt.Errorf("plugin %q not found in registry", id)
-				}
-				return fmt.Errorf("fetch plugin: %w", err)
-			}
-
-			fmt.Printf("  %s\n", ext.Name)
-			fmt.Printf("  %s\n\n", strings.Repeat("─", len(ext.Name)+2))
-			fmt.Printf("  ID:          %s\n", ext.ID)
-			fmt.Printf("  Author:      %s\n", ext.Author)
-			if ext.Category != "" {
-				fmt.Printf("  Category:    %s\n", ext.Category)
-			}
-			fmt.Printf("  Repo:        github.com/%s\n", ext.Repo)
-			if ext.License != "" {
-				fmt.Printf("  License:     %s\n", ext.License)
-			}
-			if ext.Homepage != "" {
-				fmt.Printf("  Homepage:    %s\n", ext.Homepage)
-			}
-			if ext.Verified {
-				fmt.Printf("  Status:      ✓ Verified\n")
-			}
-			fmt.Printf("  Downloads:   %d\n", ext.Downloads)
-			if len(ext.Tags) > 0 {
-				fmt.Printf("  Tags:        %s\n", strings.Join(ext.Tags, ", "))
-			}
-			if ext.MinTauVersion != "" {
-				fmt.Printf("  Min tau:     %s\n", ext.MinTauVersion)
-			}
-			fmt.Printf("\n  %s\n\n", ext.Description)
-
-			// Show installed status.
-			if plugin.IsInstalled(id) {
-				fmt.Println("  Status:      ✓ installed")
-			} else {
-				fmt.Println("  Status:      not installed")
-			}
-
-			// Show versions and platforms.
-			versions, err := client.ListVersions(ctx, id)
-			if err != nil {
-				return nil // non-fatal
-			}
-			if len(versions) > 0 {
-				fmt.Println("\n  Versions:")
-				for _, v := range versions {
-					platforms := platformList(ctx, client, id, v.Version)
-					fmt.Printf("    v%-12s  %s\n", v.Version, strings.Join(platforms, "  "))
-				}
-			}
-
-			fmt.Printf("\n  Install:  tau plugin install %s\n", ext.ID)
-			return nil
-		},
+		Name:   "info",
+		Usage:  "Show details for a plugin",
+		Action: runPluginInfo,
 	}
+}
+
+func runPluginInfo(ctx context.Context, cmd *urfavecli.Command) error {
+	if cmd.Args().Len() == 0 {
+		return fmt.Errorf("plugin ID is required: tau plugin info <id>")
+	}
+	id := cmd.Args().First()
+
+	client, err := newRegistryClient()
+	if err != nil {
+		return err
+	}
+
+	ext, err := client.GetExtension(ctx, id)
+	if err != nil {
+		if registry.IsNotFound(err) {
+			return fmt.Errorf("plugin %q not found in registry", id)
+		}
+		return fmt.Errorf("fetch plugin: %w", err)
+	}
+
+	printExtensionDetails(ext, id)
+	if !printExtensionVersions(ctx, client, id) {
+		return nil
+	}
+
+	fmt.Printf("\n  Install:  tau plugin install %s\n", ext.ID)
+	return nil
+}
+
+// printExtensionDetails prints the header block and metadata for a plugin.
+func printExtensionDetails(ext *registry.ExtensionDetail, id string) {
+	fmt.Printf("  %s\n", ext.Name)
+	fmt.Printf("  %s\n\n", strings.Repeat("─", len(ext.Name)+2))
+	fmt.Printf("  ID:          %s\n", ext.ID)
+	fmt.Printf("  Author:      %s\n", ext.Author)
+	if ext.Category != "" {
+		fmt.Printf("  Category:    %s\n", ext.Category)
+	}
+	fmt.Printf("  Repo:        github.com/%s\n", ext.Repo)
+	if ext.License != "" {
+		fmt.Printf("  License:     %s\n", ext.License)
+	}
+	if ext.Homepage != "" {
+		fmt.Printf("  Homepage:    %s\n", ext.Homepage)
+	}
+	if ext.Verified {
+		fmt.Printf("  Status:      ✓ Verified\n")
+	}
+	fmt.Printf("  Downloads:   %d\n", ext.Downloads)
+	if len(ext.Tags) > 0 {
+		fmt.Printf("  Tags:        %s\n", strings.Join(ext.Tags, ", "))
+	}
+	if ext.MinTauVersion != "" {
+		fmt.Printf("  Min tau:     %s\n", ext.MinTauVersion)
+	}
+	fmt.Printf("\n  %s\n\n", ext.Description)
+
+	// Show installed status.
+	if plugin.IsInstalled(id) {
+		fmt.Println("  Status:      ✓ installed")
+	} else {
+		fmt.Println("  Status:      not installed")
+	}
+}
+
+// printExtensionVersions prints the available versions and their platforms.
+// A failing version list is non-fatal: it must not abort the whole listing,
+// so it reports false and the caller stops before the install hint.
+func printExtensionVersions(ctx context.Context, client *registry.Client, id string) bool {
+	versions, err := client.ListVersions(ctx, id)
+	if err != nil {
+		return false //nolint:nilerr // non-fatal: one plugin's version list failing must not abort the whole listing
+	}
+	if len(versions) == 0 {
+		return true
+	}
+	fmt.Println("\n  Versions:")
+	for _, v := range versions {
+		platforms := platformList(ctx, client, id, v.Version)
+		fmt.Printf("    v%-12s  %s\n", v.Version, strings.Join(platforms, "  "))
+	}
+	return true
 }
 
 func pluginInstallCmd() *urfavecli.Command {

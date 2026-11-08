@@ -21,7 +21,7 @@ import (
 
 // model is the root Bubbletea model for the chat TUI.
 type model struct {
-	ctx     context.Context
+	ctx     context.Context //nolint:containedctx // app-lifetime context owned by the Bubbletea program
 	runtime tauchat.ChatRuntime
 	chatSub *eventbus.Subscriber[tauchat.ChatEvent]
 
@@ -420,151 +420,171 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	if _, ok := msg.(tea.QuitMsg); ok {
 		return m, nil
 	}
+	if cmd, ok := m.handleWindowSizeMsg(msg); ok {
+		return m, cmd
+	}
+	if cmd, ok := m.handleMouseMsg(msg); ok {
+		return m, cmd
+	}
+	if cmd, ok := m.handleInputMsg(msg); ok {
+		return m, cmd
+	}
+	if cmd, ok := m.handleChatStreamMsg(msg); ok {
+		return m, cmd
+	}
+	if cmd, ok := m.handleProviderMsg(msg); ok {
+		return m, cmd
+	}
+	if cmd, ok := m.handleResultMsg(msg); ok {
+		return m, cmd
+	}
+	return m, nil
+}
 
+// handleWindowSizeMsg applies terminal resize: viewport bounds, glamour renderer rebuild, child-transcript overlay resize. Returns (cmd, true) when the message was handled.
+func (m *model) handleWindowSizeMsg(msg tea.Msg) (tea.Cmd, bool) {
+	sz, ok := msg.(tea.WindowSizeMsg)
+	if !ok {
+		return nil, false
+	}
+	m.width = sz.Width
+	m.height = sz.Height
+	m.viewport.SetWidth(sz.Width)
+	// Alt-screen layout: the viewport shares the terminal with the fixed
+	// chrome (separator, padded input box, status bar). The actual space
+	// left for the viewport is recomputed every frame in View(); here we
+	// just store an upper-bound estimate for tests and sanity checks.
+	inputLines := max(strings.Count(m.input, "\n")+1, 1)
+	reserved := 1 + inputLines + 4 + 1 // separator + input box + status
+	m.maxViewportHeight = max(sz.Height-reserved, 4)
+	m.viewport.SetHeight(m.maxViewportHeight)
+	// Rebuild the glamour renderer with the new terminal width so
+	// subsequent finalized messages don't wrap at a stale column.
+	ensureMDRenderer(m.mdCache, sz.Width)
+	// Resize the child transcript overlay's viewport too, if open - the
+	// diff viewer has this gap (its viewport is fixed at open-time), but
+	// it's cheap to avoid here so a resize while drilled in doesn't leave
+	// a stale-sized box.
+	if m.childTranscriptViewer != nil {
+		boxW := max(20, int(float64(m.width)*diffViewerWidthFrac))
+		boxH := max(10, int(float64(m.height)*diffViewerHeightFrac))
+		m.childTranscriptViewer.viewport.SetWidth(max(20, boxW-4))
+		m.childTranscriptViewer.viewport.SetHeight(max(3, boxH-6))
+	}
+	return nil, true
+}
+
+// handleMouseMsg routes mouse wheel (scroll/help-overlay) and left/right click/drag/release. Returns (cmd, true) when the message was handled.
+func (m *model) handleMouseMsg(msg tea.Msg) (tea.Cmd, bool) {
+	mm, ok := msg.(tea.MouseMsg)
+	if !ok {
+		return nil, false
+	}
+	mev := mm.Mouse()
+	switch mev.Button {
+	case tea.MouseWheelUp:
+		if m.helpOverlay != nil {
+			m.helpOverlay.scrollOffset -= 3
+			break
+		}
+		m.viewport.ScrollUp(3)
+		m.autoFollow = false
+	case tea.MouseWheelDown:
+		if m.helpOverlay != nil {
+			m.helpOverlay.scrollOffset += 3
+			break
+		}
+		m.viewport.ScrollDown(3)
+		if m.viewport.AtBottom() {
+			m.autoFollow = true
+		}
+	case tea.MouseLeft:
+		switch mm.(type) {
+		case tea.MouseClickMsg:
+			return m.handleMousePress(mev.X, mev.Y), true
+		case tea.MouseMotionMsg:
+			m.handleMouseDrag(mev.X, mev.Y)
+		case tea.MouseReleaseMsg:
+			return m.handleMouseRelease(), true
+		}
+	case tea.MouseRight:
+		if _, ok := mm.(tea.MouseClickMsg); ok {
+			// Right-click keeps its existing "copy my selection"
+			// behavior; only when nothing is selected does it fall
+			// through to opening a context menu at the click.
+			if cmd := m.copyActiveSelection(); cmd != nil {
+				return cmd, true
+			}
+			m.openContextMenuAt(mev.X, mev.Y)
+		}
+	}
+
+	return nil, true
+}
+
+// handleInputMsg handles paste, clipboard reply, focus/blur, and key press/release. Returns (cmd, true) when the message was handled.
+func (m *model) handleInputMsg(msg tea.Msg) (tea.Cmd, bool) {
 	switch msg := msg.(type) {
-	case tea.WindowSizeMsg:
-		m.width = msg.Width
-		m.height = msg.Height
-		m.viewport.SetWidth(msg.Width)
-		// Alt-screen layout: the viewport shares the terminal with the fixed
-		// chrome (separator, padded input box, status bar). The actual space
-		// left for the viewport is recomputed every frame in View(); here we
-		// just store an upper-bound estimate for tests and sanity checks.
-		inputLines := max(strings.Count(m.input, "\n")+1, 1)
-		reserved := 1 + inputLines + 4 + 1 // separator + input box + status
-		m.maxViewportHeight = max(msg.Height-reserved, 4)
-		m.viewport.SetHeight(m.maxViewportHeight)
-		// Rebuild the glamour renderer with the new terminal width so
-		// subsequent finalized messages don't wrap at a stale column.
-		ensureMDRenderer(m.mdCache, msg.Width)
-		// Resize the child transcript overlay's viewport too, if open - the
-		// diff viewer has this gap (its viewport is fixed at open-time), but
-		// it's cheap to avoid here so a resize while drilled in doesn't leave
-		// a stale-sized box.
-		if m.childTranscriptViewer != nil {
-			boxW := max(20, int(float64(m.width)*diffViewerWidthFrac))
-			boxH := max(10, int(float64(m.height)*diffViewerHeightFrac))
-			m.childTranscriptViewer.viewport.SetWidth(max(20, boxW-4))
-			m.childTranscriptViewer.viewport.SetHeight(max(3, boxH-6))
-		}
-		return m, nil
-
-	case tea.MouseMsg:
-		mev := msg.Mouse()
-		switch mev.Button {
-		case tea.MouseWheelUp:
-			if m.helpOverlay != nil {
-				m.helpOverlay.scrollOffset -= 3
-				break
-			}
-			m.viewport.ScrollUp(3)
-			m.autoFollow = false
-		case tea.MouseWheelDown:
-			if m.helpOverlay != nil {
-				m.helpOverlay.scrollOffset += 3
-				break
-			}
-			m.viewport.ScrollDown(3)
-			if m.viewport.AtBottom() {
-				m.autoFollow = true
-			}
-		case tea.MouseLeft:
-			switch msg.(type) {
-			case tea.MouseClickMsg:
-				return m, m.handleMousePress(mev.X, mev.Y)
-			case tea.MouseMotionMsg:
-				m.handleMouseDrag(mev.X, mev.Y)
-			case tea.MouseReleaseMsg:
-				return m, m.handleMouseRelease()
-			}
-		case tea.MouseRight:
-			if _, ok := msg.(tea.MouseClickMsg); ok {
-				// Right-click keeps its existing "copy my selection"
-				// behavior; only when nothing is selected does it fall
-				// through to opening a context menu at the click.
-				if cmd := m.copyActiveSelection(); cmd != nil {
-					return m, cmd
-				}
-				m.openContextMenuAt(mev.X, mev.Y)
-			}
-		}
-		return m, nil
-
 	case tea.PasteMsg:
-		return m, m.handlePaste(msg.Content)
+		return m.handlePaste(msg.Content), true
 
 	case tea.ClipboardMsg:
 		// Response to an explicit tea.ReadClipboard (ctrl+v fallback for
 		// terminals that don't deliver bracketed pastes): route through the
 		// same image-aware paste handling.
-		return m, m.handlePaste(msg.Content)
+		return m.handlePaste(msg.Content), true
 
 	case tea.FocusMsg:
 		m.focused = true
-		return m, nil
+		return nil, true
 
 	case tea.BlurMsg:
 		m.focused = false
-		return m, nil
+		return nil, true
 
 	case tea.KeyPressMsg:
-		return m, m.handleKey(msg)
+		return m.handleKey(msg), true
 
 	case tea.KeyReleaseMsg:
-		return m, noopCmd
+		return noopCmd, true
 
+	}
+	return nil, false
+}
+
+// handleChatStreamMsg drives the chat event stream: re-arms the subscription and dispatches events; quits when the stream closes. Returns (cmd, true) when the message was handled.
+func (m *model) handleChatStreamMsg(msg tea.Msg) (tea.Cmd, bool) {
+	switch msg := msg.(type) {
 	case chatEventMsg:
 		var cmds []tea.Cmd
 		cmds = append(cmds, readNextEvent(m.chatSub)) // re-arm
 		if eventCmd := m.handleChatEvent(msg.event); eventCmd != nil {
 			cmds = append(cmds, eventCmd)
 		}
-		return m, tea.Batch(cmds...)
+		return tea.Batch(cmds...), true
 
 	case chatEventsClosedMsg:
 		m.notification = "event stream closed - exiting"
-		return m, tea.Quit
+		return tea.Quit, true
 
-	case clearNotificationMsg:
-		if msg.gen == m.notificationGen {
-			m.notification = ""
-			m.notificationLevel = notify.LevelInfo
-		}
-		return m, nil
+	}
+	return nil, false
+}
 
-	case sendResultMsg:
-		if msg.err != nil {
-			m.agentState = agentReady
-			m.notification = fmt.Sprintf("send failed: %v", msg.err)
-		}
-		return m, nil
-
-	case bashSendResultMsg:
-		if msg.err != nil {
-			m.bashRunning = false
-			m.bashCallID = ""
-			m.notification = fmt.Sprintf("bash command failed: %v", msg.err)
-		}
-		return m, nil
-
-	case refreshResultMsg:
-		if msg.err != nil {
-			return m, m.setNotification("refresh failed: " + msg.err.Error())
-		}
-		m.availableModels = msg.models
-		return m, m.setNotification(fmt.Sprintf("refreshed: %d models available", len(msg.models)))
-
+// handleProviderMsg handles update-check and provider toggle/login results. Returns (cmd, true) when the message was handled.
+func (m *model) handleProviderMsg(msg tea.Msg) (tea.Cmd, bool) {
+	switch msg := msg.(type) {
 	case updateCheckMsg:
 		if msg.err != nil {
-			return m, m.setNotification("update failed: " + msg.err.Error())
+			return m.setNotification("update failed: " + msg.err.Error()), true
 		}
 		m.appendMessage("system", msg.text)
 		if msg.restart {
 			// The binary on disk is already the new one; quitting lets the app
 			// layer re-exec it in this same terminal.
-			return m, tea.Quit
+			return tea.Quit, true
 		}
-		return m, nil
+		return nil, true
 
 	case providerToggleResultMsg:
 		var line string
@@ -578,12 +598,12 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 		}
 		m.appendMessage("system", line)
-		return m, nil
+		return nil, true
 
 	case providerLoginStartedMsg:
 		if msg.err != nil {
 			m.appendMessage("system", providerui.FailureMessage(msg.displayName, msg.err))
-			return m, nil
+			return nil, true
 		}
 		code := msg.session.DeviceCode
 		codeText := strings.TrimSpace(code.UserCode)
@@ -596,12 +616,12 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 		}
 		m.appendMessage("system", providerui.DeviceCodeMessage(msg.displayName, code, msg.browserOpened, codeCopied))
-		return m, tea.Batch(copyCmd, m.providerLoginPoll(msg.providerID, msg.displayName, msg.session))
+		return tea.Batch(copyCmd, m.providerLoginPoll(msg.providerID, msg.displayName, msg.session)), true
 
 	case providerLoginResultMsg:
 		if msg.err != nil {
 			m.appendMessage("system", providerui.FailureMessage(msg.displayName, msg.err))
-			return m, nil
+			return nil, true
 		}
 		if len(msg.models) > 0 {
 			m.availableModels = msg.models
@@ -609,7 +629,43 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		} else {
 			m.appendMessage("system", fmt.Sprintf("%s enabled", msg.displayName))
 		}
-		return m, nil
+		return nil, true
+
+	}
+	return nil, false
+}
+
+// handleResultMsg handles send/bash/refresh results, notification-clear ticks, spinner ticks, and startup. Returns (cmd, true) when the message was handled.
+func (m *model) handleResultMsg(msg tea.Msg) (tea.Cmd, bool) {
+	switch msg := msg.(type) {
+	case clearNotificationMsg:
+		if msg.gen == m.notificationGen {
+			m.notification = ""
+			m.notificationLevel = notify.LevelInfo
+		}
+		return nil, true
+
+	case sendResultMsg:
+		if msg.err != nil {
+			m.agentState = agentReady
+			m.notification = fmt.Sprintf("send failed: %v", msg.err)
+		}
+		return nil, true
+
+	case bashSendResultMsg:
+		if msg.err != nil {
+			m.bashRunning = false
+			m.bashCallID = ""
+			m.notification = fmt.Sprintf("bash command failed: %v", msg.err)
+		}
+		return nil, true
+
+	case refreshResultMsg:
+		if msg.err != nil {
+			return m.setNotification("refresh failed: " + msg.err.Error()), true
+		}
+		m.availableModels = msg.models
+		return m.setNotification(fmt.Sprintf("refreshed: %d models available", len(msg.models))), true
 
 	case tickMsg:
 		m.spinnerFrame++
@@ -621,19 +677,18 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 		}
 		if m.inResponse() {
-			return m, spinTick()
+			return spinTick(), true
 		}
-		return m, nil
+		return nil, true
 
 	case startupMsg:
 		m.sessionID = msg.sessionID
 		m.modelName = msg.modelName
 		m.provider = msg.provider
-		return m, nil
+		return nil, true
 
-	default:
-		return m, nil
 	}
+	return nil, false
 }
 
 func (m *model) View() tea.View {
@@ -717,16 +772,7 @@ func (m *model) computeLayout() layoutGeometry {
 	var g layoutGeometry
 
 	// 1. Plugin panel.
-	var activePanelStr string
-	if p := m.activePanel(); p != nil {
-		var psb strings.Builder
-		psb.WriteString(panelStyle.Render("┌─ " + p.title + " ─┐"))
-		psb.WriteString("\n")
-		psb.WriteString(p.content)
-		psb.WriteString("\n")
-		psb.WriteString(panelStyle.Render("└" + strings.Repeat("─", min(m.width, 40)) + "┘"))
-		activePanelStr = psb.String()
-	}
+	activePanelStr := m.renderActivePanel()
 
 	// 2. Live response content is rendered inside the viewport so it occupies
 	// the same bottom-aligned chat pane as finalized messages.
@@ -741,7 +787,7 @@ func (m *model) computeLayout() layoutGeometry {
 	toolsStr, toolRows := m.renderToolGroup()
 
 	// 4. Interactive prompt (modal).
-	var promptStr string
+	promptStr := ""
 	if m.activePrompt != nil {
 		promptStr = renderPrompt(m.activePrompt, m.width)
 	}
@@ -751,16 +797,74 @@ func (m *model) computeLayout() layoutGeometry {
 	// it no longer occupies space here.
 
 	// 6. Notification banner - a fixed notifyReservedLines-tall area is
-	// always reserved directly above the separator/input, even when
-	// there's nothing to show, matching how Claude Code's own status area
-	// never resizes. Previously this only occupied space while
-	// m.notification was non-empty, so the viewport visibly grew and
-	// shrank by that height every time a notification appeared or cleared
-	// ("pushing text up and dropping it back down"). Width-wrapped via
-	// lipgloss (so a message that needs it still gets multiple lines, up
-	// to the reserved height - see notifyStyleForLevel's caller), then
-	// padded/clipped to exactly notifyReservedLines so the reserved height
-	// truly never varies.
+	// always reserved directly above the separator/input, even when there's
+	// nothing to show, matching how Claude Code's own status area never
+	// resizes (see renderNotifyArea).
+	notifyStr := m.renderNotifyArea()
+
+	// 7. Divider and input area.
+	sepStr := m.renderSeparator()
+	inputStr := m.renderInputArea()
+
+	// 8. Status bar.
+	statusStr := ""
+	if m.width > 0 {
+		statusStr = m.computeStatusBar()
+	}
+
+	// 9-10. Assemble the chrome (everything below the viewport) and compute
+	// the total height reserved for it plus the plugin panel.
+	chromeStr, panelSepStr, reservedHeight := assembleChrome(activePanelStr, toolsStr, promptStr, notifyStr, sepStr, inputStr, statusStr)
+
+	// 11. Decide how much vertical space the viewport region may use.
+	availableHeight := max(m.height-reservedHeight, 4)
+	contentHeight := max(m.viewport.TotalLineCount(), 1)
+	viewportHeight := min(contentHeight, availableHeight)
+	topPadding := availableHeight - viewportHeight
+	m.viewport.SetHeight(viewportHeight)
+	if m.autoFollow {
+		m.viewport.GotoBottom()
+	}
+
+	// 12. Record geometry in final rendered-view coordinates.
+	g.chromeStr = chromeStr
+	g.panelSepStr = panelSepStr
+	g.topPadding = topPadding
+	recordChromeGeometry(&g, chromeRender{
+		viewportHeight: viewportHeight,
+		toolsStr:       toolsStr,
+		toolRows:       toolRows,
+		promptStr:      promptStr,
+		notifyStr:      notifyStr,
+		sepStr:         sepStr,
+		inputStr:       inputStr,
+	})
+	return g
+}
+
+// renderActivePanel renders the active plugin panel (title bar, content,
+// bottom border) or "" when no panel is active.
+func (m *model) renderActivePanel() string {
+	p := m.activePanel()
+	if p == nil {
+		return ""
+	}
+	var psb strings.Builder
+	psb.WriteString(panelStyle.Render("┌─ " + p.title + " ─┐"))
+	psb.WriteString("\n")
+	psb.WriteString(p.content)
+	psb.WriteString("\n")
+	psb.WriteString(panelStyle.Render("└" + strings.Repeat("─", min(m.width, 40)) + "┘"))
+	return psb.String()
+}
+
+// renderNotifyArea renders the notification banner into exactly
+// notifyReservedLines rows: width-wrapped when a notification is set, then
+// padded/clipped so the reserved height truly never varies (see the step-6
+// comment in computeLayout's history - previously this area only occupied
+// space while m.notification was non-empty, so the viewport visibly grew and
+// shrank by that height every time a notification appeared or cleared).
+func (m *model) renderNotifyArea() string {
 	notifyWidth := m.width
 	if notifyWidth <= 0 {
 		notifyWidth = 80
@@ -773,9 +877,12 @@ func (m *model) computeLayout() layoutGeometry {
 		notifyRendered = notifyStyleForLevel(m.notificationLevel).Width(notifyWidth).Render(m.notification)
 	}
 	h := max(visualLineCount(notifyRendered), notifyReservedLines)
-	notifyStr := padOrClipLines(notifyRendered, h)
+	return padOrClipLines(notifyRendered, h)
+}
 
-	// 7. Divider and input area.
+// renderSeparator renders the horizontal divider line above the input area,
+// including the (currently zero) top/bottom margins.
+func (m *model) renderSeparator() string {
 	sepWidth := m.width
 	if sepWidth <= 0 {
 		sepWidth = 80
@@ -793,18 +900,16 @@ func (m *model) computeLayout() layoutGeometry {
 		}
 		sepStr = sb.String()
 	}
-	inputStr := m.renderInputArea()
+	return sepStr
+}
 
-	// 8. Status bar.
-	var statusStr string
-	if m.width > 0 {
-		statusStr = m.computeStatusBar()
-	}
-
-	// 9. Assemble the chrome (everything below the viewport) as a single string
-	// with no leading newline.  The boundary newline between the viewport and
-	// the chrome is added during final assembly, so its height is not double
-	// counted by visualLineCount.
+// assembleChrome joins the chrome parts (everything below the viewport) into a
+// single string, prepends the plugin panel separator when a panel is active,
+// and returns the joined chrome, the panel separator, and the total reserved
+// height (chrome + panel).
+func assembleChrome(activePanelStr, toolsStr, promptStr, notifyStr, sepStr, inputStr, statusStr string) (chromeStr, panelSepStr string, reservedHeight int) {
+	// The boundary newline between the viewport and the chrome is added
+	// during final assembly in View(), so it is not counted here.
 	chromeParts := []string{}
 	if toolsStr != "" {
 		chromeParts = append(chromeParts, toolsStr)
@@ -813,71 +918,66 @@ func (m *model) computeLayout() layoutGeometry {
 		chromeParts = append(chromeParts, promptStr)
 	}
 	// notifyStr is always present (padOrClipLines guarantees
-	// notifyReservedLines rows even when there's no message) - see its
-	// comment above for why that fixed reservation matters.
+	// notifyReservedLines rows even when there's no message).
 	chromeParts = append(chromeParts, notifyStr, sepStr, inputStr, statusStr)
 
-	chromeStr := strings.Join(chromeParts, "\n")
-	chromeHeight := visualLineCount(chromeStr)
-
-	// 10. Calculate total visual height occupied by all non-viewport elements.
-	reservedHeight := chromeHeight
-	panelSepStr := ""
+	chromeStr = strings.Join(chromeParts, "\n")
+	reservedHeight = visualLineCount(chromeStr)
 	if activePanelStr != "" {
 		panelSepStr = activePanelStr + "\n\n"
 		reservedHeight += visualLineCount(panelSepStr)
 	}
+	return chromeStr, panelSepStr, reservedHeight
+}
 
-	// 11. Decide how much vertical space the viewport region may use.
-	availableHeight := max(m.height-reservedHeight, 4)
-	contentHeight := max(m.viewport.TotalLineCount(), 1)
-	viewportHeight := min(contentHeight, availableHeight)
-	topPadding := availableHeight - viewportHeight
-	m.viewport.SetHeight(viewportHeight)
-	if m.autoFollow {
-		m.viewport.GotoBottom()
-	}
+// chromeRender carries the rendered chrome regions and viewport height that
+// recordChromeGeometry needs to compute on-screen row ranges.
+type chromeRender struct {
+	viewportHeight int
+	toolsStr       string
+	toolRows       []toolBoxGeometry
+	promptStr      string
+	notifyStr      string
+	sepStr         string
+	inputStr       string
+}
 
-	// 12. Record geometry in final rendered-view coordinates.
-	g.chromeStr = chromeStr
-	g.panelSepStr = panelSepStr
-	g.topPadding = topPadding
-
+// recordChromeGeometry records the on-screen row range of each chrome region
+// (and each tool box) in final rendered-view coordinates. chromeParts are
+// joined by a single "\n" each (see assembleChrome), which is the same
+// separator that already appears between any two lines of rendered text - it
+// does not add a blank row of its own. So advancing from one part to the next
+// is exactly visualLineCount(part) rows, with no extra "+1" per transition
+// (unlike the viewport->chrome boundary below, which IS a standalone "\n"
+// written outside chromeStr).
+func recordChromeGeometry(g *layoutGeometry, c chromeRender) {
 	row := 0
-	if panelSepStr != "" {
-		row += visualLineCount(panelSepStr)
+	if g.panelSepStr != "" {
+		row += visualLineCount(g.panelSepStr)
 	}
-	if topPadding > 0 {
-		row += topPadding
+	if g.topPadding > 0 {
+		row += g.topPadding
 	}
 	g.viewportStartY = row
-	g.viewportEndY = g.viewportStartY + viewportHeight - 1
+	g.viewportEndY = g.viewportStartY + c.viewportHeight - 1
 
-	// chromeParts are joined by a single "\n" each (see step 9 above), which
-	// is the same separator that already appears between any two lines of
-	// rendered text - it does not add a blank row of its own. So advancing
-	// from one part to the next is exactly visualLineCount(part) rows, with
-	// no extra "+1" per transition (unlike the viewport->chrome boundary
-	// below, which IS a standalone "\n" written outside chromeStr).
 	row = g.viewportEndY + 1 // "\n" boundary between viewport and chrome
-	if toolsStr != "" {
+	if c.toolsStr != "" {
 		g.toolsStartY = row
-		g.toolsEndY = row + visualLineCount(toolsStr) - 1
-		g.toolBoxes = make([]toolBoxGeometry, len(toolRows))
-		for i, tr := range toolRows {
+		g.toolsEndY = row + visualLineCount(c.toolsStr) - 1
+		g.toolBoxes = make([]toolBoxGeometry, len(c.toolRows))
+		for i, tr := range c.toolRows {
 			g.toolBoxes[i] = toolBoxGeometry{id: tr.id, startY: row + tr.startY, endY: row + tr.endY}
 		}
-		row += visualLineCount(toolsStr)
+		row += visualLineCount(c.toolsStr)
 	}
-	if promptStr != "" {
-		row += visualLineCount(promptStr)
+	if c.promptStr != "" {
+		row += visualLineCount(c.promptStr)
 	}
-	row += visualLineCount(notifyStr) // notifyStr is always present
-	row += visualLineCount(sepStr)    // separator is always present
+	row += visualLineCount(c.notifyStr) // notifyStr is always present
+	row += visualLineCount(c.sepStr)    // separator is always present
 	g.inputStartY = row
-	inputHeight := visualLineCount(inputStr)
+	inputHeight := visualLineCount(c.inputStr)
 	g.inputEndY = row + inputHeight - 1
 	g.statusY = g.inputEndY + 1
-
-	return g
 }

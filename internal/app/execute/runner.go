@@ -39,37 +39,46 @@ func (r *Runner) Run(
 			if !ok {
 				return nil
 			}
-			switch e := event.(type) {
-			case tauchat.ChatResponseDeltaEvent:
-				if e.SessionID == sessionID {
-					renderer.OnDelta(ctx, e)
-				}
-			case tauchat.ChatToolExecutionStartedEvent:
-				if e.SessionID == sessionID {
-					renderer.OnToolStart(ctx, e)
-				}
-			case tauchat.ChatToolExecutionCompletedEvent:
-				if e.SessionID == sessionID {
-					renderer.OnToolComplete(ctx, e)
-				}
-			case tauchat.ChatResponseCompletedEvent:
-				if e.State.SessionID == sessionID {
-					renderer.OnComplete(ctx, e, tracker, sessionID)
-					return nil
-				}
-			case tauchat.ChatRuntimeErrorEvent:
-				if e.SessionID == sessionID {
-					renderer.OnError(ctx, e)
-					return Err(e)
-				}
-			case tauchat.ChatResponseCancelledEvent:
-				if e.State.SessionID == sessionID {
-					renderer.OnCancel(ctx, e)
-					return nil
-				}
+			if done, err := r.handleEvent(ctx, event, renderer, sessionID, tracker); done {
+				return err
 			}
 		}
 	}
+}
+
+// handleEvent dispatches one chat event to the renderer. It returns done=true
+// when the run should stop, with the error to return (nil for a clean end).
+func (r *Runner) handleEvent(ctx context.Context, event tauchat.ChatEvent, renderer Renderer, sessionID string, tracker *metrics.UsageTracker) (bool, error) {
+	switch e := event.(type) {
+	case tauchat.ChatResponseDeltaEvent:
+		if e.SessionID == sessionID {
+			renderer.OnDelta(ctx, e)
+		}
+	case tauchat.ChatToolExecutionStartedEvent:
+		if e.SessionID == sessionID {
+			renderer.OnToolStart(ctx, e)
+		}
+	case tauchat.ChatToolExecutionCompletedEvent:
+		if e.SessionID == sessionID {
+			renderer.OnToolComplete(ctx, e)
+		}
+	case tauchat.ChatResponseCompletedEvent:
+		if e.State.SessionID == sessionID {
+			renderer.OnComplete(ctx, e, tracker, sessionID)
+			return true, nil
+		}
+	case tauchat.ChatRuntimeErrorEvent:
+		if e.SessionID == sessionID {
+			renderer.OnError(ctx, e)
+			return true, Err(e)
+		}
+	case tauchat.ChatResponseCancelledEvent:
+		if e.State.SessionID == sessionID {
+			renderer.OnCancel(ctx, e)
+			return true, nil
+		}
+	}
+	return false, nil
 }
 
 // Err renders a ChatRuntimeErrorEvent as an error.

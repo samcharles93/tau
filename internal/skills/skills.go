@@ -141,77 +141,7 @@ func Discover(sources []Source) ([]*Skill, []Diagnostic) {
 	selected := make(map[string]*Skill)
 
 	for _, source := range sources {
-		root := strings.TrimSpace(source.Root)
-		if root == "" {
-			continue
-		}
-
-		info, err := os.Stat(root)
-		if errors.Is(err, os.ErrNotExist) {
-			continue
-		}
-		if err != nil {
-			diagnostics = append(diagnostics, Diagnostic{Path: root, Severity: SeverityError, Message: err.Error()})
-			continue
-		}
-		if !info.IsDir() {
-			continue
-		}
-
-		walkErr := filepath.WalkDir(root, func(path string, entry fs.DirEntry, walkErr error) error {
-			if walkErr != nil {
-				diagnostics = append(diagnostics, Diagnostic{Path: path, Severity: SeverityError, Message: walkErr.Error()})
-				return nil
-			}
-
-			if entry.IsDir() {
-				if shouldSkipDir(path, root, entry.Name()) {
-					return filepath.SkipDir
-				}
-				return nil
-			}
-
-			if !skillFileRegex.MatchString(entry.Name()) {
-				return nil
-			}
-
-			skill, parseDiagnostics, err := Parse(path)
-			diagnostics = append(diagnostics, parseDiagnostics...)
-			if err != nil || HasErrors(parseDiagnostics) {
-				return nil
-			}
-
-			skill.Scope = source.Scope
-			skill.SourceRoot = root
-			skill.Priority = source.Priority
-
-			key := strings.ToLower(skill.Name)
-			if existing, ok := selected[key]; ok {
-				if shouldReplaceSkill(existing, skill) {
-					diagnostics = append(diagnostics, Diagnostic{
-						Path:      existing.SkillFilePath,
-						SkillName: existing.Name,
-						Severity:  SeverityWarning,
-						Message:   fmt.Sprintf("shadowed by %s", skill.SkillFilePath),
-					})
-					selected[key] = skill
-				} else {
-					diagnostics = append(diagnostics, Diagnostic{
-						Path:      skill.SkillFilePath,
-						SkillName: skill.Name,
-						Severity:  SeverityWarning,
-						Message:   fmt.Sprintf("shadowed by %s", existing.SkillFilePath),
-					})
-				}
-				return nil
-			}
-
-			selected[key] = skill
-			return nil
-		})
-		if walkErr != nil {
-			diagnostics = append(diagnostics, Diagnostic{Path: root, Severity: SeverityError, Message: walkErr.Error()})
-		}
+		discoverFromSource(source, selected, &diagnostics)
 	}
 
 	results := make([]*Skill, 0, len(selected))
@@ -234,6 +164,82 @@ func Discover(sources []Source) ([]*Skill, []Diagnostic) {
 	})
 
 	return results, diagnostics
+}
+
+// discoverFromSource walks one source root, recording selected skills and
+// appending diagnostics.
+func discoverFromSource(source Source, selected map[string]*Skill, diagnostics *[]Diagnostic) {
+	root := strings.TrimSpace(source.Root)
+	if root == "" {
+		return
+	}
+
+	info, err := os.Stat(root)
+	if errors.Is(err, os.ErrNotExist) {
+		return
+	}
+	if err != nil {
+		*diagnostics = append(*diagnostics, Diagnostic{Path: root, Severity: SeverityError, Message: err.Error()})
+		return
+	}
+	if !info.IsDir() {
+		return
+	}
+
+	walkErr := filepath.WalkDir(root, func(path string, entry fs.DirEntry, walkErr error) error {
+		if walkErr != nil {
+			*diagnostics = append(*diagnostics, Diagnostic{Path: path, Severity: SeverityError, Message: walkErr.Error()})
+			return nil //nolint:nilerr // recorded as a diagnostic; the walk must continue
+		}
+
+		if entry.IsDir() {
+			if shouldSkipDir(path, root, entry.Name()) {
+				return filepath.SkipDir
+			}
+			return nil
+		}
+
+		if !skillFileRegex.MatchString(entry.Name()) {
+			return nil
+		}
+
+		skill, parseDiagnostics, err := Parse(path)
+		*diagnostics = append(*diagnostics, parseDiagnostics...)
+		if err != nil || HasErrors(parseDiagnostics) {
+			return nil //nolint:nilerr // parse problems are already in diagnostics; skip the skill
+		}
+
+		skill.Scope = source.Scope
+		skill.SourceRoot = root
+		skill.Priority = source.Priority
+
+		key := strings.ToLower(skill.Name)
+		if existing, ok := selected[key]; ok {
+			if shouldReplaceSkill(existing, skill) {
+				*diagnostics = append(*diagnostics, Diagnostic{
+					Path:      existing.SkillFilePath,
+					SkillName: existing.Name,
+					Severity:  SeverityWarning,
+					Message:   fmt.Sprintf("shadowed by %s", skill.SkillFilePath),
+				})
+				selected[key] = skill
+			} else {
+				*diagnostics = append(*diagnostics, Diagnostic{
+					Path:      skill.SkillFilePath,
+					SkillName: skill.Name,
+					Severity:  SeverityWarning,
+					Message:   fmt.Sprintf("shadowed by %s", existing.SkillFilePath),
+				})
+			}
+			return nil
+		}
+
+		selected[key] = skill
+		return nil
+	})
+	if walkErr != nil {
+		*diagnostics = append(*diagnostics, Diagnostic{Path: root, Severity: SeverityError, Message: walkErr.Error()})
+	}
 }
 
 // Parse reads and parses a single SKILL.md file.

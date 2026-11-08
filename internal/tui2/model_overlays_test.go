@@ -151,7 +151,10 @@ func TestResolvePromptCancel(t *testing.T) {
 	if len(rt.sent) != 1 {
 		t.Fatalf("expected 1 sent command, got %d", len(rt.sent))
 	}
-	cmd := rt.sent[0].(tauchat.RespondInteractivePromptCommand)
+	cmd, ok := rt.sent[0].(tauchat.RespondInteractivePromptCommand)
+	if !ok {
+		t.Fatalf("expected RespondInteractivePromptCommand, got %T", rt.sent[0])
+	}
 	if !cmd.Canceled {
 		t.Fatal("expected Canceled=true")
 	}
@@ -214,7 +217,10 @@ func TestHandlePromptKeyEsc(t *testing.T) {
 	if len(rt.sent) != 1 {
 		t.Fatalf("expected 1 sent command, got %d", len(rt.sent))
 	}
-	cmd := rt.sent[0].(tauchat.RespondInteractivePromptCommand)
+	cmd, ok := rt.sent[0].(tauchat.RespondInteractivePromptCommand)
+	if !ok {
+		t.Fatalf("expected RespondInteractivePromptCommand, got %T", rt.sent[0])
+	}
 	if !cmd.Canceled {
 		t.Fatal("expected Canceled=true when pressing Esc")
 	}
@@ -233,7 +239,10 @@ func TestHandlePromptKeyEnterOnConfirmWithInputKind(t *testing.T) {
 	if len(rt.sent) != 1 {
 		t.Fatalf("expected 1 sent command, got %d", len(rt.sent))
 	}
-	cmd := rt.sent[0].(tauchat.RespondInteractivePromptCommand)
+	cmd, ok := rt.sent[0].(tauchat.RespondInteractivePromptCommand)
+	if !ok {
+		t.Fatalf("expected RespondInteractivePromptCommand, got %T", rt.sent[0])
+	}
 	if cmd.Response != "my value" {
 		t.Fatalf("Response = %q, want %q", cmd.Response, "my value")
 	}
@@ -675,7 +684,10 @@ func TestHandlePromptKeyNOnConfirm(t *testing.T) {
 	if len(rt.sent) != 1 {
 		t.Fatalf("expected 1 sent command, got %d", len(rt.sent))
 	}
-	cmd := rt.sent[0].(tauchat.RespondInteractivePromptCommand)
+	cmd, ok := rt.sent[0].(tauchat.RespondInteractivePromptCommand)
+	if !ok {
+		t.Fatalf("expected RespondInteractivePromptCommand, got %T", rt.sent[0])
+	}
 	if cmd.Confirmed {
 		t.Fatal("'n' on confirm should resolve to Confirmed=false")
 	}
@@ -782,7 +794,10 @@ func TestResolvePromptConfirmTrue(t *testing.T) {
 	if len(rt.sent) != 1 {
 		t.Fatalf("expected 1 sent command, got %d", len(rt.sent))
 	}
-	cmd := rt.sent[0].(tauchat.RespondInteractivePromptCommand)
+	cmd, ok := rt.sent[0].(tauchat.RespondInteractivePromptCommand)
+	if !ok {
+		t.Fatalf("expected RespondInteractivePromptCommand, got %T", rt.sent[0])
+	}
 	if !cmd.Confirmed || cmd.Canceled {
 		t.Fatal("expected Confirmed=true, Canceled=false")
 	}

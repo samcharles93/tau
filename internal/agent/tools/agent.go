@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"html"
+	"io"
 	"os/exec"
 	"strings"
 	"syscall"
@@ -166,19 +167,22 @@ func agentToolParams() json.RawMessage {
 }
 
 // agentToolArgs is the parsed shape of the agent tool's parameters.
+// agentBudgetArgs is the optional per-call budget for an agent spawn.
+type agentBudgetArgs struct {
+	MaxTokens int    `json:"max_tokens"`
+	Timeout   string `json:"timeout"`
+	Deadline  string `json:"deadline"`
+}
+
 type agentToolArgs struct {
-	Agent       string   `json:"agent"`
-	Prompt      string   `json:"prompt"`
-	Context     string   `json:"context"`
-	ContextMode string   `json:"context_mode"`
-	Resume      string   `json:"resume"`
-	Model       string   `json:"model"`
-	Tools       []string `json:"tools"`
-	Budget      *struct {
-		MaxTokens int    `json:"max_tokens"`
-		Timeout   string `json:"timeout"`
-		Deadline  string `json:"deadline"`
-	} `json:"budget"`
+	Agent       string           `json:"agent"`
+	Prompt      string           `json:"prompt"`
+	Context     string           `json:"context"`
+	ContextMode string           `json:"context_mode"`
+	Resume      string           `json:"resume"`
+	Model       string           `json:"model"`
+	Tools       []string         `json:"tools"`
+	Budget      *agentBudgetArgs `json:"budget"`
 }
 
 func executeAgentTool(ctx context.Context, params json.RawMessage, ui UIBridge, cfg AgentToolConfig) (Result, error) {
@@ -327,7 +331,8 @@ func executeResume(ctx context.Context, args agentToolArgs, cfg AgentToolConfig)
 
 	state, err := cfg.Store.Load(ctx, args.Resume)
 	if err != nil {
-		return Result{Content: fmt.Sprintf("agent call failed: resume session %q not found", args.Resume), IsError: true, ErrorKind: "session_not_found"}, nil
+		// Surfaced to the model as an IsError tool result, not a Go error.
+		return Result{Content: fmt.Sprintf("agent call failed: resume session %q not found", args.Resume), IsError: true, ErrorKind: "session_not_found"}, nil //nolint:nilerr
 	}
 	if state.AgentInstanceID == "" {
 		return Result{Content: fmt.Sprintf("agent call failed: session %q has no agent instance to resume", args.Resume), IsError: true, ErrorKind: "resume_unauthorized"}, nil
@@ -423,116 +428,113 @@ func isAncestorOf(ctx context.Context, s store.SessionStore, candidateInstanceID
 // and assembles the tool result per the completion contract. Shared by both
 // the fresh-spawn and resume paths, which differ only in how instResult was
 // produced.
-func spawnChildProcess(ctx context.Context, args agentToolArgs, cfg AgentToolConfig, instResult *childInstance) (Result, error) {
-	// Compensating close: any return path below that doesn't reach the
-	// normal completion close (which sets instanceClosed) means spawn,
-	// handshake, or streaming failed before a result was ever obtained.
-	// Close the instance deterministically as failed rather than leaving
-	// it "started" forever - see docs/specs/agents/
-	// 04-storage-and-sessions.md (G3: atomic instantiation / spawn-failure
-	// compensation). Uses context.WithoutCancel: this defer very often runs
-	// exactly because ctx was cancelled (G7 cancellation path) - the close
-	// write must still go through even though the request that triggered it
-	// is the reason ctx is no longer usable.
-	instanceClosed := false
-	defer func() {
-		if !instanceClosed && cfg.Store != nil {
-			_ = cfg.Store.CloseAgentInstance(context.WithoutCancel(ctx), instResult.InstanceID, string(tauchat.ChildAgentFailed), "", "spawn did not reach completion")
-		}
-	}()
 
-	// Concurrency admission (G5): gate the actual process spawn behind the
-	// per-parent/process-wide ceilings. This runs after instantiation (so
-	// the instance row already exists - the instanceClosed defer above
-	// cleans it up on rejection, same as any other pre-start failure) and
-	// before anything OS-level happens, per docs/specs/agents/
-	// 02-spawning-and-lifecycle.md (Concurrency and resource ceilings).
+// admitSpawn gates the process spawn behind the concurrency ceilings (G5),
+// returning the slot release func and, on rejection, the Result to return.
+func admitSpawn(ctx context.Context, args agentToolArgs, cfg AgentToolConfig, instResult *childInstance) (func(), *Result) {
 	deadline := computeSpawnDeadline(args, instResult.Timeout)
 	release, admitErr := acquireSpawnSlot(ctx, cfg.ParentInstanceID, cfg.Agents, deadline)
-	if admitErr != nil {
-		if rej, ok := errors.AsType[*spawnRejected](admitErr); ok {
-			detailsJSON, _ := json.Marshal(map[string]any{
-				"status":         string(tauchat.ChildAgentFailed),
-				"failure_reason": rej.reason,
-				"queued":         rej.queued,
-			})
-			return Result{
-				Content:   fmt.Sprintf("agent call failed: %s", rej.reason),
-				Details:   detailsJSON,
-				IsError:   true,
-				ErrorKind: "spawn_rejected",
-			}, nil
-		}
-		return agentToolError("spawn admission", admitErr), nil
+	if admitErr == nil {
+		return release, nil
 	}
-	defer release()
+	if rej, ok := errors.AsType[*spawnRejected](admitErr); ok {
+		detailsJSON, _ := json.Marshal(map[string]any{
+			"status":         string(tauchat.ChildAgentFailed),
+			"failure_reason": rej.reason,
+			"queued":         rej.queued,
+		})
+		return release, &Result{
+			Content:   fmt.Sprintf("agent call failed: %s", rej.reason),
+			Details:   detailsJSON,
+			IsError:   true,
+			ErrorKind: "spawn_rejected",
+		}
+	}
+	res := agentToolError("spawn admission", admitErr)
+	return release, &res
+}
 
+// buildAgentBudget validates args.Budget and converts it to a wire budget.
+// On invalid input it kills the child and returns the rejection Result.
+func buildAgentBudget(b *agentBudgetArgs, cmd *exec.Cmd) (bridge.AgentBudget, *Result) {
+	var budget bridge.AgentBudget
+	if b == nil {
+		return budget, nil
+	}
+	reject := func(format string, a ...any) *Result {
+		_ = signalProcessGroup(cmd, syscall.SIGKILL)
+		_ = cmd.Wait()
+		return &Result{Content: fmt.Sprintf(format, a...), IsError: true, ErrorKind: "invalid_params"}
+	}
+	if b.MaxTokens < 0 {
+		return budget, reject("invalid budget.max_tokens %d: must be >= 0", b.MaxTokens)
+	}
+	budget.MaxTokens = b.MaxTokens
+
+	if b.Timeout != "" {
+		d, err := time.ParseDuration(b.Timeout)
+		if err != nil {
+			return budget, reject("invalid budget.timeout %q: %v", b.Timeout, err)
+		}
+		if d < time.Second {
+			return budget, reject("invalid budget.timeout %q: must be >= 1s", b.Timeout)
+		}
+		if d > 24*time.Hour {
+			d = 24 * time.Hour
+		}
+		budget.Timeout = d.String()
+	}
+
+	if b.Deadline != "" {
+		t, err := time.Parse(time.RFC3339, b.Deadline)
+		if err != nil {
+			return budget, reject("invalid budget.deadline %q: must be RFC 3339: %v", b.Deadline, err)
+		}
+		if !t.After(time.Now()) {
+			return budget, reject("invalid budget.deadline %q: must be in the future", b.Deadline)
+		}
+		budget.Deadline = b.Deadline
+	}
+	return budget, nil
+}
+
+// startChildProcess builds and starts the tau --child process with stdio
+// pipes wired up. It deliberately uses exec.Command, not exec.CommandContext:
+// cancellation is handled by superviseCancellation and readChildResult's
+// context check - CommandContext would make Start() return ctx.Err() when the
+// context is already cancelled, losing the structured cancellation result.
+func startChildProcess(cfg AgentToolConfig, instResult *childInstance) (cmd *exec.Cmd, stdin io.WriteCloser, stdout, stderr io.ReadCloser, err error) {
 	tauPath := cfg.TauPath
 	if tauPath == "" {
 		tauPath, _ = exec.LookPath("tau") // Best effort - let exec fail if not found.
 	}
-
-	// Use exec.Command, not exec.CommandContext: cancellation is handled
-	// by our own three-phase escalation (superviseCancellation) and
-	// readChildResult's context check. exec.CommandContext would cause
-	// Start() to return ctx.Err() when the context is already cancelled
-	// (e.g. under load), losing the structured cancellation result.
-	cmd := exec.Command(tauPath, "--child") //nolint:noctx // cancellation is handled by superviseCancellation, not ctx
+	cmd = exec.Command(tauPath, "--child") //nolint:noctx // cancellation is handled by superviseCancellation, not ctx
 	cmd.Dir = cfg.CWD
 	cmd.Env = nil // inherit
 	setProcessGroup(cmd)
-	stdin, err := cmd.StdinPipe()
-	if err != nil {
-		return agentToolError("stdin pipe", err), nil
+	if stdin, err = cmd.StdinPipe(); err != nil {
+		return nil, nil, nil, nil, err
 	}
-	stdout, err := cmd.StdoutPipe()
-	if err != nil {
-		return agentToolError("stdout pipe", err), nil
+	if stdout, err = cmd.StdoutPipe(); err != nil {
+		return nil, nil, nil, nil, err
 	}
-	stderr, err := cmd.StderrPipe()
-	if err != nil {
-		return agentToolError("stderr pipe", err), nil
+	if stderr, err = cmd.StderrPipe(); err != nil {
+		return nil, nil, nil, nil, err
 	}
-	// Drain stderr to slog in background: redacted, rate-limited, and
-	// capped per docs/specs/agents/03-wire-protocol.md (stderr handling).
-	// stderr is diagnostic-only and never parsed for protocol messages.
-	go drainChildStderr(stderr, instResult.InstanceID)
-
-	if err := cmd.Start(); err != nil {
-		return agentToolError("start child", err), nil
+	if err = cmd.Start(); err != nil {
+		return nil, nil, nil, nil, err
 	}
+	return cmd, stdin, stdout, stderr, nil
+}
 
-	// Record the child's OS process identity now that it's known (the
-	// instance row was created before Start() - pid can't be known
-	// earlier). Best effort: a failure here just means the orphan sweep
-	// falls back to "no pid recorded" for this row (G10), not a spawn
-	// failure.
-	if cfg.Store != nil {
-		pid := cmd.Process.Pid
-		_ = cfg.Store.SetAgentInstancePID(context.WithoutCancel(ctx), instResult.InstanceID, pid, procid.CaptureProcessStartNS(pid))
-	}
-
-	childReader := stdio.NewReader(stdout)
-	childWriter := stdio.NewWriter(stdin)
-
-	// Single authoritative cmd.Wait() call site for this process - Wait
-	// must be called exactly once. waitDone tells the cancellation
-	// supervisor (below) the process has already been reaped, so it stops
-	// escalating signals into a pid that may have been recycled.
-	waitDone := make(chan struct{})
-	supervisorDone := make(chan struct{})
-	go superviseCancellation(ctx, cmd, childWriter, instResult.InstanceID, cfg.Agents, waitDone, supervisorDone)
-	defer func() {
-		close(waitDone)
-		<-supervisorDone
-	}()
-
-	// Handshake: read agent.ready, write agent.assign.
+// handshakeAndAssign reads agent.ready and writes the agent.assign envelope.
+// On failure it kills and reaps the child before returning the error.
+func handshakeAndAssign(ctx context.Context, cmd *exec.Cmd, childReader *stdio.Reader, childWriter *stdio.Writer, args agentToolArgs, instResult *childInstance) (*Result, error) {
 	ready, err := childReader.ReadHandshake(stdio.ProtocolVersion)
 	if err != nil {
 		_ = signalProcessGroup(cmd, syscall.SIGKILL)
 		_ = cmd.Wait()
-		return agentToolError("handshake", err), nil
+		return nil, err
 	}
 	_ = ready // PID is available if needed.
 
@@ -541,79 +543,18 @@ func spawnChildProcess(ctx context.Context, args agentToolArgs, cfg AgentToolCon
 	// agent.ready) should not deplete the WORKING-phase budget.
 	childReader.ResetErrorCounters()
 
+	// Build budget from the spawn call (validated per the spec's Validation
+	// rules) - see buildAgentBudget.
+	budget, budgetRej := buildAgentBudget(args.Budget, cmd)
+	if budgetRej != nil {
+		return budgetRej, nil
+	}
+
 	// Build limits from the resolved spec (structural caps). For resume,
 	// these come from the original snapshot, not a freshly resolved spec.
 	limits := bridge.AgentLimits{MaxTurns: instResult.MaxTurns}
 	if instResult.Timeout != 0 {
 		limits.Timeout = instResult.Timeout.String()
-	}
-
-	// Build budget from the spawn call. timeout and deadline are validated
-	// per docs/specs/agents/02-spawning-and-lifecycle.md (Validation
-	// rules): timeout must parse and be within 1s-24h (capped, not
-	// rejected, above 24h); deadline must parse as RFC 3339 and be in the
-	// future; max_tokens must be non-negative.
-	var budget bridge.AgentBudget
-	if args.Budget != nil {
-		if args.Budget.MaxTokens < 0 {
-			_ = signalProcessGroup(cmd, syscall.SIGKILL)
-			_ = cmd.Wait()
-			return Result{
-				Content:   fmt.Sprintf("invalid budget.max_tokens %d: must be >= 0", args.Budget.MaxTokens),
-				IsError:   true,
-				ErrorKind: "invalid_params",
-			}, nil
-		}
-		budget.MaxTokens = args.Budget.MaxTokens
-
-		if args.Budget.Timeout != "" {
-			d, err := time.ParseDuration(args.Budget.Timeout)
-			if err != nil {
-				_ = signalProcessGroup(cmd, syscall.SIGKILL)
-				_ = cmd.Wait()
-				return Result{
-					Content:   fmt.Sprintf("invalid budget.timeout %q: %v", args.Budget.Timeout, err),
-					IsError:   true,
-					ErrorKind: "invalid_params",
-				}, nil
-			}
-			if d < time.Second {
-				_ = signalProcessGroup(cmd, syscall.SIGKILL)
-				_ = cmd.Wait()
-				return Result{
-					Content:   fmt.Sprintf("invalid budget.timeout %q: must be >= 1s", args.Budget.Timeout),
-					IsError:   true,
-					ErrorKind: "invalid_params",
-				}, nil
-			}
-			if d > 24*time.Hour {
-				d = 24 * time.Hour
-			}
-			budget.Timeout = d.String()
-		}
-
-		if args.Budget.Deadline != "" {
-			t, err := time.Parse(time.RFC3339, args.Budget.Deadline)
-			if err != nil {
-				_ = signalProcessGroup(cmd, syscall.SIGKILL)
-				_ = cmd.Wait()
-				return Result{
-					Content:   fmt.Sprintf("invalid budget.deadline %q: must be RFC 3339: %v", args.Budget.Deadline, err),
-					IsError:   true,
-					ErrorKind: "invalid_params",
-				}, nil
-			}
-			if !t.After(time.Now()) {
-				_ = signalProcessGroup(cmd, syscall.SIGKILL)
-				_ = cmd.Wait()
-				return Result{
-					Content:   fmt.Sprintf("invalid budget.deadline %q: must be in the future", args.Budget.Deadline),
-					IsError:   true,
-					ErrorKind: "invalid_params",
-				}, nil
-			}
-			budget.Deadline = args.Budget.Deadline
-		}
 	}
 
 	assignMsg := bridge.AgentAssign{
@@ -634,10 +575,16 @@ func spawnChildProcess(ctx context.Context, args agentToolArgs, cfg AgentToolCon
 	if err := childWriter.WriteEnvelope("agent.assign", assignMsg); err != nil {
 		_ = signalProcessGroup(cmd, syscall.SIGKILL)
 		_ = cmd.Wait()
-		return agentToolError("write assign", err), nil
+		return nil, err
 	}
+	return nil, nil
+}
 
-	// Stream events and wait for agent.result.
+// awaitChildResult streams the child's events until agent.result, waits for
+// process exit, closes the instance row, and assembles the tool Result. The
+// returned bool reports whether the instance row was closed (so the caller's
+// compensating-close defer knows not to double-close).
+func awaitChildResult(ctx context.Context, cfg AgentToolConfig, cmd *exec.Cmd, childReader *stdio.Reader, instResult *childInstance) (Result, bool) {
 	// Create a dedicated bus client for this child so forwarded events are
 	// scoped and don't leak between concurrent children.
 	startedAt := time.Now()
@@ -649,7 +596,7 @@ func spawnChildProcess(ctx context.Context, args agentToolArgs, cfg AgentToolCon
 		_ = signalProcessGroup(cmd, syscall.SIGKILL)
 		_ = cmd.Wait()
 		childBusClient.Close()
-		return agentToolError("child result", err), nil
+		return agentToolError("child result", err), false
 	}
 
 	// Wait for the child to exit - the sole cmd.Wait() call for the normal
@@ -664,10 +611,11 @@ func spawnChildProcess(ctx context.Context, args agentToolArgs, cfg AgentToolCon
 	}
 
 	// Close the instance row and bus client.
+	closed := false
 	if cfg.Store != nil && usageAcc != nil {
 		usageJSON, _ := json.Marshal(usageAcc)
 		_ = cfg.Store.CloseAgentInstance(context.WithoutCancel(ctx), instResult.InstanceID, resultEnv.Status, string(usageJSON), resultEnv.Error)
-		instanceClosed = true
+		closed = true
 	}
 	childBusClient.Close()
 
@@ -699,7 +647,85 @@ func spawnChildProcess(ctx context.Context, args agentToolArgs, cfg AgentToolCon
 		Content: content,
 		Details: detailsJSON,
 		IsError: resultEnv.Status == string(tauchat.ChildAgentFailed),
-	}, nil
+	}, closed
+}
+
+func spawnChildProcess(ctx context.Context, args agentToolArgs, cfg AgentToolConfig, instResult *childInstance) (Result, error) {
+	// Compensating close: any return path below that doesn't reach the
+	// normal completion close (which sets instanceClosed) means spawn,
+	// handshake, or streaming failed before a result was ever obtained.
+	// Close the instance deterministically as failed rather than leaving
+	// it "started" forever - see docs/specs/agents/
+	// 04-storage-and-sessions.md (G3: atomic instantiation / spawn-failure
+	// compensation). Uses context.WithoutCancel: this defer very often runs
+	// exactly because ctx was cancelled (G7 cancellation path) - the close
+	// write must still go through even though the request that triggered it
+	// is the reason ctx is no longer usable.
+	instanceClosed := false
+	defer func() {
+		if !instanceClosed && cfg.Store != nil {
+			_ = cfg.Store.CloseAgentInstance(context.WithoutCancel(ctx), instResult.InstanceID, string(tauchat.ChildAgentFailed), "", "spawn did not reach completion")
+		}
+	}()
+
+	// Concurrency admission (G5): gate the actual process spawn behind the
+	// per-parent/process-wide ceilings. This runs after instantiation (so
+	// the instance row already exists - the instanceClosed defer above
+	// cleans it up on rejection, same as any other pre-start failure) and
+	// before anything OS-level happens, per docs/specs/agents/
+	// 02-spawning-and-lifecycle.md (Concurrency and resource ceilings).
+	release, admitResult := admitSpawn(ctx, args, cfg, instResult)
+	if admitResult != nil {
+		return *admitResult, nil
+	}
+	defer release()
+
+	cmd, stdin, stdout, stderr, err := startChildProcess(cfg, instResult)
+	if err != nil {
+		return agentToolError("start child", err), nil
+	}
+	// Drain stderr to slog in background: redacted, rate-limited, and
+	// capped per docs/specs/agents/03-wire-protocol.md (stderr handling).
+	// stderr is diagnostic-only and never parsed for protocol messages.
+	go drainChildStderr(stderr, instResult.InstanceID)
+
+	// Record the child's OS process identity now that it's known (the
+	// instance row was created before Start() - pid can't be known
+	// earlier). Best effort: a failure here just means the orphan sweep
+	// falls back to "no pid recorded" for this row (G10), not a spawn
+	// failure.
+	if cfg.Store != nil {
+		pid := cmd.Process.Pid
+		_ = cfg.Store.SetAgentInstancePID(context.WithoutCancel(ctx), instResult.InstanceID, pid, procid.CaptureProcessStartNS(pid))
+	}
+
+	childReader := stdio.NewReader(stdout)
+	childWriter := stdio.NewWriter(stdin)
+
+	// Single authoritative cmd.Wait() call site for this process - Wait
+	// must be called exactly once. waitDone tells the cancellation
+	// supervisor (below) the process has already been reaped, so it stops
+	// escalating signals into a pid that may have been recycled.
+	waitDone := make(chan struct{})
+	supervisorDone := make(chan struct{})
+	go superviseCancellation(ctx, cmd, childWriter, instResult.InstanceID, cfg.Agents, waitDone, supervisorDone)
+	defer func() {
+		close(waitDone)
+		<-supervisorDone
+	}()
+
+	// Handshake: read agent.ready, then assign the task (limits and budget
+	// are built inside handshakeAndAssign).
+	if rej, err := handshakeAndAssign(ctx, cmd, childReader, childWriter, args, instResult); rej != nil {
+		return *rej, nil
+	} else if err != nil {
+		return agentToolError("handshake", err), nil
+	}
+
+	// Stream events, wait for agent.result, and assemble the tool result.
+	res, closed := awaitChildResult(ctx, cfg, cmd, childReader, instResult)
+	instanceClosed = closed
+	return res, nil
 }
 
 type childInstance struct {
@@ -959,152 +985,187 @@ func superviseCancellation(ctx context.Context, cmd *exec.Cmd, w *stdio.Writer, 
 // and the child is treated as crashed.
 const maxAuthorityViolations = 3
 
-func readChildResult(ctx context.Context, reader *stdio.Reader, instanceID, callID, parentSessionID string, childPub *eventbus.Publisher[tauchat.ChatEvent]) (string, *bridge.AgentResult, *bridge.AgentResultUsage, error) {
-	var finalText strings.Builder
-	var usageAcc bridge.AgentResultUsage
-	var activity string
-	startedAt := time.Now()
-	violations := 0
+// childResultReader accumulates state while streaming one child's envelopes.
+type childResultReader struct {
+	reader     *stdio.Reader
+	instanceID string
+	callID     string
+	childPub   *eventbus.Publisher[tauchat.ChatEvent]
+	finalText  strings.Builder
+	usageAcc   bridge.AgentResultUsage
+	activity   string
+	violations int
+	startedAt  time.Time
+}
 
-	// emitState publishes a ChildAgentStateEvent on the parent bus.
-	emitState := func(status tauchat.ChildAgentStatus) {
-		if childPub == nil || !childPub.ShouldPublish() {
-			return
+func readChildResult(ctx context.Context, reader *stdio.Reader, instanceID, callID, parentSessionID string, childPub *eventbus.Publisher[tauchat.ChatEvent]) (string, *bridge.AgentResult, *bridge.AgentResultUsage, error) {
+	r := &childResultReader{
+		reader:     reader,
+		instanceID: instanceID,
+		callID:     callID,
+		childPub:   childPub,
+		startedAt:  time.Now(),
+	}
+	for {
+		typ, payload, err := r.reader.ReadEnvelope()
+		if err != nil {
+			return r.eofResult(ctx, err)
 		}
-		elapsed := time.Since(startedAt).Milliseconds()
-		childPub.Publish(tauchat.ChildAgentStateEvent{
-			InstanceID:   instanceID,
-			CallID:       callID,
-			SpecName:     specNameFromID(instanceID),
-			Activity:     activity,
-			Turns:        usageAcc.Turns,
-			InputTokens:  usageAcc.InputTokens,
-			OutputTokens: usageAcc.OutputTokens,
-			ElapsedMs:    elapsed,
-			Status:       status,
-			OccurredAt:   time.Now(),
+		res, err := r.dispatch(typ, payload)
+		if res != nil || err != nil {
+			return r.finalText.String(), res, &r.usageAcc, err
+		}
+	}
+}
+
+// eofResult builds the synthetic result for EOF without agent.result. If the
+// parent's own context was cancelled, this is the expected outcome of the
+// cancellation escalation (see superviseCancellation) - synthesise
+// "cancelled", not "failed" (docs/specs/agents/02-spawning-and-lifecycle.md,
+// Phase 3: Forced kill). Otherwise the child crashed unexpectedly.
+func (r *childResultReader) eofResult(ctx context.Context, err error) (string, *bridge.AgentResult, *bridge.AgentResultUsage, error) {
+	status := tauchat.ChildAgentFailed
+	errDetail := fmt.Sprintf("child exited without result: %v", err)
+	if ctx.Err() != nil {
+		status = tauchat.ChildAgentCancelled
+		errDetail = ""
+	}
+	return r.finalText.String(), &bridge.AgentResult{
+		TaskID:    r.instanceID,
+		Status:    string(status),
+		FinalText: r.finalText.String(),
+		Partial:   true,
+		Error:     errDetail,
+		Usage: bridge.AgentResultUsage{
+			Turns:        r.usageAcc.Turns,
+			InputTokens:  r.usageAcc.InputTokens,
+			OutputTokens: r.usageAcc.OutputTokens,
+			Cost:         r.usageAcc.Cost,
+		},
+	}, &r.usageAcc, nil
+}
+
+// dispatch handles one envelope: authority gating first (per
+// 03-wire-protocol.md, violations count for ALL message types, including
+// post-result ones), then type dispatch. A nil result and nil error means
+// "keep reading".
+func (r *childResultReader) dispatch(typ string, payload json.RawMessage) (*bridge.AgentResult, error) {
+	// Instance-ID validation and message-type gating runs BEFORE type
+	// dispatch so authority violations are counted for ALL messages.
+	// agent.event/agent.usage must carry a matching instance field; unknown
+	// types count as authority violations; duplicate agent.result is
+	// discarded silently (not fatal).
+	switch typ {
+	case "agent.event", "agent.usage":
+		if !r.validateInstance(payload) {
+			if err := r.countViolation(""); err != nil {
+				return nil, err
+			}
+			return nil, nil
+		}
+	case "agent.result":
+		// Processed below.
+	default:
+		// Unknown message types counted as authority violations
+		// per 03-wire-protocol.md (discarded, WARN, counter).
+		if err := r.countViolation(typ); err != nil {
+			return nil, err
+		}
+		return nil, nil
+	}
+
+	switch typ {
+	case "agent.event":
+		r.publishChildEvent(payload)
+		if r.activity == "" {
+			r.activity = extractChildActivity(payload)
+		}
+		r.emitState(tauchat.ChildAgentWorking)
+	case "agent.usage":
+		var usage bridge.AgentResultUsage
+		if err := json.Unmarshal(payload, &usage); err != nil {
+			return nil, nil //nolint:nilerr // malformed usage envelope is skipped, not fatal
+		}
+		if usage.Turns > r.usageAcc.Turns {
+			r.usageAcc = usage
+		}
+		r.emitState(tauchat.ChildAgentWorking)
+	case "agent.result":
+		var result bridge.AgentResult
+		if err := json.Unmarshal(payload, &result); err != nil {
+			return nil, fmt.Errorf("unmarshal agent.result: %w", err)
+		}
+		return &result, nil
+	}
+	return nil, nil
+}
+
+// countViolation records an authority violation and returns an error once the
+// cap is reached. An empty unknownType means the instance field mismatched.
+func (r *childResultReader) countViolation(unknownType string) error {
+	r.violations++
+	if r.violations < maxAuthorityViolations {
+		return nil
+	}
+	if unknownType != "" {
+		return fmt.Errorf("protocol violation: %d authority violations (unknown type %q), closing pipe", r.violations, unknownType)
+	}
+	return fmt.Errorf("protocol violation: %d authority violations, closing pipe", r.violations)
+}
+
+// validateInstance returns true only on strict match with the expected
+// instanceID per the spec's pipe-binding rules. An empty or missing instance
+// field is a violation (G4 authority validation).
+func (r *childResultReader) validateInstance(payload json.RawMessage) bool {
+	var obj struct {
+		Instance string `json:"instance"`
+	}
+	if err := json.Unmarshal(payload, &obj); err != nil {
+		return false
+	}
+	return obj.Instance == r.instanceID
+}
+
+// publishChildEvent forwards a decoded agent.event as a ChildAgentMessageEvent
+// for the child-transcript renderer (internal/tui2 appendChildMessageEvent and
+// equivalents). Do NOT also publish a ChatToolOutputEvent here: that event type
+// is documented as a live human-readable text chunk, but the only "chunk"
+// available at this point is the raw wire envelope bytes for payload -
+// publishing those would leak protocol internals (JSON discriminators, nested
+// envelopes) into anything that renders or persists ChatToolOutputEvent
+// verbatim.
+func (r *childResultReader) publishChildEvent(payload json.RawMessage) {
+	if r.childPub == nil {
+		return
+	}
+	var agentEv bridge.AgentEvent
+	if err := json.Unmarshal(payload, &agentEv); err == nil && agentEv.Event != nil {
+		r.childPub.Publish(tauchat.ChildAgentMessageEvent{
+			InstanceID: r.instanceID,
+			CallID:     r.callID,
+			Event:      agentEv.Event,
 		})
 	}
+}
 
-	// validateInstance returns true only on strict match with the expected
-	// instanceID per the spec's pipe-binding rules. An empty or missing
-	// instance field is a violation (G4 authority validation).
-	validateInstance := func(payload json.RawMessage) bool {
-		var obj struct {
-			Instance string `json:"instance"`
-		}
-		if err := json.Unmarshal(payload, &obj); err != nil {
-			return false
-		}
-		return obj.Instance == instanceID
+// emitState publishes a ChildAgentStateEvent on the parent bus.
+func (r *childResultReader) emitState(status tauchat.ChildAgentStatus) {
+	if r.childPub == nil || !r.childPub.ShouldPublish() {
+		return
 	}
-
-	for {
-		typ, payload, err := reader.ReadEnvelope()
-		if err != nil {
-			// EOF without agent.result. If the parent's own context was
-			// cancelled, this is the expected outcome of our cancellation
-			// escalation (see superviseCancellation) - synthesise
-			// "cancelled", not "failed" (docs/specs/agents/
-			// 02-spawning-and-lifecycle.md, Phase 3: Forced kill). Otherwise
-			// the child crashed unexpectedly.
-			status := tauchat.ChildAgentFailed
-			errDetail := fmt.Sprintf("child exited without result: %v", err)
-			if ctx.Err() != nil {
-				status = tauchat.ChildAgentCancelled
-				errDetail = ""
-			}
-			return finalText.String(), &bridge.AgentResult{
-				TaskID:    instanceID,
-				Status:    string(status),
-				FinalText: finalText.String(),
-				Partial:   true,
-				Error:     errDetail,
-				Usage: bridge.AgentResultUsage{
-					Turns:        usageAcc.Turns,
-					InputTokens:  usageAcc.InputTokens,
-					OutputTokens: usageAcc.OutputTokens,
-					Cost:         usageAcc.Cost,
-				},
-			}, &usageAcc, nil
-		}
-
-		// Instance-ID validation and message-type gating runs BEFORE
-		// type dispatch so authority violations are counted for ALL
-		// messages, including post-result ones. Per 03-wire-protocol.md:
-		// agent.event/agent.usage must carry a matching instance field;
-		// unknown types count as authority violations; duplicate
-		// agent.result is discarded silently (not fatal).
-		switch typ {
-		case "agent.event", "agent.usage":
-			if !validateInstance(payload) {
-				violations++
-				if violations >= maxAuthorityViolations {
-					return finalText.String(), nil, &usageAcc,
-						fmt.Errorf("protocol violation: %d authority violations, closing pipe", violations)
-				}
-				continue
-			}
-		case "agent.result":
-			// First result is processed normally below. A second result
-			// (duplicate) is discarded silently per spec — the pipe is
-			// already closing after the first.
-			// We mark resultReceived in the type switch below.
-		default:
-			// Unknown message types counted as authority violations
-			// per 03-wire-protocol.md (discarded, WARN, counter).
-			// Malformed JSON is caught by ReadEnvelope; this handles
-			// valid-but-unrecognised types.
-			violations++
-			if violations >= maxAuthorityViolations {
-				return finalText.String(), nil, &usageAcc,
-					fmt.Errorf("protocol violation: %d authority violations (unknown type %q), closing pipe", violations, typ)
-			}
-			continue
-		}
-
-		switch typ {
-		case "agent.event":
-			if childPub != nil {
-				// Publish the decoded event for the child-transcript renderer
-				// (internal/tui2 appendChildMessageEvent and equivalents).
-				// Do NOT also publish a ChatToolOutputEvent here: that event
-				// type is documented as a live human-readable text chunk, but
-				// the only "chunk" available at this point is the raw wire
-				// envelope bytes for payload - publishing those would leak
-				// protocol internals (JSON discriminators, nested envelopes)
-				// into anything that renders or persists ChatToolOutputEvent
-				// verbatim.
-				var agentEv bridge.AgentEvent
-				if err := json.Unmarshal(payload, &agentEv); err == nil && agentEv.Event != nil {
-					childPub.Publish(tauchat.ChildAgentMessageEvent{
-						InstanceID: instanceID,
-						CallID:     callID,
-						Event:      agentEv.Event,
-					})
-				}
-			}
-			if activity == "" {
-				activity = extractChildActivity(payload)
-			}
-			emitState(tauchat.ChildAgentWorking)
-		case "agent.usage":
-			var usage bridge.AgentResultUsage
-			if err := json.Unmarshal(payload, &usage); err != nil {
-				continue
-			}
-			if usage.Turns > usageAcc.Turns {
-				usageAcc = usage
-			}
-			emitState(tauchat.ChildAgentWorking)
-		case "agent.result":
-			var result bridge.AgentResult
-			if err := json.Unmarshal(payload, &result); err != nil {
-				return finalText.String(), nil, &usageAcc, fmt.Errorf("unmarshal agent.result: %w", err)
-			}
-			return finalText.String(), &result, &usageAcc, nil
-		}
-	}
+	elapsed := time.Since(r.startedAt).Milliseconds()
+	r.childPub.Publish(tauchat.ChildAgentStateEvent{
+		InstanceID:   r.instanceID,
+		CallID:       r.callID,
+		SpecName:     specNameFromID(r.instanceID),
+		Activity:     r.activity,
+		Turns:        r.usageAcc.Turns,
+		InputTokens:  r.usageAcc.InputTokens,
+		OutputTokens: r.usageAcc.OutputTokens,
+		ElapsedMs:    elapsed,
+		Status:       status,
+		OccurredAt:   time.Now(),
+	})
 }
 
 func agentToolError(stage string, err error) Result {

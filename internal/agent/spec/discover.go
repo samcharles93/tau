@@ -77,69 +77,7 @@ func DiscoverFromDisk(sources []Source) ([]*Definition, []Diagnostic) {
 	selectedPriority := make(map[string]int)
 
 	for _, source := range sources {
-		root := strings.TrimSpace(source.Root)
-		if root == "" {
-			continue
-		}
-
-		info, err := os.Stat(root)
-		if err != nil {
-			continue // missing source directory is not an error
-		}
-		if !info.IsDir() {
-			continue
-		}
-
-		walkErr := filepath.WalkDir(root, func(path string, entry fs.DirEntry, walkErr error) error {
-			if walkErr != nil {
-				diagnostics = append(diagnostics, Diagnostic{Path: path, Message: walkErr.Error()})
-				return nil
-			}
-			if entry.IsDir() {
-				return nil
-			}
-			if !strings.HasSuffix(strings.ToLower(entry.Name()), agentFileSuffix) {
-				return nil
-			}
-
-			content, err := os.ReadFile(path)
-			if err != nil {
-				diagnostics = append(diagnostics, Diagnostic{Path: path, Message: err.Error()})
-				return nil
-			}
-
-			def, err := Parse(content)
-			if err != nil {
-				diagnostics = append(diagnostics, Diagnostic{Path: path, Message: err.Error()})
-				return nil
-			}
-			def.Scope = source.Scope
-			def.SourcePath = path
-
-			key := strings.ToLower(def.Name)
-			if existingPriority, ok := selectedPriority[key]; ok {
-				if source.Priority < existingPriority {
-					diagnostics = append(diagnostics, Diagnostic{
-						Path:    path,
-						Message: "shadowed by higher-priority definition of the same name",
-					})
-					return nil
-				}
-				if source.Priority == existingPriority && path <= selected[key].SourcePath {
-					diagnostics = append(diagnostics, Diagnostic{
-						Path:    path,
-						Message: "shadowed by another definition of the same name",
-					})
-					return nil
-				}
-			}
-			selected[key] = def
-			selectedPriority[key] = source.Priority
-			return nil
-		})
-		if walkErr != nil {
-			diagnostics = append(diagnostics, Diagnostic{Path: root, Message: walkErr.Error()})
-		}
+		discoverSpecsFromSource(source, selected, selectedPriority, &diagnostics)
 	}
 
 	defs := make([]*Definition, 0, len(selected))
@@ -151,4 +89,72 @@ func DiscoverFromDisk(sources []Source) ([]*Definition, []Diagnostic) {
 	})
 
 	return defs, diagnostics
+}
+
+// discoverSpecsFromSource walks one source root, recording selected spec
+// definitions and appending diagnostics.
+func discoverSpecsFromSource(source Source, selected map[string]*Definition, selectedPriority map[string]int, diagnostics *[]Diagnostic) {
+	root := strings.TrimSpace(source.Root)
+	if root == "" {
+		return
+	}
+
+	info, err := os.Stat(root)
+	if err != nil {
+		return // missing source directory is not an error
+	}
+	if !info.IsDir() {
+		return
+	}
+
+	walkErr := filepath.WalkDir(root, func(path string, entry fs.DirEntry, walkErr error) error {
+		if walkErr != nil {
+			*diagnostics = append(*diagnostics, Diagnostic{Path: path, Message: walkErr.Error()})
+			return nil //nolint:nilerr // recorded as a diagnostic; the walk must continue
+		}
+		if entry.IsDir() {
+			return nil
+		}
+		if !strings.HasSuffix(strings.ToLower(entry.Name()), agentFileSuffix) {
+			return nil
+		}
+
+		content, err := os.ReadFile(path)
+		if err != nil {
+			*diagnostics = append(*diagnostics, Diagnostic{Path: path, Message: err.Error()})
+			return nil //nolint:nilerr // recorded as a diagnostic; the walk must continue
+		}
+
+		def, err := Parse(content)
+		if err != nil {
+			*diagnostics = append(*diagnostics, Diagnostic{Path: path, Message: err.Error()})
+			return nil //nolint:nilerr // recorded as a diagnostic; the walk must continue
+		}
+		def.Scope = source.Scope
+		def.SourcePath = path
+
+		key := strings.ToLower(def.Name)
+		if existingPriority, ok := selectedPriority[key]; ok {
+			if source.Priority < existingPriority {
+				*diagnostics = append(*diagnostics, Diagnostic{
+					Path:    path,
+					Message: "shadowed by higher-priority definition of the same name",
+				})
+				return nil
+			}
+			if source.Priority == existingPriority && path <= selected[key].SourcePath {
+				*diagnostics = append(*diagnostics, Diagnostic{
+					Path:    path,
+					Message: "shadowed by another definition of the same name",
+				})
+				return nil
+			}
+		}
+		selected[key] = def
+		selectedPriority[key] = source.Priority
+		return nil
+	})
+	if walkErr != nil {
+		*diagnostics = append(*diagnostics, Diagnostic{Path: root, Message: walkErr.Error()})
+	}
 }

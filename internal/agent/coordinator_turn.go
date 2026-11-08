@@ -63,244 +63,314 @@ func (c *Coordinator) runTurn(ctx context.Context, state chat.ChatSessionState) 
 			c.cancelTurn(sessionID, requestID, time.Now().UTC())
 			return
 		}
-
-		// Check budget/limit enforcement.
-		c.turnCount++
-		if status, partial := c.checkLimits(sessionID, requestID); status != "" {
-			c.budgetExhausted(sessionID, requestID, status, partial, turnIterations, cumulativeUsage, time.Now().UTC())
+		var step turnStep
+		state, step = c.runTurnIteration(ctx, sessionID, requestID, state, bearerToken, iteration, &turnIterations, &cumulativeUsage)
+		if step != turnStepContinue {
 			return
 		}
+	}
+}
 
-		// Inject any steering messages that arrived during tool execution
-		// or at the turn start.
-		c.injectSteering(sessionID)
-		state = c.getSessionState(sessionID)
+// turnStep is the outcome of one turn-loop iteration.
+type turnStep int
 
-		// Build tool definitions from registry each iteration so the
-		// AllowedTools filter (set by the Skill tool) takes effect.
-		state.Tools = c.buildToolDefs()
-		reasoningSnapshot := ""
-		toolCallSnapshots := make([]chat.ChatToolCall, 0)
+const (
+	turnStepContinue turnStep = iota // keep looping
+	turnStepStop                     // turn ended (completed, failed, cancelled, or budget exhausted)
+)
 
-		// Emit context event with the full message list so plugins can
-		// observe and mutate conversation state before the LLM call.
-		contextResp := c.dispatchPluginRequestResponse("context", sessionID, &api.EventPayload{
-			Kind: &api.EventPayload_Context{Context: &api.ContextPayload{
-				Messages: marshalMessages(state.Messages),
-			}},
-		})
-		if contextResp != nil {
-			c.applyPluginMessageModifications(&state, contextResp)
-			// Sync mutations back to the stored session so they persist
-			// across turn iterations (tool-call loops).
-			c.mu.Lock()
-			if s, ok := c.sessions[sessionID]; ok {
-				s.state.Messages = state.Messages
+// llmStreamCallbacks builds the StreamCallbacks for one LLM call, wiring
+// deltas to the session's pending text and tool-call snapshots.
+func (c *Coordinator) llmStreamCallbacks(sessionID, requestID string, reasoningSnapshot *string, toolCallSnapshots *[]chat.ChatToolCall) chat.StreamCallbacks {
+	return chat.StreamCallbacks{
+		OnDelta: func(delta string) error {
+			return c.appendDelta(sessionID, requestID, delta, time.Now().UTC())
+		},
+		OnReasoningDelta: func(delta string) error {
+			*reasoningSnapshot += delta
+			c.emitReasoningDelta(sessionID, requestID, delta, *reasoningSnapshot, time.Now().UTC())
+			return nil
+		},
+		OnToolCallDelta: func(tcd chat.ChatToolCallDelta) error {
+			*toolCallSnapshots = mergeToolCallDelta(*toolCallSnapshots, tcd)
+			call := (*toolCallSnapshots)[tcd.Index]
+			callID := call.ID
+			if callID == "" {
+				callID = fmt.Sprintf("tool_call_%d", tcd.Index)
 			}
-			c.mu.Unlock()
-		}
+			argsSummary, truncated := summarizeForUIWithTruncation(call.Function.Arguments)
+			c.emit(chat.ChatToolCallDeltaEvent{
+				SessionID:        sessionID,
+				RequestID:        requestID,
+				CallID:           callID,
+				Index:            tcd.Index,
+				ToolName:         call.Function.Name,
+				ArgumentsSummary: argsSummary,
+				Truncated:        truncated,
+				ReceivedAt:       time.Now().UTC(),
+			})
+			return nil
+		},
+	}
+}
 
-		if iteration == 0 {
-			compactedState, compacted, compactErr := c.maybeAutoCompact(ctx, state, bearerToken)
-			if compactErr != nil {
-				c.loggerWithTurn(sessionID, requestID).Warn(
-					"auto-compaction failed",
-					"err", compactErr,
-				)
-				c.emit(chat.ChatNotificationEvent{
-					Message:    "auto-compaction failed: " + compactErr.Error(),
-					Level:      chat.ChatNotificationWarn,
-					OccurredAt: time.Now().UTC(),
-				})
-			} else if compacted {
-				state = compactedState
-			}
-		}
+// applyContextPluginHook dispatches the "context" plugin event with the full
+// message list and applies any message modifications, syncing them back to the
+// stored session so they persist across turn iterations.
+func (c *Coordinator) applyContextPluginHook(sessionID string, state chat.ChatSessionState) chat.ChatSessionState {
+	contextResp := c.dispatchPluginRequestResponse("context", sessionID, &api.EventPayload{
+		Kind: &api.EventPayload_Context{Context: &api.ContextPayload{
+			Messages: marshalMessages(state.Messages),
+		}},
+	})
+	if contextResp == nil {
+		return state
+	}
+	c.applyPluginMessageModifications(&state, contextResp)
+	c.mu.Lock()
+	if s, ok := c.sessions[sessionID]; ok {
+		s.state.Messages = state.Messages
+	}
+	c.mu.Unlock()
+	return state
+}
 
-		pluginResp := c.dispatchPluginRequestResponse("before_llm_call", sessionID, &api.EventPayload{
-			Kind: &api.EventPayload_BeforeLlmCall{
-				BeforeLlmCall: &api.BeforeLLMCallPayload{
-					ModelId:    state.Model.ID,
-					Headers:    map[string]string{"Authorization": "Bearer " + bearerToken},
-					Messages:   marshalMessages(state.Messages),
-					Parameters: marshalParameters(state.Parameters),
-				},
-			},
-		})
-
-		var extraHeaders map[string]string
-		if pluginResp != nil && len(pluginResp.GetAddHeaders()) > 0 {
-			extraHeaders = pluginResp.GetAddHeaders()
-		}
-
-		// Apply LLM-boundary modifiers for this call only.
-		originalSystemPrompt := state.SystemPrompt
-		originalModelID := state.Model.ID
-		if pluginResp != nil {
-			if pluginResp.GetInjectSystemPrompt() != "" {
-				state.SystemPrompt = state.SystemPrompt + "\n" + pluginResp.GetInjectSystemPrompt()
-			}
-			if pluginResp.GetModifiedModelId() != "" {
-				state.Model.ID = pluginResp.GetModifiedModelId()
-			}
-		}
-
-		c.loggerWithTurn(sessionID, requestID).Debug(
-			"llm call start",
-			"iteration", iteration,
-			"model", state.Model.ID,
-			"provider", state.ProviderName,
-			"msg_count", len(state.Messages),
-			"tool_count", len(state.Tools),
+// maybeAutoCompactTurn runs auto-compaction on the first turn iteration,
+// warning (not failing) on compaction errors.
+func (c *Coordinator) maybeAutoCompactTurn(ctx context.Context, sessionID, requestID string, state chat.ChatSessionState, bearerToken string) chat.ChatSessionState {
+	compactedState, compacted, compactErr := c.maybeAutoCompact(ctx, state, bearerToken)
+	if compactErr != nil {
+		c.loggerWithTurn(sessionID, requestID).Warn(
+			"auto-compaction failed",
+			"err", compactErr,
 		)
-
-		result, err := c.streamer.StreamChatCompletionFull(ctx, state, bearerToken, extraHeaders, chat.StreamCallbacks{
-			OnDelta: func(delta string) error {
-				return c.appendDelta(sessionID, requestID, delta, time.Now().UTC())
-			},
-			OnReasoningDelta: func(delta string) error {
-				reasoningSnapshot += delta
-				c.emitReasoningDelta(sessionID, requestID, delta, reasoningSnapshot, time.Now().UTC())
-				return nil
-			},
-			OnToolCallDelta: func(tcd chat.ChatToolCallDelta) error {
-				toolCallSnapshots = mergeToolCallDelta(toolCallSnapshots, tcd)
-				call := toolCallSnapshots[tcd.Index]
-				callID := call.ID
-				if callID == "" {
-					callID = fmt.Sprintf("tool_call_%d", tcd.Index)
-				}
-				argsSummary, truncated := summarizeForUIWithTruncation(call.Function.Arguments)
-				c.emit(chat.ChatToolCallDeltaEvent{
-					SessionID:        sessionID,
-					RequestID:        requestID,
-					CallID:           callID,
-					Index:            tcd.Index,
-					ToolName:         call.Function.Name,
-					ArgumentsSummary: argsSummary,
-					Truncated:        truncated,
-					ReceivedAt:       time.Now().UTC(),
-				})
-				return nil
-			},
+		c.emit(chat.ChatNotificationEvent{
+			Message:    "auto-compaction failed: " + compactErr.Error(),
+			Level:      chat.ChatNotificationWarn,
+			OccurredAt: time.Now().UTC(),
 		})
-		if err != nil {
-			// Restore per-call overrides before error handling.
-			state.SystemPrompt = originalSystemPrompt
-			state.Model.ID = originalModelID
-			if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) || errors.Is(ctx.Err(), context.Canceled) {
-				c.loggerWithTurn(sessionID, requestID).Debug(
-					"llm call cancelled",
-					"iteration", iteration,
-					"err", err,
-				)
-				c.cancelTurn(sessionID, requestID, time.Now().UTC())
-				return
-			}
-			c.loggerWithTurn(sessionID, requestID).Warn(
-				"llm call failed",
+		return state
+	}
+	if compacted {
+		return compactedState
+	}
+	return state
+}
+
+// beforeLLMCallHook dispatches the "before_llm_call" plugin event and returns
+// the extra headers plus the state with per-call overrides applied (injected
+// system prompt, modified model ID), along with the original values so the
+// caller can restore them after the call.
+func (c *Coordinator) beforeLLMCallHook(sessionID string, state chat.ChatSessionState, bearerToken string) (map[string]string, chat.ChatSessionState, string, string) {
+	pluginResp := c.dispatchPluginRequestResponse("before_llm_call", sessionID, &api.EventPayload{
+		Kind: &api.EventPayload_BeforeLlmCall{
+			BeforeLlmCall: &api.BeforeLLMCallPayload{
+				ModelId:    state.Model.ID,
+				Headers:    map[string]string{"Authorization": "Bearer " + bearerToken},
+				Messages:   marshalMessages(state.Messages),
+				Parameters: marshalParameters(state.Parameters),
+			},
+		},
+	})
+
+	var extraHeaders map[string]string
+	if pluginResp != nil && len(pluginResp.GetAddHeaders()) > 0 {
+		extraHeaders = pluginResp.GetAddHeaders()
+	}
+
+	// Apply LLM-boundary modifiers for this call only.
+	originalSystemPrompt := state.SystemPrompt
+	originalModelID := state.Model.ID
+	if pluginResp != nil {
+		if pluginResp.GetInjectSystemPrompt() != "" {
+			state.SystemPrompt = state.SystemPrompt + "\n" + pluginResp.GetInjectSystemPrompt()
+		}
+		if pluginResp.GetModifiedModelId() != "" {
+			state.Model.ID = pluginResp.GetModifiedModelId()
+		}
+	}
+	return extraHeaders, state, originalSystemPrompt, originalModelID
+}
+
+// handleLLMResult processes one LLM call's outcome: error/cancellation
+// handling, per-call override restore, after_llm_call event, usage accounting,
+// and either turn completion (no tool calls) or tool execution and loop
+// refresh. Returns the refreshed state and the loop step.
+func (c *Coordinator) handleLLMResult(ctx context.Context, sessionID, requestID string, state chat.ChatSessionState, bearerToken string, result chat.CompletionResult, err error, iteration int, originalSystemPrompt, originalModelID string, turnIterations *int, cumulativeUsage *chat.ChatUsage) (chat.ChatSessionState, turnStep) {
+	if err != nil {
+		// Restore per-call overrides before error handling.
+		state.SystemPrompt = originalSystemPrompt
+		state.Model.ID = originalModelID
+		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) || errors.Is(ctx.Err(), context.Canceled) {
+			c.loggerWithTurn(sessionID, requestID).Debug(
+				"llm call cancelled",
 				"iteration", iteration,
 				"err", err,
 			)
-			c.failTurn(sessionID, requestID, err, time.Now().UTC())
-			return
+			c.cancelTurn(sessionID, requestID, time.Now().UTC())
+			return state, turnStepStop
 		}
-
-		// Snapshot effective model ID before restoring, so after_llm_call
-		// reports the model that was actually used.
-		effectiveModelID := state.Model.ID
-
-		// Restore per-call overrides.
-		state.SystemPrompt = originalSystemPrompt
-		state.Model.ID = originalModelID
-
-		c.publishPluginLifecycleEvent("after_llm_call", sessionID, &api.EventPayload{
-			Kind: &api.EventPayload_AfterLlmCall{
-				AfterLlmCall: &api.AfterLLMCallPayload{
-					ModelId:      effectiveModelID,
-					FinishReason: result.FinishReason,
-				},
-			},
-		})
-
-		c.loggerWithTurn(sessionID, requestID).Debug(
-			"llm call complete",
+		c.loggerWithTurn(sessionID, requestID).Warn(
+			"llm call failed",
 			"iteration", iteration,
-			"finish_reason", result.FinishReason,
-			"input_tokens", result.Usage.PromptTokens,
-			"output_tokens", result.Usage.CompletionTokens,
-			"total_tokens", result.Usage.TotalTokens,
-			"tool_calls", len(result.ToolCalls),
+			"err", err,
 		)
-
-		// Accumulate token usage for budget enforcement and
-		// per-turn cumulative accounting.
-		c.cumulativeTokens += result.Usage.TotalTokens
-		cumulativeUsage = addUsage(cumulativeUsage, result.Usage)
-		turnIterations++
-
-		// No tool calls → final response. Complete the turn.
-		if len(result.ToolCalls) == 0 {
-			c.completeTurn(sessionID, requestID, result, turnIterations, cumulativeUsage, time.Now().UTC())
-			return
-		}
-
-		// Tool calls detected. Validate arguments before committing -
-		// malformed JSON in tool call arguments poisons the session history
-		// and causes downstream API 400 errors on subsequent turns.
-		toolNames := make([]string, len(result.ToolCalls))
-		for i, tc := range result.ToolCalls {
-			toolNames[i] = tc.Function.Name
-		}
-		c.loggerWithTurn(sessionID, requestID).Debug(
-			"tool calls detected",
-			"iteration", iteration,
-			"count", len(result.ToolCalls),
-			"tools", toolNames,
-		)
-
-		sanitized := sanitizeToolCallArguments(result.ToolCalls)
-		if sanitized > 0 {
-			c.emitMetrics(chat.MetricEvent{
-				Category: chat.MetricCategoryTool,
-				Name:     "tool.arguments.malformed",
-				Value:    float64(sanitized),
-				Unit:     "count",
-				Labels: map[string]string{
-					"total_tool_calls": fmt.Sprintf("%d", len(result.ToolCalls)),
-				},
-				SessionID: sessionID,
-			})
-		}
-
-		// Commit the assistant's response with sanitized tool calls.
-		c.commitAssistantMessage(sessionID, c.getPendingContent(sessionID), result.ReasoningContent, result.ToolCalls)
-
-		// Execute tool calls in parallel.
-		toolResults, hardStopReason := c.executeToolsParallel(ctx, sessionID, requestID, result.ToolCalls)
-
-		// Append tool result messages to the session.
-		for i, tc := range result.ToolCalls {
-			c.appendToolResult(sessionID, requestID, tc, toolResults[i])
-		}
-
-		// The tool-call loop breaker tripped: a call was blocked without
-		// ever being justified toolLoopHardBlockLimit times in a row. End
-		// the turn now rather than let it iterate forever.
-		if hardStopReason != "" {
-			c.failTurn(sessionID, requestID, errors.New(hardStopReason), time.Now().UTC())
-			return
-		}
-
-		// Refresh state for the next iteration.
-		state = c.getSessionState(sessionID)
-		if state.SessionID == "" {
-			return // session gone
-		}
-
-		// Clear pending assistant for the next LLM call.
-		c.clearPending(sessionID)
+		c.failTurn(sessionID, requestID, err, time.Now().UTC())
+		return state, turnStepStop
 	}
+
+	// Snapshot effective model ID before restoring, so after_llm_call
+	// reports the model that was actually used.
+	effectiveModelID := state.Model.ID
+
+	// Restore per-call overrides.
+	state.SystemPrompt = originalSystemPrompt
+	state.Model.ID = originalModelID
+
+	c.publishPluginLifecycleEvent("after_llm_call", sessionID, &api.EventPayload{
+		Kind: &api.EventPayload_AfterLlmCall{
+			AfterLlmCall: &api.AfterLLMCallPayload{
+				ModelId:      effectiveModelID,
+				FinishReason: result.FinishReason,
+			},
+		},
+	})
+
+	c.loggerWithTurn(sessionID, requestID).Debug(
+		"llm call complete",
+		"iteration", iteration,
+		"finish_reason", result.FinishReason,
+		"input_tokens", result.Usage.PromptTokens,
+		"output_tokens", result.Usage.CompletionTokens,
+		"total_tokens", result.Usage.TotalTokens,
+		"tool_calls", len(result.ToolCalls),
+	)
+
+	// Accumulate token usage for budget enforcement and
+	// per-turn cumulative accounting.
+	c.cumulativeTokens += result.Usage.TotalTokens
+	*cumulativeUsage = addUsage(*cumulativeUsage, result.Usage)
+	*turnIterations++
+
+	// No tool calls → final response. Complete the turn.
+	if len(result.ToolCalls) == 0 {
+		c.completeTurn(sessionID, requestID, result, *turnIterations, *cumulativeUsage, time.Now().UTC())
+		return state, turnStepStop
+	}
+
+	return c.runToolCallsPhase(ctx, sessionID, requestID, state, result, iteration)
+}
+
+// runToolCallsPhase handles the tool-call branch of an LLM result: argument
+// sanitization, committing the assistant message, parallel execution, result
+// appending, loop-breaker hard stop, and state refresh.
+func (c *Coordinator) runToolCallsPhase(ctx context.Context, sessionID, requestID string, state chat.ChatSessionState, result chat.CompletionResult, iteration int) (chat.ChatSessionState, turnStep) {
+	// Tool calls detected. Validate arguments before committing -
+	// malformed JSON in tool call arguments poisons the session history
+	// and causes downstream API 400 errors on subsequent turns.
+	toolNames := make([]string, len(result.ToolCalls))
+	for i, tc := range result.ToolCalls {
+		toolNames[i] = tc.Function.Name
+	}
+	c.loggerWithTurn(sessionID, requestID).Debug(
+		"tool calls detected",
+		"iteration", iteration,
+		"count", len(result.ToolCalls),
+		"tools", toolNames,
+	)
+
+	sanitized := sanitizeToolCallArguments(result.ToolCalls)
+	if sanitized > 0 {
+		c.emitMetrics(chat.MetricEvent{
+			Category: chat.MetricCategoryTool,
+			Name:     "tool.arguments.malformed",
+			Value:    float64(sanitized),
+			Unit:     "count",
+			Labels: map[string]string{
+				"total_tool_calls": fmt.Sprintf("%d", len(result.ToolCalls)),
+			},
+			SessionID: sessionID,
+		})
+	}
+
+	// Commit the assistant's response with sanitized tool calls.
+	c.commitAssistantMessage(sessionID, c.getPendingContent(sessionID), result.ReasoningContent, result.ToolCalls)
+
+	// Execute tool calls in parallel.
+	toolResults, hardStopReason := c.executeToolsParallel(ctx, sessionID, requestID, result.ToolCalls)
+
+	// Append tool result messages to the session.
+	for i, tc := range result.ToolCalls {
+		c.appendToolResult(sessionID, requestID, tc, toolResults[i])
+	}
+
+	// The tool-call loop breaker tripped: a call was blocked without
+	// ever being justified toolLoopHardBlockLimit times in a row. End
+	// the turn now rather than let it iterate forever.
+	if hardStopReason != "" {
+		c.failTurn(sessionID, requestID, errors.New(hardStopReason), time.Now().UTC())
+		return state, turnStepStop
+	}
+
+	// Refresh state for the next iteration.
+	state = c.getSessionState(sessionID)
+	if state.SessionID == "" {
+		return state, turnStepStop // session gone
+	}
+
+	// Clear pending assistant for the next LLM call.
+	c.clearPending(sessionID)
+	return state, turnStepContinue
+}
+
+// runTurnIteration runs one LLM-call/tool-execution iteration of the turn
+// loop. It returns the refreshed session state and whether the loop should
+// continue.
+func (c *Coordinator) runTurnIteration(ctx context.Context, sessionID, requestID string, state chat.ChatSessionState, bearerToken string, iteration int, turnIterations *int, cumulativeUsage *chat.ChatUsage) (chat.ChatSessionState, turnStep) {
+	if err := ctx.Err(); err != nil {
+		c.cancelTurn(sessionID, requestID, time.Now().UTC())
+		return state, turnStepStop
+	}
+
+	// Check budget/limit enforcement.
+	c.turnCount++
+	if status, partial := c.checkLimits(sessionID, requestID); status != "" {
+		c.budgetExhausted(sessionID, requestID, status, partial, *turnIterations, *cumulativeUsage, time.Now().UTC())
+		return state, turnStepStop
+	}
+
+	// Inject any steering messages that arrived during tool execution
+	// or at the turn start.
+	c.injectSteering(sessionID)
+	state = c.getSessionState(sessionID)
+
+	// Build tool definitions from registry each iteration so the
+	// AllowedTools filter (set by the Skill tool) takes effect.
+	state.Tools = c.buildToolDefs()
+	reasoningSnapshot := ""
+	toolCallSnapshots := make([]chat.ChatToolCall, 0)
+
+	// Emit context event with the full message list so plugins can
+	// observe and mutate conversation state before the LLM call.
+	state = c.applyContextPluginHook(sessionID, state)
+
+	if iteration == 0 {
+		state = c.maybeAutoCompactTurn(ctx, sessionID, requestID, state, bearerToken)
+	}
+
+	extraHeaders, state, originalSystemPrompt, originalModelID := c.beforeLLMCallHook(sessionID, state, bearerToken)
+
+	c.loggerWithTurn(sessionID, requestID).Debug(
+		"llm call start",
+		"iteration", iteration,
+		"model", state.Model.ID,
+		"provider", state.ProviderName,
+		"msg_count", len(state.Messages),
+		"tool_count", len(state.Tools),
+	)
+
+	result, err := c.streamer.StreamChatCompletionFull(ctx, state, bearerToken, extraHeaders, c.llmStreamCallbacks(sessionID, requestID, &reasoningSnapshot, &toolCallSnapshots))
+	return c.handleLLMResult(ctx, sessionID, requestID, state, bearerToken, result, err, iteration, originalSystemPrompt, originalModelID, turnIterations, cumulativeUsage)
 }
 
 // toolLoopSoftThreshold is how many consecutive identical tool calls (same
@@ -448,146 +518,127 @@ func (c *Coordinator) executeToolsParallel(ctx context.Context, sessionID, reque
 		"parallel", c.parallelToolCalls,
 	)
 
-	var hardStopMu sync.Mutex
+	hardStop := &hardStopTracker{}
 
-	executeTool := func(i int, tc chat.ChatToolCall) {
-		startedAt := time.Now().UTC()
-		effectiveArgs := tc.Function.Arguments
-
-		// Normalise a hallucinated tool name before anything else looks at it,
-		// so plugin hooks, UI events and the loop breaker all see the tool that
-		// will actually run.
-		tc.Function.Name = c.resolveToolName(tc.Function.Name)
-
-		loopVerdict := c.checkToolLoop(sessionID, tc)
-		switch {
-		case loopVerdict.hardStop:
-			hardStopMu.Lock()
-			if hardStopReason == "" {
-				hardStopReason = loopVerdict.message
-			}
-			hardStopMu.Unlock()
-			c.loggerWithTurn(sessionID, requestID).Warn(
-				"tool loop breaker: hard stop",
-				"tool", tc.Function.Name,
-				"call_id", tc.ID,
-				"streak", loopVerdict.streak,
-				"blocked", loopVerdict.blockedN,
-			)
-			c.emitMetrics(chat.MetricEvent{
-				Category:  chat.MetricCategoryTool,
-				Name:      "tool.loop.hard_stop",
-				Value:     1,
-				Unit:      "count",
-				Labels:    map[string]string{"tool": tc.Function.Name, "streak": fmt.Sprintf("%d", loopVerdict.streak)},
-				SessionID: sessionID,
-			})
-
-		case loopVerdict.blocked:
-			c.loggerWithTurn(sessionID, requestID).Debug(
-				"tool loop breaker: blocked pending justification",
-				"tool", tc.Function.Name,
-				"call_id", tc.ID,
-				"streak", loopVerdict.streak,
-				"blocked", loopVerdict.blockedN,
-			)
-			c.emitMetrics(chat.MetricEvent{
-				Category:  chat.MetricCategoryTool,
-				Name:      "tool.loop.blocked",
-				Value:     1,
-				Unit:      "count",
-				Labels:    map[string]string{"tool": tc.Function.Name, "streak": fmt.Sprintf("%d", loopVerdict.streak)},
-				SessionID: sessionID,
-			})
-
-		case loopVerdict.justified:
-			c.loggerWithTurn(sessionID, requestID).Debug(
-				"tool loop breaker: justified override accepted",
-				"tool", tc.Function.Name,
-				"call_id", tc.ID,
-				"streak", loopVerdict.streak,
-			)
-			c.emitMetrics(chat.MetricEvent{
-				Category:  chat.MetricCategoryTool,
-				Name:      "tool.loop.justified",
-				Value:     1,
-				Unit:      "count",
-				Labels:    map[string]string{"tool": tc.Function.Name, "streak": fmt.Sprintf("%d", loopVerdict.streak)},
-				SessionID: sessionID,
-			})
+	if c.parallelToolCalls {
+		var wg sync.WaitGroup
+		for i, tc := range calls {
+			wg.Add(1)
+			go func(i int, tc chat.ChatToolCall) {
+				defer wg.Done()
+				c.executeOneTool(ctx, sessionID, requestID, i, tc, results, hardStop)
+			}(i, tc)
 		}
+		wg.Wait()
+	} else {
+		for i, tc := range calls {
+			c.executeOneTool(ctx, sessionID, requestID, i, tc, results, hardStop)
+		}
+	}
 
-		// Lifecycle event: tool execution is about to start.
-		c.publishPluginLifecycleEvent("tool_execution_start", sessionID, &api.EventPayload{
-			Kind: &api.EventPayload_BeforeToolExec{
-				BeforeToolExec: &api.ToolCallPayload{
-					ToolName:  tc.Function.Name,
-					Arguments: tc.Function.Arguments,
-					CallId:    tc.ID,
-				},
-			},
+	return results, hardStop.reason
+}
+
+// hardStopTracker carries the tool-loop hard-stop message out of concurrent
+// tool executions.
+type hardStopTracker struct {
+	mu     sync.Mutex
+	reason string
+}
+
+func (h *hardStopTracker) set(msg string) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	if h.reason == "" {
+		h.reason = msg
+	}
+}
+
+// recordLoopVerdict logs/metrics the tool-loop breaker decision and records a
+// hard stop.
+func (c *Coordinator) recordLoopVerdict(sessionID, requestID string, tc chat.ChatToolCall, loopVerdict toolLoopVerdict, hardStop *hardStopTracker) {
+	switch {
+
+	case loopVerdict.hardStop:
+		hardStop.set(loopVerdict.message)
+		c.loggerWithTurn(sessionID, requestID).Warn(
+			"tool loop breaker: hard stop",
+			"tool", tc.Function.Name,
+			"call_id", tc.ID,
+			"streak", loopVerdict.streak,
+			"blocked", loopVerdict.blockedN,
+		)
+		c.emitMetrics(chat.MetricEvent{
+			Category:  chat.MetricCategoryTool,
+			Name:      "tool.loop.hard_stop",
+			Value:     1,
+			Unit:      "count",
+			Labels:    map[string]string{"tool": tc.Function.Name, "streak": fmt.Sprintf("%d", loopVerdict.streak)},
+			SessionID: sessionID,
 		})
 
-		// Mutation hook: plugins may block the tool or modify its arguments.
-		beforeResp := c.dispatchPluginRequestResponse("before_tool_exec", sessionID, &api.EventPayload{
-			Kind: &api.EventPayload_BeforeToolExec{
-				BeforeToolExec: &api.ToolCallPayload{
-					ToolName:  tc.Function.Name,
-					Arguments: tc.Function.Arguments,
-					CallId:    tc.ID,
-				},
-			},
+	case loopVerdict.blocked:
+		c.loggerWithTurn(sessionID, requestID).Debug(
+			"tool loop breaker: blocked pending justification",
+			"tool", tc.Function.Name,
+			"call_id", tc.ID,
+			"streak", loopVerdict.streak,
+			"blocked", loopVerdict.blockedN,
+		)
+		c.emitMetrics(chat.MetricEvent{
+			Category:  chat.MetricCategoryTool,
+			Name:      "tool.loop.blocked",
+			Value:     1,
+			Unit:      "count",
+			Labels:    map[string]string{"tool": tc.Function.Name, "streak": fmt.Sprintf("%d", loopVerdict.streak)},
+			SessionID: sessionID,
 		})
 
-		// Determine the result, applying permission gates and argument rewriting.
-		// The started event fires AFTER mutation hooks so it reflects effective args.
-		var result tools.Result
-		var toolErr error
+	case loopVerdict.justified:
+		c.loggerWithTurn(sessionID, requestID).Debug(
+			"tool loop breaker: justified override accepted",
+			"tool", tc.Function.Name,
+			"call_id", tc.ID,
+			"streak", loopVerdict.streak,
+		)
+		c.emitMetrics(chat.MetricEvent{
+			Category:  chat.MetricCategoryTool,
+			Name:      "tool.loop.justified",
+			Value:     1,
+			Unit:      "count",
+			Labels:    map[string]string{"tool": tc.Function.Name, "streak": fmt.Sprintf("%d", loopVerdict.streak)},
+			SessionID: sessionID,
+		})
+	}
+}
 
-		bridge := &loggingUIBridge{
-			UIBridge:  c.uiBridge,
-			sessionID: sessionID,
-			requestID: requestID,
-			callID:    tc.ID,
-			c:         c,
+// resolveToolRun decides what a tool call does - a loop-breaker/plugin block
+// result, a plugin-rewritten execution, or the normal registry execution -
+// without running it yet, so the started event fires before a long-running
+// tool executes rather than after it returns. Returns the immediate result
+// (when no execution is needed), the run func, and the effective args.
+func (c *Coordinator) resolveToolRun(ctx context.Context, tc chat.ChatToolCall, loopVerdict toolLoopVerdict, effectiveArgs string, beforeResp *api.EventResponse, bridge *loggingUIBridge) (tools.Result, func() (tools.Result, error), string) {
+	var result tools.Result
+	var run func() (tools.Result, error)
+	switch {
+	case loopVerdict.blocked || loopVerdict.hardStop:
+		result = tools.Result{Content: loopVerdict.message, IsError: true}
+
+	case beforeResp != nil && beforeResp.GetBlockToolExecution():
+		reason := beforeResp.GetBlockReason()
+		if reason == "" {
+			reason = "tool execution blocked by plugin"
 		}
+		result = tools.Result{Content: reason, IsError: true}
 
-		// Resolve which tool.Execute call (if any) this turn needs, without
-		// running it yet, so the started event - and the "pending" ->
-		// "running" transition it drives in the UI - fires before a
-		// long-running tool actually executes rather than after it
-		// returns (previously the whole call sat in "pending" for its
-		// entire duration).
-		var run func() (tools.Result, error)
-		switch {
-		case loopVerdict.blocked || loopVerdict.hardStop:
-			result = tools.Result{Content: loopVerdict.message, IsError: true}
-
-		case beforeResp != nil && beforeResp.GetBlockToolExecution():
-			reason := beforeResp.GetBlockReason()
-			if reason == "" {
-				reason = "tool execution blocked by plugin"
+	case beforeResp != nil && beforeResp.GetModifiedToolArguments() != "":
+		if !json.Valid([]byte(beforeResp.GetModifiedToolArguments())) {
+			result = tools.Result{
+				Content: "plugin returned invalid modified_tool_arguments (not valid JSON)",
+				IsError: true,
 			}
-			result = tools.Result{Content: reason, IsError: true}
-
-		case beforeResp != nil && beforeResp.GetModifiedToolArguments() != "":
-			if !json.Valid([]byte(beforeResp.GetModifiedToolArguments())) {
-				result = tools.Result{
-					Content: "plugin returned invalid modified_tool_arguments (not valid JSON)",
-					IsError: true,
-				}
-			} else {
-				effectiveArgs = beforeResp.GetModifiedToolArguments()
-				if tool, ok := c.registry.Get(tc.Function.Name); ok && c.toolAllowed(tc.Function.Name) {
-					run = func() (tools.Result, error) {
-						return tool.Execute(ctx, json.RawMessage(effectiveArgs), bridge)
-					}
-				} else {
-					result = c.unknownToolResult(tc.Function.Name)
-				}
-			}
-
-		default:
+		} else {
+			effectiveArgs = beforeResp.GetModifiedToolArguments()
 			if tool, ok := c.registry.Get(tc.Function.Name); ok && c.toolAllowed(tc.Function.Name) {
 				run = func() (tools.Result, error) {
 					return tool.Execute(ctx, json.RawMessage(effectiveArgs), bridge)
@@ -597,122 +648,175 @@ func (c *Coordinator) executeToolsParallel(ctx context.Context, sessionID, reque
 			}
 		}
 
-		// Emit started event with effective args AFTER plugin hooks but
-		// BEFORE tool.Execute runs, so the UI reflects "running" for the
-		// actual duration of the call instead of only after it completes.
-		c.emit(chat.ChatToolExecutionStartedEvent{
-			SessionID:        sessionID,
-			RequestID:        requestID,
-			CallID:           tc.ID,
-			ToolName:         tc.Function.Name,
-			ArgumentsSummary: summarizeForUI(effectiveArgs),
-			Summary:          extractToolCallSummary(effectiveArgs),
-			StartedAt:        startedAt,
-		})
-
-		if run != nil {
-			result, toolErr = run()
-			if toolErr != nil {
-				result = tools.Result{
-					Content: fmt.Sprintf("tool execution error: %v", toolErr),
-					IsError: true,
-				}
+	default:
+		if tool, ok := c.registry.Get(tc.Function.Name); ok && c.toolAllowed(tc.Function.Name) {
+			run = func() (tools.Result, error) {
+				return tool.Execute(ctx, json.RawMessage(effectiveArgs), bridge)
 			}
-		}
-
-		// Mutation hook: plugins may modify the result. Dispatch on all paths.
-		afterResp := c.dispatchPluginRequestResponse("after_tool_exec", sessionID, &api.EventPayload{
-			Kind: &api.EventPayload_AfterToolExec{
-				AfterToolExec: &api.ToolResultPayload{
-					ToolName:  tc.Function.Name,
-					Arguments: effectiveArgs,
-					Result:    result.Content,
-					IsError:   result.IsError,
-					CallId:    tc.ID,
-				},
-			},
-		})
-		if afterResp != nil && afterResp.GetModifiedToolResult() != "" {
-			result.Content = afterResp.GetModifiedToolResult()
-		}
-
-		// Preserve the original size before truncating model-visible content.
-		if result.ResultBytes == 0 {
-			result.ResultBytes = len(result.Content)
-		}
-
-		// Truncate after plugin modifications.
-		tr := tools.TruncateHead(result.Content, tools.DefaultMaxLines, tools.DefaultMaxBytes)
-		result.Content = tr.Content
-		result.StartedAt = startedAt
-		result.CompletedAt = time.Now().UTC()
-		result.Duration = result.CompletedAt.Sub(startedAt)
-		result.Truncated = result.Truncated || tr.Truncated
-		if result.IsError && result.ErrorKind == "" {
-			result.ErrorKind = toolErrorKind(tc.Function.Name, result.Content)
-		}
-
-		results[i] = result
-		c.loggerWithTurn(sessionID, requestID).Debug(
-			"tool executed",
-			"tool", tc.Function.Name,
-			"call_id", tc.ID,
-			"is_error", result.IsError,
-			"duration_ms", time.Since(startedAt).Milliseconds(),
-			"result_bytes", len(result.Content),
-		)
-		c.emitToolCompleted(sessionID, requestID, tc, result)
-
-		// Skill activations via the LLM-invoked "skill" tool (the dominant
-		// path) need their own metric; handleRunSkill covers the user-command
-		// slash command path.
-		if tc.Function.Name == "skill" && !result.IsError {
-			skillName := tc.Function.Name // fallback
-			if args := strings.TrimSpace(tc.Function.Arguments); args != "" {
-				var skillArgs struct {
-					Name string `json:"name"`
-				}
-				if json.Unmarshal([]byte(args), &skillArgs) == nil && skillArgs.Name != "" {
-					skillName = skillArgs.Name
-				}
-			}
-			c.emitMetrics(chat.MetricEvent{
-				Category:  chat.MetricCategorySkill,
-				Name:      "skill.activated",
-				Value:     1,
-				Unit:      "count",
-				Labels:    map[string]string{"skill_name": skillName},
-				SessionID: sessionID,
-			})
-		}
-
-		c.publishPluginLifecycleEvent("tool_execution_end", sessionID, &api.EventPayload{
-			Kind: &api.EventPayload_AfterToolExec{
-				AfterToolExec: &api.ToolResultPayload{
-					ToolName: tc.Function.Name,
-					CallId:   tc.ID,
-				},
-			},
-		})
-	}
-
-	if c.parallelToolCalls {
-		var wg sync.WaitGroup
-		for i, tc := range calls {
-			wg.Add(1)
-			go func(i int, tc chat.ChatToolCall) {
-				defer wg.Done()
-				executeTool(i, tc)
-			}(i, tc)
-		}
-		wg.Wait()
-	} else {
-		for i, tc := range calls {
-			executeTool(i, tc)
+		} else {
+			result = c.unknownToolResult(tc.Function.Name)
 		}
 	}
+	return result, run, effectiveArgs
+}
 
-	return results, hardStopReason
+// finalizeToolResult applies the after_tool_exec plugin mutation, truncates
+// the model-visible content, stamps execution metadata, and emits the
+// completion events/metrics for one finished tool call.
+func (c *Coordinator) finalizeToolResult(sessionID, requestID string, tc chat.ChatToolCall, startedAt time.Time, effectiveArgs string, result tools.Result) tools.Result {
+	// Mutation hook: plugins may modify the result. Dispatch on all paths.
+	afterResp := c.dispatchPluginRequestResponse("after_tool_exec", sessionID, &api.EventPayload{
+		Kind: &api.EventPayload_AfterToolExec{
+			AfterToolExec: &api.ToolResultPayload{
+				ToolName:  tc.Function.Name,
+				Arguments: effectiveArgs,
+				Result:    result.Content,
+				IsError:   result.IsError,
+				CallId:    tc.ID,
+			},
+		},
+	})
+	if afterResp != nil && afterResp.GetModifiedToolResult() != "" {
+		result.Content = afterResp.GetModifiedToolResult()
+	}
+
+	// Preserve the original size before truncating model-visible content.
+	if result.ResultBytes == 0 {
+		result.ResultBytes = len(result.Content)
+	}
+
+	// Truncate after plugin modifications.
+	tr := tools.TruncateHead(result.Content, tools.DefaultMaxLines, tools.DefaultMaxBytes)
+	result.Content = tr.Content
+	result.StartedAt = startedAt
+	result.CompletedAt = time.Now().UTC()
+	result.Duration = result.CompletedAt.Sub(startedAt)
+	result.Truncated = result.Truncated || tr.Truncated
+	if result.IsError && result.ErrorKind == "" {
+		result.ErrorKind = toolErrorKind(tc.Function.Name, result.Content)
+	}
+
+	c.loggerWithTurn(sessionID, requestID).Debug(
+		"tool executed",
+		"tool", tc.Function.Name,
+		"call_id", tc.ID,
+		"is_error", result.IsError,
+		"duration_ms", time.Since(startedAt).Milliseconds(),
+		"result_bytes", len(result.Content),
+	)
+	c.emitToolCompleted(sessionID, requestID, tc, result)
+	c.emitSkillActivationMetric(sessionID, tc, result)
+
+	c.publishPluginLifecycleEvent("tool_execution_end", sessionID, &api.EventPayload{
+		Kind: &api.EventPayload_AfterToolExec{
+			AfterToolExec: &api.ToolResultPayload{
+				ToolName: tc.Function.Name,
+				CallId:   tc.ID,
+			},
+		},
+	})
+	return result
+}
+
+// emitSkillActivationMetric records the skill.activated metric for a
+// successful LLM-invoked "skill" tool call (the dominant activation path;
+// handleRunSkill covers the user-command slash path).
+func (c *Coordinator) emitSkillActivationMetric(sessionID string, tc chat.ChatToolCall, result tools.Result) {
+	if tc.Function.Name != "skill" || result.IsError {
+		return
+	}
+	skillName := tc.Function.Name // fallback
+	if args := strings.TrimSpace(tc.Function.Arguments); args != "" {
+		var skillArgs struct {
+			Name string `json:"name"`
+		}
+		if json.Unmarshal([]byte(args), &skillArgs) == nil && skillArgs.Name != "" {
+			skillName = skillArgs.Name
+		}
+	}
+	c.emitMetrics(chat.MetricEvent{
+		Category:  chat.MetricCategorySkill,
+		Name:      "skill.activated",
+		Value:     1,
+		Unit:      "count",
+		Labels:    map[string]string{"skill_name": skillName},
+		SessionID: sessionID,
+	})
+}
+
+// executeOneTool runs a single tool call end to end: loop-breaker check,
+// plugin hooks, execution, result mutation/truncation, and completion events.
+func (c *Coordinator) executeOneTool(ctx context.Context, sessionID, requestID string, i int, tc chat.ChatToolCall, results []tools.Result, hardStop *hardStopTracker) {
+	startedAt := time.Now().UTC()
+	effectiveArgs := tc.Function.Arguments
+
+	// Normalise a hallucinated tool name before anything else looks at it,
+	// so plugin hooks, UI events and the loop breaker all see the tool that
+	// will actually run.
+	tc.Function.Name = c.resolveToolName(tc.Function.Name)
+
+	loopVerdict := c.checkToolLoop(sessionID, tc)
+	c.recordLoopVerdict(sessionID, requestID, tc, loopVerdict, hardStop)
+
+	// Lifecycle event: tool execution is about to start.
+	c.publishPluginLifecycleEvent("tool_execution_start", sessionID, &api.EventPayload{
+		Kind: &api.EventPayload_BeforeToolExec{
+			BeforeToolExec: &api.ToolCallPayload{
+				ToolName:  tc.Function.Name,
+				Arguments: tc.Function.Arguments,
+				CallId:    tc.ID,
+			},
+		},
+	})
+
+	// Mutation hook: plugins may block the tool or modify its arguments.
+	beforeResp := c.dispatchPluginRequestResponse("before_tool_exec", sessionID, &api.EventPayload{
+		Kind: &api.EventPayload_BeforeToolExec{
+			BeforeToolExec: &api.ToolCallPayload{
+				ToolName:  tc.Function.Name,
+				Arguments: tc.Function.Arguments,
+				CallId:    tc.ID,
+			},
+		},
+	})
+
+	bridge := &loggingUIBridge{
+		UIBridge:  c.uiBridge,
+		sessionID: sessionID,
+		requestID: requestID,
+		callID:    tc.ID,
+		c:         c,
+	}
+
+	// Determine the result, applying permission gates and argument rewriting.
+	// The started event fires AFTER mutation hooks so it reflects effective args.
+	var toolErr error
+	result, run, effectiveArgs := c.resolveToolRun(ctx, tc, loopVerdict, effectiveArgs, beforeResp, bridge)
+
+	// Emit started event with effective args AFTER plugin hooks but
+	// BEFORE tool.Execute runs, so the UI reflects "running" for the
+	// actual duration of the call instead of only after it completes.
+	c.emit(chat.ChatToolExecutionStartedEvent{
+		SessionID:        sessionID,
+		RequestID:        requestID,
+		CallID:           tc.ID,
+		ToolName:         tc.Function.Name,
+		ArgumentsSummary: summarizeForUI(effectiveArgs),
+		Summary:          extractToolCallSummary(effectiveArgs),
+		StartedAt:        startedAt,
+	})
+
+	if run != nil {
+		result, toolErr = run()
+		if toolErr != nil {
+			result = tools.Result{
+				Content: fmt.Sprintf("tool execution error: %v", toolErr),
+				IsError: true,
+			}
+		}
+	}
+
+	results[i] = c.finalizeToolResult(sessionID, requestID, tc, startedAt, effectiveArgs, result)
 }
 
 // SetAllowedTools sets the active tool filter for the current mode/skill.
@@ -1249,29 +1353,9 @@ func (c *Coordinator) getSessionState(sessionID string) chat.ChatSessionState {
 	return chat.CloneChatSessionState(session.state)
 }
 
-func (c *Coordinator) completeTurn(sessionID, requestID string, result chat.CompletionResult, turnIterations int, cumulativeUsage chat.ChatUsage, at time.Time) {
-	c.mu.Lock()
-	session, ok := c.sessions[sessionID]
-	if !ok || session.state.ActiveRequestID != requestID {
-		c.mu.Unlock()
-		return
-	}
-	turnStartedAt := session.turnStartedAt
-	_ = session.state.CompleteTurnWithReasoning(result.FinishReason, result.Usage, result.ReasoningContent, at)
-	session.cancel = nil
-	session.steeringMu.Lock()
-	session.pendingSteering = nil
-	session.steeringMu.Unlock()
-	snapshot := chat.CloneChatSessionState(session.state)
-	c.mu.Unlock()
-
-	c.loggerWithTurn(sessionID, requestID).Debug(
-		"turn completed",
-		"finish_reason", result.FinishReason,
-		"total_tokens", result.Usage.TotalTokens,
-		"duration_ms", time.Since(turnStartedAt).Milliseconds(),
-	)
-
+// emitTurnMetrics emits the LLM latency, error, response, and cost metrics
+// for a completed turn.
+func (c *Coordinator) emitTurnMetrics(sessionID string, snapshot chat.ChatSessionState, result chat.CompletionResult, turnStartedAt time.Time) {
 	// Emit LLM latency metric when we have a turn start timestamp.
 	if !turnStartedAt.IsZero() {
 		c.emitMetrics(chat.MetricEvent{
@@ -1331,6 +1415,32 @@ func (c *Coordinator) completeTurn(sessionID, requestID string, result chat.Comp
 			SessionID: sessionID,
 		})
 	}
+}
+
+func (c *Coordinator) completeTurn(sessionID, requestID string, result chat.CompletionResult, turnIterations int, cumulativeUsage chat.ChatUsage, at time.Time) {
+	c.mu.Lock()
+	session, ok := c.sessions[sessionID]
+	if !ok || session.state.ActiveRequestID != requestID {
+		c.mu.Unlock()
+		return
+	}
+	turnStartedAt := session.turnStartedAt
+	_ = session.state.CompleteTurnWithReasoning(result.FinishReason, result.Usage, result.ReasoningContent, at)
+	session.cancel = nil
+	session.steeringMu.Lock()
+	session.pendingSteering = nil
+	session.steeringMu.Unlock()
+	snapshot := chat.CloneChatSessionState(session.state)
+	c.mu.Unlock()
+
+	c.loggerWithTurn(sessionID, requestID).Debug(
+		"turn completed",
+		"finish_reason", result.FinishReason,
+		"total_tokens", result.Usage.TotalTokens,
+		"duration_ms", time.Since(turnStartedAt).Milliseconds(),
+	)
+
+	c.emitTurnMetrics(sessionID, snapshot, result, turnStartedAt)
 
 	c.emit(chat.ChatResponseCompletedEvent{
 		State:           snapshot,
@@ -1459,7 +1569,7 @@ func (c *Coordinator) failTurn(sessionID, requestID string, err error, at time.T
 	})
 }
 
-func (c *Coordinator) cancelAllSessions() {
+func (c *Coordinator) cancelAllSessions(ctx context.Context) {
 	c.mu.Lock()
 	now := time.Now().UTC()
 	states := make([]chat.ChatSessionState, 0, len(c.sessions))
@@ -1484,7 +1594,7 @@ func (c *Coordinator) cancelAllSessions() {
 		c.mu.Lock()
 		if _, exists := c.shutdown[sessionID]; exists {
 			c.mu.Unlock()
-			c.persistSession(state, time.Since(state.CreatedAt))
+			c.persistSession(ctx, state, time.Since(state.CreatedAt))
 			continue
 		}
 		c.shutdown[sessionID] = struct{}{}
@@ -1496,7 +1606,7 @@ func (c *Coordinator) cancelAllSessions() {
 				Provider:  state.Provider.Name,
 			}},
 		})
-		c.persistSession(state, time.Since(state.CreatedAt))
+		c.persistSession(ctx, state, time.Since(state.CreatedAt))
 	}
 
 	// Release session and shutdown map entries after all sessions are persisted.

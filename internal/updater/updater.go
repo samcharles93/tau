@@ -66,6 +66,40 @@ type releaseAsset struct {
 	BrowserDownloadURL string `json:"browser_download_url"`
 }
 
+// downloadAndVerify locates the target path, picks the release asset, downloads
+// the archive and checksums, and verifies the archive checksum.
+func downloadAndVerify(ctx context.Context, opts Options, rel release, result Result) (Result, releaseAsset, []byte, error) {
+	assetName, err := ArchiveName(rel.TagName, opts.GOOS, opts.GOARCH)
+	if err != nil {
+		return Result{}, releaseAsset{}, nil, err
+	}
+	asset, ok := findAsset(rel.Assets, assetName)
+	if !ok {
+		return Result{}, releaseAsset{}, nil, fmt.Errorf("release %s has no asset for %s/%s (%s)", rel.TagName, opts.GOOS, opts.GOARCH, assetName)
+	}
+	result.AssetName = asset.Name
+	result.DownloadURL = asset.BrowserDownloadURL
+
+	checksumAsset, ok := findAsset(rel.Assets, "checksums.txt")
+	if !ok {
+		return Result{}, releaseAsset{}, nil, fmt.Errorf("release %s has no checksums.txt asset", rel.TagName)
+	}
+
+	archiveBytes, err := fetchBytes(ctx, opts, asset.BrowserDownloadURL)
+	if err != nil {
+		return Result{}, releaseAsset{}, nil, fmt.Errorf("downloading %s: %w", asset.Name, err)
+	}
+	checksums, err := fetchBytes(ctx, opts, checksumAsset.BrowserDownloadURL)
+	if err != nil {
+		return Result{}, releaseAsset{}, nil, fmt.Errorf("downloading checksums.txt: %w", err)
+	}
+	if err := verifyArchiveChecksum(asset.Name, archiveBytes, checksums); err != nil {
+		return Result{}, releaseAsset{}, nil, err
+	}
+
+	return result, asset, archiveBytes, nil
+}
+
 func Run(ctx context.Context, opts Options) (Result, error) {
 	opts = withDefaults(opts)
 	current := currentTag(opts.CurrentVersion)
@@ -95,40 +129,15 @@ func Run(ctx context.Context, opts Options) (Result, error) {
 		}
 		opts.TargetPath = target
 	}
-
-	assetName, err := ArchiveName(rel.TagName, opts.GOOS, opts.GOARCH)
+	result, asset, archiveBytes, err := downloadAndVerify(ctx, opts, rel, result)
 	if err != nil {
 		return Result{}, err
 	}
-	asset, ok := findAsset(rel.Assets, assetName)
-	if !ok {
-		return Result{}, fmt.Errorf("release %s has no asset for %s/%s (%s)", rel.TagName, opts.GOOS, opts.GOARCH, assetName)
-	}
-	result.AssetName = asset.Name
-	result.DownloadURL = asset.BrowserDownloadURL
-
-	checksumAsset, ok := findAsset(rel.Assets, "checksums.txt")
-	if !ok {
-		return Result{}, fmt.Errorf("release %s has no checksums.txt asset", rel.TagName)
-	}
-
-	archiveBytes, err := fetchBytes(ctx, opts, asset.BrowserDownloadURL)
-	if err != nil {
-		return Result{}, fmt.Errorf("downloading %s: %w", asset.Name, err)
-	}
-	checksums, err := fetchBytes(ctx, opts, checksumAsset.BrowserDownloadURL)
-	if err != nil {
-		return Result{}, fmt.Errorf("downloading checksums.txt: %w", err)
-	}
-	if err := verifyArchiveChecksum(asset.Name, archiveBytes, checksums); err != nil {
-		return Result{}, err
-	}
-
 	binary, err := extractBinary(asset.Name, archiveBytes)
 	if err != nil {
 		return Result{}, err
 	}
-	if err := verifyBinaryRuns(binary, opts.GOOS, opts.VerifyBinaryTimeout); err != nil {
+	if err := verifyBinaryRuns(ctx, binary, opts.GOOS, opts.VerifyBinaryTimeout); err != nil {
 		return Result{}, err
 	}
 	if err := applyUpdate(binary, opts.TargetPath); err != nil {
@@ -340,7 +349,7 @@ func extractZip(archiveBytes []byte) ([]byte, error) {
 	return nil, errors.New("release archive did not contain tau binary")
 }
 
-func verifyBinaryRuns(binary []byte, goos string, timeout time.Duration) error {
+func verifyBinaryRuns(ctx context.Context, binary []byte, goos string, timeout time.Duration) error {
 	name := "tau"
 	if goos == "windows" {
 		name = "tau.exe"
@@ -364,7 +373,7 @@ func verifyBinaryRuns(binary []byte, goos string, timeout time.Duration) error {
 		return fmt.Errorf("making temp binary executable: %w", err)
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	ctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 
 	cmd := exec.CommandContext(ctx, f.Name(), "--version")

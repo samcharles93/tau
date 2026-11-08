@@ -72,56 +72,7 @@ func makeWriteExecutor(cwd string, mq *MutationQueue, rt *ReadTracker, grants *P
 		writeCtx, cancel := context.WithTimeout(ctx, DefaultToolTimeout)
 		defer cancel()
 
-		var result Result
-		err := runWithContext(writeCtx, func() error {
-			// Check for accidental overwrite and enforce read-before-write.
-			// Both checks only apply when the file already exists; new files
-			// are always allowed.
-			var oldContent string
-			if info, err := os.Stat(path); err == nil && info.Mode().IsRegular() {
-				// Read-before-write: model must have read the file before mutating it.
-				if rt != nil {
-					if err := rt.CheckRead(cwd, p.Path); err != nil {
-						result = Result{Content: err.Error(), IsError: true}
-						return nil
-					}
-				}
-				// Overwrite protection: require explicit opt-in.
-				if !p.Overwrite {
-					result = Result{
-						Content: fmt.Sprintf(
-							"file %q already exists - set overwrite to true to replace it, or use the edit tool for partial changes",
-							path,
-						),
-						IsError: true,
-					}
-					return nil
-				}
-				if data, err := os.ReadFile(path); err == nil {
-					oldContent = string(data)
-				}
-			}
-
-			release := mq.Acquire(path)
-			defer release()
-
-			dir := filepath.Dir(path)
-			if err := os.MkdirAll(dir, 0o755); err != nil {
-				result = Result{Content: fmt.Sprintf("error creating directory: %v", err), IsError: true}
-				return nil
-			}
-
-			if err := writeFileAtomic(path, []byte(p.Content), 0o644); err != nil {
-				result = Result{Content: fmt.Sprintf("error writing file: %v", err), IsError: true}
-				return nil
-			}
-
-			result = Result{
-				Content: fmt.Sprintf("wrote %d bytes to %s", len(p.Content), path),
-				Details: DiffDetails{Path: path, OldContent: oldContent, NewContent: p.Content},
-			}
-			return nil
-		})
+		result, err := runWrite(writeCtx, cwd, path, p, mq, rt)
 		if err != nil {
 			if errors.Is(err, context.DeadlineExceeded) {
 				return Result{Content: fmt.Sprintf("write timed out after %v", DefaultToolTimeout), IsError: true}, nil
@@ -131,4 +82,68 @@ func makeWriteExecutor(cwd string, mq *MutationQueue, rt *ReadTracker, grants *P
 
 		return result, nil
 	}
+}
+
+// runWrite performs the write under writeCtx, returning either the success
+// Result or a nil error with the failure Result.
+func runWrite(writeCtx context.Context, cwd, path string, p WriteParams, mq *MutationQueue, rt *ReadTracker) (Result, error) {
+	var result Result
+	err := runWithContext(writeCtx, func() error {
+		oldContent, blocked := checkWriteGuards(cwd, path, p, rt)
+		if blocked != nil {
+			result = *blocked
+			return nil
+		}
+
+		release := mq.Acquire(path)
+		defer release()
+
+		dir := filepath.Dir(path)
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			result = Result{Content: fmt.Sprintf("error creating directory: %v", err), IsError: true}
+			return nil
+		}
+
+		if err := writeFileAtomic(path, []byte(p.Content), 0o644); err != nil {
+			result = Result{Content: fmt.Sprintf("error writing file: %v", err), IsError: true}
+			return nil
+		}
+
+		result = Result{
+			Content: fmt.Sprintf("wrote %d bytes to %s", len(p.Content), path),
+			Details: DiffDetails{Path: path, OldContent: oldContent, NewContent: p.Content},
+		}
+		return nil
+	})
+	return result, err
+}
+
+// checkWriteGuards enforces read-before-write and overwrite protection for an
+// existing regular file. It returns the old content and, when a guard
+// rejects the write, the failure Result to return.
+func checkWriteGuards(cwd, path string, p WriteParams, rt *ReadTracker) (oldContent string, blocked *Result) {
+	info, err := os.Stat(path)
+	if err != nil || !info.Mode().IsRegular() {
+		return "", nil // new files are always allowed
+	}
+	// Read-before-write: model must have read the file before mutating it.
+	if rt != nil {
+		if err := rt.CheckRead(cwd, p.Path); err != nil {
+			return "", &Result{Content: err.Error(), IsError: true}
+		}
+	}
+	// Overwrite protection: require explicit opt-in.
+	if !p.Overwrite {
+		return "", &Result{
+			Content: fmt.Sprintf(
+				"file %q already exists - set overwrite to true to replace it, or use the edit tool for partial changes",
+				path,
+			),
+			IsError: true,
+		}
+	}
+	if data, err := os.ReadFile(path); err == nil {
+		oldContent = string(data)
+	}
+	return oldContent, nil
 }

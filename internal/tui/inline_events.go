@@ -46,351 +46,466 @@ func (c *inlineChat) handleEvent(ev tauchat.ChatEvent) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
+	if c.handleTurnEvent(ev) {
+		return
+	}
+	if c.handleExtensionEvent(ev) {
+		return
+	}
+	c.handleSessionEvent(ev)
+}
+
+// handleTurnEvent dispatches streaming/turn-lifecycle events. Returns true
+// when ev was handled. The caller holds c.mu; each handler releases and
+// re-acquires it around engine calls (engine methods take the render lock and
+// some call back into render paths).
+func (c *inlineChat) handleTurnEvent(ev tauchat.ChatEvent) bool {
+	switch e := ev.(type) {
+	case tauchat.ChatReasoningDeltaEvent:
+		c.handleReasoningDelta(e)
+	case tauchat.ChatResponseDeltaEvent:
+		c.handleResponseDelta(e)
+	case tauchat.ChatToolExecutionStartedEvent:
+		c.handleToolStarted(e)
+	case tauchat.ChatToolExecutionCompletedEvent:
+		c.handleToolCompleted(e)
+	case tauchat.ChatToolOutputEvent:
+		c.handleToolOutput(e)
+	case tauchat.ChatResponseCompletedEvent:
+		c.handleResponseCompleted(e)
+	case tauchat.ChatResponseCancelledEvent:
+		c.handleResponseCancelled(e)
+	case tauchat.ChatRuntimeErrorEvent:
+		c.handleRuntimeError(e)
+	case tauchat.ChatNotificationEvent:
+		c.handleNotificationEvent(e)
+	default:
+		return false
+	}
+	return true
+}
+
+// handleExtensionEvent dispatches extension/plugin events. Returns true when
+// ev was handled. The caller holds c.mu.
+func (c *inlineChat) handleExtensionEvent(ev tauchat.ChatEvent) bool {
+	switch e := ev.(type) {
+	case tauchat.ExtensionsReloadedEvent:
+		c.handleExtensionsReloaded(e)
+	case tauchat.ExtensionCommandsChangedEvent:
+		c.handleExtensionCommandsChanged(e)
+	case tauchat.CommandsChangedEvent:
+		c.registryCommands = e.Commands
+	case tauchat.ExtensionCommandResultEvent:
+		c.handleExtensionCommandResult(e)
+	case tauchat.ExtensionViewRenderedEvent:
+		c.handleViewRendered(e)
+	case tauchat.ExtensionViewClosedEvent:
+		c.handleViewClosed(e)
+	case tauchat.InteractivePromptRequestedEvent:
+		c.handleInteractivePromptRequested(e)
+	default:
+		return false
+	}
+	return true
+}
+
+// handleSessionEvent dispatches session/skills events. The caller holds c.mu.
+func (c *inlineChat) handleSessionEvent(ev tauchat.ChatEvent) {
 	switch e := ev.(type) {
 	case tauchat.SkillsChangedEvent:
 		c.handleSkillsChanged(e)
 	case tauchat.ChatSessionSnapshotEvent:
 		c.syncState(e.State)
+	case tauchat.SessionsListedEvent:
+		c.handleSessionsListed(e)
+	case tauchat.SessionLoadedEvent:
+		c.handleSessionLoaded(e)
+	case tauchat.SessionDeletedEvent:
+		c.handleSessionDeleted(e)
+	case tauchat.SearchResultsEvent:
+		c.handleSearchResults(e)
+	case tauchat.SessionExportedEvent:
+		c.handleSessionExported(e)
+	}
+}
 
-	case tauchat.ChatReasoningDeltaEvent:
-		show := c.showReasoning
-		c.mu.Unlock()
-		if !show {
-			c.mu.Lock()
+// ── Turn lifecycle handlers (caller holds c.mu) ────────────────────────────
+
+func (c *inlineChat) handleReasoningDelta(e tauchat.ChatReasoningDeltaEvent) {
+	show := c.showReasoning
+	c.mu.Unlock()
+	if !show {
+		c.mu.Lock()
+		return
+	}
+	c.engine.Update(func() {
+		if c.turnReasoning == nil {
+			c.turnReasoning = taui.NewParagraph("")
+			c.turnReasoning.SetStyle(c.dim)
+			c.stage.Clear()
+			c.stage.AddChild(c.turnReasoning)
+		}
+		c.turnReasoning.Append(e.Delta)
+	})
+	c.mu.Lock()
+}
+
+func (c *inlineChat) handleResponseDelta(e tauchat.ChatResponseDeltaEvent) {
+	c.mu.Unlock()
+	c.engine.Update(func() {
+		if c.turnText == nil {
+			c.turnText = taui.NewParagraph("")
+			c.stage.Clear()
+			c.stage.AddChild(c.turnText)
+		}
+		c.turnText.Append(e.Delta)
+	})
+	c.mu.Lock()
+}
+
+func (c *inlineChat) handleToolStarted(e tauchat.ChatToolExecutionStartedEvent) {
+	c.mu.Unlock()
+	c.engine.UpdateThenPrint(func() []string { return c.startToolBox(e) })
+	c.mu.Lock()
+}
+
+// startToolBox flushes any in-progress turn paragraphs to scrollback and mounts
+// the new tool's box in the stage. Runs inside engine.UpdateThenPrint.
+func (c *inlineChat) startToolBox(e tauchat.ChatToolExecutionStartedEvent) []string {
+	// A tool call ends the text segment (if any) that preceded it -
+	// the backend commits it as its own message and starts a fresh
+	// one after the tool runs. Flush it to scrollback and reset so
+	// the next ChatResponseDeltaEvent starts a new Paragraph instead
+	// of silently concatenating onto this one with no separator.
+	var above []string
+	if c.turnReasoning != nil {
+		if t := c.turnReasoning.Text(); t != "" {
+			above = append(above, c.dim(t))
+		}
+		c.stage.RemoveChild(c.turnReasoning)
+		c.turnReasoning = nil
+	}
+	if c.turnText != nil {
+		if t := c.turnText.Text(); t != "" {
+			above = append(above, t+"\n")
+		}
+		c.stage.RemoveChild(c.turnText)
+		c.turnText = nil
+	}
+
+	label := e.ArgumentsSummary
+	bgStatus := theme.ToolRunning
+	if e.ToolName == skillToolName {
+		label = skillStatusLabel(e.ArgumentsSummary)
+		bgStatus = theme.SkillRunning
+	}
+	tr := taui.NewToolRow(e.ToolName, label)
+	tail := taui.NewTailLog(toolTailLines, c.grey)
+	tbox := taui.NewBox().Padding(2, 1).Bg(toolBoxBg(bgStatus)).ExpandW().Build()
+	tbox.AddChild(tr)
+	tbox.AddChild(tail)
+	if c.activeTools == nil {
+		c.activeTools = make(map[string]*activeToolBox)
+	}
+	c.activeTools[e.CallID] = &activeToolBox{row: tr, box: tbox, tail: tail}
+	c.stage.AddChild(tbox)
+	return above
+}
+
+func (c *inlineChat) handleToolCompleted(e tauchat.ChatToolExecutionCompletedEvent) {
+	if e.CallID == c.bashCallID {
+		c.bashCallID = ""
+		c.bashRunning.Store(false)
+	}
+	c.mu.Unlock()
+	c.engine.Update(func() {
+		tb, ok := c.activeTools[e.CallID]
+		if !ok {
 			return
 		}
-		c.engine.Update(func() {
-			if c.turnReasoning == nil {
-				c.turnReasoning = taui.NewParagraph("")
-				c.turnReasoning.SetStyle(c.dim)
-				c.stage.Clear()
-				c.stage.AddChild(c.turnReasoning)
-			}
-			c.turnReasoning.Append(e.Delta)
-		})
-		c.mu.Lock()
+		resolveToolRow(tb, e)
+	})
+	c.engine.RequestRender()
+	time.Sleep(450 * time.Millisecond)
 
-	case tauchat.ChatResponseDeltaEvent:
-		c.mu.Unlock()
-		c.engine.Update(func() {
-			if c.turnText == nil {
-				c.turnText = taui.NewParagraph("")
-				c.stage.Clear()
-				c.stage.AddChild(c.turnText)
-			}
-			c.turnText.Append(e.Delta)
-		})
-		c.mu.Lock()
+	// Render the resolved tool box, remove it from the live frame, and commit
+	// it to scrollback - all ordered safely by UpdateThenPrint.
+	c.engine.UpdateThenPrint(func() []string { return c.commitToolBox(e.CallID) })
+	c.mu.Lock()
+}
 
-	case tauchat.ChatToolExecutionStartedEvent:
-		c.mu.Unlock()
-		c.engine.UpdateThenPrint(func() []string {
-			// A tool call ends the text segment (if any) that preceded it -
-			// the backend commits it as its own message and starts a fresh
-			// one after the tool runs. Flush it to scrollback and reset so
-			// the next ChatResponseDeltaEvent starts a new Paragraph instead
-			// of silently concatenating onto this one with no separator.
-			var above []string
-			if c.turnReasoning != nil {
-				if t := c.turnReasoning.Text(); t != "" {
-					above = append(above, c.dim(t))
-				}
-				c.stage.RemoveChild(c.turnReasoning)
-				c.turnReasoning = nil
-			}
-			if c.turnText != nil {
-				if t := c.turnText.Text(); t != "" {
-					above = append(above, t+"\n")
-				}
-				c.stage.RemoveChild(c.turnText)
-				c.turnText = nil
-			}
+// commitToolBox renders the resolved tool box, removes it from the live frame,
+// and returns it as a scrollback line. Runs inside engine.UpdateThenPrint.
+func (c *inlineChat) commitToolBox(callID string) []string {
+	tb, ok := c.activeTools[callID]
+	if !ok {
+		return nil
+	}
+	line := c.blockString(tb.box.Render(c.width()))
+	c.stage.RemoveChild(tb.box)
+	delete(c.activeTools, callID)
+	return []string{line}
+}
 
-			label := e.ArgumentsSummary
-			bgStatus := theme.ToolRunning
-			if e.ToolName == skillToolName {
-				label = skillStatusLabel(e.ArgumentsSummary)
-				bgStatus = theme.SkillRunning
-			}
-			tr := taui.NewToolRow(e.ToolName, label)
-			tail := taui.NewTailLog(toolTailLines, c.grey)
-			tbox := taui.NewBox().Padding(2, 1).Bg(toolBoxBg(bgStatus)).ExpandW().Build()
-			tbox.AddChild(tr)
-			tbox.AddChild(tail)
-			if c.activeTools == nil {
-				c.activeTools = make(map[string]*activeToolBox)
-			}
-			c.activeTools[e.CallID] = &activeToolBox{row: tr, box: tbox, tail: tail}
-			c.stage.AddChild(tbox)
-			return above
-		})
-		c.mu.Lock()
+// resolveToolRow marks the tool row resolved (success/fail) and restyles its
+// box; the streamed tail is dropped since it was only a live peek, not part of
+// the permanent scrollback record.
+func resolveToolRow(tb *activeToolBox, e tauchat.ChatToolExecutionCompletedEvent) {
+	// ResultSummary preserves line breaks for tui2's expandable box;
+	// this row renders as a single formatted line, so collapse them.
+	detail := strings.Join(strings.Fields(e.ResultSummary), " ")
+	if e.ToolName == skillToolName && !e.IsError {
+		// Don't dump the skill instructions in the box; the model already
+		// received them as the tool result. A clean "loaded" label keeps
+		// the box scannable.
+		detail = "loaded"
+	}
+	if e.IsError {
+		detail = "failed"
+		tb.row.Fail(detail)
+		tb.box.SetBgFn(toolResultBg(theme.ToolFailed, e.ToolName))
+	} else {
+		tb.row.Succeed(detail)
+		tb.box.SetBgFn(toolResultBg(theme.ToolSuccess, e.ToolName))
+	}
+	if tb.tail != nil {
+		tb.box.RemoveChild(tb.tail)
+		tb.tail = nil
+	}
+}
 
-	case tauchat.ChatToolExecutionCompletedEvent:
-		if e.CallID == c.bashCallID {
-			c.bashCallID = ""
-			c.bashRunning.Store(false)
+// toolResultBg picks the resolved-box background for a tool, using the skill
+// palette when the executing tool is the Skill tool.
+func toolResultBg(status theme.ToolStatus, toolName string) taui.BgFn {
+	if toolName == skillToolName {
+		return skillBoxBg(status)
+	}
+	return toolBoxBg(status)
+}
+
+func (c *inlineChat) handleToolOutput(e tauchat.ChatToolOutputEvent) {
+	c.mu.Unlock()
+	c.engine.Update(func() {
+		tb, ok := c.activeTools[e.CallID]
+		if !ok || tb.tail == nil {
+			return
 		}
-		c.mu.Unlock()
-		c.engine.Update(func() {
-			tb, ok := c.activeTools[e.CallID]
-			if !ok {
-				return
-			}
-			// ResultSummary preserves line breaks for tui2's expandable box;
-			// this row renders as a single formatted line, so collapse them.
-			detail := strings.Join(strings.Fields(e.ResultSummary), " ")
-			if e.ToolName == skillToolName {
-				// Don't dump the skill instructions in the box; the model already
-				// received them as the tool result. A clean "loaded" label keeps
-				// the box scannable.
-				if !e.IsError {
-					detail = "loaded"
-				}
-			}
-			if e.IsError {
-				detail = "failed"
-				tb.row.Fail(detail)
-				if e.ToolName == skillToolName {
-					tb.box.SetBgFn(skillBoxBg(theme.SkillFailed))
-				} else {
-					tb.box.SetBgFn(toolBoxBg(theme.ToolFailed))
-				}
-			} else {
-				tb.row.Succeed(detail)
-				if e.ToolName == skillToolName {
-					tb.box.SetBgFn(skillBoxBg(theme.SkillSuccess))
-				} else {
-					tb.box.SetBgFn(toolBoxBg(theme.ToolSuccess))
-				}
-			}
-			// The streamed tail was a live peek, not part of the permanent
-			// record - drop it now so neither the resolved hold-state nor the
-			// scrollback commit below include it, only the resolved row.
-			if tb.tail != nil {
-				tb.box.RemoveChild(tb.tail)
-				tb.tail = nil
-			}
-		})
-		c.engine.RequestRender()
-		time.Sleep(450 * time.Millisecond)
-		c.mu.Lock()
+		tb.tail.Append(e.Chunk)
+	})
+	c.mu.Lock()
+}
 
-		// Render the resolved tool box, remove it from the live frame, and commit
-		// it to scrollback - all ordered safely by UpdateThenPrint.
-		c.mu.Unlock()
-		c.engine.UpdateThenPrint(func() []string {
-			tb, ok := c.activeTools[e.CallID]
-			if !ok {
-				return nil
-			}
-			line := c.blockString(tb.box.Render(c.width()))
-			c.stage.RemoveChild(tb.box)
-			delete(c.activeTools, e.CallID)
-			return []string{line}
-		})
+func (c *inlineChat) handleResponseCompleted(e tauchat.ChatResponseCompletedEvent) {
+	// Flush the turn's reasoning, body, and any in-flight tool boxes to
+	// scrollback. UpdateThenPrint mutates the frame under the lock and
+	// commits the returned lines after it releases - no PrintAbove-in-Update
+	// deadlock.
+	c.steering.Store(false)
+	c.generating.Store(false)
+	c.mu.Unlock()
+	var finalText string
+	c.engine.UpdateThenPrint(func() []string {
+		above, text := c.flushTurn()
+		finalText = text
+		return above
+	})
+	if finalText != "" {
 		c.mu.Lock()
-
-	case tauchat.ChatToolOutputEvent:
+		c.lastResponseText = finalText
 		c.mu.Unlock()
-		c.engine.Update(func() {
-			tb, ok := c.activeTools[e.CallID]
-			if !ok || tb.tail == nil {
-				return
-			}
-			tb.tail.Append(e.Chunk)
-		})
-		c.mu.Lock()
-
-	case tauchat.ChatResponseCompletedEvent:
-		// Flush the turn's reasoning, body, and any in-flight tool boxes to
-		// scrollback. UpdateThenPrint mutates the frame under the lock and
-		// commits the returned lines after it releases - no PrintAbove-in-Update
-		// deadlock.
-		c.steering.Store(false)
-		c.generating.Store(false)
-		c.mu.Unlock()
-		var finalText string
-		c.engine.UpdateThenPrint(func() []string {
-			var above []string
-			if c.turnReasoning != nil {
-				if t := c.turnReasoning.Text(); t != "" {
-					above = append(above, c.dim(t))
-				}
-				c.turnReasoning = nil
-			}
-			if c.turnText != nil {
-				if t := c.turnText.Text(); t != "" {
-					above = append(above, t+"\n")
-					finalText = t
-				}
-				c.turnText = nil
-			}
-			for _, tb := range c.activeTools {
-				above = append(above, c.blockString(tb.box.Render(c.width())))
-				c.stage.RemoveChild(tb.box)
-			}
-			c.activeTools = nil
-			c.stage.Clear()
-			c.header.SetText(c.grey(headerIdle))
-			return above
-		})
-		if finalText != "" {
-			c.mu.Lock()
-			c.lastResponseText = finalText
-			c.mu.Unlock()
-			// Only nudge the user via desktop notification when they've
-			// actually looked away - while focused, the response already
-			// streamed onto their screen.
-			if !c.engine.Focused() {
-				c.engine.Terminal.Write(termkit.Notify("tau", finalText))
-			}
+		// Only nudge the user via desktop notification when they've
+		// actually looked away - while focused, the response already
+		// streamed onto their screen.
+		if !c.engine.Focused() {
+			c.engine.Terminal.Write(termkit.Notify("tau", finalText))
 		}
-		c.mu.Lock()
+	}
+	c.mu.Lock()
+}
 
-	case tauchat.ChatResponseCancelledEvent:
-		c.steering.Store(false)
-		c.generating.Store(false)
-		c.mu.Unlock()
-		c.engine.Update(c.clearTurnLocked)
-		c.engine.PrintAbove("%s\n", c.grey("chat request cancelled"))
-		c.mu.Lock()
-
-	case tauchat.ChatRuntimeErrorEvent:
-		c.steering.Store(false)
-		c.generating.Store(false)
-		if c.notifyQueue != nil {
-			c.notifyQueue.Push(notify.Notification{
-				Message:  e.Message,
-				Level:    notify.LevelError,
-				Duration: notifyDurationFromChat(tauchat.ChatNotificationError),
-			})
+// flushTurn commits the turn's reasoning, body, and any in-flight tool boxes
+// to scrollback and clears the stage. Runs inside engine.UpdateThenPrint.
+// Returns the scrollback lines and the assistant's final response text.
+func (c *inlineChat) flushTurn() (above []string, finalText string) {
+	if c.turnReasoning != nil {
+		if t := c.turnReasoning.Text(); t != "" {
+			above = append(above, c.dim(t))
 		}
+		c.turnReasoning = nil
+	}
+	if c.turnText != nil {
+		if t := c.turnText.Text(); t != "" {
+			above = append(above, t+"\n")
+			finalText = t
+		}
+		c.turnText = nil
+	}
+	for _, tb := range c.activeTools {
+		above = append(above, c.blockString(tb.box.Render(c.width())))
+		c.stage.RemoveChild(tb.box)
+	}
+	c.activeTools = nil
+	c.stage.Clear()
+	c.header.SetText(c.grey(headerIdle))
+	return above, finalText
+}
+
+func (c *inlineChat) handleResponseCancelled(e tauchat.ChatResponseCancelledEvent) {
+	c.steering.Store(false)
+	c.generating.Store(false)
+	c.mu.Unlock()
+	c.engine.Update(c.clearTurnLocked)
+	c.engine.PrintAbove("%s\n", c.grey("chat request cancelled"))
+	c.mu.Lock()
+}
+
+func (c *inlineChat) handleRuntimeError(e tauchat.ChatRuntimeErrorEvent) {
+	c.steering.Store(false)
+	c.generating.Store(false)
+	if c.notifyQueue != nil {
+		c.notifyQueue.Push(notify.Notification{
+			Message:  e.Message,
+			Level:    notify.LevelError,
+			Duration: notifyDurationFromChat(tauchat.ChatNotificationError),
+		})
+	}
+	c.mu.Unlock()
+	c.engine.PrintAbove("%s %s", c.grey("✗"), e.Message)
+	c.engine.Update(c.clearTurnLocked)
+	c.mu.Lock()
+}
+
+func (c *inlineChat) handleNotificationEvent(e tauchat.ChatNotificationEvent) {
+	if c.notifyQueue != nil {
+		c.notifyQueue.Push(notify.Notification{
+			Message:  e.Message,
+			Level:    notifyLevelFromChat(e.Level),
+			Duration: notifyDurationFromChat(e.Level),
+		})
+	}
+	if e.Level == tauchat.ChatNotificationError {
 		c.mu.Unlock()
 		c.engine.PrintAbove("%s %s", c.grey("✗"), e.Message)
-		c.engine.Update(c.clearTurnLocked)
-		c.mu.Lock()
-
-	case tauchat.ChatNotificationEvent:
-		if c.notifyQueue != nil {
-			c.notifyQueue.Push(notify.Notification{
-				Message:  e.Message,
-				Level:    notifyLevelFromChat(e.Level),
-				Duration: notifyDurationFromChat(e.Level),
-			})
-		}
-		if e.Level == tauchat.ChatNotificationError {
-			c.mu.Unlock()
-			c.engine.PrintAbove("%s %s", c.grey("✗"), e.Message)
-			c.mu.Lock()
-		}
-
-	case tauchat.ExtensionsReloadedEvent:
-		c.mu.Unlock()
-		c.setExtensionCommands(e.Result.Commands)
-		msg := fmt.Sprintf("reloaded extensions: %d loaded", e.Result.ExtensionCount)
-		c.pushNotice(msg)
-		c.engine.PrintAbove("%s", c.grey(msg))
-		c.mu.Lock()
-
-	case tauchat.ExtensionCommandsChangedEvent:
-		c.mu.Unlock()
-		c.setExtensionCommands(e.Commands)
-		c.mu.Lock()
-
-	case tauchat.CommandsChangedEvent:
-		c.registryCommands = e.Commands
-
-	case tauchat.ExtensionCommandResultEvent:
-		// A view, when present, replaces the plain-text output. Sync command
-		// views are one-shot (commands only run while idle - see
-		// handleRunExtensionCommand's isIdle guard) and aren't part of a
-		// streaming turn, so they render straight to scrollback rather than
-		// mounting into c.stage, mirroring the plain-text path exactly.
-		if e.View != nil {
-			c.mu.Unlock()
-			lines := buildViewComponent(*e.View).Render(c.width())
-			if len(lines) > 0 {
-				c.engine.PrintAbove("%s", c.blockString(lines))
-			}
-			c.mu.Lock()
-		} else if strings.TrimSpace(e.Output) != "" {
-			c.mu.Unlock()
-			c.engine.PrintAbove("%s", e.Output)
-			c.mu.Lock()
-		}
-
-	case tauchat.ExtensionViewRenderedEvent:
-		c.mu.Unlock()
-		c.engine.Update(func() {
-			comp := buildViewComponent(e.View)
-			if old, ok := c.panelsByID[e.ViewID]; ok {
-				c.panels.RemoveChild(old)
-			}
-			c.panelsByID[e.ViewID] = comp
-			c.panels.AddChild(comp)
-		})
-		c.mu.Lock()
-
-	case tauchat.ExtensionViewClosedEvent:
-		c.mu.Unlock()
-		c.engine.Update(func() {
-			if comp, ok := c.panelsByID[e.ViewID]; ok {
-				c.panels.RemoveChild(comp)
-				delete(c.panelsByID, e.ViewID)
-			}
-		})
-		c.mu.Lock()
-
-	case tauchat.InteractivePromptRequestedEvent:
-		c.mu.Unlock()
-		c.enqueuePrompt(e)
-		c.mu.Lock()
-
-	case tauchat.SessionsListedEvent:
-		c.sessionSummaries = e.Sessions
-		c.mu.Unlock()
-		c.printSessionSummaries(e.Sessions, e.NextCursor)
-		c.mu.Lock()
-
-	case tauchat.SessionLoadedEvent:
-		c.syncState(e.State)
-		msg := fmt.Sprintf("Session %s loaded (%d messages)", e.State.SessionID, len(e.State.Messages))
-		c.mu.Unlock()
-		c.pushNotice(msg)
-		c.engine.PrintAbove("%s", c.grey(msg))
-		for _, m := range e.State.Messages {
-			c.printMessage(m)
-		}
-		// Seed the input history from persisted user messages.
-		c.seedHistoryFromMessages(e.State.Messages)
-		c.mu.Lock()
-
-	case tauchat.SessionDeletedEvent:
-		msg := "Session deleted: " + e.SessionID
-		c.mu.Unlock()
-		c.pushNotice(msg)
-		c.engine.PrintAbove("%s", c.grey(msg))
-		c.mu.Lock()
-
-	case tauchat.SearchResultsEvent:
-		c.mu.Unlock()
-		c.printSearchResults(e)
-		c.mu.Lock()
-
-	case tauchat.SessionExportedEvent:
-		msg := "Session exported to stdout"
-		if e.Path != "" {
-			msg = "Session exported to " + e.Path
-		}
-		c.mu.Unlock()
-		c.pushNotice(msg)
-		if e.Content != "" {
-			c.engine.PrintAbove("%s", e.Content)
-		}
-		c.engine.PrintAbove("%s", c.grey(msg))
 		c.mu.Lock()
 	}
+}
+
+// ── Extension/plugin handlers (caller holds c.mu) ───────────────────────────
+
+func (c *inlineChat) handleExtensionsReloaded(e tauchat.ExtensionsReloadedEvent) {
+	c.mu.Unlock()
+	c.setExtensionCommands(e.Result.Commands)
+	msg := fmt.Sprintf("reloaded extensions: %d loaded", e.Result.ExtensionCount)
+	c.pushNotice(msg)
+	c.engine.PrintAbove("%s", c.grey(msg))
+	c.mu.Lock()
+}
+
+func (c *inlineChat) handleExtensionCommandsChanged(e tauchat.ExtensionCommandsChangedEvent) {
+	c.mu.Unlock()
+	c.setExtensionCommands(e.Commands)
+	c.mu.Lock()
+}
+
+func (c *inlineChat) handleExtensionCommandResult(e tauchat.ExtensionCommandResultEvent) {
+	// A view, when present, replaces the plain-text output. Sync command
+	// views are one-shot (commands only run while idle - see
+	// handleRunExtensionCommand's isIdle guard) and aren't part of a
+	// streaming turn, so they render straight to scrollback rather than
+	// mounting into c.stage, mirroring the plain-text path exactly.
+	if e.View != nil {
+		c.mu.Unlock()
+		lines := buildViewComponent(*e.View).Render(c.width())
+		if len(lines) > 0 {
+			c.engine.PrintAbove("%s", c.blockString(lines))
+		}
+		c.mu.Lock()
+	} else if strings.TrimSpace(e.Output) != "" {
+		c.mu.Unlock()
+		c.engine.PrintAbove("%s", e.Output)
+		c.mu.Lock()
+	}
+}
+
+func (c *inlineChat) handleViewRendered(e tauchat.ExtensionViewRenderedEvent) {
+	c.mu.Unlock()
+	c.engine.Update(func() {
+		comp := buildViewComponent(e.View)
+		if old, ok := c.panelsByID[e.ViewID]; ok {
+			c.panels.RemoveChild(old)
+		}
+		c.panelsByID[e.ViewID] = comp
+		c.panels.AddChild(comp)
+	})
+	c.mu.Lock()
+}
+
+func (c *inlineChat) handleViewClosed(e tauchat.ExtensionViewClosedEvent) {
+	c.mu.Unlock()
+	c.engine.Update(func() {
+		if comp, ok := c.panelsByID[e.ViewID]; ok {
+			c.panels.RemoveChild(comp)
+			delete(c.panelsByID, e.ViewID)
+		}
+	})
+	c.mu.Lock()
+}
+
+func (c *inlineChat) handleInteractivePromptRequested(e tauchat.InteractivePromptRequestedEvent) {
+	c.mu.Unlock()
+	c.enqueuePrompt(e)
+	c.mu.Lock()
+}
+
+// ── Session/skills handlers (caller holds c.mu) ─────────────────────────────
+
+func (c *inlineChat) handleSessionsListed(e tauchat.SessionsListedEvent) {
+	c.sessionSummaries = e.Sessions
+	c.mu.Unlock()
+	c.printSessionSummaries(e.Sessions, e.NextCursor)
+	c.mu.Lock()
+}
+
+func (c *inlineChat) handleSessionLoaded(e tauchat.SessionLoadedEvent) {
+	c.syncState(e.State)
+	msg := fmt.Sprintf("Session %s loaded (%d messages)", e.State.SessionID, len(e.State.Messages))
+	c.mu.Unlock()
+	c.pushNotice(msg)
+	c.engine.PrintAbove("%s", c.grey(msg))
+	for _, m := range e.State.Messages {
+		c.printMessage(m)
+	}
+	// Seed the input history from persisted user messages.
+	c.seedHistoryFromMessages(e.State.Messages)
+	c.mu.Lock()
+}
+
+func (c *inlineChat) handleSessionDeleted(e tauchat.SessionDeletedEvent) {
+	msg := "Session deleted: " + e.SessionID
+	c.mu.Unlock()
+	c.pushNotice(msg)
+	c.engine.PrintAbove("%s", c.grey(msg))
+	c.mu.Lock()
+}
+
+func (c *inlineChat) handleSearchResults(e tauchat.SearchResultsEvent) {
+	c.mu.Unlock()
+	c.printSearchResults(e)
+	c.mu.Lock()
+}
+
+func (c *inlineChat) handleSessionExported(e tauchat.SessionExportedEvent) {
+	msg := "Session exported to stdout"
+	if e.Path != "" {
+		msg = "Session exported to " + e.Path
+	}
+	c.mu.Unlock()
+	c.pushNotice(msg)
+	if e.Content != "" {
+		c.engine.PrintAbove("%s", e.Content)
+	}
+	c.engine.PrintAbove("%s", c.grey(msg))
+	c.mu.Lock()
 }
 
 // handleSkillsChanged displays the list of available skills in the TUI.

@@ -17,11 +17,10 @@ func TestHandleSearchSessions_NoSessionManager_EmitsWarning(t *testing.T) {
 
 	require.NoError(t, coordinator.Send(chat.SearchSessionsCommand{Query: "anything"}))
 
-	event := drainUntil(t, sub, time.Second, func(e chat.ChatEvent) bool {
+	notif := drainUntil[chat.ChatNotificationEvent](t, sub, time.Second, func(e chat.ChatEvent) bool {
 		_, ok := e.(chat.ChatNotificationEvent)
 		return ok
 	})
-	notif := event.(chat.ChatNotificationEvent)
 	require.Equal(t, chat.ChatNotificationWarn, notif.Level)
 	require.Contains(t, notif.Message, "not available")
 }
@@ -34,11 +33,11 @@ func TestHandleSearchSessions_EmptyQuery_EmitsUsage(t *testing.T) {
 
 	require.NoError(t, coordinator.Send(chat.SearchSessionsCommand{Query: "   "}))
 
-	event := drainUntil(t, sub, time.Second, func(e chat.ChatEvent) bool {
+	notif := drainUntil[chat.ChatNotificationEvent](t, sub, time.Second, func(e chat.ChatEvent) bool {
 		_, ok := e.(chat.ChatNotificationEvent)
 		return ok
 	})
-	require.Contains(t, event.(chat.ChatNotificationEvent).Message, "/search")
+	require.Contains(t, notif.Message, "/search")
 }
 
 func TestHandleSearchSessions_ReturnsHits(t *testing.T) {
@@ -53,11 +52,10 @@ func TestHandleSearchSessions_ReturnsHits(t *testing.T) {
 
 	require.NoError(t, coordinator.Send(chat.SearchSessionsCommand{Query: "kubeconfig", Limit: 10}))
 
-	event := drainUntil(t, sub, time.Second, func(e chat.ChatEvent) bool {
+	res := drainUntil[chat.SearchResultsEvent](t, sub, time.Second, func(e chat.ChatEvent) bool {
 		_, ok := e.(chat.SearchResultsEvent)
 		return ok
 	})
-	res := event.(chat.SearchResultsEvent)
 	require.Equal(t, "kubeconfig", res.Query)
 	require.Len(t, res.Hits, 1)
 	require.Equal(t, "search-sess-1", res.Hits[0].SessionID)
@@ -77,20 +75,18 @@ func TestHandleSearchSessions_PaginationCursor(t *testing.T) {
 	persistSessionWithMessage(t, coordinator, sub, "pg-2", "shared searchterm there")
 
 	require.NoError(t, coordinator.Send(chat.SearchSessionsCommand{Query: "searchterm", Limit: 1}))
-	event := drainUntil(t, sub, time.Second, func(e chat.ChatEvent) bool {
+	page1 := drainUntil[chat.SearchResultsEvent](t, sub, time.Second, func(e chat.ChatEvent) bool {
 		_, ok := e.(chat.SearchResultsEvent)
 		return ok
 	})
-	page1 := event.(chat.SearchResultsEvent)
 	require.Len(t, page1.Hits, 1)
 	require.NotEmpty(t, page1.NextCursor, "a full page sets a next cursor")
 
 	require.NoError(t, coordinator.Send(chat.SearchSessionsCommand{Query: "searchterm", Limit: 1, Cursor: page1.NextCursor}))
-	event = drainUntil(t, sub, time.Second, func(e chat.ChatEvent) bool {
+	page2 := drainUntil[chat.SearchResultsEvent](t, sub, time.Second, func(e chat.ChatEvent) bool {
 		r, ok := e.(chat.SearchResultsEvent)
 		return ok && r.NextCursor == ""
 	})
-	page2 := event.(chat.SearchResultsEvent)
 	require.Len(t, page2.Hits, 1)
 	require.NotEqual(t, page1.Hits[0].SessionID, page2.Hits[0].SessionID, "cursor pages are disjoint")
 }
@@ -103,9 +99,9 @@ func TestHandleSearchSessions_InvalidCursor_EmitsError(t *testing.T) {
 
 	require.NoError(t, coordinator.Send(chat.SearchSessionsCommand{Query: "x", Cursor: "not-a-number"}))
 
-	event := drainUntil(t, sub, time.Second, func(e chat.ChatEvent) bool {
+	errEvent := drainUntil[chat.ChatRuntimeErrorEvent](t, sub, time.Second, func(e chat.ChatEvent) bool {
 		_, ok := e.(chat.ChatRuntimeErrorEvent)
 		return ok
 	})
-	require.Contains(t, event.(chat.ChatRuntimeErrorEvent).Message, "cursor")
+	require.Contains(t, errEvent.Message, "cursor")
 }

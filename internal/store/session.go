@@ -87,7 +87,7 @@ const SnippetMark = "**"
 // SessionStore persists and retrieves chat sessions. SQLite is the single
 // source of truth. JSONL export files are a derived artifact - the app never
 // reads them for its own operations.
-type SessionStore interface {
+type SessionStore interface { //nolint:interfacebloat // persistence is one cohesive CRUD+query surface; splitting it would force callers to accept parallel interfaces
 	// Save writes session metadata and messages to SQLite. It is an upsert -
 	// existing sessions are updated, new sessions are inserted.
 	Save(ctx context.Context, state chat.ChatSessionState, duration time.Duration) error

@@ -159,7 +159,7 @@ func (m *model) completionToken() string {
 		// every candidate "matches" it trivially (every Word contains "/")
 		// and ties at an identical fuzzy score, which forces the sort
 		// below to fall back to its alphabetical tie-break - exactly the
-		// bug that fragmented the just-opened dropdown into repeating
+		// defect that fragmented the just-opened dropdown into repeating
 		// "Commands"/"Agents"/"Commands" headers instead of one contiguous
 		// group per category.
 		return ""
@@ -555,21 +555,7 @@ func (m *model) handleCompletionKey(msg tea.KeyPressMsg) (tea.Cmd, bool) {
 		return nil, true
 
 	case "tab":
-		// LCP extension: if the shared prefix across all matches extends
-		// further than what's typed, extend to it (matches taui's Tab
-		// behaviour). Otherwise accept the highlighted row.
-		//
-		// When the LCP is already present at the end of the input
-		// (e.g. token is "" for a bare "/" and LCP is "/"), extending
-		// is a no-op that would just reset compSelected to 0 - fall
-		// through to accepting the highlighted row instead so the
-		// viewport doesn't jump away from the item the user targeted.
-		lcp := longestCommonWordPrefix(rows)
-		if len([]rune(lcp)) > len([]rune(token)) && !strings.HasSuffix(m.input, lcp) {
-			m.replaceCompletionToken(lcp)
-		} else {
-			m.acceptCompletionRow(rows[m.compSelected])
-		}
+		m.handleCompletionTab(rows, token)
 		return nil, true
 
 	case "shift+tab":
@@ -579,20 +565,7 @@ func (m *model) handleCompletionKey(msg tea.KeyPressMsg) (tea.Cmd, bool) {
 		return nil, true
 
 	case "enter":
-		// Enter always accepts the highlighted row. Unlike Tab, it also
-		// submits immediately when the accepted row doesn't require further
-		// typing (RequiresArg false: a no/optional-argument command, or any
-		// argument-value completion, which is always a leaf value) - so
-		// completing an unambiguous command like /help or /clear takes one
-		// Enter, not two. A required-argument command (RequiresArg true,
-		// e.g. /model, /system) instead leaves the line open for its
-		// argument, since submitting it bare would just be rejected anyway.
-		row := rows[m.compSelected]
-		m.acceptCompletionRow(row)
-		if !row.RequiresArg {
-			return m.submitInput(), true
-		}
-		return nil, true
+		return m.handleCompletionEnter(rows), true
 
 	case "esc":
 		// First Esc for this token hides the dropdown without touching the
@@ -606,6 +579,40 @@ func (m *model) handleCompletionKey(msg tea.KeyPressMsg) (tea.Cmd, bool) {
 	}
 
 	return nil, false
+}
+
+// handleCompletionTab implements Tab: LCP extension when the shared prefix
+// across all matches extends further than what's typed (matches taui's Tab
+// behaviour), otherwise accept the highlighted row.
+//
+// When the LCP is already present at the end of the input (e.g. token is ""
+// for a bare "/" and LCP is "/"), extending is a no-op that would just reset
+// compSelected to 0 - fall through to accepting the highlighted row instead
+// so the viewport doesn't jump away from the item the user targeted.
+func (m *model) handleCompletionTab(rows []compRow, token string) {
+	lcp := longestCommonWordPrefix(rows)
+	if len([]rune(lcp)) > len([]rune(token)) && !strings.HasSuffix(m.input, lcp) {
+		m.replaceCompletionToken(lcp)
+	} else {
+		m.acceptCompletionRow(rows[m.compSelected])
+	}
+}
+
+// handleCompletionEnter implements Enter: always accepts the highlighted
+// row, and also submits immediately when the accepted row doesn't require
+// further typing (RequiresArg false: a no/optional-argument command, or any
+// argument-value completion, which is always a leaf value) - so completing
+// an unambiguous command like /help or /clear takes one Enter, not two. A
+// required-argument command (RequiresArg true, e.g. /model, /system) instead
+// leaves the line open for its argument, since submitting it bare would just
+// be rejected anyway.
+func (m *model) handleCompletionEnter(rows []compRow) tea.Cmd {
+	row := rows[m.compSelected]
+	m.acceptCompletionRow(row)
+	if !row.RequiresArg {
+		return m.submitInput()
+	}
+	return nil
 }
 
 // acceptCompletionRow replaces the current token with row's word (plus a
@@ -624,11 +631,12 @@ func (m *model) acceptCompletionRow(row compRow) {
 // selection state so the next keystroke re-derives it against the new text.
 func (m *model) replaceCompletionToken(replacement string) {
 	fields := strings.Fields(m.input)
-	if len(fields) == 0 {
+	switch {
+	case len(fields) == 0:
 		m.input = replacement
-	} else if strings.HasSuffix(m.input, " ") {
+	case strings.HasSuffix(m.input, " "):
 		m.input += replacement
-	} else {
+	default:
 		fields[len(fields)-1] = strings.TrimRight(replacement, " ")
 		m.input = strings.Join(fields, " ")
 		if strings.HasSuffix(replacement, " ") {

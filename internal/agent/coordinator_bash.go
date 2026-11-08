@@ -16,7 +16,7 @@ import (
 // started/output/completed event trio a real LLM-invoked tool call would -
 // so it renders identically in the TUI - before appending the result to
 // session history (unless Exclude, the "!!" variant, is set).
-func (c *Coordinator) handleRunBashCommand(cmd chat.RunBashCommand) {
+func (c *Coordinator) handleRunBashCommand(ctx context.Context, cmd chat.RunBashCommand) {
 	now := normalizedTime(cmd.RequestedAt)
 
 	c.mu.Lock()
@@ -31,7 +31,7 @@ func (c *Coordinator) handleRunBashCommand(cmd chat.RunBashCommand) {
 		})
 		return
 	}
-	ctx, cancel := context.WithCancel(c.ctx)
+	ctx, cancel := context.WithCancel(ctx)
 	session.bashCancel = cancel
 	c.mu.Unlock()
 
@@ -100,7 +100,7 @@ func (c *Coordinator) runBashCommand(ctx context.Context, cancel context.CancelF
 }
 
 // handleCancelBash stops the session's in-flight bash-mode command, if any.
-func (c *Coordinator) handleCancelBash(cmd chat.CancelBashCommand) {
+func (c *Coordinator) handleCancelBash(ctx context.Context, cmd chat.CancelBashCommand) {
 	c.mu.Lock()
 	session, ok := c.sessions[cmd.SessionID]
 	var cancel context.CancelFunc

@@ -74,21 +74,7 @@ func (f *textField) End() { f.cursor = utf8.RuneCountInString(f.value) }
 func (f *textField) Render(width int) string {
 	width = max(width, 1)
 	if f.value == "" {
-		if f.placeholder == "" {
-			return inputCursorStyle.Render(" ")
-		}
-		// Reserve one column for the leading cursor block, and truncate on a
-		// rune boundary with an ellipsis rather than a hard mid-word cut.
-		avail := max(width-1, 1)
-		ph := []rune(f.placeholder)
-		if len(ph) > avail {
-			if avail > 1 {
-				ph = append(ph[:avail-1], '…')
-			} else {
-				ph = ph[:avail]
-			}
-		}
-		return inputCursorStyle.Render(" ") + inputPlaceholderStyle.Render(string(ph))
+		return f.renderPlaceholder(width)
 	}
 
 	rs := []rune(f.value)
@@ -102,4 +88,24 @@ func (f *textField) Render(width int) string {
 	}
 	hasCursor := f.cursor >= start && f.cursor <= end
 	return renderInputChunk(rs, start, end, inputStyle, hasCursor, f.cursor, false, 0, 0)
+}
+
+// renderPlaceholder renders the empty-field placeholder: just the cursor
+// block when no placeholder is set, otherwise the placeholder text truncated
+// on a rune boundary with an ellipsis rather than a hard mid-word cut (one
+// column is reserved for the leading cursor block).
+func (f *textField) renderPlaceholder(width int) string {
+	if f.placeholder == "" {
+		return inputCursorStyle.Render(" ")
+	}
+	avail := max(width-1, 1)
+	ph := []rune(f.placeholder)
+	if len(ph) > avail {
+		if avail > 1 {
+			ph = append(ph[:avail-1], '…')
+		} else {
+			ph = ph[:avail]
+		}
+	}
+	return inputCursorStyle.Render(" ") + inputPlaceholderStyle.Render(string(ph))
 }

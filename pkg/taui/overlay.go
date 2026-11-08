@@ -1,8 +1,9 @@
 package taui
 
-import "slices"
-
-import "sync"
+import (
+	"slices"
+	"sync"
+)
 
 // Overlay is a component that can be pushed onto an OverlayStack to take
 // priority over a base component while it is active - a Prompt-style dialog,

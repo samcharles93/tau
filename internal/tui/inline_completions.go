@@ -106,17 +106,37 @@ func (c *inlineChat) completionSet(ctx taui.CompletionContext) *taui.CompletionS
 func (c *inlineChat) commandGroups(token string) []taui.MatchGroup {
 	cmdToken := strings.ToLower(strings.TrimPrefix(token, "/"))
 
-	seen := make(map[string]struct{})
-	add := func(dst *[]taui.Match, m taui.Match) {
-		key := strings.ToLower(m.Word)
-		if _, ok := seen[key]; ok {
-			return
-		}
-		seen[key] = struct{}{}
-		*dst = append(*dst, m)
-	}
-
+	d := newMatchDeduper()
 	var commands, agents []taui.Match
+	d.addBuiltins(cmdToken, &commands, &agents)
+	c.addRegistryCommandMatches(d, &commands)
+	extensions := c.addExtensionMatches(d)
+
+	return matchGroups(commands, agents, extensions)
+}
+
+// matchDeduper dedups matches by lowercase word across all groups, keeping the
+// first occurrence (e.g. a registry command that mirrors a core built-in).
+type matchDeduper struct {
+	seen map[string]struct{}
+}
+
+func newMatchDeduper() *matchDeduper {
+	return &matchDeduper{seen: make(map[string]struct{})}
+}
+
+func (d *matchDeduper) add(dst *[]taui.Match, m taui.Match) {
+	key := strings.ToLower(m.Word)
+	if _, ok := d.seen[key]; ok {
+		return
+	}
+	d.seen[key] = struct{}{}
+	*dst = append(*dst, m)
+}
+
+// addBuiltins folds the built-in slash commands into commands/agents,
+// surfacing alias entries when cmdToken prefixes them.
+func (d *matchDeduper) addBuiltins(cmdToken string, commands, agents *[]taui.Match) {
 	for i := range slashCommands {
 		cmd := &slashCommands[i]
 
@@ -131,35 +151,37 @@ func (c *inlineChat) commandGroups(token string) []taui.MatchGroup {
 
 		m := taui.Match{Word: "/" + cmd.name, Description: desc}
 		if cmd.isAgent {
-			add(&agents, m)
+			d.add(agents, m)
 		} else {
-			add(&commands, m)
+			d.add(commands, m)
 		}
 
 		// Surface aliases as matches only when the user has typed enough
 		// to match an alias prefix. Prevents aliases from cluttering the
 		// dropdown when browsing the full command list.
-		if cmdToken != "" && len(cmd.aliases) > 0 {
-			for _, alias := range cmd.aliases {
-				if strings.HasPrefix(strings.ToLower(alias), cmdToken) {
-					aliasMatch := taui.Match{Word: "/" + alias, Description: desc}
-					if cmd.isAgent {
-						add(&agents, aliasMatch)
-					} else {
-						add(&commands, aliasMatch)
-					}
-				}
+		if cmdToken == "" || len(cmd.aliases) == 0 {
+			continue
+		}
+		for _, alias := range cmd.aliases {
+			if !strings.HasPrefix(strings.ToLower(alias), cmdToken) {
+				continue
+			}
+			aliasMatch := taui.Match{Word: "/" + alias, Description: desc}
+			if cmd.isAgent {
+				d.add(agents, aliasMatch)
+			} else {
+				d.add(commands, aliasMatch)
 			}
 		}
 	}
+}
 
+// addRegistryCommandMatches adds the registry command refs (which mirror the
+// core built-ins for the web UI) to commands, honoring the debug flag.
+func (c *inlineChat) addRegistryCommandMatches(d *matchDeduper, commands *[]taui.Match) {
 	c.mu.Lock()
 	registry := slices.Clone(c.registryCommands)
 	debug := c.debug
-	exts := make([]tauchat.ExtensionCommand, 0, len(c.extensionCommands))
-	for _, ext := range c.extensionCommands {
-		exts = append(exts, ext)
-	}
 	c.mu.Unlock()
 
 	for _, ref := range registry {
@@ -173,15 +195,29 @@ func (c *inlineChat) commandGroups(token string) []taui.MatchGroup {
 		if !strings.HasPrefix(word, "/") {
 			word = "/" + word
 		}
-		add(&commands, taui.Match{Word: word, Description: ref.Description})
+		d.add(commands, taui.Match{Word: word, Description: ref.Description})
 	}
+}
+
+// addExtensionMatches adds the extension commands, sorted by name.
+func (c *inlineChat) addExtensionMatches(d *matchDeduper) []taui.Match {
+	c.mu.Lock()
+	exts := make([]tauchat.ExtensionCommand, 0, len(c.extensionCommands))
+	for _, ext := range c.extensionCommands {
+		exts = append(exts, ext)
+	}
+	c.mu.Unlock()
 
 	slices.SortFunc(exts, func(a, b tauchat.ExtensionCommand) int { return strings.Compare(a.Name, b.Name) })
 	var extensions []taui.Match
 	for _, ext := range exts {
-		add(&extensions, taui.Match{Word: "/" + ext.Name, Description: ext.Description})
+		d.add(&extensions, taui.Match{Word: "/" + ext.Name, Description: ext.Description})
 	}
+	return extensions
+}
 
+// matchGroups packs the per-origin match lists into titled dropdown groups.
+func matchGroups(commands, agents, extensions []taui.Match) []taui.MatchGroup {
 	var groups []taui.MatchGroup
 	if len(commands) > 0 {
 		groups = append(groups, taui.MatchGroup{Title: "Commands", Matches: commands})

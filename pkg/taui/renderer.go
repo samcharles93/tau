@@ -330,15 +330,44 @@ func (t *TUI) fullRewrite(newLines []string, width, height int) {
 }
 
 func (t *TUI) diffRender(newLines []string, width, height int) {
-	// Find the changed band.
-	firstChange := -1
-	lastChange := -1
-	maxLen := max(len(newLines), len(t.prevLines))
+	firstChange, lastChange, appended := changedBand(newLines, t.prevLines)
+	if firstChange < 0 {
+		return // No changes.
+	}
+
+	// appendStart: the change is purely new lines tacked onto the end. Step
+	// onto the last existing line, then emit a newline to open fresh rows.
+	appendStart := appended && firstChange == len(t.prevLines) && firstChange > 0
+
+	var buf strings.Builder
+	buf.WriteString("\x1b[?2026h") // Begin synchronized output
+	finalPhysicalRow := writeDiffBand(&buf, newLines, t.prevLines, firstChange, lastChange, appendStart)
+
+	// Park cursor back at the frame top.
+	if finalPhysicalRow > 0 {
+		fmt.Fprintf(&buf, "\x1b[%dA", finalPhysicalRow)
+	}
+	buf.WriteString("\x1b[?2026l") // End synchronized output
+	t.Terminal.Write(buf.String())
+
+	t.prevLines = newLines
+	t.prevWidth = width
+	t.prevHeight = height
+	t.cursorRow = 0
+}
+
+// changedBand finds the [first, last] range of lines that differ between the
+// previous and new frames. appended reports whether the new frame is purely
+// longer; in that case the band covers the newly tacked-on tail.
+func changedBand(newLines, prevLines []string) (firstChange, lastChange int, appended bool) {
+	firstChange = -1
+	lastChange = -1
+	maxLen := max(len(newLines), len(prevLines))
 	for i := range maxLen {
 		oldLine := ""
 		newLine := ""
-		if i < len(t.prevLines) {
-			oldLine = t.prevLines[i]
+		if i < len(prevLines) {
+			oldLine = prevLines[i]
 		}
 		if i < len(newLines) {
 			newLine = newLines[i]
@@ -351,33 +380,29 @@ func (t *TUI) diffRender(newLines []string, width, height int) {
 		}
 	}
 
-	appended := len(newLines) > len(t.prevLines)
+	appended = len(newLines) > len(prevLines)
 	if appended {
 		if firstChange < 0 {
-			firstChange = len(t.prevLines)
+			firstChange = len(prevLines)
 		}
 		lastChange = len(newLines) - 1
 	}
+	return firstChange, lastChange, appended
+}
 
-	if firstChange < 0 {
-		return // No changes.
-	}
-
-	// appendStart: the change is purely new lines tacked onto the end. Step
-	// onto the last existing line, then emit a newline to open fresh rows.
-	appendStart := appended && firstChange == len(t.prevLines) && firstChange > 0
-
-	var buf strings.Builder
-	buf.WriteString("\x1b[?2026h") // Begin synchronized output
-
-	// Cursor is at the frame top (cursorRow=0). Step down to the first line we
-	// need to touch - all relative, so the frame stays anchored.
+// writeDiffBand emits the relative cursor movement and redraw for the changed
+// band into buf, returning the physical row the cursor ends up on (so the
+// caller can park it back at the frame top). The cursor is at the frame top
+// (cursorRow=0) on entry.
+func writeDiffBand(buf *strings.Builder, newLines, prevLines []string, firstChange, lastChange int, appendStart bool) int {
+	// Step down to the first line we need to touch - all relative, so the
+	// frame stays anchored.
 	moveTarget := firstChange
 	if appendStart {
 		moveTarget = firstChange - 1
 	}
 	if moveTarget > 0 {
-		fmt.Fprintf(&buf, "\x1b[%dB", moveTarget)
+		fmt.Fprintf(buf, "\x1b[%dB", moveTarget)
 	}
 	if appendStart {
 		buf.WriteString("\r\n")
@@ -398,30 +423,19 @@ func (t *TUI) diffRender(newLines []string, width, height int) {
 
 	// If the previous frame was taller, clear the orphaned rows below, then
 	// step back up to the top.
-	if len(t.prevLines) > len(newLines) {
+	if len(prevLines) > len(newLines) {
 		if renderEnd < len(newLines)-1 {
 			down := len(newLines) - 1 - renderEnd
-			fmt.Fprintf(&buf, "\x1b[%dB", down)
+			fmt.Fprintf(buf, "\x1b[%dB", down)
 			finalPhysicalRow = len(newLines) - 1
 		}
-		extra := len(t.prevLines) - len(newLines)
+		extra := len(prevLines) - len(newLines)
 		for range extra {
 			buf.WriteString("\r\n\x1b[2K")
 		}
 		finalPhysicalRow += extra
 	}
-
-	// Park cursor back at the frame top.
-	if finalPhysicalRow > 0 {
-		fmt.Fprintf(&buf, "\x1b[%dA", finalPhysicalRow)
-	}
-	buf.WriteString("\x1b[?2026l") // End synchronized output
-	t.Terminal.Write(buf.String())
-
-	t.prevLines = newLines
-	t.prevWidth = width
-	t.prevHeight = height
-	t.cursorRow = 0
+	return finalPhysicalRow
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

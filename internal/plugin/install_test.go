@@ -114,7 +114,7 @@ func TestAtomicReplace_FreshInstall(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	tmp.WriteString("new-binary")
+	_, _ = tmp.WriteString("new-binary")
 	tmp.Close()
 
 	if err := atomicReplace(tmp.Name(), dest); err != nil {
@@ -143,7 +143,7 @@ func TestAtomicReplace_ReplacesExistingAndCleansBackup(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	tmp.WriteString("new-binary")
+	_, _ = tmp.WriteString("new-binary")
 	tmp.Close()
 
 	if err := atomicReplace(tmp.Name(), dest); err != nil {
@@ -234,7 +234,7 @@ func newTestRegistryAndDownloadServer(t *testing.T, binaryContent []byte, checks
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("/download/plugin-binary", func(w http.ResponseWriter, r *http.Request) {
-		w.Write(binaryContent)
+		_, _ = w.Write(binaryContent)
 	})
 
 	var srv *httptest.Server
@@ -242,10 +242,10 @@ func newTestRegistryAndDownloadServer(t *testing.T, binaryContent []byte, checks
 		switch {
 		case strings.HasSuffix(r.URL.Path, "/versions"):
 			w.Header().Set("Content-Type", "application/json")
-			json.NewEncoder(w).Encode([]registry.VersionInfo{{Version: "1.0.0"}})
+			_ = json.NewEncoder(w).Encode([]registry.VersionInfo{{Version: "1.0.0"}})
 		case strings.Contains(r.URL.Path, "/versions/"):
 			w.Header().Set("Content-Type", "application/json")
-			json.NewEncoder(w).Encode(registry.VersionDetail{
+			_ = json.NewEncoder(w).Encode(registry.VersionDetail{
 				Version: "1.0.0",
 				Platforms: []registry.Platform{
 					{

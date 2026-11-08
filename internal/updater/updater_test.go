@@ -223,7 +223,7 @@ func main() {
 	os.Exit(1)
 }`)
 
-	err := verifyBinaryRuns(goodBin, "linux", 5*time.Second)
+	err := verifyBinaryRuns(context.Background(), goodBin, "linux", 5*time.Second)
 	require.NoError(t, err)
 }
 
@@ -240,7 +240,7 @@ func main() {
 	os.Exit(0)
 }`)
 
-	err := verifyBinaryRuns(badBin, "linux", 5*time.Second)
+	err := verifyBinaryRuns(context.Background(), badBin, "linux", 5*time.Second)
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "failed --version check: exit status 2")
 	require.Contains(t, err.Error(), "leaving existing install untouched")
@@ -262,7 +262,7 @@ func main() {
 	os.Exit(0)
 }`)
 
-	err := verifyBinaryRuns(hangBin, "linux", 1*time.Second)
+	err := verifyBinaryRuns(context.Background(), hangBin, "linux", 1*time.Second)
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "did not respond to --version within")
 	require.Contains(t, err.Error(), "leaving existing install untouched")
@@ -419,10 +419,10 @@ func main() {
 	server := fakeReleaseServer(t, goodBin)
 
 	dir := t.TempDir()
-	real := filepath.Join(dir, "tau-real")
-	require.NoError(t, os.WriteFile(real, []byte("old-binary"), 0o755))
+	realPath := filepath.Join(dir, "tau-real")
+	require.NoError(t, os.WriteFile(realPath, []byte("old-binary"), 0o755))
 	link := filepath.Join(dir, "tau")
-	require.NoError(t, os.Symlink(real, link))
+	require.NoError(t, os.Symlink(realPath, link))
 
 	old := executablePath
 	t.Cleanup(func() { executablePath = old })
@@ -440,7 +440,7 @@ func main() {
 	require.NoError(t, err)
 	require.True(t, result.Updated)
 
-	got, err := os.ReadFile(real)
+	got, err := os.ReadFile(realPath)
 	require.NoError(t, err)
 	require.Equal(t, goodBin, got)
 	info, err := os.Lstat(link)

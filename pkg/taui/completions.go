@@ -118,18 +118,31 @@ func (c *Completions) SetCursorColor(fg termkit.Color) {
 	c.cursorFG = &fg
 }
 
+// inputAction describes what a handled key sequence wants done once the
+// completions lock has been released.
+type inputAction struct {
+	consumed   bool
+	chosen     string
+	choose     bool
+	accept     bool
+	wantDetail bool
+	detail     string
+}
+
 func (c *Completions) HandleInput(data string) bool {
 	c.mu.Lock()
 	if !c.visible {
 		c.mu.Unlock()
 		return false
 	}
-	var chosen string
-	detail := ""
-	choose := false
-	accept := false
-	wantDetail := false
-	consumed := true
+	act := c.applyKeyLocked(data)
+	c.mu.Unlock()
+	return c.dispatchAction(act)
+}
+
+// applyKeyLocked maps one key sequence to an inputAction. Caller holds c.mu.
+func (c *Completions) applyKeyLocked(data string) inputAction {
+	act := inputAction{consumed: true}
 	n := len(c.filtered)
 
 	switch data {
@@ -142,77 +155,83 @@ func (c *Completions) HandleInput(data string) bool {
 			c.selected++
 		}
 	case "\t":
-		if n == 0 {
-			consumed = false
-			break
-		}
-		lcp := c.filtered[0].text
-		for i := 1; i < n; i++ {
-			lcp = commonPrefix(lcp, c.filtered[i].text)
-		}
-		query := c.currentQuery()
-		// If LCP extends further than the current query, extend to it.
-		// Otherwise insert the best match (index 0) - this is what the user
-		// expects from the first Tab press. Arrow keys handle cycling.
-		if lcp != query && len([]rune(lcp)) > len([]rune(query)) {
-			c.extendQueryLocked(lcp)
-			c.mu.Unlock()
-			return true
-		}
-		chosen = c.fullReplace(c.filtered[c.selected])
-		choose = true
+		act = c.tabActionLocked(n)
 	case "\x1b[Z": // Shift+Tab - insert the last match (bottom of list)
 		if n > 0 {
 			c.selected = n - 1
-			chosen = c.fullReplace(c.filtered[c.selected])
-			choose = true
+			act.chosen = c.fullReplace(c.filtered[c.selected])
+			act.choose = true
 		}
 	case "\r":
 		if c.selected >= 0 && c.selected < n {
-			chosen = c.fullReplace(c.filtered[c.selected])
-			accept = true
+			act.chosen = c.fullReplace(c.filtered[c.selected])
+			act.accept = true
 		}
 	case "\x1b":
 		c.hideLocked()
-
 	case " ":
-		// Space on a selected completion item defers to the detail callback
-		// (used to show session info). The callback runs after the lock is
-		// released; whether the space is consumed depends on its result.
-		if c.onDetail != nil && c.selected >= 0 && c.selected < n {
-			detail = c.filtered[c.selected].match.Word
-			wantDetail = true
-			break
-		}
-		consumed = false
-
+		act = c.spaceActionLocked(n)
 	default:
-		consumed = false
+		act.consumed = false
 	}
-	c.mu.Unlock()
+	return act
+}
 
-	if wantDetail {
+// tabActionLocked handles Tab: extend the query to the longest common prefix
+// of the filtered rows when that goes past the current query, otherwise choose
+// the selected row.
+func (c *Completions) tabActionLocked(n int) inputAction {
+	if n == 0 {
+		return inputAction{consumed: false}
+	}
+	lcp := c.filtered[0].text
+	for i := 1; i < n; i++ {
+		lcp = commonPrefix(lcp, c.filtered[i].text)
+	}
+	query := c.currentQuery()
+	// If LCP extends further than the current query, extend to it.
+	// Otherwise insert the best match (index 0) - this is what the user
+	// expects from the first Tab press. Arrow keys handle cycling.
+	if lcp != query && len([]rune(lcp)) > len([]rune(query)) {
+		c.extendQueryLocked(lcp)
+		return inputAction{consumed: true}
+	}
+	return inputAction{consumed: true, chosen: c.fullReplace(c.filtered[c.selected]), choose: true}
+}
+
+// spaceActionLocked handles Space: on a selected completion item it defers to
+// the detail callback (used to show session info); otherwise the space falls
+// through and is inserted as ordinary text.
+func (c *Completions) spaceActionLocked(n int) inputAction {
+	if c.onDetail != nil && c.selected >= 0 && c.selected < n {
+		return inputAction{consumed: true, wantDetail: true, detail: c.filtered[c.selected].match.Word}
+	}
+	return inputAction{consumed: false}
+}
+
+// dispatchAction runs the callbacks for act after c.mu is released: onAccept
+// in particular can trigger a submit that re-renders synchronously, which
+// calls back into Render() and would deadlock on this same mutex if invoked
+// while still held.
+func (c *Completions) dispatchAction(act inputAction) bool {
+	if act.wantDetail {
 		// If the callback handled the item, consume the space; otherwise let it
 		// fall through so it is inserted as text (e.g. "/mcp " to reveal
 		// sub-actions).
-		return c.onDetail(detail)
+		return c.onDetail(act.detail)
 	}
-	// accept/choose callbacks run only after c.mu is released: onAccept in
-	// particular can trigger a submit that re-renders synchronously, which
-	// calls back into Render() and would deadlock on this same mutex if
-	// invoked while still held.
-	if accept {
+	if act.accept {
 		if c.onAccept != nil {
-			c.onAccept(chosen)
+			c.onAccept(act.chosen)
 		} else if c.onSelect != nil {
-			c.onSelect(chosen)
+			c.onSelect(act.chosen)
 		}
-		return consumed
+		return act.consumed
 	}
-	if choose && c.onSelect != nil {
-		c.onSelect(chosen)
+	if act.choose && c.onSelect != nil {
+		c.onSelect(act.chosen)
 	}
-	return consumed
+	return act.consumed
 }
 
 func (c *Completions) fullReplace(row filteredRow) string {
@@ -434,6 +453,15 @@ func descGutter(word, desc string, col int) string {
 
 // ── refresh ──────────────────────────────────────────────────────────────────
 
+// rawCandidate is one unfiltered completion candidate flattened from the
+// provider's groups, carrying its group index and original position.
+type rawCandidate struct {
+	match   Match
+	group   int
+	noSpace bool
+	origIdx int
+}
+
 func (c *Completions) refreshLocked() {
 	if c.provider == nil || c.input == nil {
 		c.hideLocked()
@@ -447,43 +475,60 @@ func (c *Completions) refreshLocked() {
 		c.hideLocked()
 		return
 	}
-	textRunes := []rune(c.input.Value())
-	rs := max(0, min(set.ReplaceStart, len(textRunes)))
-	re := max(rs, min(set.ReplaceEnd, len(textRunes)))
-	query := ""
-	if rs < re {
-		query = string(textRunes[rs:re])
-	}
-
-	type raw struct {
-		match   Match
-		group   int
-		noSpace bool
-		origIdx int
-	}
-	var all []raw
-	for gi, g := range set.Groups {
-		for _, m := range g.Matches {
-			all = append(all, raw{m, gi, g.NoTrailingSpace, len(all)})
-		}
-	}
-
-	filtered := fuzzyFilterSlice(all, query, func(r raw) string { return r.match.Word })
+	query := c.replaceQuery(set)
+	filtered := fuzzyFilterSlice(collectRawCandidates(set), query, func(r rawCandidate) string { return r.match.Word })
 
 	// Remember the previously selected entry's origIdx so the highlight
 	// follows the same item across re-filtering (each keystroke re-sorts by
 	// fuzzy score) instead of sticking to a numeric index that now points at
 	// a different, unrelated item. origIdx (not match.Word) disambiguates
 	// duplicate names, e.g. the same model offered by two providers.
-	selectedOrigIdx := -1
-	if c.selected >= 0 && c.selected < len(c.filtered) {
-		selectedOrigIdx = c.filtered[c.selected].origIdx
-	}
+	selectedOrigIdx := c.selectedOrigIdxLocked()
 
 	c.rawSet = set
 	c.filtered = c.filtered[:0]
 	c.groups = c.groups[:0]
+	c.buildRowsLocked(set, filtered, query)
 
+	c.visible = len(c.filtered) > 0
+	c.selected = c.restoreSelectionLocked(selectedOrigIdx)
+}
+
+// replaceQuery returns the text inside the provider's replacement span.
+func (c *Completions) replaceQuery(set *CompletionSet) string {
+	textRunes := []rune(c.input.Value())
+	rs := max(0, min(set.ReplaceStart, len(textRunes)))
+	re := max(rs, min(set.ReplaceEnd, len(textRunes)))
+	if rs >= re {
+		return ""
+	}
+	return string(textRunes[rs:re])
+}
+
+// collectRawCandidates flattens the provider's groups into one candidate
+// list, stamping each entry with its group index and original position.
+func collectRawCandidates(set *CompletionSet) []rawCandidate {
+	var all []rawCandidate
+	for gi, g := range set.Groups {
+		for _, m := range g.Matches {
+			all = append(all, rawCandidate{m, gi, g.NoTrailingSpace, len(all)})
+		}
+	}
+	return all
+}
+
+// selectedOrigIdxLocked returns the origIdx of the currently selected row, or
+// -1 when there is no selection.
+func (c *Completions) selectedOrigIdxLocked() int {
+	if c.selected >= 0 && c.selected < len(c.filtered) {
+		return c.filtered[c.selected].origIdx
+	}
+	return -1
+}
+
+// buildRowsLocked rebuilds the filtered rows and the group index from the
+// fuzzy-filtered candidates.
+func (c *Completions) buildRowsLocked(set *CompletionSet, filtered []rawCandidate, query string) {
 	groupStart := 0
 	lastGroup := -1
 	for _, fr := range filtered {
@@ -520,17 +565,20 @@ func (c *Completions) refreshLocked() {
 	if lastGroup >= 0 && len(c.groups) > 0 {
 		c.groups[len(c.groups)-1].end = len(c.filtered)
 	}
+}
 
-	c.visible = len(c.filtered) > 0
-	c.selected = 0
-	if selectedOrigIdx >= 0 {
-		for i := range c.filtered {
-			if c.filtered[i].origIdx == selectedOrigIdx {
-				c.selected = i
-				break
-			}
+// restoreSelectionLocked returns the index of the row carrying origIdx, or 0
+// when there is no such row.
+func (c *Completions) restoreSelectionLocked(origIdx int) int {
+	if origIdx < 0 {
+		return 0
+	}
+	for i := range c.filtered {
+		if c.filtered[i].origIdx == origIdx {
+			return i
 		}
 	}
+	return 0
 }
 
 // ── Helpers ──────────────────────────────────────────────────────────────────

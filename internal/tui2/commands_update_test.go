@@ -47,7 +47,10 @@ func TestCmdUpdateCheckDoesNotInstall(t *testing.T) {
 			return "tau v0.31.0 is available", false, nil
 		},
 	}
-	msg := m.cmdUpdate("check")().(updateCheckMsg)
+	msg, ok := m.cmdUpdate("check")().(updateCheckMsg)
+	if !ok {
+		t.Fatal("expected updateCheckMsg")
+	}
 	if gotInstall {
 		t.Error("/update check installed, want check only")
 	}
@@ -63,7 +66,11 @@ func TestCmdUpdateReportsError(t *testing.T) {
 			return "", false, errors.New("network unreachable")
 		},
 	}
-	if msg := m.cmdUpdate("")().(updateCheckMsg); msg.err == nil {
+	msg, ok := m.cmdUpdate("")().(updateCheckMsg)
+	if !ok {
+		t.Fatal("expected updateCheckMsg")
+	}
+	if msg.err == nil {
 		t.Fatal("updateCheckMsg.err is nil, want the failure surfaced")
 	}
 }

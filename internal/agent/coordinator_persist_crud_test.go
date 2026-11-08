@@ -42,19 +42,22 @@ func newTestCoordinatorWithManager(t *testing.T, mgr *sessions.Manager) *Coordin
 }
 
 // drainUntil reads events off sub until match returns true, failing the test
-// if timeout elapses first.
-func drainUntil(t *testing.T, sub *eventbus.Subscriber[chat.ChatEvent], timeout time.Duration, match func(chat.ChatEvent) bool) chat.ChatEvent {
+// if timeout elapses first. The type parameter is the expected concrete event
+// type - the assertion is checked here so call sites get a typed value.
+func drainUntil[T chat.ChatEvent](t *testing.T, sub *eventbus.Subscriber[chat.ChatEvent], timeout time.Duration, match func(chat.ChatEvent) bool) T {
 	t.Helper()
 	deadline := time.After(timeout)
 	for {
 		select {
 		case event := <-sub.Events():
 			if match(event) {
-				return event
+				typed, ok := event.(T)
+				require.True(t, ok, "expected %T, got %T", *new(T), event)
+				return typed
 			}
 		case <-deadline:
 			t.Fatal("timed out waiting for expected event")
-			return nil
+			return *new(T)
 		}
 	}
 }
@@ -73,7 +76,7 @@ func persistSessionWithMessage(t *testing.T, coordinator *Coordinator, sub *even
 			Model:    chat.ChatModelRef{ID: "model", URL: "https://example.test"},
 		},
 	}))
-	drainUntil(t, sub, time.Second, func(e chat.ChatEvent) bool {
+	drainUntil[chat.ChatSessionSnapshotEvent](t, sub, time.Second, func(e chat.ChatEvent) bool {
 		snap, ok := e.(chat.ChatSessionSnapshotEvent)
 		return ok && snap.State.SessionID == sessionID
 	})
@@ -84,7 +87,7 @@ func persistSessionWithMessage(t *testing.T, coordinator *Coordinator, sub *even
 		Prompt:      prompt,
 		SubmittedAt: time.Now().UTC(),
 	}))
-	drainUntil(t, sub, time.Second, func(e chat.ChatEvent) bool {
+	drainUntil[chat.ChatResponseCompletedEvent](t, sub, time.Second, func(e chat.ChatEvent) bool {
 		done, ok := e.(chat.ChatResponseCompletedEvent)
 		return ok && done.State.SessionID == sessionID
 	})
@@ -93,7 +96,7 @@ func persistSessionWithMessage(t *testing.T, coordinator *Coordinator, sub *even
 		SessionID:   sessionID,
 		RequestedAt: time.Now().UTC(),
 	}))
-	drainUntil(t, sub, time.Second, func(e chat.ChatEvent) bool {
+	drainUntil[chat.ChatSessionSnapshotEvent](t, sub, time.Second, func(e chat.ChatEvent) bool {
 		snap, ok := e.(chat.ChatSessionSnapshotEvent)
 		return ok && snap.State.SessionID == sessionID && snap.State.Status == chat.ChatSessionClosed
 	})
@@ -109,11 +112,10 @@ func TestHandleListSessions_NoSessionManager_EmitsWarning(t *testing.T) {
 
 	require.NoError(t, coordinator.Send(chat.ListSessionsCommand{Limit: 10}))
 
-	event := drainUntil(t, sub, time.Second, func(e chat.ChatEvent) bool {
+	notif := drainUntil[chat.ChatNotificationEvent](t, sub, time.Second, func(e chat.ChatEvent) bool {
 		_, ok := e.(chat.ChatNotificationEvent)
 		return ok
 	})
-	notif := event.(chat.ChatNotificationEvent)
 	require.Equal(t, chat.ChatNotificationWarn, notif.Level)
 	require.Contains(t, notif.Message, "not available")
 }
@@ -130,11 +132,10 @@ func TestHandleListSessions_ReturnsPersistedSessions(t *testing.T) {
 
 	require.NoError(t, coordinator.Send(chat.ListSessionsCommand{Limit: 10}))
 
-	event := drainUntil(t, sub, time.Second, func(e chat.ChatEvent) bool {
+	listed := drainUntil[chat.SessionsListedEvent](t, sub, time.Second, func(e chat.ChatEvent) bool {
 		_, ok := e.(chat.SessionsListedEvent)
 		return ok
 	})
-	listed := event.(chat.SessionsListedEvent)
 	require.Len(t, listed.Sessions, 2)
 
 	ids := make([]string, len(listed.Sessions))
@@ -154,11 +155,10 @@ func TestHandleLoadSession_NoSessionManager_EmitsError(t *testing.T) {
 
 	require.NoError(t, coordinator.Send(chat.LoadSessionCommand{SessionID: "missing"}))
 
-	event := drainUntil(t, sub, time.Second, func(e chat.ChatEvent) bool {
+	errEvent := drainUntil[chat.ChatRuntimeErrorEvent](t, sub, time.Second, func(e chat.ChatEvent) bool {
 		_, ok := e.(chat.ChatRuntimeErrorEvent)
 		return ok
 	})
-	errEvent := event.(chat.ChatRuntimeErrorEvent)
 	require.False(t, errEvent.Fatal)
 	require.Contains(t, errEvent.Message, "not available")
 }
@@ -172,11 +172,10 @@ func TestHandleLoadSession_UnknownSession_EmitsError(t *testing.T) {
 
 	require.NoError(t, coordinator.Send(chat.LoadSessionCommand{SessionID: "does-not-exist"}))
 
-	event := drainUntil(t, sub, time.Second, func(e chat.ChatEvent) bool {
+	errEvent := drainUntil[chat.ChatRuntimeErrorEvent](t, sub, time.Second, func(e chat.ChatEvent) bool {
 		_, ok := e.(chat.ChatRuntimeErrorEvent)
 		return ok
 	})
-	errEvent := event.(chat.ChatRuntimeErrorEvent)
 	require.Equal(t, "does-not-exist", errEvent.SessionID)
 	require.False(t, errEvent.Fatal)
 	require.Contains(t, errEvent.Message, "loading session")
@@ -199,11 +198,10 @@ func TestHandleLoadSession_LoadsPersistedStateIntoMemory(t *testing.T) {
 
 	require.NoError(t, coordinator.Send(chat.LoadSessionCommand{SessionID: "load-session-1"}))
 
-	event := drainUntil(t, sub, time.Second, func(e chat.ChatEvent) bool {
+	loaded := drainUntil[chat.SessionLoadedEvent](t, sub, time.Second, func(e chat.ChatEvent) bool {
 		_, ok := e.(chat.SessionLoadedEvent)
 		return ok
 	})
-	loaded := event.(chat.SessionLoadedEvent)
 	require.Equal(t, "load-session-1", loaded.State.SessionID)
 	require.Len(t, loaded.State.Messages, 1)
 	require.Equal(t, "remember this", loaded.State.Messages[0].Content)
@@ -228,11 +226,11 @@ func TestHandleLoadChildTranscript_NoSessionManager_EmitsError(t *testing.T) {
 
 	require.NoError(t, coordinator.Send(chat.LoadChildTranscriptCommand{SessionID: "child-1"}))
 
-	event := drainUntil(t, sub, time.Second, func(e chat.ChatEvent) bool {
+	errEvent := drainUntil[chat.ChatRuntimeErrorEvent](t, sub, time.Second, func(e chat.ChatEvent) bool {
 		_, ok := e.(chat.ChatRuntimeErrorEvent)
 		return ok
 	})
-	require.Equal(t, "child-1", event.(chat.ChatRuntimeErrorEvent).SessionID)
+	require.Equal(t, "child-1", errEvent.SessionID)
 }
 
 func TestHandleLoadChildTranscript_IsReadOnly(t *testing.T) {
@@ -246,11 +244,10 @@ func TestHandleLoadChildTranscript_IsReadOnly(t *testing.T) {
 
 	require.NoError(t, coordinator.Send(chat.LoadChildTranscriptCommand{SessionID: "child-session-1"}))
 
-	event := drainUntil(t, sub, time.Second, func(e chat.ChatEvent) bool {
+	transcript := drainUntil[chat.ChildTranscriptLoadedEvent](t, sub, time.Second, func(e chat.ChatEvent) bool {
 		_, ok := e.(chat.ChildTranscriptLoadedEvent)
 		return ok
 	})
-	transcript := event.(chat.ChildTranscriptLoadedEvent)
 	require.Equal(t, "child-session-1", transcript.SessionID)
 	require.Len(t, transcript.Messages, 1)
 	require.Equal(t, "child said hi", transcript.Messages[0].Content)
@@ -273,7 +270,7 @@ func TestHandleDeleteSession_NoSessionManager_EmitsError(t *testing.T) {
 
 	require.NoError(t, coordinator.Send(chat.DeleteSessionCommand{SessionID: "missing"}))
 
-	drainUntil(t, sub, time.Second, func(e chat.ChatEvent) bool {
+	drainUntil[chat.ChatRuntimeErrorEvent](t, sub, time.Second, func(e chat.ChatEvent) bool {
 		_, ok := e.(chat.ChatRuntimeErrorEvent)
 		return ok
 	})
@@ -288,11 +285,10 @@ func TestHandleDeleteSession_UnknownSession_EmitsError(t *testing.T) {
 
 	require.NoError(t, coordinator.Send(chat.DeleteSessionCommand{SessionID: "does-not-exist"}))
 
-	event := drainUntil(t, sub, time.Second, func(e chat.ChatEvent) bool {
+	errEvent := drainUntil[chat.ChatRuntimeErrorEvent](t, sub, time.Second, func(e chat.ChatEvent) bool {
 		_, ok := e.(chat.ChatRuntimeErrorEvent)
 		return ok
 	})
-	errEvent := event.(chat.ChatRuntimeErrorEvent)
 	require.Equal(t, "does-not-exist", errEvent.SessionID)
 	require.Contains(t, errEvent.Message, "deleting session")
 }
@@ -309,7 +305,7 @@ func TestHandleDeleteSession_RemovesFromStoreAndMemory(t *testing.T) {
 	// Reload it so it is active in the in-memory map, mirroring a user
 	// resuming a session before deleting it.
 	require.NoError(t, coordinator.Send(chat.LoadSessionCommand{SessionID: "delete-session-1"}))
-	drainUntil(t, sub, time.Second, func(e chat.ChatEvent) bool {
+	drainUntil[chat.SessionLoadedEvent](t, sub, time.Second, func(e chat.ChatEvent) bool {
 		_, ok := e.(chat.SessionLoadedEvent)
 		return ok
 	})
@@ -320,11 +316,11 @@ func TestHandleDeleteSession_RemovesFromStoreAndMemory(t *testing.T) {
 
 	require.NoError(t, coordinator.Send(chat.DeleteSessionCommand{SessionID: "delete-session-1"}))
 
-	event := drainUntil(t, sub, time.Second, func(e chat.ChatEvent) bool {
+	deleted := drainUntil[chat.SessionDeletedEvent](t, sub, time.Second, func(e chat.ChatEvent) bool {
 		_, ok := e.(chat.SessionDeletedEvent)
 		return ok
 	})
-	require.Equal(t, "delete-session-1", event.(chat.SessionDeletedEvent).SessionID)
+	require.Equal(t, "delete-session-1", deleted.SessionID)
 
 	coordinator.mu.Lock()
 	_, stillActive := coordinator.sessions["delete-session-1"]
@@ -349,7 +345,7 @@ func TestHandleExportSession_NoSessionManager_EmitsError(t *testing.T) {
 
 	require.NoError(t, coordinator.Send(chat.ExportSessionCommand{SessionID: "missing", Format: "jsonl"}))
 
-	drainUntil(t, sub, time.Second, func(e chat.ChatEvent) bool {
+	drainUntil[chat.ChatRuntimeErrorEvent](t, sub, time.Second, func(e chat.ChatEvent) bool {
 		_, ok := e.(chat.ChatRuntimeErrorEvent)
 		return ok
 	})
@@ -378,11 +374,10 @@ func TestHandleExportSession_UnknownSession_EmitsError(t *testing.T) {
 		Output:    outputPath,
 	}))
 
-	event := drainUntil(t, sub, time.Second, func(e chat.ChatEvent) bool {
+	errEvent := drainUntil[chat.ChatRuntimeErrorEvent](t, sub, time.Second, func(e chat.ChatEvent) bool {
 		_, ok := e.(chat.ChatRuntimeErrorEvent)
 		return ok
 	})
-	errEvent := event.(chat.ChatRuntimeErrorEvent)
 	require.Equal(t, "does-not-exist", errEvent.SessionID)
 	require.Contains(t, errEvent.Message, "exporting session")
 
@@ -406,11 +401,10 @@ func TestHandleExportSession_WritesJSONLFile(t *testing.T) {
 		Output:    outputPath,
 	}))
 
-	event := drainUntil(t, sub, time.Second, func(e chat.ChatEvent) bool {
+	exported := drainUntil[chat.SessionExportedEvent](t, sub, time.Second, func(e chat.ChatEvent) bool {
 		_, ok := e.(chat.SessionExportedEvent)
 		return ok
 	})
-	exported := event.(chat.SessionExportedEvent)
 	require.Equal(t, "export-session-1", exported.SessionID)
 	require.Equal(t, "jsonl", exported.Format)
 	require.Equal(t, outputPath, exported.Path)
@@ -447,7 +441,7 @@ func TestHandleExportSession_EmitsContentEventWhenNoOutputPath(t *testing.T) {
 		Format:    "jsonl",
 	}))
 
-	event := drainUntil(t, sub, time.Second, func(e chat.ChatEvent) bool {
+	exported := drainUntil[chat.SessionExportedEvent](t, sub, time.Second, func(e chat.ChatEvent) bool {
 		_, ok := e.(chat.SessionExportedEvent)
 		return ok
 	})
@@ -467,7 +461,6 @@ func TestHandleExportSession_EmitsContentEventWhenNoOutputPath(t *testing.T) {
 		}
 	}
 
-	exported := event.(chat.SessionExportedEvent)
 	require.Equal(t, "export-session-stdout", exported.SessionID)
 	require.Empty(t, exported.Path, "stdout export must not report a file path")
 	require.Contains(t, exported.Content, "stream me to stdout")

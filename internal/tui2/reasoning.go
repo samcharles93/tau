@@ -208,40 +208,17 @@ func (m *model) toggleReasoningBlock(key string) bool {
 }
 
 // spliceCommittedReasoning re-renders b after a collapse/expand toggle and
-// splices the result into m.renderedLines in place of its previous lines -
-// shifting every committed tool group, message range, and other reasoning
-// block that comes after it by the resulting line-count delta, exactly like
-// spliceCommittedGroup (see its doc comment: this is the second of the two
-// places that mutate renderedLines in place after initial construction, and
-// anything added to renderedLines' bookkeeping in the future needs the same
-// shift treatment in both).
+// splices the result into m.renderedLines in place of its previous lines via
+// spliceRenderedBlock - shifting every committed tool group, message range,
+// and other reasoning block that comes after it by the resulting line-count
+// delta, exactly like spliceCommittedGroup (see spliceRenderedBlock's doc
+// comment: these are the two places that mutate renderedLines in place after
+// initial construction, and anything added to renderedLines' bookkeeping in
+// the future needs the same shift treatment in both).
 func (m *model) spliceCommittedReasoning(b *committedReasoningBlock) {
-	rendered := m.renderCommittedReasoning(b)
-	newLines := strings.Split(rendered, "\n")
-	delta := len(newLines) - b.lineCount
-
-	tail := append([]string(nil), m.renderedLines[b.lineIdx+b.lineCount:]...)
-	m.renderedLines = append(m.renderedLines[:b.lineIdx], newLines...)
-	m.renderedLines = append(m.renderedLines, tail...)
-
+	newLines := strings.Split(m.renderCommittedReasoning(b), "\n")
+	m.spliceRenderedBlock(b.lineIdx, b.lineCount, newLines)
 	b.lineCount = len(newLines)
-	for _, other := range m.committedReasoning {
-		if other != b && other.lineIdx > b.lineIdx {
-			other.lineIdx += delta
-		}
-	}
-	for _, g := range m.committedGroups {
-		if g.lineIdx > b.lineIdx {
-			g.lineIdx += delta
-		}
-	}
-	for i := range m.messageRanges {
-		if m.messageRanges[i].startLine > b.lineIdx {
-			m.messageRanges[i].startLine += delta
-			m.messageRanges[i].endLine += delta
-		}
-	}
-	m.viewport.SetContentLines(m.renderedLines)
 }
 
 func (m *model) viewportLinesForView(visibleReasoning bool) []string {

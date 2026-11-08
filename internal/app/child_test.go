@@ -49,7 +49,7 @@ func TestRunChild_InvalidHandshake(t *testing.T) {
 	}()
 
 	writer := stdio.NewWriter(parentStdin)
-	writer.WriteEnvelope("agent.cancel", map[string]string{"task_id": "123"})
+	_ = writer.WriteEnvelope("agent.cancel", map[string]string{"task_id": "123"})
 	parentStdin.Close()
 
 	runErr := <-errCh
@@ -105,7 +105,7 @@ func TestRunChild_InstanceNotFound(t *testing.T) {
 	}()
 
 	writer := stdio.NewWriter(parentStdin)
-	writer.WriteEnvelope("agent.assign", map[string]any{
+	_ = writer.WriteEnvelope("agent.assign", map[string]any{
 		"task_id":     "nonexistent#zzzzzz",
 		"instance_id": "nonexistent#zzzzzz",
 		"session_id":  "test-session-001",
@@ -159,7 +159,7 @@ func TestRunChild_BadHandshakeContents(t *testing.T) {
 	}()
 
 	writer := stdio.NewWriter(parentStdin)
-	writer.WriteEnvelope("agent.assign", map[string]string{"prompt": "hello"})
+	_ = writer.WriteEnvelope("agent.assign", map[string]string{"prompt": "hello"})
 	parentStdin.Close()
 
 	runErr := <-errCh
@@ -280,7 +280,7 @@ func TestRunChild_HandshakeRoundTripWithValidStore(t *testing.T) {
 		}
 		if typ == "agent.result" {
 			var result map[string]any
-			json.Unmarshal(payload, &result)
+			_ = json.Unmarshal(payload, &result)
 			t.Logf("agent.result: %v", result)
 			break
 		}

@@ -60,6 +60,34 @@ func NewUsageTracker(client *eventbus.Client) *UsageTracker {
 	return t
 }
 
+// applyLLMMetric folds one LLM-category metric event into totals.
+func applyLLMMetric(e chat.MetricEvent, totals *SessionTotals) {
+	switch e.Name {
+	case "llm.response":
+		totals.TotalTokens += int(e.Value)
+		totals.TurnCount++
+		if prompt, err := strconv.Atoi(e.Labels["prompt_tokens"]); err == nil {
+			totals.PromptTokens += prompt
+			totals.LastPromptTokens = prompt
+		}
+		if completion, err := strconv.Atoi(e.Labels["completion_tokens"]); err == nil {
+			totals.CompletionTokens += completion
+		}
+		if provider, ok := e.Labels["provider"]; ok {
+			totals.LastProvider = provider
+		}
+		if model, ok := e.Labels["model"]; ok {
+			totals.LastModel = model
+		}
+	case "llm.cost":
+		totals.Cost += e.Value
+	case "turn.duration":
+		totals.TurnDurationMs += int64(e.Value)
+	case "llm.error":
+		totals.TurnErrors++
+	}
+}
+
 func (t *UsageTracker) handle(e chat.MetricEvent) {
 	// Session lifecycle events (created, closed) carry no numeric
 	// aggregates. State-change events (model.changed, provider.changed)
@@ -76,30 +104,7 @@ func (t *UsageTracker) handle(e chat.MetricEvent) {
 
 	switch e.Category {
 	case chat.MetricCategoryLLM:
-		switch e.Name {
-		case "llm.response":
-			totals.TotalTokens += int(e.Value)
-			totals.TurnCount++
-			if prompt, err := strconv.Atoi(e.Labels["prompt_tokens"]); err == nil {
-				totals.PromptTokens += prompt
-				totals.LastPromptTokens = prompt
-			}
-			if completion, err := strconv.Atoi(e.Labels["completion_tokens"]); err == nil {
-				totals.CompletionTokens += completion
-			}
-			if provider, ok := e.Labels["provider"]; ok {
-				totals.LastProvider = provider
-			}
-			if model, ok := e.Labels["model"]; ok {
-				totals.LastModel = model
-			}
-		case "llm.cost":
-			totals.Cost += e.Value
-		case "turn.duration":
-			totals.TurnDurationMs += int64(e.Value)
-		case "llm.error":
-			totals.TurnErrors++
-		}
+		applyLLMMetric(e, totals)
 
 	case chat.MetricCategoryTool:
 		totals.ToolCalls++
@@ -108,14 +113,12 @@ func (t *UsageTracker) handle(e chat.MetricEvent) {
 		}
 
 	case chat.MetricCategorySkill:
-		switch e.Name {
-		case "skill.activated":
+		if e.Name == "skill.activated" {
 			totals.SkillActivations++
 		}
 
 	case chat.MetricCategoryExtension:
-		switch e.Name {
-		case "extension.command":
+		if e.Name == "extension.command" {
 			totals.ExtensionCommands++
 		}
 

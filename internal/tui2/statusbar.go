@@ -215,10 +215,43 @@ func approxTokensPerSecond(streamed string, elapsed time.Duration) (rate int, ok
 // top of whichever state is active, so it never needs duplicating per
 // branch.
 func (m *model) computeStatusBar() string {
+	left, right := m.statusBarSegments()
+
+	// Steering overlays whichever state is active - it's an orthogonal
+	// mid-turn condition (the user interrupted to redirect the agent), not
+	// one of the 6 primary states, so every branch above can stay unaware
+	// of it and this stays the single place it's appended. Undroppable
+	// (prioTransient): once the user has actually intervened mid-turn,
+	// that's more important than any of the identity segments it might
+	// otherwise be dropped in favor of.
+	if m.steering {
+		dots := (m.spinnerFrame / 4) % 4
+		left = append(left, statusSeg{
+			Text:  "steering" + strings.Repeat(".", dots),
+			Style: func(s string) string { return termkit.FgOnly(s, theme.ToneWarn) },
+			Prio:  prioTransient,
+		})
+	}
+
+	return renderStatusBar(m.width, left, right)
+}
+
+// statusBarSegments builds the left (app identity + current activity) and
+// right (model/provider/effort/token/cost/context/web) segment lists for the
+// current agentState. Layout is deliberately consistent across all 7 states:
+// the left side is always "τ tau" plus the current activity (Ready/Thinking/
+// Processing/Running <tool>/generating/Cancelled/Error), never anything else;
+// the right side always carries model/provider/effort/token/cost/context/web -
+// i.e. model sits on the opposite side of the bar from whatever the agent is
+// currently doing, so the two never compete for the same reading position.
+// Busy states (Thinking/Processing/RunningTool/Streaming) trim the right side
+// down to just what's useful mid-turn (nothing else is as relevant, and it
+// keeps the bar compact); idle-ish states (Ready/Cancelled) restore the full
+// identity + token-usage picture.
+func (m *model) statusBarSegments() (left, right []statusSeg) {
 	// "τ tau" is prioTransient (undroppable) - it's the app's own identity,
 	// the last thing that should ever disappear.
-	left := []statusSeg{{Text: "τ", Prio: prioTransient}}
-	var right []statusSeg
+	left = []statusSeg{{Text: "τ", Prio: prioTransient}}
 
 	switch m.agentState {
 	case agentThinking:
@@ -296,24 +329,7 @@ func (m *model) computeStatusBar() string {
 		right = append(right, m.identitySegs(true)...)
 		right = append(right, m.sessionTokenSegs()...)
 	}
-
-	// Steering overlays whichever state is active - it's an orthogonal
-	// mid-turn condition (the user interrupted to redirect the agent), not
-	// one of the 6 primary states, so every branch above can stay unaware
-	// of it and this stays the single place it's appended. Undroppable
-	// (prioTransient): once the user has actually intervened mid-turn,
-	// that's more important than any of the identity segments it might
-	// otherwise be dropped in favor of.
-	if m.steering {
-		dots := (m.spinnerFrame / 4) % 4
-		left = append(left, statusSeg{
-			Text:  "steering" + strings.Repeat(".", dots),
-			Style: func(s string) string { return termkit.FgOnly(s, theme.ToneWarn) },
-			Prio:  prioTransient,
-		})
-	}
-
-	return renderStatusBar(m.width, left, right)
+	return left, right
 }
 
 // --- formatters ------------------------------------------------------------

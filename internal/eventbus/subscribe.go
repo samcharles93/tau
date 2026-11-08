@@ -155,6 +155,17 @@ func newSubscriber[T any](r *subscribeState) *Subscriber[T] {
 	return s
 }
 
+// mustCast asserts event is of type T. The bus routes events by reflect.Type,
+// so a mismatch here is an internal invariant violation, not a runtime input
+// error - panic rather than silently dropping the event.
+func mustCast[T any](event any) T {
+	t, ok := event.(T)
+	if !ok {
+		panic(fmt.Sprintf("eventbus: routed %T to subscriber of %s", event, reflect.TypeFor[T]()))
+	}
+	return t
+}
+
 // dispatchTyped is the per-T dispatch loop for Subscriber[T]. It must
 // remain generic because the typed channel send must appear lexically
 // inside the select.
@@ -164,7 +175,7 @@ func (s *Subscriber[T]) dispatchTyped(
 	acceptCh func() chan DeliveredEvent,
 	snapshot chan chan []DeliveredEvent,
 ) bool {
-	t := vals.Peek().Event.(T)
+	t := mustCast[T](vals.Peek().Event)
 
 	start := time.Now()
 	s.core.slow.Reset(slowSubscriberTimeout)
@@ -229,7 +240,7 @@ func newSubscriberFunc[T any](r *subscribeState, f func(T)) *SubscriberFunc[T] {
 		acceptCh func() chan DeliveredEvent,
 		snapshot chan chan []DeliveredEvent,
 	) bool {
-		t := vals.Peek().Event.(T)
+		t := mustCast[T](vals.Peek().Event)
 		callDone := make(chan struct{})
 		go runFuncCallback(f, t, callDone)
 		return dispatchFunc(ctx, core, vals, acceptCh, snapshot, callDone)

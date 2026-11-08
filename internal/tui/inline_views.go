@@ -36,95 +36,123 @@ func buildViewComponent(view tauchat.ExtensionView) taui.Component {
 func renderWidget(w tauchat.Widget) taui.Component {
 	switch w.Kind {
 	case tauchat.WidgetKindText:
-		if w.Text == nil {
-			return &taui.Container{}
-		}
-		t := taui.NewStyledText(w.Text.Text, styleFn(w.Text.Style), nil)
-		return t
-
+		return renderTextWidget(w.Text)
 	case tauchat.WidgetKindStack:
-		if w.Stack == nil {
-			return &taui.Container{}
-		}
-		dir := taui.StackVertical
-		if w.Stack.Direction == tauchat.StackHorizontal {
-			dir = taui.StackHorizontal
-		}
-		s := taui.NewStack(dir, w.Stack.Gap)
-		for _, child := range w.Stack.Children {
-			s.AddChild(renderWidget(child))
-		}
-		return s
-
+		return renderStackWidget(w.Stack)
 	case tauchat.WidgetKindKeyValue:
-		if w.KeyValue == nil {
-			return &taui.Container{}
-		}
-		entries := make([]taui.KeyValueEntry, 0, len(w.KeyValue.Entries))
-		for _, e := range w.KeyValue.Entries {
-			entries = append(entries, taui.KeyValueEntry{
-				Key:     e.Key,
-				Value:   e.Value,
-				ValueFn: styleFn(e.ValueStyle),
-			})
-		}
-		return taui.NewKeyValue(entries)
-
+		return renderKeyValueWidget(w.KeyValue)
 	case tauchat.WidgetKindList:
-		if w.List == nil {
-			return &taui.Container{}
-		}
-		l := taui.NewList(w.List.Items, w.List.Ordered)
-		if fn := styleFn(w.List.Style); fn != nil {
-			l.SetStyle(fn)
-		}
-		return l
-
+		return renderListWidget(w.List)
 	case tauchat.WidgetKindTable:
-		if w.Table == nil {
-			return &taui.Container{}
-		}
-		rows := make([][]string, 0, len(w.Table.Rows))
-		for _, r := range w.Table.Rows {
-			rows = append(rows, r.Cells)
-		}
-		return taui.NewTable(w.Table.Headers, rows)
-
+		return renderTableWidget(w.Table)
 	case tauchat.WidgetKindProgress:
-		if w.Progress == nil {
-			return &taui.Container{}
-		}
-		bar := termkit.ProgressBar(w.Progress.Fraction, 20)
-		label := bar
-		if w.Progress.Label != "" {
-			label = w.Progress.Label + " " + bar
-		}
-		return taui.NewStyledText(label, styleFn(w.Progress.Style), nil)
-
+		return renderProgressWidget(w.Progress)
 	case tauchat.WidgetKindDivider:
-		label := ""
-		if w.Divider != nil {
-			label = w.Divider.Label
-		}
-		return taui.NewDivider(label)
-
+		return renderDividerWidget(w.Divider)
 	case tauchat.WidgetKindStatus:
-		if w.Status == nil {
-			return &taui.Container{}
-		}
-		state := taui.StatusRowNeutral
-		switch w.Status.State {
-		case tauchat.StatusRunning:
-			state = taui.StatusRowRunning
-		case tauchat.StatusSuccess:
-			state = taui.StatusRowSuccess
-		case tauchat.StatusFailed:
-			state = taui.StatusRowFailed
-		}
-		return taui.NewStatusRow(w.Status.Label, w.Status.Detail, state)
-
+		return renderStatusWidget(w.Status)
 	default:
 		return &taui.Container{}
+	}
+}
+
+func renderTextWidget(t *tauchat.TextWidget) taui.Component {
+	if t == nil {
+		return &taui.Container{}
+	}
+	return taui.NewStyledText(t.Text, styleFn(t.Style), nil)
+}
+
+func renderStackWidget(s *tauchat.StackWidget) taui.Component {
+	if s == nil {
+		return &taui.Container{}
+	}
+	dir := taui.StackVertical
+	if s.Direction == tauchat.StackHorizontal {
+		dir = taui.StackHorizontal
+	}
+	stack := taui.NewStack(dir, s.Gap)
+	for _, child := range s.Children {
+		stack.AddChild(renderWidget(child))
+	}
+	return stack
+}
+
+func renderKeyValueWidget(kv *tauchat.KeyValueWidget) taui.Component {
+	if kv == nil {
+		return &taui.Container{}
+	}
+	entries := make([]taui.KeyValueEntry, 0, len(kv.Entries))
+	for _, e := range kv.Entries {
+		entries = append(entries, taui.KeyValueEntry{
+			Key:     e.Key,
+			Value:   e.Value,
+			ValueFn: styleFn(e.ValueStyle),
+		})
+	}
+	return taui.NewKeyValue(entries)
+}
+
+func renderListWidget(l *tauchat.ListWidget) taui.Component {
+	if l == nil {
+		return &taui.Container{}
+	}
+	list := taui.NewList(l.Items, l.Ordered)
+	if fn := styleFn(l.Style); fn != nil {
+		list.SetStyle(fn)
+	}
+	return list
+}
+
+func renderTableWidget(t *tauchat.TableWidget) taui.Component {
+	if t == nil {
+		return &taui.Container{}
+	}
+	rows := make([][]string, 0, len(t.Rows))
+	for _, r := range t.Rows {
+		rows = append(rows, r.Cells)
+	}
+	return taui.NewTable(t.Headers, rows)
+}
+
+func renderProgressWidget(p *tauchat.ProgressWidget) taui.Component {
+	if p == nil {
+		return &taui.Container{}
+	}
+	bar := termkit.ProgressBar(p.Fraction, 20)
+	label := bar
+	if p.Label != "" {
+		label = p.Label + " " + bar
+	}
+	return taui.NewStyledText(label, styleFn(p.Style), nil)
+}
+
+func renderDividerWidget(d *tauchat.DividerWidget) taui.Component {
+	label := ""
+	if d != nil {
+		label = d.Label
+	}
+	return taui.NewDivider(label)
+}
+
+func renderStatusWidget(s *tauchat.StatusWidget) taui.Component {
+	if s == nil {
+		return &taui.Container{}
+	}
+	return taui.NewStatusRow(s.Label, s.Detail, statusRowState(s.State))
+}
+
+// statusRowState maps a domain status state to the taui status-row state.
+func statusRowState(state tauchat.StatusState) taui.StatusRowState {
+	switch state {
+	case tauchat.StatusRunning:
+		return taui.StatusRowRunning
+	case tauchat.StatusSuccess:
+		return taui.StatusRowSuccess
+	case tauchat.StatusFailed:
+		return taui.StatusRowFailed
+	default:
+		return taui.StatusRowNeutral
 	}
 }
 

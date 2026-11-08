@@ -1,6 +1,7 @@
 package agent
 
 import (
+	"context"
 	"fmt"
 	"strings"
 	"time"
@@ -17,7 +18,7 @@ import (
 // the skill's instructions into the session system prompt so the model has
 // them for subsequent turns, and emits Skill-tool-style started/completed
 // events so the TUI renders the lilac "loaded" box.
-func (c *Coordinator) handleRunSkill(cmd chat.RunSkillCommand) {
+func (c *Coordinator) handleRunSkill(ctx context.Context, cmd chat.RunSkillCommand) {
 	now := normalizedTime(cmd.RequestedAt)
 
 	if c.skillsMgr == nil {
@@ -115,7 +116,7 @@ func (c *Coordinator) handleRunSkill(cmd chat.RunSkillCommand) {
 // requested Tools are clamped to the session's current allowlist rather
 // than applied as-is, so activating one can never grant a wider tool set
 // than the session already had - see clampToolsToCurrentAllowlist.
-func (c *Coordinator) handleRunAgent(cmd chat.RunAgentCommand) {
+func (c *Coordinator) handleRunAgent(ctx context.Context, cmd chat.RunAgentCommand) {
 	now := normalizedTime(cmd.RequestedAt)
 
 	name := strings.TrimSpace(cmd.Name)
@@ -220,7 +221,7 @@ func (c *Coordinator) clampToolsToCurrentAllowlist(requested []string) []string 
 
 // handleReloadSkills re-discovers skills from disk and merges them into the
 // command registry, enabling hot-reload without restarting tau.
-func (c *Coordinator) handleReloadSkills(_ chat.ReloadSkillsCommand) {
+func (c *Coordinator) handleReloadSkills(_ context.Context, _ chat.ReloadSkillsCommand) {
 	now := time.Now().UTC()
 	if c.skillsMgr == nil {
 		c.emit(chat.ChatNotificationEvent{
@@ -250,7 +251,7 @@ func (c *Coordinator) handleReloadSkills(_ chat.ReloadSkillsCommand) {
 }
 
 // handleListSkills prints the available skill catalog as a notification.
-func (c *Coordinator) handleListSkills(_ chat.ListSkillsCommand) {
+func (c *Coordinator) handleListSkills(_ context.Context, _ chat.ListSkillsCommand) {
 	now := time.Now().UTC()
 	if c.skillsMgr == nil {
 		c.emit(chat.ChatNotificationEvent{

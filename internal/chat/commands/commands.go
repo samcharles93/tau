@@ -106,7 +106,7 @@ func loadFromSource(source commandSource) ([]CustomCommand, error) {
 
 		cmd, err := loadCommand(path, source.path, source.prefix)
 		if err != nil {
-			return nil // Skip invalid files
+			return nil //nolint:nilerr // skip invalid file; the walk must continue
 		}
 
 		commands = append(commands, cmd)

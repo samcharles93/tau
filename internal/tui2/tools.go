@@ -180,32 +180,14 @@ type toolBoxGeometry struct {
 }
 
 func (m *model) upsertToolCall(callID, toolName, argumentsSummary, summary string) {
-	for i := range m.tools {
-		if m.tools[i].id == callID {
-			if toolName != "" {
-				m.tools[i].name = toolName
-			}
-			if argumentsSummary != "" {
-				m.tools[i].args += argumentsSummary
-			}
-			if summary != "" {
-				m.tools[i].summary = summary
-			}
-			return
-		}
+	if m.updateExistingToolCall(callID, toolName, argumentsSummary, summary) {
+		return
 	}
 	if m.adoptToolCallID(callID, toolName) {
-		for i := range m.tools {
-			if m.tools[i].id == callID {
-				if argumentsSummary != "" {
-					m.tools[i].args += argumentsSummary
-				}
-				if summary != "" {
-					m.tools[i].summary = summary
-				}
-				return
-			}
-		}
+		// adoptToolCallID only returns true once a row with id == callID
+		// exists (it renamed the best match), so this always finds it.
+		m.updateExistingToolCall(callID, "", argumentsSummary, summary)
+		return
 	}
 	// This tool call is new - any streaming/reasoning text accumulated so
 	// far was authored before it started, so commit it now (see
@@ -220,6 +202,28 @@ func (m *model) upsertToolCall(callID, toolName, argumentsSummary, summary strin
 		status:    "pending",
 		startedAt: time.Now(),
 	})
+}
+
+// updateExistingToolCall applies a streamed name/arguments/summary delta to
+// the row with id == callID, if one exists. Returns false when no row matches
+// (the caller then tries adoptToolCallID or creates a new row). Empty fields
+// leave the row's value unchanged.
+func (m *model) updateExistingToolCall(callID, toolName, argumentsSummary, summary string) bool {
+	for i := range m.tools {
+		if m.tools[i].id == callID {
+			if toolName != "" {
+				m.tools[i].name = toolName
+			}
+			if argumentsSummary != "" {
+				m.tools[i].args += argumentsSummary
+			}
+			if summary != "" {
+				m.tools[i].summary = summary
+			}
+			return true
+		}
+	}
+	return false
 }
 
 // adoptToolCallID reconciles a row's tracking ID with the ID used by started
@@ -685,35 +689,45 @@ func (m *model) toggleCommittedToolAtLine(idx int) bool {
 
 // spliceCommittedGroup re-renders g after toggleCommittedToolAtLine folded,
 // unfolded, or expanded/collapsed one of its rows, and splices the result
-// into m.renderedLines in place of its previous lines - shifting every
-// other committed group AND every recorded messageRange that comes after it
-// by the resulting line-count delta so their recorded positions stay
-// accurate for the next click. This is the only place that mutates
-// renderedLines in place after initial construction (every other write is a
-// pure trailing append) - anything else added to renderedLines' bookkeeping
-// in the future needs the same shift treatment here.
+// into m.renderedLines in place of its previous lines via spliceRenderedBlock
+// (see its doc comment: this is one of the two places that mutate
+// renderedLines in place after initial construction, and anything added to
+// renderedLines' bookkeeping in the future needs the same shift treatment in
+// both).
 func (m *model) spliceCommittedGroup(g *committedToolGroup) {
-	rendered := m.renderCommittedGroup(g)
-	newLines := strings.Split(rendered, "\n")
-	delta := len(newLines) - g.lineCount
+	newLines := strings.Split(m.renderCommittedGroup(g), "\n")
+	m.spliceRenderedBlock(g.lineIdx, g.lineCount, newLines)
+	g.lineCount = len(newLines)
+}
 
-	tail := append([]string(nil), m.renderedLines[g.lineIdx+g.lineCount:]...)
-	m.renderedLines = append(m.renderedLines[:g.lineIdx], newLines...)
+// spliceRenderedBlock replaces the oldCount rendered lines starting at lineIdx
+// with newLines, then shifts every recorded position after lineIdx (committed
+// reasoning blocks, committed tool groups, message ranges) by the resulting
+// line-count delta so those positions stay accurate. The spliced block itself
+// is never shifted: its own lineIdx equals lineIdx, which the strict ">"
+// comparisons exclude. This is the shared core of spliceCommittedGroup and
+// spliceCommittedReasoning - the two places that mutate renderedLines in
+// place after initial construction (every other write is a pure trailing
+// append).
+func (m *model) spliceRenderedBlock(lineIdx, oldCount int, newLines []string) {
+	delta := len(newLines) - oldCount
+
+	tail := append([]string(nil), m.renderedLines[lineIdx+oldCount:]...)
+	m.renderedLines = append(m.renderedLines[:lineIdx], newLines...)
 	m.renderedLines = append(m.renderedLines, tail...)
 
-	g.lineCount = len(newLines)
-	for _, other := range m.committedGroups {
-		if other != g && other.lineIdx > g.lineIdx {
-			other.lineIdx += delta
-		}
-	}
 	for _, rb := range m.committedReasoning {
-		if rb.lineIdx > g.lineIdx {
+		if rb.lineIdx > lineIdx {
 			rb.lineIdx += delta
 		}
 	}
+	for _, g := range m.committedGroups {
+		if g.lineIdx > lineIdx {
+			g.lineIdx += delta
+		}
+	}
 	for i := range m.messageRanges {
-		if m.messageRanges[i].startLine > g.lineIdx {
+		if m.messageRanges[i].startLine > lineIdx {
 			m.messageRanges[i].startLine += delta
 			m.messageRanges[i].endLine += delta
 		}
@@ -925,31 +939,7 @@ func (m *model) renderToolGroupBox(tools []toolState, expandedID string, focused
 // m.width; the child transcript overlay passes its own narrower inner
 // width instead).
 func (m *model) renderToolBox(t toolState, expanded bool, _, width int) string {
-	label := toolArgLabel(t.name, t.args)
-
-	glyph := toolGlyph(t.status, t.spinnerIdx)
-	var elapsed time.Duration
-	if t.status == "pending" || t.status == "running" {
-		elapsed = time.Since(t.startedAt)
-	} else {
-		elapsed = t.elapsed
-	}
-
-	elapsedStr := ""
-	if !t.startedAt.IsZero() || elapsed > 0 {
-		elapsedStr = " (" + formatElapsed(elapsed) + ")"
-	}
-
-	// Title line content: glyph + name + elapsed. For pending/running, the
-	// status word ("pending" vs "running") is real information the shared
-	// spinner glyph alone doesn't distinguish. For done/error, the glyph
-	// and box color (green/red) already say everything - repeating "done"
-	// or "error" as text is redundant log-speak, not state.
-	statusWord := ""
-	if t.status == "pending" || t.status == "running" {
-		statusWord = " " + t.status
-	}
-	title := glyph + " " + label + statusWord + elapsedStr
+	title := toolBoxTitle(t)
 
 	// Pick the style based on status.
 	boxStyle := toolBoxStyleForStatus(t.name, t.status)
@@ -968,104 +958,169 @@ func (m *model) renderToolBox(t toolState, expanded bool, _, width int) string {
 
 	// For agent tools, render the live child state block while running
 	// or the terminal summary once complete.
-	childBlock := ""
-	if t.name == "agent" {
-		if child, ok := m.childAgents[t.id]; ok && child.instanceID != "" {
-			childBlock = renderChildStateBlock(child, width-4)
-		}
-	}
+	childBlock := m.childStateBlock(t, width)
 
 	if expanded {
-		if cached, ok := m.cachedExpandedTool(t, width, focused, childBlock); ok {
-			return renderExpandedToolHeader(boxStyle, title, cached.body)
-		}
-
-		var bodyLines []string
-		if childBlock != "" {
-			bodyLines = append(bodyLines, childBlock)
-		}
-		// Expanded mode: show full result content in an inner box.
-		// When the output looks like markdown (code blocks, lists,
-		// tables), render it through glamour for syntax highlight.
-		bodyLines = append(bodyLines, "")
-		innerWidth := max(
-			// inner box narrower than outer
-			width-8, 10,
-		)
-		innerStyle := lipgloss.NewStyle().
-			Border(lipgloss.RoundedBorder()).
-			BorderForeground(themeHex(theme.SecondaryColor)).
-			Width(innerWidth).
-			Padding(toolBoxPadTopBottom, toolBoxPadLeftRight)
-		var innerContent strings.Builder
-		if len(t.result) == 0 {
-			innerContent.WriteString("No output\n")
-		}
-
-		if looksLikeMarkdown(t.result) {
-			// Wrap as a fenced markdown block and render through
-			// the width-memoized glamour cache for syntax highlight.
-			var mdBuilder strings.Builder
-			mdBuilder.Grow(len(t.result) + len("```result.md\n\n```"))
-			mdBuilder.WriteString("```result.md\n")
-			mdBuilder.WriteString(t.result)
-			mdBuilder.WriteString("\n```")
-			md := mdBuilder.String()
-			ensureMDRenderer(m.mdCache, innerWidth)
-			if r, ok := m.mdCache[mdCacheWidth(innerWidth)]; ok && r != nil {
-				if out, err := r.Render(md); err == nil {
-					for line := range strings.SplitSeq(out, "\n") {
-						innerContent.WriteString(line)
-						innerContent.WriteByte('\n')
-					}
-					innerRendered := innerStyle.Render(strings.TrimRight(innerContent.String(), "\n"))
-					for line := range strings.SplitSeq(innerRendered, "\n") {
-						bodyLines = append(bodyLines, line)
-					}
-					return m.cacheAndRenderExpandedTool(t, width, focused, childBlock, boxStyle, title, bodyLines)
-				}
-			}
-			// Fall through to plain-text rendering if glamour failed.
-		}
-
-		resultLines := strings.SplitSeq(t.result, "\n")
-		for line := range resultLines {
-			innerContent.WriteString(line)
-			innerContent.WriteByte('\n')
-		}
-		// Render inner box and append each line to body.
-		innerRendered := innerStyle.Render(strings.TrimRight(innerContent.String(), "\n"))
-		for line := range strings.SplitSeq(innerRendered, "\n") {
-			bodyLines = append(bodyLines, line)
-		}
-		return m.cacheAndRenderExpandedTool(t, width, focused, childBlock, boxStyle, title, bodyLines)
-	} else {
-		var bodyLines []string
-		if childBlock != "" {
-			bodyLines = append(bodyLines, childBlock)
-		}
-		// Compact mode: show first tail line if any, otherwise truncated result summary.
-		detail := ""
-		if len(t.tailLines) > 0 && (t.status == "pending" || t.status == "running") {
-			detail = t.tailLines[len(t.tailLines)-1]
-		} else if t.result != "" {
-			const resultLimit = 60
-			summary := strings.ReplaceAll(t.result, "\n", " ")
-			if len(summary) > resultLimit {
-				summary = summary[:resultLimit] + "…"
-			}
-			detail = summary
-		}
-		if detail != "" {
-			bodyLines = append(bodyLines, detail)
-		}
-		// Build compact content: title on first line, body on subsequent lines.
-		content := title
-		if len(bodyLines) > 0 {
-			content += "\n" + strings.Join(bodyLines, "\n")
-		}
-		return boxStyle.Render(content)
+		return m.renderExpandedToolBox(t, width, focused, childBlock, boxStyle, title)
 	}
+	return renderCompactToolBox(t, childBlock, boxStyle, title)
+}
+
+// toolBoxTitle builds the box's title line: glyph + name + elapsed. For
+// pending/running, the status word ("pending" vs "running") is real
+// information the shared spinner glyph alone doesn't distinguish. For
+// done/error, the glyph and box color (green/red) already say everything -
+// repeating "done" or "error" as text is redundant log-speak, not state.
+func toolBoxTitle(t toolState) string {
+	label := toolArgLabel(t.name, t.args)
+
+	glyph := toolGlyph(t.status, t.spinnerIdx)
+	var elapsed time.Duration
+	if t.status == "pending" || t.status == "running" {
+		elapsed = time.Since(t.startedAt)
+	} else {
+		elapsed = t.elapsed
+	}
+
+	elapsedStr := ""
+	if !t.startedAt.IsZero() || elapsed > 0 {
+		elapsedStr = " (" + formatElapsed(elapsed) + ")"
+	}
+
+	statusWord := ""
+	if t.status == "pending" || t.status == "running" {
+		statusWord = " " + t.status
+	}
+	return glyph + " " + label + statusWord + elapsedStr
+}
+
+// childStateBlock renders the live child agent state block (agent tools
+// only) for the given inner width, or "" when this tool has no child state.
+func (m *model) childStateBlock(t toolState, width int) string {
+	if t.name != "agent" {
+		return ""
+	}
+	if child, ok := m.childAgents[t.id]; ok && child.instanceID != "" {
+		return renderChildStateBlock(child, width-4)
+	}
+	return ""
+}
+
+// renderExpandedToolBox renders the full result content in an inner box.
+// When the output looks like markdown (code blocks, lists, tables), it is
+// rendered through glamour for syntax highlight.
+func (m *model) renderExpandedToolBox(t toolState, width int, focused bool, childBlock string, boxStyle lipgloss.Style, title string) string {
+	if cached, ok := m.cachedExpandedTool(t, width, focused, childBlock); ok {
+		return renderExpandedToolHeader(boxStyle, title, cached.body)
+	}
+
+	var bodyLines []string
+	if childBlock != "" {
+		bodyLines = append(bodyLines, childBlock)
+	}
+	bodyLines = append(bodyLines, "")
+	innerWidth := max(
+		// inner box narrower than outer
+		width-8, 10,
+	)
+	innerStyle := lipgloss.NewStyle().
+		Border(lipgloss.RoundedBorder()).
+		BorderForeground(themeHex(theme.SecondaryColor)).
+		Width(innerWidth).
+		Padding(toolBoxPadTopBottom, toolBoxPadLeftRight)
+	innerContent := m.toolResultInnerContent(t.result, innerWidth)
+	// Render inner box and append each line to body.
+	innerRendered := innerStyle.Render(strings.TrimRight(innerContent, "\n"))
+	for line := range strings.SplitSeq(innerRendered, "\n") {
+		bodyLines = append(bodyLines, line)
+	}
+	return m.cacheAndRenderExpandedTool(t, width, focused, childBlock, boxStyle, title, bodyLines)
+}
+
+// toolResultInnerContent renders t.result as the inner box's raw content:
+// "No output" when empty, glamour-rendered when the result looks like
+// markdown (wrapped as a fenced block and rendered through the
+// width-memoized glamour cache for syntax highlight), plain lines otherwise
+// (also the fallback when glamour fails).
+func (m *model) toolResultInnerContent(result string, innerWidth int) string {
+	var innerContent strings.Builder
+	if len(result) == 0 {
+		innerContent.WriteString("No output\n")
+	}
+
+	if looksLikeMarkdown(result) {
+		if md, ok := m.renderGlamourResult(result, innerWidth); ok {
+			return innerContent.String() + md
+		}
+		// Fall through to plain-text rendering if glamour failed.
+	}
+
+	for line := range strings.SplitSeq(result, "\n") {
+		innerContent.WriteString(line)
+		innerContent.WriteByte('\n')
+	}
+	return innerContent.String()
+}
+
+// renderGlamourResult renders result as a fenced markdown block through the
+// width-memoized glamour cache, returning the rendered content (each line
+// newline-terminated, matching the plain-text path's shape).
+func (m *model) renderGlamourResult(result string, innerWidth int) (string, bool) {
+	var mdBuilder strings.Builder
+	mdBuilder.Grow(len(result) + len("```result.md\n\n```"))
+	mdBuilder.WriteString("```result.md\n")
+	mdBuilder.WriteString(result)
+	mdBuilder.WriteString("\n```")
+	ensureMDRenderer(m.mdCache, innerWidth)
+	r, ok := m.mdCache[mdCacheWidth(innerWidth)]
+	if !ok || r == nil {
+		return "", false
+	}
+	out, err := r.Render(mdBuilder.String())
+	if err != nil {
+		return "", false
+	}
+	var b strings.Builder
+	for line := range strings.SplitSeq(out, "\n") {
+		b.WriteString(line)
+		b.WriteByte('\n')
+	}
+	return b.String(), true
+}
+
+// renderCompactToolBox renders the collapsed one/two-line tool box: the title
+// plus the live tail line (pending/running) or a truncated result summary.
+func renderCompactToolBox(t toolState, childBlock string, boxStyle lipgloss.Style, title string) string {
+	var bodyLines []string
+	if childBlock != "" {
+		bodyLines = append(bodyLines, childBlock)
+	}
+	// Compact mode: show first tail line if any, otherwise truncated result summary.
+	detail := compactToolDetail(t)
+	if detail != "" {
+		bodyLines = append(bodyLines, detail)
+	}
+	// Build compact content: title on first line, body on subsequent lines.
+	content := title
+	if len(bodyLines) > 0 {
+		content += "\n" + strings.Join(bodyLines, "\n")
+	}
+	return boxStyle.Render(content)
+}
+
+func compactToolDetail(t toolState) string {
+	if len(t.tailLines) > 0 && (t.status == "pending" || t.status == "running") {
+		return t.tailLines[len(t.tailLines)-1]
+	}
+	if t.result != "" {
+		const resultLimit = 60
+		summary := strings.ReplaceAll(t.result, "\n", " ")
+		if len(summary) > resultLimit {
+			summary = summary[:resultLimit] + "…"
+		}
+		return summary
+	}
+	return ""
 }
 
 func (m *model) cachedExpandedTool(t toolState, width int, focused bool, childBlock string) (expandedToolCacheEntry, bool) {
@@ -1307,33 +1362,8 @@ func extractChildAgentResult(details any) (childAgentResult, bool) {
 	if status == "" {
 		status = tauchat.ChildAgentCompleted
 	}
-	var turns int
-	var tokens int
-	var durationMs int64
-	if usage, ok := d["usage"].(map[string]any); ok {
-		if t, ok := usage["turns"].(float64); ok {
-			turns = int(t)
-		} else if t, ok := usage["turns"].(int); ok {
-			turns = t
-		}
-		if it, ok := usage["input_tokens"].(float64); ok {
-			tokens += int(it)
-		} else if it, ok := usage["input_tokens"].(int); ok {
-			tokens += it
-		}
-		if ot, ok := usage["output_tokens"].(float64); ok {
-			tokens += int(ot)
-		} else if ot, ok := usage["output_tokens"].(int); ok {
-			tokens += ot
-		}
-	}
-	if dur, ok := d["duration_ms"].(float64); ok {
-		durationMs = int64(dur)
-	} else if dur, ok := d["duration_ms"].(int); ok {
-		durationMs = int64(dur)
-	} else if dur, ok := d["duration_ms"].(int64); ok {
-		durationMs = dur
-	}
+	turns, tokens := childUsageCounts(d["usage"])
+	durationMs := anyToInt64(d["duration_ms"])
 	errMsg, _ := d["error"].(string)
 	sessionID, _ := d["session_id"].(string)
 	return childAgentResult{
@@ -1345,4 +1375,41 @@ func extractChildAgentResult(details any) (childAgentResult, bool) {
 		errorMsg:   errMsg,
 		sessionID:  sessionID,
 	}, true
+}
+
+// childUsageCounts reads turns/input_tokens/output_tokens from the agent
+// tool's "usage" object (a JSON map, so numbers decode as float64; int is
+// accepted too for hand-built values).
+func childUsageCounts(usage any) (turns, tokens int) {
+	u, ok := usage.(map[string]any)
+	if !ok {
+		return 0, 0
+	}
+	turns = usageNumber(u["turns"])
+	tokens = usageNumber(u["input_tokens"]) + usageNumber(u["output_tokens"])
+	return turns, tokens
+}
+
+// usageNumber converts a float64/int JSON number to int (0 for anything else).
+func usageNumber(v any) int {
+	switch n := v.(type) {
+	case float64:
+		return int(n)
+	case int:
+		return n
+	}
+	return 0
+}
+
+// anyToInt64 converts a float64/int/int64 JSON number to int64 (0 otherwise).
+func anyToInt64(v any) int64 {
+	switch n := v.(type) {
+	case float64:
+		return int64(n)
+	case int:
+		return int64(n)
+	case int64:
+		return n
+	}
+	return 0
 }

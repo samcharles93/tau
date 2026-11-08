@@ -312,7 +312,8 @@ func TestGrepClampsContextLines(t *testing.T) {
 
 	tool := NewGrepTool(tmp, nil)
 	res, err := tool.Execute(context.Background(), json.RawMessage(
-		`{"pattern":"needle","context_before":40,"context_after":40}`), nil)
+		`{"pattern":"needle","context_before":40,"context_after":40}`,
+	), nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -339,7 +340,8 @@ func TestGrepLeavesModestContextAlone(t *testing.T) {
 
 	tool := NewGrepTool(tmp, nil)
 	res, err := tool.Execute(context.Background(), json.RawMessage(
-		`{"pattern":"needle","context_before":2,"context_after":2}`), nil)
+		`{"pattern":"needle","context_before":2,"context_after":2}`,
+	), nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -368,7 +370,8 @@ func TestGrepUsesIndexForSubdirectorySearch(t *testing.T) {
 
 	tool := NewGrepTool(tmp, index)
 	res, err := tool.Execute(context.Background(), json.RawMessage(
-		`{"pattern":"needle","path":"sub"}`), nil)
+		`{"pattern":"needle","path":"sub"}`,
+	), nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -396,7 +399,8 @@ func TestGrepFallsBackToDirectWhenNoCandidatesInSubtree(t *testing.T) {
 
 	tool := NewGrepTool(tmp, index)
 	res, err := tool.Execute(context.Background(), json.RawMessage(
-		`{"pattern":"needle","path":"sub"}`), nil)
+		`{"pattern":"needle","path":"sub"}`,
+	), nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}

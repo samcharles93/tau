@@ -644,13 +644,7 @@ func (m *model) recallHistory(delta int) tea.Cmd {
 			m.historyIdx = 0
 		}
 	} else {
-		m.historyIdx += delta
-		if m.historyIdx < 0 {
-			m.historyIdx = 0
-		}
-		if m.historyIdx > len(m.history) {
-			m.historyIdx = len(m.history)
-		}
+		m.historyIdx = min(max(m.historyIdx+delta, 0), len(m.history))
 	}
 	if m.historyIdx == len(m.history) {
 		m.input = m.draftInput

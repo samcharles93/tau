@@ -1106,26 +1106,32 @@ func TestExtractChildAgentResult(t *testing.T) {
 				t.Errorf("ok = %v, want %v", ok, tt.wantOK)
 			}
 			if ok {
-				if got.instanceID != tt.want.instanceID {
-					t.Errorf("instanceID = %q, want %q", got.instanceID, tt.want.instanceID)
-				}
-				if got.status != tt.want.status {
-					t.Errorf("status = %q, want %q", got.status, tt.want.status)
-				}
-				if got.turns != tt.want.turns {
-					t.Errorf("turns = %d, want %d", got.turns, tt.want.turns)
-				}
-				if got.tokens != tt.want.tokens {
-					t.Errorf("tokens = %d, want %d", got.tokens, tt.want.tokens)
-				}
-				if got.durationMs != tt.want.durationMs {
-					t.Errorf("durationMs = %d, want %d", got.durationMs, tt.want.durationMs)
-				}
-				if got.sessionID != tt.want.sessionID {
-					t.Errorf("sessionID = %q, want %q", got.sessionID, tt.want.sessionID)
-				}
+				checkChildAgentResult(t, got, tt.want)
 			}
 		})
+	}
+}
+
+// checkChildAgentResult asserts field-by-field that got equals want.
+func checkChildAgentResult(t *testing.T, got, want childAgentResult) {
+	t.Helper()
+	if got.instanceID != want.instanceID {
+		t.Errorf("instanceID = %q, want %q", got.instanceID, want.instanceID)
+	}
+	if got.status != want.status {
+		t.Errorf("status = %q, want %q", got.status, want.status)
+	}
+	if got.turns != want.turns {
+		t.Errorf("turns = %d, want %d", got.turns, want.turns)
+	}
+	if got.tokens != want.tokens {
+		t.Errorf("tokens = %d, want %d", got.tokens, want.tokens)
+	}
+	if got.durationMs != want.durationMs {
+		t.Errorf("durationMs = %d, want %d", got.durationMs, want.durationMs)
+	}
+	if got.sessionID != want.sessionID {
+		t.Errorf("sessionID = %q, want %q", got.sessionID, want.sessionID)
 	}
 }
 

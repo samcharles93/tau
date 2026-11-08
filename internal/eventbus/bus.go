@@ -220,7 +220,7 @@ func (s publisherSet) Delete(p publisher) { delete(s, p) }
 // A worker runs a goroutine and helps coordinate its shutdown.
 
 type worker struct {
-	ctx     context.Context
+	ctx     context.Context //nolint:containedctx // goroutine-lifetime context owned by the worker's start/stop
 	stop    context.CancelFunc
 	stopped chan struct{}
 }

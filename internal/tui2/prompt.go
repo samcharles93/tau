@@ -140,59 +140,74 @@ func (m *model) handlePromptKey(msg tea.KeyPressMsg) tea.Cmd {
 	case "enter":
 		return m.resolvePrompt()
 	case "y", "Y":
-		if p.kind == promptConfirm {
-			return m.resolvePromptConfirm(true)
-		}
-		// msg.String() is used rather than msg.Key().Text since the switch
-		// above already guarantees it's exactly "y"/"Y" here.
-		p.field.Insert(msg.String())
+		return m.handlePromptAnswer(p, msg.String(), true)
 	case "n", "N":
-		if p.kind == promptConfirm {
-			return m.resolvePromptConfirm(false)
-		}
-		p.field.Insert(msg.String())
-	case "tab":
-		if p.kind == promptConfirm {
-			p.confirmYes = !p.confirmYes
-		}
-	case "left":
-		if p.kind == promptConfirm {
-			p.confirmYes = !p.confirmYes
-		} else {
-			p.field.MoveCursor(-1)
-		}
-	case "right":
-		if p.kind == promptConfirm {
-			p.confirmYes = !p.confirmYes
-		} else {
-			p.field.MoveCursor(1)
-		}
-	case "home":
-		if p.kind == promptQuestion {
-			p.field.Home()
-		}
-	case "end":
-		if p.kind == promptQuestion {
-			p.field.End()
-		}
-	case "delete":
-		if p.kind == promptQuestion {
-			p.field.Delete()
-		}
-	case "backspace":
-		if p.kind == promptQuestion {
-			p.field.Backspace()
-		}
+		return m.handlePromptAnswer(p, msg.String(), false)
+	case "tab", "left", "right":
+		m.handlePromptChoiceKey(p, msg.String())
+	case "home", "end", "delete", "backspace":
+		m.handlePromptFieldKey(p, msg.String())
 	default:
-		if p.kind == promptQuestion {
-			if text := msg.Key().Text; text != "" {
-				if r, _ := utf8.DecodeRuneInString(text); r >= 32 && r != utf8.RuneError {
-					p.field.Insert(text)
-				}
-			}
-		}
+		m.handlePromptText(p, msg.Key().Text)
 	}
 	return nil
+}
+
+// handlePromptAnswer handles y/n: on a confirm prompt they resolve it; on a
+// question prompt they're ordinary inserted text. key is msg.String() (the
+// switch in handlePromptKey guarantees it's exactly "y"/"Y"/"n"/"N"), used
+// rather than msg.Key().Text.
+func (m *model) handlePromptAnswer(p *formPrompt, key string, confirmed bool) tea.Cmd {
+	if p.kind == promptConfirm {
+		return m.resolvePromptConfirm(confirmed)
+	}
+	p.field.Insert(key)
+	return nil
+}
+
+// handlePromptChoiceKey handles tab/left/right: on a confirm prompt all three
+// toggle the Yes/No choice; on a question prompt left/right move the field
+// cursor (tab does nothing).
+func (m *model) handlePromptChoiceKey(p *formPrompt, key string) {
+	if p.kind == promptConfirm {
+		p.confirmYes = !p.confirmYes
+		return
+	}
+	switch key {
+	case "left":
+		p.field.MoveCursor(-1)
+	case "right":
+		p.field.MoveCursor(1)
+	}
+}
+
+// handlePromptFieldKey handles home/end/delete/backspace on a question
+// prompt's text field; a no-op on a confirm prompt.
+func (m *model) handlePromptFieldKey(p *formPrompt, key string) {
+	if p.kind != promptQuestion {
+		return
+	}
+	switch key {
+	case "home":
+		p.field.Home()
+	case "end":
+		p.field.End()
+	case "delete":
+		p.field.Delete()
+	case "backspace":
+		p.field.Backspace()
+	}
+}
+
+// handlePromptText inserts printable text into a question prompt's field,
+// ignoring control characters; a no-op on a confirm prompt.
+func (m *model) handlePromptText(p *formPrompt, text string) {
+	if p.kind != promptQuestion || text == "" {
+		return
+	}
+	if r, _ := utf8.DecodeRuneInString(text); r >= 32 && r != utf8.RuneError {
+		p.field.Insert(text)
+	}
 }
 
 func (m *model) resolvePrompt() tea.Cmd {

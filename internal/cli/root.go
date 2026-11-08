@@ -60,164 +60,212 @@ func initLogging(debug bool, version string) {
 	slog.Info("── tau start ──", "version", version, "pid", os.Getpid())
 }
 
-func NewRootCommand(version string) *urfavecli.Command {
-	return &urfavecli.Command{
-		Name:    "tau",
-		Usage:   "Provider-agnostic OpenAI-compatible chat client",
-		Version: version,
-		Commands: []*urfavecli.Command{
-			setupCmd(),
-			providerCmd(),
-			tokenCmd(),
-			modelsCmd(),
-			refreshCmd(),
-			sessionsCmd(),
-			skillsCmd(),
-			pluginsCmd(),
-			updateCmd(version),
-			workspaceCodesearchCmd(),
-		},
-		Flags: []urfavecli.Flag{
-			&urfavecli.StringFlag{
-				Name:    "provider",
-				Usage:   "Configured provider name",
-				Sources: urfavecli.EnvVars("TAU_PROVIDER"),
-			},
-			&urfavecli.BoolFlag{
-				Name:    "insecure",
-				Usage:   "Skip TLS certificate verification",
-				Sources: urfavecli.EnvVars("TAU_INSECURE"),
-			},
-			&urfavecli.BoolFlag{
-				Name:    "verbose",
-				Usage:   "Show progress/debug messages on stderr",
-				Sources: urfavecli.EnvVars("TAU_VERBOSE"),
-			},
-			&urfavecli.StringFlag{
-				Name:  "model",
-				Usage: "Model ID to use for chat (supports provider:model, e.g. openrouter:nvidia/nemotron-3-ultra)",
-			},
-			&urfavecli.IntFlag{
-				Name:  "max-tokens",
-				Usage: "Maximum completion tokens per response (0 = provider/model default)",
-				Value: defaultChatParameters.MaxTokens,
-			},
-			&urfavecli.FloatFlag{
-				Name:  "temperature",
-				Usage: "Sampling temperature for the model response",
-				Value: defaultChatParameters.Temperature,
-			},
-			&urfavecli.StringFlag{
-				Name:    "resume",
-				Aliases: []string{"r"},
-				Usage:   "Resume a saved session (pass ID or 'latest' for most recent)",
-			},
-			&urfavecli.BoolFlag{
-				Name:    "execute",
-				Aliases: []string{"x"},
-				Usage:   "Execute mode: process prompt and exit (reads from stdin when piped, positional args when provided)",
-			},
-			&urfavecli.StringFlag{
-				Name:    "prompt",
-				Aliases: []string{"p"},
-				Usage:   "Deprecated: use -x/--execute instead. One-shot mode: process prompt and exit",
-			},
-			&urfavecli.BoolFlag{
-				Name:    "legacy-tui",
-				Aliases: []string{"legacy"},
-				Usage:   "Use the legacy inline TUI instead of the default Bubbletea-based TUI",
-			},
-			&urfavecli.StringSliceFlag{
-				Name:  "skill-dir",
-				Usage: "Additional skill directories (repeatable)",
-			},
-			&urfavecli.StringFlag{
-				Name:  "agent",
-				Usage: "Agent spec to use as root identity (default: tau)",
-			},
-			&urfavecli.BoolFlag{
-				Name:    "trust-project-root-spec",
-				Usage:   "Trust a project-level tau.agent.md root-spec override for this run, bypassing the confirmation prompt",
-				Sources: urfavecli.EnvVars("TAU_TRUST_PROJECT_ROOT_SPEC"),
-			},
-			&urfavecli.BoolFlag{
-				Name:   "child",
-				Usage:  "Run as a headless agent child process (internal use)",
-				Hidden: true,
-			},
-			&urfavecli.StringSliceFlag{
-				Name:    "tools",
-				Aliases: []string{"t"},
-				Usage:   "Restrict visible tools (comma-separated, repeatable; empty = all tools)",
-				Sources: urfavecli.EnvVars("TAU_TOOLS"),
-			},
-			&urfavecli.BoolFlag{
-				Name:    "ephemeral",
-				Usage:   "Do not persist this session to the session store",
-				Sources: urfavecli.EnvVars("TAU_EPHEMERAL"),
-			},
-			&urfavecli.BoolFlag{
-				Name:    "jsonl",
-				Aliases: []string{"stream-json"},
-				Usage:   "Output framed JSONL events on stdout instead of plain text (execute mode only)",
-			},
-			&urfavecli.BoolFlag{
-				Name:  "skip-setup",
-				Usage: "Do not auto-launch the setup wizard when no provider is configured",
-			},
-		},
-		Action: func(ctx context.Context, cmd *urfavecli.Command) error {
-			// Support explicit provider:model syntax (preferred), e.g.
-			// --model openrouter:nvidia/nemotron-3-ultra.
-			// Also support legacy provider/model syntax for compatibility.
-			if cmd.String("provider") == "" {
-				if providerPart, modelPart, ok := splitProviderModel(cmd.String("model")); ok {
-					if providerPart != "" && modelPart != "" {
-						_ = cmd.Set("provider", providerPart)
-						_ = cmd.Set("model", modelPart)
-					}
-				}
-			}
+// rootCommands returns the CLI subcommand list.
+func rootCommands(version string) []*urfavecli.Command {
+	return []*urfavecli.Command{
+		setupCmd(),
+		providerCmd(),
+		tokenCmd(),
+		modelsCmd(),
+		refreshCmd(),
+		sessionsCmd(),
+		skillsCmd(),
+		pluginsCmd(),
+		updateCmd(version),
+		workspaceCodesearchCmd(),
+	}
+}
 
-			cfg, selectedProvider, err := loadProvider(ctx, cmd)
-			if err != nil {
-				switch {
-				case shouldAutoSetup(err, cmd):
-					cfg, selectedProvider, err = autoInvokeSetup(ctx, cmd)
-					if err != nil {
-						if errors.Is(err, app.ErrSetupCanceled) {
-							fmt.Fprintln(os.Stderr, "setup canceled")
-							os.Exit(130)
-						}
-						return err
-					}
-				case shouldSkipSetupContinue(err, cmd):
-					// Fall through into RunChat/RunStdIn with zero providers:
-					// its existing "No models available - use /provider to
-					// enable a provider" startup guidance (run.go) takes over
-					// instead of hard-failing before the user ever sees the app.
-				default:
-					return err
-				}
-			}
-			initLogging(cmd.Bool("verbose") || cfg.Debug, version)
-			opts := chatOptionsFromCmd(cmd, cfg, selectedProvider, version)
-			if cmd.Bool("child") {
-				err := app.RunChild(ctx, opts)
-				app.ExitChild(err)
-				// unreachable - exitChild calls os.Exit
-				return err
-			}
-			prompt, err := resolveExecutePrompt(cmd)
-			if err != nil {
-				return err
-			}
-			if prompt != "" {
-				return app.RunStdIn(ctx, opts, prompt)
-			}
-			return app.RunChat(ctx, opts)
+// rootFlags returns the global CLI flags.
+func rootFlags() []urfavecli.Flag {
+	return append(rootConnectionFlags(), rootSessionFlags()...)
+}
+
+// rootConnectionFlags are the provider/model/verbosity flags.
+func rootConnectionFlags() []urfavecli.Flag {
+	return []urfavecli.Flag{
+		&urfavecli.StringFlag{
+			Name:    "provider",
+			Usage:   "Configured provider name",
+			Sources: urfavecli.EnvVars("TAU_PROVIDER"),
+		},
+		&urfavecli.BoolFlag{
+			Name:    "insecure",
+			Usage:   "Skip TLS certificate verification",
+			Sources: urfavecli.EnvVars("TAU_INSECURE"),
+		},
+		&urfavecli.BoolFlag{
+			Name:    "verbose",
+			Usage:   "Show progress/debug messages on stderr",
+			Sources: urfavecli.EnvVars("TAU_VERBOSE"),
+		},
+		&urfavecli.StringFlag{
+			Name:  "model",
+			Usage: "Model ID to use for chat (supports provider:model, e.g. openrouter:nvidia/nemotron-3-ultra)",
+		},
+		&urfavecli.IntFlag{
+			Name:  "max-tokens",
+			Usage: "Maximum completion tokens per response (0 = provider/model default)",
+			Value: defaultChatParameters.MaxTokens,
+		},
+		&urfavecli.FloatFlag{
+			Name:  "temperature",
+			Usage: "Sampling temperature for the model response",
+			Value: defaultChatParameters.Temperature,
 		},
 	}
+}
+
+// rootSessionFlags are the session/execution/mode flags.
+func rootSessionFlags() []urfavecli.Flag {
+	return []urfavecli.Flag{
+		&urfavecli.StringFlag{
+			Name:    "resume",
+			Aliases: []string{"r"},
+			Usage:   "Resume a saved session (pass ID or 'latest' for most recent)",
+		},
+		&urfavecli.BoolFlag{
+			Name:    "execute",
+			Aliases: []string{"x"},
+			Usage:   "Execute mode: process prompt and exit (reads from stdin when piped, positional args when provided)",
+		},
+		&urfavecli.StringFlag{
+			Name:    "prompt",
+			Aliases: []string{"p"},
+			Usage:   "Deprecated: use -x/--execute instead. One-shot mode: process prompt and exit",
+		},
+		&urfavecli.BoolFlag{
+			Name:    "legacy-tui",
+			Aliases: []string{"legacy"},
+			Usage:   "Use the legacy inline TUI instead of the default Bubbletea-based TUI",
+		},
+		&urfavecli.StringSliceFlag{
+			Name:  "skill-dir",
+			Usage: "Additional skill directories (repeatable)",
+		},
+		&urfavecli.StringFlag{
+			Name:  "agent",
+			Usage: "Agent spec to use as root identity (default: tau)",
+		},
+		&urfavecli.BoolFlag{
+			Name:    "trust-project-root-spec",
+			Usage:   "Trust a project-level tau.agent.md root-spec override for this run, bypassing the confirmation prompt",
+			Sources: urfavecli.EnvVars("TAU_TRUST_PROJECT_ROOT_SPEC"),
+		},
+		&urfavecli.BoolFlag{
+			Name:   "child",
+			Usage:  "Run as a headless agent child process (internal use)",
+			Hidden: true,
+		},
+		&urfavecli.StringSliceFlag{
+			Name:    "tools",
+			Aliases: []string{"t"},
+			Usage:   "Restrict visible tools (comma-separated, repeatable; empty = all tools)",
+			Sources: urfavecli.EnvVars("TAU_TOOLS"),
+		},
+		&urfavecli.BoolFlag{
+			Name:    "ephemeral",
+			Usage:   "Do not persist this session to the session store",
+			Sources: urfavecli.EnvVars("TAU_EPHEMERAL"),
+		},
+		&urfavecli.BoolFlag{
+			Name:    "jsonl",
+			Aliases: []string{"stream-json"},
+			Usage:   "Output framed JSONL events on stdout instead of plain text (execute mode only)",
+		},
+		&urfavecli.BoolFlag{
+			Name:  "skip-setup",
+			Usage: "Do not auto-launch the setup wizard when no provider is configured",
+		},
+	}
+}
+
+func NewRootCommand(version string) *urfavecli.Command {
+	return &urfavecli.Command{
+		Name:     "tau",
+		Usage:    "Provider-agnostic OpenAI-compatible chat client",
+		Version:  version,
+		Commands: rootCommands(version),
+		Flags:    rootFlags(),
+		Action: func(ctx context.Context, cmd *urfavecli.Command) error {
+			return rootAction(ctx, cmd, version)
+		},
+	}
+}
+
+// rootAction is the root command's action: resolve the provider (running the
+// setup wizard when appropriate), then dispatch to child, one-shot execute,
+// or interactive chat mode.
+func rootAction(ctx context.Context, cmd *urfavecli.Command, version string) error {
+	applyProviderModelFlag(cmd)
+	cfg, selectedProvider, err := resolveRootProvider(ctx, cmd)
+	if err != nil {
+		return err
+	}
+	initLogging(cmd.Bool("verbose") || cfg.Debug, version)
+	opts := chatOptionsFromCmd(cmd, cfg, selectedProvider, version)
+	return dispatchRootRun(ctx, cmd, opts)
+}
+
+// applyProviderModelFlag supports explicit provider:model syntax (preferred),
+// e.g. --model openrouter:nvidia/nemotron-3-ultra.
+// Also supports legacy provider/model syntax for compatibility.
+func applyProviderModelFlag(cmd *urfavecli.Command) {
+	if cmd.String("provider") != "" {
+		return
+	}
+	providerPart, modelPart, ok := splitProviderModel(cmd.String("model"))
+	if ok && providerPart != "" && modelPart != "" {
+		_ = cmd.Set("provider", providerPart)
+		_ = cmd.Set("model", modelPart)
+	}
+}
+
+// resolveRootProvider loads the provider config, auto-invoking the setup
+// wizard or continuing with zero providers when the load error warrants it.
+func resolveRootProvider(ctx context.Context, cmd *urfavecli.Command) (tauconfig.Config, tauconfig.ProviderConfig, error) {
+	cfg, selectedProvider, err := loadProvider(ctx, cmd)
+	if err == nil {
+		return cfg, selectedProvider, nil
+	}
+	switch {
+	case shouldAutoSetup(err, cmd):
+		cfg, selectedProvider, err = autoInvokeSetup(ctx, cmd)
+		if err != nil {
+			if errors.Is(err, app.ErrSetupCanceled) {
+				fmt.Fprintln(os.Stderr, "setup canceled")
+				os.Exit(130)
+			}
+			return tauconfig.Config{}, tauconfig.ProviderConfig{}, err
+		}
+	case shouldSkipSetupContinue(err, cmd):
+		// Fall through into RunChat/RunStdIn with zero providers:
+		// its existing "No models available - use /provider to
+		// enable a provider" startup guidance (run.go) takes over
+		// instead of hard-failing before the user ever sees the app.
+	default:
+		return tauconfig.Config{}, tauconfig.ProviderConfig{}, err
+	}
+	return cfg, selectedProvider, nil
+}
+
+// dispatchRootRun runs the headless child process, one-shot execute mode, or
+// the interactive chat, depending on the command flags.
+func dispatchRootRun(ctx context.Context, cmd *urfavecli.Command, opts app.ChatOptions) error {
+	if cmd.Bool("child") {
+		err := app.RunChild(ctx, opts)
+		app.ExitChild(err)
+		// unreachable - ExitChild calls os.Exit
+		return err
+	}
+	prompt, err := resolveExecutePrompt(cmd)
+	if err != nil {
+		return err
+	}
+	if prompt != "" {
+		return app.RunStdIn(ctx, opts, prompt)
+	}
+	return app.RunChat(ctx, opts)
 }
 
 // resolveExecutePrompt resolves the prompt for execute mode from --execute

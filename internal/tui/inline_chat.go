@@ -66,7 +66,7 @@ type inlineChat struct {
 	// access - not mu.
 	panelsByID map[string]taui.Component
 
-	ctx     context.Context
+	ctx     context.Context //nolint:containedctx // app-lifetime context owned by the TUI run loop
 	runtime tauchat.ChatRuntime
 	sub     *eventbus.Subscriber[tauchat.ChatEvent]
 	usage   *metrics.UsageTracker
@@ -136,7 +136,29 @@ func newInlineChat(
 	usage *metrics.UsageTracker,
 	cfg TUIConfig,
 ) *inlineChat {
-	c := &inlineChat{
+	c := newInlineChatState(ctx, engine, runtime, sub, usage, cfg)
+	c.buildWidgets()
+	c.wireCompletions()
+	c.wireOverlaysAndDividers()
+	c.assembleLayout(engine)
+
+	go c.spinnerLoop()
+	go c.statusLoop()
+	go c.eventLoop()
+	return c
+}
+
+// newInlineChatState builds the inlineChat struct with its scalar fields and
+// cloned slices from cfg.
+func newInlineChatState(
+	ctx context.Context,
+	engine *taui.TUI,
+	runtime tauchat.ChatRuntime,
+	sub *eventbus.Subscriber[tauchat.ChatEvent],
+	usage *metrics.UsageTracker,
+	cfg TUIConfig,
+) *inlineChat {
+	return &inlineChat{
 		engine:            engine,
 		stage:             &taui.Container{},
 		panels:            &taui.Container{},
@@ -162,7 +184,10 @@ func newInlineChat(
 		grey:              func(s string) string { return termkit.FgOnly(s, termkit.ColorGrey) },
 		dim:               func(s string) string { return termkit.Wrap(s, termkit.Dim, termkit.Italic) },
 	}
+}
 
+// buildWidgets creates the header, status, and input widgets.
+func (c *inlineChat) buildWidgets() {
 	c.header = taui.NewStyledText(headerIdle, c.grey, nil)
 	c.status = taui.NewText("")
 	c.input = taui.NewLineInput("")
@@ -170,7 +195,11 @@ func newInlineChat(
 	c.input.SetCommandStyle(inputEchoStyle)
 	c.input.SetCommandCursorColor(theme.CommandFG)
 	c.input.SetOnSubmit(c.onSubmit)
+}
 
+// wireCompletions creates the completions dropdown and registers its
+// select/accept/detail callbacks.
+func (c *inlineChat) wireCompletions() {
 	c.completions = taui.NewCompletions(c.input, c.completionSet)
 	c.completions.SetCursorColor(theme.CommandFG)
 	c.completions.SetOnSelect(func(s string) {
@@ -208,7 +237,11 @@ func newInlineChat(
 		c.mu.Unlock()
 		return false
 	})
+}
 
+// wireOverlaysAndDividers pushes the completions dropdown as a permanent soft
+// overlay and installs the mode-aware dividers around the input box.
+func (c *inlineChat) wireOverlaysAndDividers() {
 	// The completions dropdown is a permanent soft overlay: it self-gates on
 	// its own visibility, so pushing it once at construction and never
 	// popping it is equivalent to (and replaces) the old hand-written
@@ -222,7 +255,11 @@ func newInlineChat(
 	c.bottomDivider = taui.NewDivider("")
 	c.bottomDivider.SetModeFunc(inputModeFn)
 	c.bottomDivider.HideModeLabel() // only the top divider names the mode
+}
 
+// assembleLayout builds the root box and registers it (and the controller) with
+// the engine.
+func (c *inlineChat) assembleLayout(engine *taui.TUI) {
 	box := taui.NewBox().Padding(1, 1).ExpandW().Build()
 	box.AddChild(c.header)
 	box.AddChild(c.stage)
@@ -242,11 +279,6 @@ func newInlineChat(
 	engine.AddChild(box)
 	c.ctrl = &inlineCtrl{chat: c}
 	engine.SetFocus(c.ctrl)
-
-	go c.spinnerLoop()
-	go c.statusLoop()
-	go c.eventLoop()
-	return c
 }
 
 func (c *inlineChat) close() {

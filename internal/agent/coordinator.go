@@ -54,7 +54,7 @@ type Streamer interface {
 // It receives commands from the TUI, runs the agentic turn loop,
 // and publishes events via the event bus.
 type Coordinator struct {
-	ctx               context.Context
+	ctx               context.Context //nolint:containedctx // app-lifetime context owned by NewCoordinator/Close, not a per-request ctx
 	cancel            context.CancelFunc
 	logger            *slog.Logger
 	bus               *eventbus.Bus
@@ -250,50 +250,44 @@ type CoordinatorConfig struct {
 }
 
 // NewCoordinator creates and starts the agent coordinator.
-func NewCoordinator(ctx context.Context, cfg CoordinatorConfig) (*Coordinator, error) {
-	if cfg.TokenSource == nil {
-		return nil, errors.New("agent token source is required")
+// initialEffectiveTools builds the tool allowlist from config. Empty/nil
+// means unrestricted. "skill" is an ordinary attenuated tool - it is only
+// present when the spec or spawn restriction explicitly includes it.
+func initialEffectiveTools(allowedTools []string) map[string]bool {
+	if len(allowedTools) == 0 {
+		return nil
 	}
-	if cfg.Registry == nil {
-		return nil, errors.New("agent tool registry is required")
+	m := make(map[string]bool, len(allowedTools))
+	for _, name := range allowedTools {
+		m[strings.TrimSpace(name)] = true
 	}
-	if cfg.Streamer == nil {
-		return nil, errors.New("agent streamer is required")
-	}
-	if cfg.Bus == nil {
-		return nil, errors.New("agent event bus is required")
-	}
+	return m
+}
 
-	ctx, cancel := context.WithCancel(ctx)
-	parallel := true
-	if cfg.ParallelToolCalls != nil {
-		parallel = *cfg.ParallelToolCalls
+// registerSubagentTool registers the "subagent" delegation tool when the app
+// layer supplied an executor. The runner resolves the calling session's
+// current provider/model at call time (sessions can switch models mid-turn).
+func registerSubagentTool(c *Coordinator, exec SubagentExecutor) error {
+	if exec == nil {
+		return nil
 	}
-
-	client := cfg.Bus.Client("coordinator")
-	chatPub := eventbus.Publish[chat.ChatEvent](client)
-	pluginPub := eventbus.Publish[chat.PluginLifecycleEvent](client)
-	metricsPub := eventbus.Publish[chat.MetricEvent](client)
-
-	logger := slog.Default()
-	if cfg.Logger != nil {
-		logger = cfg.Logger
-	}
-	logger = logger.With("component", "coordinator")
-
-	// Initialise the tool allowlist from config. Empty/nil means unrestricted.
-	// "skill" is an ordinary attenuated tool - it is only present when the
-	// spec or spawn restriction explicitly includes it. No tool is injected
-	// outside the declared intersection.
-	var initEffectiveTools map[string]bool
-	if len(cfg.AllowedTools) > 0 {
-		initEffectiveTools = make(map[string]bool, len(cfg.AllowedTools))
-		for _, name := range cfg.AllowedTools {
-			initEffectiveTools[strings.TrimSpace(name)] = true
+	err := tools.RegisterSubagentTool(c.registry, tools.SubagentRunnerFunc(func(ctx context.Context, sessionID, prompt string) (string, error) {
+		provider, model := c.sessionProviderModel(sessionID)
+		if provider == "" || model == "" {
+			return "", errors.New("no model selected for this session; pick one with /model first")
 		}
+		return exec(ctx, provider, model, prompt)
+	}))
+	if err != nil {
+		return fmt.Errorf("registering subagent tool: %w", err)
 	}
+	return nil
+}
 
-	c := &Coordinator{
+// newCoordinatorStruct builds the Coordinator value from the config and the
+// bus client/publishers.
+func newCoordinatorStruct(ctx context.Context, cancel context.CancelFunc, cfg CoordinatorConfig, client *eventbus.Client, chatPub *eventbus.Publisher[chat.ChatEvent], pluginPub *eventbus.Publisher[chat.PluginLifecycleEvent], metricsPub *eventbus.Publisher[chat.MetricEvent], logger *slog.Logger, parallel bool) *Coordinator {
+	return &Coordinator{
 		ctx:               ctx,
 		cancel:            cancel,
 		logger:            logger,
@@ -327,7 +321,7 @@ func NewCoordinator(ctx context.Context, cfg CoordinatorConfig) (*Coordinator, e
 		maxTokens:         cfg.MaxTokens,
 		deadline:          cfg.Deadline,
 		startedAt:         time.Now(),
-		effectiveTools:    initEffectiveTools,
+		effectiveTools:    initialEffectiveTools(cfg.AllowedTools),
 		allowedTools:      nil,
 		sessions:          make(map[string]*coordinatorSession),
 		shutdown:          make(map[string]struct{}),
@@ -335,6 +329,40 @@ func NewCoordinator(ctx context.Context, cfg CoordinatorConfig) (*Coordinator, e
 		done:              make(chan struct{}),
 		loopDone:          make(chan struct{}),
 	}
+}
+
+func NewCoordinator(ctx context.Context, cfg CoordinatorConfig) (*Coordinator, error) {
+	if cfg.TokenSource == nil {
+		return nil, errors.New("agent token source is required")
+	}
+	if cfg.Registry == nil {
+		return nil, errors.New("agent tool registry is required")
+	}
+	if cfg.Streamer == nil {
+		return nil, errors.New("agent streamer is required")
+	}
+	if cfg.Bus == nil {
+		return nil, errors.New("agent event bus is required")
+	}
+
+	ctx, cancel := context.WithCancel(ctx)
+	parallel := true
+	if cfg.ParallelToolCalls != nil {
+		parallel = *cfg.ParallelToolCalls
+	}
+
+	client := cfg.Bus.Client("coordinator")
+	chatPub := eventbus.Publish[chat.ChatEvent](client)
+	pluginPub := eventbus.Publish[chat.PluginLifecycleEvent](client)
+	metricsPub := eventbus.Publish[chat.MetricEvent](client)
+
+	logger := slog.Default()
+	if cfg.Logger != nil {
+		logger = cfg.Logger
+	}
+	logger = logger.With("component", "coordinator")
+
+	c := newCoordinatorStruct(ctx, cancel, cfg, client, chatPub, pluginPub, metricsPub, logger, parallel)
 
 	if cfg.InteractiveUI {
 		c.uiBridge = &coordinatorUIBridge{coordinator: c}
@@ -342,25 +370,13 @@ func NewCoordinator(ctx context.Context, cfg CoordinatorConfig) (*Coordinator, e
 		c.uiBridge = tools.NonInteractiveBridge{}
 	}
 
-	// Register the "subagent" delegation tool when the app layer supplied an
-	// executor. The runner resolves the calling session's current
-	// provider/model at call time (sessions can switch models mid-turn).
-	if cfg.SubagentExecutor != nil {
-		exec := cfg.SubagentExecutor
-		if err := tools.RegisterSubagentTool(c.registry, tools.SubagentRunnerFunc(func(ctx context.Context, sessionID, prompt string) (string, error) {
-			provider, model := c.sessionProviderModel(sessionID)
-			if provider == "" || model == "" {
-				return "", errors.New("no model selected for this session; pick one with /model first")
-			}
-			return exec(ctx, provider, model, prompt)
-		})); err != nil {
-			return nil, fmt.Errorf("registering subagent tool: %w", err)
-		}
+	if err := registerSubagentTool(c, cfg.SubagentExecutor); err != nil {
+		return nil, err
 	}
 
 	go func() {
 		defer close(c.loopDone)
-		c.loop()
+		c.loop(c.ctx)
 	}()
 
 	return c, nil
@@ -410,10 +426,10 @@ func (c *Coordinator) Close() {
 	})
 }
 
-func (c *Coordinator) loop() {
+func (c *Coordinator) loop(ctx context.Context) {
 	for {
 		select {
-		case <-c.ctx.Done():
+		case <-ctx.Done():
 			// Send() only enqueues onto the buffered c.commands channel and
 			// returns - it never waits for the loop to actually process the
 			// command. So a command sent right before shutdown (e.g. the TUI
@@ -427,8 +443,8 @@ func (c *Coordinator) loop() {
 			// locally, optimistically) but it's gone from the saved session.
 			// Draining first processes anything already enqueued before
 			// treating shutdown as final.
-			c.drainPendingCommands()
-			c.cancelAllSessions()
+			c.drainPendingCommands(ctx)
+			c.cancelAllSessions(ctx)
 			c.turnWG.Wait()
 			// All persistSession calls have now happened (cancelAllSessions on
 			// the loop goroutine, plus any final per-turn persists inside the
@@ -437,7 +453,7 @@ func (c *Coordinator) loop() {
 			c.exportWG.Wait()
 			return
 		case cmd := <-c.commands:
-			c.handleCommand(cmd)
+			c.handleCommand(ctx, cmd)
 		}
 	}
 }
@@ -445,75 +461,126 @@ func (c *Coordinator) loop() {
 // drainPendingCommands processes every command already sitting in
 // c.commands without blocking - see loop's ctx.Done() case for why this
 // must run before a shutdown snapshot is taken.
-func (c *Coordinator) drainPendingCommands() {
+func (c *Coordinator) drainPendingCommands(ctx context.Context) {
 	for {
 		select {
 		case cmd := <-c.commands:
-			c.handleCommand(cmd)
+			c.handleCommand(ctx, cmd)
 		default:
 			return
 		}
 	}
 }
 
-func (c *Coordinator) handleCommand(cmd chat.ChatCommand) {
+func (c *Coordinator) handleCommand(ctx context.Context, cmd chat.ChatCommand) {
 	c.loggerOrDefault().Debug("chat command received", chatCommandLogAttrs(cmd)...)
 
-	switch command := cmd.(type) {
-	case chat.StartChatSessionCommand:
-		c.handleStart(command)
-	case chat.SubmitChatPromptCommand:
-		c.handleSubmit(command)
-	case chat.SteerChatPromptCommand:
-		c.handleSteer(command)
-	case chat.UpdateChatSessionCommand:
-		c.handleUpdate(command)
-	case chat.CancelChatRequestCommand:
-		c.handleCancel(command)
-	case chat.ResetChatSessionCommand:
-		c.handleReset(command)
-	case chat.CloseChatSessionCommand:
-		c.handleClose(command)
-	case chat.ReloadExtensionsCommand:
-		c.handleReloadExtensions(command)
-	case chat.RunExtensionCommandCommand:
-		c.handleRunExtensionCommand(command)
-	case chat.RespondInteractivePromptCommand:
-		c.handleInteractivePromptResponse(command)
-	case chat.ListSessionsCommand:
-		c.handleListSessions(command)
-	case chat.SearchSessionsCommand:
-		c.handleSearchSessions(command)
-	case chat.LoadSessionCommand:
-		c.handleLoadSession(command)
-	case chat.LoadChildTranscriptCommand:
-		c.handleLoadChildTranscript(command)
-	case chat.DeleteSessionCommand:
-		c.handleDeleteSession(command)
-	case chat.ExportSessionCommand:
-		c.handleExportSession(command)
-	case chat.RunSkillCommand:
-		c.handleRunSkill(command)
-	case chat.RunAgentCommand:
-		c.handleRunAgent(command)
-	case chat.RunBashCommand:
-		c.handleRunBashCommand(command)
-	case chat.CancelBashCommand:
-		c.handleCancelBash(command)
-	case chat.ReloadSkillsCommand:
-		c.handleReloadSkills(command)
-	case chat.ListSkillsCommand:
-		c.handleListSkills(command)
-	default:
-		c.emit(chat.ChatRuntimeErrorEvent{
-			Message:    fmt.Sprintf("unsupported command %T", cmd),
-			Fatal:      true,
-			OccurredAt: time.Now().UTC(),
-		})
+	// Dispatch is split into per-domain helpers so each switch stays within
+	// the complexity budget; unknown commands fall through to the error.
+	if c.handleSessionLifecycleCommand(ctx, cmd) {
+		return
 	}
+	if c.handleExtensionCommand(ctx, cmd) {
+		return
+	}
+	if c.handlePersistCommand(ctx, cmd) {
+		return
+	}
+	if c.handleSkillAgentBashCommand(ctx, cmd) {
+		return
+	}
+	c.emit(chat.ChatRuntimeErrorEvent{
+		Message:    fmt.Sprintf("unsupported command %T", cmd),
+		Fatal:      true,
+		OccurredAt: time.Now().UTC(),
+	})
 }
 
-func (c *Coordinator) handleStart(cmd chat.StartChatSessionCommand) {
+// handleSessionLifecycleCommand dispatches the core chat-session commands.
+// Returns false when cmd is not one of them.
+func (c *Coordinator) handleSessionLifecycleCommand(ctx context.Context, cmd chat.ChatCommand) bool {
+	switch command := cmd.(type) {
+	case chat.StartChatSessionCommand:
+		c.handleStart(ctx, command)
+	case chat.SubmitChatPromptCommand:
+		c.handleSubmit(ctx, command)
+	case chat.SteerChatPromptCommand:
+		c.handleSteer(ctx, command)
+	case chat.UpdateChatSessionCommand:
+		c.handleUpdate(ctx, command)
+	case chat.CancelChatRequestCommand:
+		c.handleCancel(ctx, command)
+	case chat.ResetChatSessionCommand:
+		c.handleReset(ctx, command)
+	case chat.CloseChatSessionCommand:
+		c.handleClose(ctx, command)
+	default:
+		return false
+	}
+	return true
+}
+
+// handleExtensionCommand dispatches plugin/extension and interactive-prompt
+// commands.
+func (c *Coordinator) handleExtensionCommand(ctx context.Context, cmd chat.ChatCommand) bool {
+	switch command := cmd.(type) {
+	case chat.ReloadExtensionsCommand:
+		c.handleReloadExtensions(ctx, command)
+	case chat.RunExtensionCommandCommand:
+		c.handleRunExtensionCommand(ctx, command)
+	case chat.RespondInteractivePromptCommand:
+		c.handleInteractivePromptResponse(ctx, command)
+	default:
+		return false
+	}
+	return true
+}
+
+// handlePersistCommand dispatches saved-session commands (list, search, load,
+// delete, export).
+func (c *Coordinator) handlePersistCommand(ctx context.Context, cmd chat.ChatCommand) bool {
+	switch command := cmd.(type) {
+	case chat.ListSessionsCommand:
+		c.handleListSessions(ctx, command)
+	case chat.SearchSessionsCommand:
+		c.handleSearchSessions(ctx, command)
+	case chat.LoadSessionCommand:
+		c.handleLoadSession(ctx, command)
+	case chat.LoadChildTranscriptCommand:
+		c.handleLoadChildTranscript(ctx, command)
+	case chat.DeleteSessionCommand:
+		c.handleDeleteSession(ctx, command)
+	case chat.ExportSessionCommand:
+		c.handleExportSession(ctx, command)
+	default:
+		return false
+	}
+	return true
+}
+
+// handleSkillAgentBashCommand dispatches skill/agent activation and bash-mode
+// commands.
+func (c *Coordinator) handleSkillAgentBashCommand(ctx context.Context, cmd chat.ChatCommand) bool {
+	switch command := cmd.(type) {
+	case chat.RunSkillCommand:
+		c.handleRunSkill(ctx, command)
+	case chat.RunAgentCommand:
+		c.handleRunAgent(ctx, command)
+	case chat.RunBashCommand:
+		c.handleRunBashCommand(ctx, command)
+	case chat.CancelBashCommand:
+		c.handleCancelBash(ctx, command)
+	case chat.ReloadSkillsCommand:
+		c.handleReloadSkills(ctx, command)
+	case chat.ListSkillsCommand:
+		c.handleListSkills(ctx, command)
+	default:
+		return false
+	}
+	return true
+}
+
+func (c *Coordinator) handleStart(ctx context.Context, cmd chat.StartChatSessionCommand) {
 	now := time.Now().UTC()
 	state, err := chat.NewChatSessionState(cmd.SessionID, cmd.Config, now)
 	if err != nil {
@@ -562,7 +629,7 @@ func (c *Coordinator) handleStart(cmd chat.StartChatSessionCommand) {
 	})
 }
 
-func (c *Coordinator) handleSubmit(cmd chat.SubmitChatPromptCommand) {
+func (c *Coordinator) handleSubmit(ctx context.Context, cmd chat.SubmitChatPromptCommand) {
 	now := normalizedTime(cmd.SubmittedAt)
 
 	c.mu.Lock()
@@ -604,7 +671,7 @@ func (c *Coordinator) handleSubmit(cmd chat.SubmitChatPromptCommand) {
 	c.startedAt = now
 
 	turnState := chat.CloneChatSessionState(session.state)
-	turnCtx, cancel := context.WithCancel(c.ctx)
+	turnCtx, cancel := context.WithCancel(ctx)
 	session.cancel = cancel
 	snapshot := chat.CloneChatSessionState(session.state)
 	c.mu.Unlock()
@@ -628,7 +695,7 @@ func (c *Coordinator) handleSubmit(cmd chat.SubmitChatPromptCommand) {
 	})
 }
 
-func (c *Coordinator) handleUpdate(cmd chat.UpdateChatSessionCommand) {
+func (c *Coordinator) handleUpdate(ctx context.Context, cmd chat.UpdateChatSessionCommand) {
 	now := time.Now().UTC()
 
 	c.mu.Lock()
@@ -702,7 +769,7 @@ func (c *Coordinator) handleUpdate(cmd chat.UpdateChatSessionCommand) {
 	c.persistDefaultsOnUpdate(cmd.Patch, snapshot)
 }
 
-func (c *Coordinator) handleCancel(cmd chat.CancelChatRequestCommand) {
+func (c *Coordinator) handleCancel(ctx context.Context, cmd chat.CancelChatRequestCommand) {
 	now := normalizedTime(cmd.RequestedAt)
 
 	c.mu.Lock()
@@ -764,7 +831,7 @@ func (c *Coordinator) handleCancel(cmd chat.CancelChatRequestCommand) {
 	}
 }
 
-func (c *Coordinator) handleReset(cmd chat.ResetChatSessionCommand) {
+func (c *Coordinator) handleReset(ctx context.Context, cmd chat.ResetChatSessionCommand) {
 	now := normalizedTime(cmd.RequestedAt)
 
 	c.mu.Lock()
@@ -795,7 +862,7 @@ func (c *Coordinator) handleReset(cmd chat.ResetChatSessionCommand) {
 	c.emit(chat.ChatSessionSnapshotEvent{State: snapshot})
 }
 
-func (c *Coordinator) handleSteer(cmd chat.SteerChatPromptCommand) {
+func (c *Coordinator) handleSteer(ctx context.Context, cmd chat.SteerChatPromptCommand) {
 	c.mu.Lock()
 	session, ok := c.sessions[cmd.SessionID]
 	if !ok {
@@ -849,7 +916,7 @@ func (c *Coordinator) injectSteering(sessionID string) {
 	c.emit(chat.ChatSessionSnapshotEvent{State: snapshot})
 }
 
-func (c *Coordinator) handleClose(cmd chat.CloseChatSessionCommand) {
+func (c *Coordinator) handleClose(ctx context.Context, cmd chat.CloseChatSessionCommand) {
 	now := normalizedTime(cmd.RequestedAt)
 
 	c.mu.Lock()
@@ -907,7 +974,7 @@ func (c *Coordinator) handleClose(cmd chat.CloseChatSessionCommand) {
 		SessionID: snapshot.SessionID,
 	})
 
-	c.persistSession(snapshot, duration)
+	c.persistSession(ctx, snapshot, duration)
 	// Clean up shutdown dedup entry now that the session is fully closed.
 	c.mu.Lock()
 	delete(c.shutdown, sessionID)
@@ -915,7 +982,7 @@ func (c *Coordinator) handleClose(cmd chat.CloseChatSessionCommand) {
 	c.emit(chat.ChatSessionSnapshotEvent{State: snapshot})
 }
 
-func (c *Coordinator) handleInteractivePromptResponse(cmd chat.RespondInteractivePromptCommand) {
+func (c *Coordinator) handleInteractivePromptResponse(ctx context.Context, cmd chat.RespondInteractivePromptCommand) {
 	c.promptMu.Lock()
 	ch := c.prompts[cmd.RequestID]
 	if ch != nil {
@@ -984,6 +1051,25 @@ func shortTypeName(v any) string {
 
 func chatCommandLogAttrs(cmd chat.ChatCommand) []any {
 	attrs := []any{"command_type", shortTypeName(cmd)}
+	attrs = append(attrs, sessionCommandLogAttrs(cmd)...)
+	attrs = append(attrs, skillAgentBashCommandLogAttrs(cmd)...)
+	return attrs
+}
+
+// sessionCommandLogAttrs returns log attrs for session/extension/persist
+// commands, or nil when cmd is not one of them.
+func sessionCommandLogAttrs(cmd chat.ChatCommand) []any {
+	attrs := lifecycleCommandLogAttrs(cmd)
+	if attrs == nil {
+		attrs = persistCommandLogAttrs(cmd)
+	}
+	return attrs
+}
+
+// lifecycleCommandLogAttrs returns log attrs for session-lifecycle and
+// extension commands, or nil when cmd is not one of them.
+func lifecycleCommandLogAttrs(cmd chat.ChatCommand) []any {
+	var attrs []any
 	switch c := cmd.(type) {
 	case chat.StartChatSessionCommand:
 		attrs = append(attrs, "session_id", c.SessionID, "provider", c.Config.Provider.Name, "model", c.Config.Model.ID)
@@ -1011,6 +1097,15 @@ func chatCommandLogAttrs(cmd chat.ChatCommand) []any {
 		attrs = append(attrs, "name", c.Name, "args_bytes", len(c.Args))
 	case chat.RespondInteractivePromptCommand:
 		attrs = append(attrs, "prompt_request_id", c.RequestID, "confirmed", c.Confirmed, "canceled", c.Canceled, "response_bytes", len(c.Response))
+	}
+	return attrs
+}
+
+// persistCommandLogAttrs returns log attrs for saved-session commands
+// (load/child-transcript/delete/export), or nil.
+func persistCommandLogAttrs(cmd chat.ChatCommand) []any {
+	var attrs []any
+	switch c := cmd.(type) {
 	case chat.LoadSessionCommand:
 		attrs = append(attrs, "session_id", c.SessionID)
 	case chat.LoadChildTranscriptCommand:
@@ -1019,6 +1114,15 @@ func chatCommandLogAttrs(cmd chat.ChatCommand) []any {
 		attrs = append(attrs, "session_id", c.SessionID)
 	case chat.ExportSessionCommand:
 		attrs = append(attrs, "session_id", c.SessionID, "format", c.Format, "path_set", c.Output != "")
+	}
+	return attrs
+}
+
+// skillAgentBashCommandLogAttrs returns log attrs for skill/agent/bash
+// commands, or nil when cmd is not one of them.
+func skillAgentBashCommandLogAttrs(cmd chat.ChatCommand) []any {
+	var attrs []any
+	switch c := cmd.(type) {
 	case chat.RunSkillCommand:
 		attrs = append(attrs, "session_id", c.SessionID, "skill", c.SkillName, "args_bytes", len(c.Args))
 	case chat.RunAgentCommand:
@@ -1033,6 +1137,15 @@ func chatCommandLogAttrs(cmd chat.ChatCommand) []any {
 
 func chatEventLogAttrs(event chat.ChatEvent) []any {
 	attrs := []any{"event_type", shortTypeName(event)}
+	attrs = append(attrs, streamEventLogAttrs(event)...)
+	attrs = append(attrs, pluginSessionEventLogAttrs(event)...)
+	return attrs
+}
+
+// streamEventLogAttrs returns log attrs for streaming/tool/response events,
+// or nil when event is not one of them.
+func streamEventLogAttrs(event chat.ChatEvent) []any {
+	var attrs []any
 	switch e := event.(type) {
 	case chat.ChatSessionSnapshotEvent:
 		attrs = append(
@@ -1066,6 +1179,15 @@ func chatEventLogAttrs(event chat.ChatEvent) []any {
 		attrs = append(attrs, "session_id", e.SessionID, "request_id", e.RequestID, "fatal", e.Fatal, "message_bytes", len(e.Message))
 	case chat.ChatNotificationEvent:
 		attrs = append(attrs, "level", e.Level, "message_bytes", len(e.Message))
+	}
+	return attrs
+}
+
+// pluginSessionEventLogAttrs returns log attrs for plugin lifecycle and
+// session events, or nil when event is not one of them.
+func pluginSessionEventLogAttrs(event chat.ChatEvent) []any {
+	var attrs []any
+	switch e := event.(type) {
 	case chat.ExtensionsReloadedEvent:
 		attrs = append(attrs, "extension_count", e.Result.ExtensionCount, "diagnostic_count", len(e.Result.Diagnostics), "command_count", len(e.Result.Commands))
 	case chat.ExtensionCommandsChangedEvent:

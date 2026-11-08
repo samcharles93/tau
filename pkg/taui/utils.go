@@ -50,42 +50,61 @@ func stripANSI(s string) string {
 	var b strings.Builder
 	i := 0
 	for i < len(s) {
-		if s[i] == '\x1b' && i+1 < len(s) {
-			if s[i+1] == '[' {
-				// CSI: ESC [ ... m/G/K/H/J
-				j := i + 2
-				for j < len(s) && !isCSITerminator(s[j]) {
-					j++
-				}
-				if j < len(s) {
-					i = j + 1
-					continue
-				}
-			}
-			if s[i+1] == ']' {
-				// OSC: ESC ] ... BEL or ESC ] ... ST (ESC \)
-				j := i + 2
-				for j < len(s) {
-					if s[j] == '\x07' {
-						i = j + 1
-						break
-					}
-					if s[j] == '\x1b' && j+1 < len(s) && s[j+1] == '\\' {
-						i = j + 2
-						break
-					}
-					j++
-				}
-				if j >= len(s) {
-					i = j
-				}
-				continue
-			}
+		if n, ok := escapeSeqLen(s[i:]); ok {
+			i += n
+			continue
 		}
 		b.WriteByte(s[i])
 		i++
 	}
 	return b.String()
+}
+
+// escapeSeqLen returns the byte length of the escape sequence at the start of
+// s (which is expected to begin with ESC), or ok=false when s does not start
+// with a recognized, terminated sequence - in which case the caller emits the
+// ESC as a literal byte.
+func escapeSeqLen(s string) (int, bool) {
+	if len(s) < 2 || s[0] != '\x1b' {
+		return 0, false
+	}
+	switch s[1] {
+	case '[':
+		return csiSeqLen(s)
+	case ']':
+		return oscSeqLen(s)
+	}
+	return 0, false
+}
+
+// csiSeqLen returns the length of the CSI sequence at the start of s
+// (ESC [ ... final byte). An unterminated CSI is not a sequence: ok=false so
+// the caller keeps the ESC as a literal byte.
+func csiSeqLen(s string) (int, bool) {
+	j := 2
+	for j < len(s) && !isCSITerminator(s[j]) {
+		j++
+	}
+	if j >= len(s) {
+		return 0, false
+	}
+	return j + 1, true
+}
+
+// oscSeqLen returns the length of the OSC sequence at the start of s, ended
+// by BEL or ST (ESC \). An unterminated OSC consumes the rest of the string.
+func oscSeqLen(s string) (int, bool) {
+	j := 2
+	for j < len(s) {
+		if s[j] == '\x07' {
+			return j + 1, true
+		}
+		if s[j] == '\x1b' && j+1 < len(s) && s[j+1] == '\\' {
+			return j + 2, true
+		}
+		j++
+	}
+	return len(s), true
 }
 
 func isCSITerminator(b byte) bool {
@@ -113,31 +132,7 @@ func truncateANSIToWidth(s string, width int) string {
 	i := 0
 	for i < len(s) {
 		if s[i] == '\x1b' {
-			j := i + 1
-			switch {
-			case j < len(s) && s[j] == '[': // CSI ... final byte
-				j++
-				for j < len(s) && !isCSITerminator(s[j]) {
-					j++
-				}
-				if j < len(s) {
-					j++
-				}
-			case j < len(s) && s[j] == ']': // OSC ... BEL or ST
-				for j < len(s) {
-					if s[j] == '\x07' {
-						j++
-						break
-					}
-					if s[j] == '\x1b' && j+1 < len(s) && s[j+1] == '\\' {
-						j += 2
-						break
-					}
-					j++
-				}
-			default:
-				j++
-			}
+			j := min(i+ansiSeqLen(s[i:]), len(s))
 			b.WriteString(s[i:j])
 			i = j
 			continue
@@ -152,6 +147,40 @@ func truncateANSIToWidth(s string, width int) string {
 		i += size
 	}
 	return b.String()
+}
+
+// ansiSeqLen returns the byte length of the escape sequence starting at the
+// beginning of s, which must begin with ESC. Unlike escapeSeqLen, an
+// unterminated CSI/OSC still consumes the rest of the string here (the
+// truncated tail is styling, not content). A bare ESC consumes one extra byte.
+func ansiSeqLen(s string) int {
+	j := 1
+	switch {
+	case j < len(s) && s[j] == '[': // CSI ... final byte
+		j++
+		for j < len(s) && !isCSITerminator(s[j]) {
+			j++
+		}
+		if j < len(s) {
+			j++
+		}
+	case j < len(s) && s[j] == ']': // OSC ... BEL or ST
+		j++
+		for j < len(s) {
+			if s[j] == '\x07' {
+				j++
+				break
+			}
+			if s[j] == '\x1b' && j+1 < len(s) && s[j+1] == '\\' {
+				j += 2
+				break
+			}
+			j++
+		}
+	default:
+		j++
+	}
+	return j
 }
 
 // TruncateANSIToWidth truncates a (possibly ANSI-styled) string to fit within

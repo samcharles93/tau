@@ -85,6 +85,16 @@ func (p *listPicker) HandleKey(msg tea.KeyPressMsg, rowCount int) (pickerAction,
 	case "end", "ctrl+e":
 		p.cursor = utf8.RuneCountInString(p.query)
 		return pickerActionNone, true
+	default:
+		return p.editQueryKey(msg)
+	}
+}
+
+// editQueryKey handles the query-editing keys (kill/delete/insert) that fall
+// through HandleKey's navigation switch. Returns (pickerActionNone, false)
+// for keys that don't edit the query so the caller can treat them as unhandled.
+func (p *listPicker) editQueryKey(msg tea.KeyPressMsg) (pickerAction, bool) {
+	switch msg.String() {
 	case "ctrl+u":
 		runes := []rune(p.query)
 		p.query = string(runes[p.cursor:])
@@ -119,22 +129,27 @@ func (p *listPicker) HandleKey(msg tea.KeyPressMsg, rowCount int) (pickerAction,
 		}
 		return pickerActionNone, true
 	default:
-		text := msg.Key().Text
-		if text == "" {
-			return pickerActionNone, false
-		}
-		r, _ := utf8.DecodeRuneInString(text)
-		if r < 32 || r == utf8.RuneError {
-			return pickerActionNone, false
-		}
-		runes := []rune(p.query)
-		insert := []rune(text)
-		runes = append(runes[:p.cursor], append(insert, runes[p.cursor:]...)...)
-		p.query = string(runes)
-		p.cursor += len(insert)
-		p.selected = 0
-		return pickerActionNone, true
+		return p.insertQueryText(msg.Key().Text)
 	}
+}
+
+// insertQueryText inserts printable text at the cursor, rejecting control
+// characters so they stay unhandled.
+func (p *listPicker) insertQueryText(text string) (pickerAction, bool) {
+	if text == "" {
+		return pickerActionNone, false
+	}
+	r, _ := utf8.DecodeRuneInString(text)
+	if r < 32 || r == utf8.RuneError {
+		return pickerActionNone, false
+	}
+	runes := []rune(p.query)
+	insert := []rune(text)
+	runes = append(runes[:p.cursor], append(insert, runes[p.cursor:]...)...)
+	p.query = string(runes)
+	p.cursor += len(insert)
+	p.selected = 0
+	return pickerActionNone, true
 }
 
 func pickerWordLeft(query string, cursor int) int {

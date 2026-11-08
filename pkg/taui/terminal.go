@@ -12,7 +12,7 @@ import (
 )
 
 // Terminal abstracts the terminal device. Ported from Pi's terminal.ts.
-type Terminal interface {
+type Terminal interface { //nolint:interfacebloat // terminal device abstraction; the methods are the minimal device contract
 	// Start begins listening for input and resize events.
 	Start(onInput func(data string), onResize func())
 

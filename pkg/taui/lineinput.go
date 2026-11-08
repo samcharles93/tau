@@ -179,27 +179,52 @@ func (li *LineInput) Invalidate() {}
 // input for one frame, which is correct (the prompt was just submitted).
 func (li *LineInput) HandleInput(data string) bool {
 	li.mu.Lock()
+	submit, didSubmit, consumed := li.applyKeyLocked(data)
+	onSubmit := li.onSubmit
+	li.mu.Unlock()
 
-	var submit string
-	didSubmit := false
+	if !consumed {
+		return false
+	}
+	if didSubmit && onSubmit != nil {
+		onSubmit(submit)
+	}
+	return true
+}
 
-	switch data {
-	case "\r":
+// applyKeyLocked applies one key sequence while holding li.mu and reports what
+// happened: the submitted text (Enter only), whether a submit occurred, and
+// whether the key was consumed at all.
+func (li *LineInput) applyKeyLocked(data string) (submit string, didSubmit, consumed bool) {
+	if data == "\r" {
 		// Enter - submit.
 		submit = string(li.runes)
 		li.runes = li.runes[:0]
 		li.cursor = 0
 		li.historyPos = -1
 		li.historySave = ""
-		didSubmit = true
+		return submit, true, true
+	}
+	if li.handleLineEditLocked(data) || li.handleCursorMoveLocked(data) {
+		return "", false, true
+	}
+	if !insertable(data) {
+		return "", false, false
+	}
+	li.insertLocked([]rune(data))
+	return "", false, true
+}
 
+// handleLineEditLocked applies text-editing keys (newline, delete, kill-line).
+// Returns false when data is not one of them. Caller holds li.mu.
+func (li *LineInput) handleLineEditLocked(data string) bool {
+	switch data {
 	case "\x0a",
 		"\x1b[13;2u",    // Kitty CSI-u: Shift+Enter (codepoint 13, modifier 2)
 		"\x1b[27;2;13~", // xterm modifyOtherKeys: CSI 27 ; modifier ; keycode ~
 		"\x1b[27;13;2~": // (defensive: some terminals swap the two fields)
 		// Ctrl+J / Shift+Enter - insert a newline.
 		li.insertLocked([]rune{'\n'})
-
 	case "\x7f": // Backspace (DEL) - single character
 		if li.cursor > 0 {
 			li.runes = append(li.runes[:li.cursor-1], li.runes[li.cursor:]...)
@@ -209,7 +234,24 @@ func (li *LineInput) HandleInput(data string) bool {
 		if li.cursor < len(li.runes) {
 			li.runes = append(li.runes[:li.cursor], li.runes[li.cursor+1:]...)
 		}
+	case "\x15": // Ctrl+U: delete to start of line
+		li.runes = append([]rune(nil), li.runes[li.cursor:]...)
+		li.cursor = 0
+	case "\x0b": // Ctrl+K: delete to end of line
+		li.runes = li.runes[:li.cursor]
+	case "\x08", "\x17", "\x1b[127;5u": // Ctrl+W / Ctrl+Backspace: delete previous word
+		li.deleteWordLocked()
+	default:
+		return false
+	}
+	return true
+}
 
+// handleCursorMoveLocked applies cursor-movement keys (arrows, word jumps,
+// home/end, vertical line moves, history recall). Returns false when data is
+// not one of them. Caller holds li.mu.
+func (li *LineInput) handleCursorMoveLocked(data string) bool {
+	switch data {
 	case "\x1b[D", "\x1bOD": // Left
 		if li.cursor > 0 {
 			li.cursor--
@@ -218,12 +260,10 @@ func (li *LineInput) HandleInput(data string) bool {
 		if li.cursor < len(li.runes) {
 			li.cursor++
 		}
-
 	case "\x1b[1;5D", "\x1b[1;3D": // Ctrl+Left / Alt+Left - jump word left
 		li.cursor = li.wordLeftLocked()
 	case "\x1b[1;5C", "\x1b[1;3C": // Ctrl+Right / Alt+Right - jump word right
 		li.cursor = li.wordRightLocked()
-
 	case "\x1b[A", "\x1bOA": // Up - history or previous logical line
 		if li.atFirstLineStart() {
 			li.navigateHistory(-1)
@@ -236,33 +276,12 @@ func (li *LineInput) HandleInput(data string) bool {
 		} else {
 			li.moveVertLocked(1)
 		}
-
 	case "\x01", "\x1b[H", "\x1bOH", "\x1b[1~", "\x1b[7~": // Home / Ctrl+A
 		li.cursor = 0
 	case "\x05", "\x1b[F", "\x1bOF", "\x1b[4~", "\x1b[8~": // End / Ctrl+E
 		li.cursor = len(li.runes)
-
-	case "\x15": // Ctrl+U: delete to start of line
-		li.runes = append([]rune(nil), li.runes[li.cursor:]...)
-		li.cursor = 0
-	case "\x0b": // Ctrl+K: delete to end of line
-		li.runes = li.runes[:li.cursor]
-	case "\x08", "\x17", "\x1b[127;5u": // Ctrl+W / Ctrl+Backspace: delete previous word
-		li.deleteWordLocked()
-
 	default:
-		if !insertable(data) {
-			li.mu.Unlock()
-			return false
-		}
-		li.insertLocked([]rune(data))
-	}
-
-	onSubmit := li.onSubmit
-	li.mu.Unlock()
-
-	if didSubmit && onSubmit != nil {
-		onSubmit(submit)
+		return false
 	}
 	return true
 }
@@ -467,11 +486,7 @@ func (li *LineInput) Render(width int) []string {
 	promptW := VisibleWidth(li.prompt)
 
 	if len(li.runes) == 0 && li.hint != "" && !li.focused {
-		hint := li.hint
-		if li.hintFn != nil && colour {
-			hint = li.hintFn(li.hint)
-		}
-		return []string{prompt + hint}
+		return []string{prompt + li.styledHint(colour)}
 	}
 
 	// A line beginning with "/" (slash command) or "!" (bash mode) is a
@@ -483,18 +498,7 @@ func (li *LineInput) Render(width int) []string {
 	// get command styling just because cmdFn happens to be set.
 	trimmed := strings.TrimSpace(string(li.runes))
 	isCommand := li.cmdFn != nil && (strings.HasPrefix(trimmed, "/") || strings.HasPrefix(trimmed, "!"))
-	paint := func(s string) string {
-		if !colour {
-			return s
-		}
-		if isCommand {
-			return li.cmdFn(s)
-		}
-		if li.textFn != nil {
-			return li.textFn(s)
-		}
-		return s
-	}
+	paint := li.textPainter(colour, isCommand)
 
 	logicalLines := li.splitLines()
 	curLine, curCol := li.cursorInLines(logicalLines)
@@ -512,6 +516,32 @@ func (li *LineInput) Render(width int) []string {
 		out = append(out, li.renderOneLine(ln, i == curLine, curCol, prefix, contentWidth, paint, isCommand)...)
 	}
 	return out
+}
+
+// styledHint returns the hint text, styled when colours are enabled.
+func (li *LineInput) styledHint(colour bool) string {
+	if li.hintFn != nil && colour {
+		return li.hintFn(li.hint)
+	}
+	return li.hint
+}
+
+// textPainter returns the style function applied to the line's typed text:
+// cmdFn for a command in progress, textFn otherwise, plain when colours are
+// disabled.
+func (li *LineInput) textPainter(colour, isCommand bool) func(string) string {
+	return func(s string) string {
+		if !colour {
+			return s
+		}
+		if isCommand {
+			return li.cmdFn(s)
+		}
+		if li.textFn != nil {
+			return li.textFn(s)
+		}
+		return s
+	}
 }
 
 // renderChunk is one segment of a wrapped display line with source rune offsets
@@ -538,7 +568,22 @@ func (li *LineInput) renderOneLine(ln []rune, hasCursor bool, cursorCol int, pre
 		maxW = 1
 	}
 
-	// Scan words + spaces, building wrapped display lines.
+	lines := wrapChunks(ln, maxW)
+	if len(lines) == 0 {
+		return []string{prefix}
+	}
+
+	out := make([]string, 0, len(lines))
+	for _, chunks := range lines {
+		out = append(out, li.renderDisplayLine(chunks, hasCursor, cursorCol, prefix, paint, isCommand))
+	}
+	return out
+}
+
+// wrapChunks scans ln word-by-word and wraps it into display lines of at most
+// maxW columns, each a slice of chunks carrying source rune offsets so cursor
+// injection can target the exact character position.
+func wrapChunks(ln []rune, maxW int) [][]renderChunk {
 	var lines [][]renderChunk
 	var cur []renderChunk
 	vis := 0
@@ -599,47 +644,43 @@ func (li *LineInput) renderOneLine(ln []rune, hasCursor bool, cursorCol int, pre
 		rem = rem[srcSp+len(word):]
 	}
 	flush()
+	return lines
+}
 
-	if len(lines) == 0 {
-		return []string{prefix}
+// renderDisplayLine renders one wrapped display line, injecting the block
+// cursor at cursorCol when hasCursor is true and the cursor falls within this
+// line's source range.
+func (li *LineInput) renderDisplayLine(chunks []renderChunk, hasCursor bool, cursorCol int, prefix string, paint func(string) string, isCommand bool) string {
+	if !hasCursor {
+		return prefix + li.joinRenderChunks(chunks, paint)
 	}
-
-	var out []string
-	for _, chunks := range lines {
-		if !hasCursor {
-			out = append(out, prefix+li.joinRenderChunks(chunks, paint))
+	first := chunks[0].runesBefore
+	last := chunks[len(chunks)-1].runesAfter
+	if cursorCol < first || cursorCol > last {
+		return prefix + li.joinRenderChunks(chunks, paint)
+	}
+	// Cursor is on this display line - inject it into the right chunk.
+	var sb strings.Builder
+	sb.WriteString(prefix)
+	placed := false
+	for _, ck := range chunks {
+		if placed || cursorCol < ck.runesBefore || cursorCol > ck.runesAfter {
+			sb.WriteString(paint(ck.text))
 			continue
 		}
-		first := chunks[0].runesBefore
-		last := chunks[len(chunks)-1].runesAfter
-		if cursorCol < first || cursorCol > last {
-			out = append(out, prefix+li.joinRenderChunks(chunks, paint))
-			continue
+		localCol := cursorCol - ck.runesBefore
+		flat := []rune(ck.text)
+		if localCol > len(flat) {
+			localCol = len(flat)
 		}
-		// Cursor is on this display line - inject it into the right chunk.
-		var sb strings.Builder
-		sb.WriteString(prefix)
-		placed := false
-		for _, ck := range chunks {
-			if placed || cursorCol < ck.runesBefore || cursorCol > ck.runesAfter {
-				sb.WriteString(paint(ck.text))
-				continue
-			}
-			localCol := cursorCol - ck.runesBefore
-			flat := []rune(ck.text)
-			if localCol > len(flat) {
-				localCol = len(flat)
-			}
-			sb.WriteString(paint(string(flat[:localCol])))
-			sb.WriteString(li.cursorAtEnd(string(flat[localCol:]), paint, isCommand))
-			placed = true
-		}
-		if !placed {
-			sb.WriteString(li.cursorAtEnd("", paint, isCommand))
-		}
-		out = append(out, sb.String())
+		sb.WriteString(paint(string(flat[:localCol])))
+		sb.WriteString(li.cursorAtEnd(string(flat[localCol:]), paint, isCommand))
+		placed = true
 	}
-	return out
+	if !placed {
+		sb.WriteString(li.cursorAtEnd("", paint, isCommand))
+	}
+	return sb.String()
 }
 
 func (li *LineInput) joinRenderChunks(chunks []renderChunk, paint func(string) string) string {

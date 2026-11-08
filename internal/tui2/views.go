@@ -32,45 +32,24 @@ func renderPluginView(view tauchat.ExtensionView) string {
 func renderWidget(w tauchat.Widget) string {
 	switch w.Kind {
 	case tauchat.WidgetKindText:
-		if w.Text == nil {
-			return ""
-		}
-		return styleOrPlain(w.Text.Style, w.Text.Text)
+		return renderWidgetBody(w.Text, func(t *tauchat.TextWidget) string {
+			return styleOrPlain(t.Style, t.Text)
+		})
 
 	case tauchat.WidgetKindStack:
-		if w.Stack == nil {
-			return ""
-		}
-		return renderStackWidget(w.Stack)
+		return renderWidgetBody(w.Stack, renderStackWidget)
 
 	case tauchat.WidgetKindKeyValue:
-		if w.KeyValue == nil {
-			return ""
-		}
-		return renderKeyValueWidget(w.KeyValue)
+		return renderWidgetBody(w.KeyValue, renderKeyValueWidget)
 
 	case tauchat.WidgetKindList:
-		if w.List == nil {
-			return ""
-		}
-		return renderListWidget(w.List)
+		return renderWidgetBody(w.List, renderListWidget)
 
 	case tauchat.WidgetKindTable:
-		if w.Table == nil {
-			return ""
-		}
-		return renderTableWidget(w.Table)
+		return renderWidgetBody(w.Table, renderTableWidget)
 
 	case tauchat.WidgetKindProgress:
-		if w.Progress == nil {
-			return ""
-		}
-		bar := termkit.ProgressBar(w.Progress.Fraction, 20)
-		label := bar
-		if w.Progress.Label != "" {
-			label = w.Progress.Label + " " + bar
-		}
-		return styleOrPlain(w.Progress.Style, label)
+		return renderWidgetBody(w.Progress, renderProgressWidget)
 
 	case tauchat.WidgetKindDivider:
 		label := ""
@@ -80,14 +59,30 @@ func renderWidget(w tauchat.Widget) string {
 		return renderDividerWidget(label)
 
 	case tauchat.WidgetKindStatus:
-		if w.Status == nil {
-			return ""
-		}
-		return renderStatusWidget(w.Status)
+		return renderWidgetBody(w.Status, renderStatusWidget)
 
 	default:
 		return ""
 	}
+}
+
+// renderWidgetBody renders a widget body through render, returning "" for a
+// nil body (a newer plugin kind this host doesn't fully populate yet).
+func renderWidgetBody[T any](body *T, render func(*T) string) string {
+	if body == nil {
+		return ""
+	}
+	return render(body)
+}
+
+// renderProgressWidget renders a progress bar, prefixed with its label when set.
+func renderProgressWidget(p *tauchat.ProgressWidget) string {
+	bar := termkit.ProgressBar(p.Fraction, 20)
+	label := bar
+	if p.Label != "" {
+		label = p.Label + " " + bar
+	}
+	return styleOrPlain(p.Style, label)
 }
 
 // renderStackWidget lays out children vertically (one per line, Gap blank

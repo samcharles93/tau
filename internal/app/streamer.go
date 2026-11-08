@@ -48,7 +48,72 @@ func NewDynamicStreamer(resolve providerResolver) *Streamer {
 	return &Streamer{resolve: resolve}
 }
 
-// StreamChatCompletionFull implements agent.Streamer.
+// drainStream reads chunks until EOF/Done and folds them into the result.
+func (s *Streamer) drainStream(ctx context.Context, stream aisdkchat.Stream, cb tauchat.StreamCallbacks) (tauchat.CompletionResult, error) {
+	result := tauchat.CompletionResult{}
+	calls := make(map[int]*assembledToolCall)
+	for {
+		chunk, err := stream.Next(ctx)
+		if errors.Is(err, io.EOF) {
+			break
+		}
+		if err != nil {
+			return result, err
+		}
+		done, err := s.applyChunk(chunk, &result, calls, cb)
+		if err != nil {
+			return result, err
+		}
+		if done {
+			break
+		}
+	}
+	result.ToolCalls = buildToolCalls(calls)
+	for i, call := range result.ToolCalls {
+		if strings.TrimSpace(call.Function.Name) == "" {
+			return result, fmt.Errorf("stream tool call %d (%q) has no function name", i, call.ID)
+		}
+	}
+	return result, nil
+}
+
+// applyChunk folds one stream chunk into result/calls. Returns done=true when
+// the chunk marks the stream finished.
+func (s *Streamer) applyChunk(chunk aisdkchat.Chunk, result *tauchat.CompletionResult, calls map[int]*assembledToolCall, cb tauchat.StreamCallbacks) (bool, error) {
+	if chunk.Delta != "" && cb.OnDelta != nil {
+		if err := cb.OnDelta(chunk.Delta); err != nil {
+			return false, err
+		}
+	}
+	if chunk.ReasoningDelta != "" && cb.OnReasoningDelta != nil {
+		result.ReasoningContent += chunk.ReasoningDelta
+		if err := cb.OnReasoningDelta(chunk.ReasoningDelta); err != nil {
+			return false, err
+		}
+	}
+	for _, d := range chunk.ToolCallDeltas {
+		if err := s.applyToolCallDelta(calls, d, cb); err != nil {
+			return false, err
+		}
+	}
+	if chunk.Usage != nil {
+		result.Usage = tauchat.ChatUsage{
+			PromptTokens:        chunk.Usage.PromptTokens,
+			CompletionTokens:    chunk.Usage.CompletionTokens,
+			TotalTokens:         chunk.Usage.TotalTokens,
+			CachedTokens:        chunk.Usage.CachedTokens,
+			CacheCreationTokens: chunk.Usage.CacheCreationTokens,
+		}
+	}
+	if chunk.FinishReason != "" {
+		result.FinishReason = chunk.FinishReason
+	}
+	if chunk.Done {
+		return true, nil
+	}
+	return false, nil
+}
+
 func (s *Streamer) StreamChatCompletionFull(
 	ctx context.Context,
 	session tauchat.ChatSessionState,
@@ -72,58 +137,7 @@ func (s *Streamer) StreamChatCompletionFull(
 	}
 	defer stream.Close()
 
-	result := tauchat.CompletionResult{}
-	calls := make(map[int]*assembledToolCall)
-
-	for {
-		chunk, err := stream.Next(ctx)
-		if errors.Is(err, io.EOF) {
-			break
-		}
-		if err != nil {
-			return result, err
-		}
-
-		if chunk.Delta != "" && cb.OnDelta != nil {
-			if err := cb.OnDelta(chunk.Delta); err != nil {
-				return result, err
-			}
-		}
-		if chunk.ReasoningDelta != "" && cb.OnReasoningDelta != nil {
-			result.ReasoningContent += chunk.ReasoningDelta
-			if err := cb.OnReasoningDelta(chunk.ReasoningDelta); err != nil {
-				return result, err
-			}
-		}
-		for _, d := range chunk.ToolCallDeltas {
-			if err := s.applyToolCallDelta(calls, d, cb); err != nil {
-				return result, err
-			}
-		}
-		if chunk.Usage != nil {
-			result.Usage = tauchat.ChatUsage{
-				PromptTokens:        chunk.Usage.PromptTokens,
-				CompletionTokens:    chunk.Usage.CompletionTokens,
-				TotalTokens:         chunk.Usage.TotalTokens,
-				CachedTokens:        chunk.Usage.CachedTokens,
-				CacheCreationTokens: chunk.Usage.CacheCreationTokens,
-			}
-		}
-		if chunk.FinishReason != "" {
-			result.FinishReason = chunk.FinishReason
-		}
-		if chunk.Done {
-			break
-		}
-	}
-
-	result.ToolCalls = buildToolCalls(calls)
-	for i, call := range result.ToolCalls {
-		if strings.TrimSpace(call.Function.Name) == "" {
-			return result, fmt.Errorf("stream tool call %d (%q) has no function name", i, call.ID)
-		}
-	}
-	return result, nil
+	return s.drainStream(ctx, stream, cb)
 }
 
 func mergeHeaders(base, override map[string]string) map[string]string {

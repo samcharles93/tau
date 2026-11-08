@@ -108,7 +108,7 @@ func TestRunFailsWhenChecksumEntryMissing(t *testing.T) {
 }
 
 // TestRunFailsWhenArchiveContentDoesNotMatchChecksum guards against a real
-// bug: run() used to only check that a checksums.txt entry existed for a
+// defect: run() used to only check that a checksums.txt entry existed for a
 // filename, never that the recorded hash matched the archive's actual
 // bytes, so a corrupted or stale-checksum archive passed silently.
 func TestRunFailsWhenArchiveContentDoesNotMatchChecksum(t *testing.T) {

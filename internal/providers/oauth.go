@@ -203,7 +203,7 @@ func refreshGitHubCopilot(ctx context.Context, creds OAuthCredentials) (OAuthCre
 	}
 	access := strings.TrimSpace(firstNonEmpty(payload.Token, payload.AccessToken))
 	if access == "" {
-		return OAuthCredentials{}, errors.New("Copilot token response did not include an access token")
+		return OAuthCredentials{}, errors.New("copilot token response did not include an access token")
 	}
 	extra := cloneStringMap(creds.Extra)
 	if extra == nil {
@@ -382,24 +382,35 @@ func pollDeviceToken(
 		if !errors.As(err, &oauthErr) {
 			return oauthTokenResponse{}, err
 		}
-		switch oauthErr.Code {
-		case "authorization_pending":
-			if onStatus != nil {
-				onStatus("waiting for browser authorization")
-			}
-		case "slow_down":
-			intervalSeconds += 5
-			if onStatus != nil {
-				onStatus("authorization pending; slowing polling")
-			}
-		case "expired_token":
-			return oauthTokenResponse{}, errors.New("device code expired")
-		case "access_denied":
-			return oauthTokenResponse{}, errors.New("device login denied")
-		default:
-			return oauthTokenResponse{}, oauthErr
+		done, err := handleOAuthPollError(oauthErr, onStatus, &intervalSeconds)
+		if done {
+			return oauthTokenResponse{}, err
 		}
 	}
+}
+
+// handleOAuthPollError maps one OAuth poll error to a terminal error or a
+// "keep polling" signal. Returns done=true with the terminal error (nil error
+// is never returned with done=true).
+func handleOAuthPollError(oauthErr oauthError, onStatus func(string), intervalSeconds *int) (bool, error) {
+	switch oauthErr.Code {
+	case "authorization_pending":
+		if onStatus != nil {
+			onStatus("waiting for browser authorization")
+		}
+	case "slow_down":
+		*intervalSeconds += 5
+		if onStatus != nil {
+			onStatus("authorization pending; slowing polling")
+		}
+	case "expired_token":
+		return true, errors.New("device code expired")
+	case "access_denied":
+		return true, errors.New("device login denied")
+	default:
+		return true, oauthErr
+	}
+	return false, nil
 }
 
 // postJSON POSTs payload as a JSON body and decodes a JSON response, for the

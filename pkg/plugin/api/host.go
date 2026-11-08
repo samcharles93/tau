@@ -11,7 +11,7 @@ var ErrPromptCanceled = errors.New("prompt canceled by user")
 // Host is the plugin-facing handle to tau host services. A plugin that wants to
 // read config, query session state, or push notifications/logs back to the host
 // implements HostAware; the host injects a Host once it calls Init.
-type Host interface {
+type Host interface { //nolint:interfacebloat // the plugin-facing host service surface is intentionally one handle
 	// GetConfig returns a JSON-encoded value for the plugin's config block.
 	// An empty key returns the whole block. found is false when unset.
 	GetConfig(ctx context.Context, key string) (value string, found bool, err error)

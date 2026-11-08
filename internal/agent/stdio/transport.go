@@ -174,17 +174,7 @@ func (r *Reader) ReadMessage() ([]byte, error) {
 		}
 
 		if !r.scanner.Scan() {
-			if err := r.scanner.Err(); err != nil {
-				if errors.Is(err, bufio.ErrTooLong) {
-					r.oversizedErrors.Add(1)
-					if r.ErrorsExceeded() {
-						return nil, ErrTooManyErrors
-					}
-					return nil, fmt.Errorf("%w (%d bytes)", ErrLineTooLong, MaxLineSize)
-				}
-				return nil, fmt.Errorf("read: %w", err)
-			}
-			return nil, io.EOF
+			return nil, r.scanErr()
 		}
 
 		data := r.scanner.Bytes()
@@ -196,11 +186,7 @@ func (r *Reader) ReadMessage() ([]byte, error) {
 
 		// Validate UTF-8
 		if !utf8.Valid(data) {
-			r.utf8Errors.Add(1)
-			if r.ErrorsExceeded() {
-				return nil, ErrTooManyErrors
-			}
-			return nil, ErrInvalidUTF8
+			return nil, r.utf8Err()
 		}
 
 		// Copy the bytes - the scanner reuses its buffer.
@@ -208,6 +194,32 @@ func (r *Reader) ReadMessage() ([]byte, error) {
 		copy(line, data)
 		return line, nil
 	}
+}
+
+// scanErr converts a failed scanner.Scan into the appropriate error,
+// accounting for oversized lines in the error counter.
+func (r *Reader) scanErr() error {
+	err := r.scanner.Err()
+	if err == nil {
+		return io.EOF
+	}
+	if errors.Is(err, bufio.ErrTooLong) {
+		r.oversizedErrors.Add(1)
+		if r.ErrorsExceeded() {
+			return ErrTooManyErrors
+		}
+		return fmt.Errorf("%w (%d bytes)", ErrLineTooLong, MaxLineSize)
+	}
+	return fmt.Errorf("read: %w", err)
+}
+
+// utf8Err accounts for an invalid-UTF-8 line and returns the appropriate error.
+func (r *Reader) utf8Err() error {
+	r.utf8Errors.Add(1)
+	if r.ErrorsExceeded() {
+		return ErrTooManyErrors
+	}
+	return ErrInvalidUTF8
 }
 
 // ReadEnvelope reads the next line and returns the type discriminator and

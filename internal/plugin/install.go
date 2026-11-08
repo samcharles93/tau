@@ -10,6 +10,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"hash"
 	"io"
 	"net/http"
 	"os"
@@ -54,31 +55,25 @@ type InstalledPlugin struct {
 // Install downloads a plugin binary from the registry and places it in the
 // plugins directory. If version is empty, the latest version is resolved.
 // Returns the path to the installed binary.
-func Install(ctx context.Context, client *registry.Client, id, version string) (string, error) {
-	dest, err := resolvePluginBinaryPath(pluginsDir(), id)
-	if err != nil {
-		return "", err
-	}
-
-	// Resolve version.
+// resolvePluginVersion picks the version to install and the platform entry
+// matching the current OS/arch.
+func resolvePluginVersion(ctx context.Context, client *registry.Client, id, version string) (*registry.Platform, error) {
 	if version == "" || version == "latest" {
 		versions, err := client.ListVersions(ctx, id)
 		if err != nil {
-			return "", fmt.Errorf("list versions for %q: %w", id, err)
+			return nil, fmt.Errorf("list versions for %q: %w", id, err)
 		}
 		if len(versions) == 0 {
-			return "", fmt.Errorf("no versions available for %q", id)
+			return nil, fmt.Errorf("no versions available for %q", id)
 		}
 		version = versions[0].Version
 	}
 
-	// Fetch version with platforms.
 	ver, err := client.GetVersion(ctx, id, version)
 	if err != nil {
-		return "", fmt.Errorf("fetch version %s@%s: %w", id, version, err)
+		return nil, fmt.Errorf("fetch version %s@%s: %w", id, version, err)
 	}
 
-	// Find matching platform.
 	var plat *registry.Platform
 	for i := range ver.Platforms {
 		p := &ver.Platforms[i]
@@ -88,42 +83,66 @@ func Install(ctx context.Context, client *registry.Client, id, version string) (
 		}
 	}
 	if plat == nil {
-		return "", fmt.Errorf("no binary for %s/%s in %s@%s", runtime.GOOS, runtime.GOARCH, id, version)
+		return nil, fmt.Errorf("no binary for %s/%s in %s@%s", runtime.GOOS, runtime.GOARCH, id, version)
 	}
 
-	fmt.Printf("  downloading from %s\n", plat.URL)
+	return plat, nil
+}
 
+// stageDownload creates the staged temp file and issues the download request.
+func stageDownload(ctx context.Context, plat *registry.Platform) (*os.File, hash.Hash, int64, error) {
 	tmp, err := stagePluginTempFile(pluginsDir())
 	if err != nil {
-		return "", err
+		return nil, nil, 0, err
 	}
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, plat.URL, nil)
 	if err != nil {
 		discardStaged(tmp)
-		return "", fmt.Errorf("create download request: %w", err)
+		return nil, nil, 0, fmt.Errorf("create download request: %w", err)
 	}
 	resp, err := httpClient.Do(req)
 	if err != nil {
 		discardStaged(tmp)
-		return "", fmt.Errorf("download: %w", err)
+		return nil, nil, 0, fmt.Errorf("download: %w", err)
 	}
 	defer resp.Body.Close()
 
+	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
 		discardStaged(tmp)
-		return "", fmt.Errorf("download returned status %d", resp.StatusCode)
+		return nil, nil, 0, fmt.Errorf("download returned status %d", resp.StatusCode)
 	}
 
 	hasher := sha256.New()
 	written, err := copyLimited(io.MultiWriter(tmp, hasher), resp.Body, MaxDownloadSize)
 	if err != nil {
 		discardStaged(tmp)
-		return "", fmt.Errorf("save binary: %w", err)
+		return nil, nil, 0, fmt.Errorf("save binary: %w", err)
 	}
 	if err := tmp.Close(); err != nil {
 		os.Remove(tmp.Name())
-		return "", fmt.Errorf("save binary: %w", err)
+		return nil, nil, 0, fmt.Errorf("save binary: %w", err)
+	}
+
+	return tmp, hasher, written, nil
+}
+
+func Install(ctx context.Context, client *registry.Client, id, version string) (string, error) {
+	dest, err := resolvePluginBinaryPath(pluginsDir(), id)
+	if err != nil {
+		return "", err
+	}
+
+	plat, err := resolvePluginVersion(ctx, client, id, version)
+	if err != nil {
+		return "", err
+	}
+	fmt.Printf("  downloading from %s\n", plat.URL)
+
+	tmp, hasher, written, err := stageDownload(ctx, plat)
+	if err != nil {
+		return "", err
 	}
 
 	// Verify checksum if provided.

@@ -140,11 +140,12 @@ func TestSQLiteStore_SearchIndexStaysInSync(t *testing.T) {
 func TestMigrateV11_BackfillsFTSIndex(t *testing.T) {
 	// Simulate a pre-v11 database: schema_version at 10 with a messages
 	// table holding rows the FTS index has never seen.
+	ctx := context.Background()
 	dbPath := t.TempDir() + "/legacy.db"
 	db, err := sql.Open("sqlite", dbPath)
 	require.NoError(t, err)
 	defer db.Close()
-	_, err = db.Exec(`
+	_, err = db.ExecContext(ctx, `
 		CREATE TABLE schema_version (version INTEGER PRIMARY KEY, applied_at TEXT NOT NULL DEFAULT (datetime('now')));
 		INSERT INTO schema_version (version) VALUES (10);
 		CREATE TABLE messages (
@@ -171,19 +172,19 @@ func TestMigrateV11_BackfillsFTSIndex(t *testing.T) {
 	require.NoError(t, store.Migrate(context.Background(), db))
 
 	var n int
-	require.NoError(t, db.QueryRow(`SELECT COUNT(*) FROM messages_fts`).Scan(&n))
+	require.NoError(t, db.QueryRowContext(ctx, `SELECT COUNT(*) FROM messages_fts`).Scan(&n))
 	assert.Equal(t, 2, n, "migration v11 backfills pre-existing messages")
 
 	var snip string
-	require.NoError(t, db.QueryRow(
+	require.NoError(t, db.QueryRowContext(ctx,
 		`SELECT snippet(messages_fts, 0, '**', '**', '…', 8) FROM messages_fts WHERE messages_fts MATCH 'content:"buffalo"'`,
 	).Scan(&snip))
 	assert.Contains(t, snip, "**buffalo**")
 
 	// Triggers keep the index in sync after the migration.
-	_, err = db.Exec(`INSERT INTO messages (session_id, seq, role, content, created_at) VALUES ('old-sess', 2, 'user', 'fresh yak content', '2026-01-02T00:00:00Z')`)
+	_, err = db.ExecContext(ctx, `INSERT INTO messages (session_id, seq, role, content, created_at) VALUES ('old-sess', 2, 'user', 'fresh yak content', '2026-01-02T00:00:00Z')`)
 	require.NoError(t, err)
-	require.NoError(t, db.QueryRow(
+	require.NoError(t, db.QueryRowContext(ctx,
 		`SELECT snippet(messages_fts, 0, '**', '**', '…', 8) FROM messages_fts WHERE messages_fts MATCH 'content:"yak"'`,
 	).Scan(&snip))
 	assert.Contains(t, snip, "**yak**")

@@ -101,84 +101,93 @@ func makeShellExecutor(cwd string, mq *MutationQueue) Executor {
 		ctx, cancel := context.WithTimeout(ctx, timeout)
 		defer cancel()
 
-		shell, args := shellCommand(p.Command)
-		// Run the command as a process-group leader and signal the whole
-		// group on cancellation. The CommandContext default (Process.Kill on
-		// the shell alone) orphans any children the command spawned - make,
-		// npm run, pipelines, servers - which keep running after the timeout
-		// (tau-iwh). cmd.Cancel replaces the default kill so ctx expiry kills
-		// the group instead.
-		cmd := exec.CommandContext(ctx, shell, args...)
-		setProcessGroup(cmd)
-		cmd.Cancel = func() error {
-			return signalProcessGroup(cmd, syscall.SIGKILL)
-		}
-		if cwd != "" {
-			cmd.Dir = cwd
-		}
-
-		var stdout, stderr bytes.Buffer
-		bw := &bridgeWriter{bridge: bridge}
-		cmd.Stdout = io.MultiWriter(&stdout, bw)
-		cmd.Stderr = io.MultiWriter(&stderr, bw)
-
-		err := cmd.Run()
-
-		var b strings.Builder
-		if stdout.Len() > 0 {
-			b.WriteString(stdout.String())
-		}
-		if stderr.Len() > 0 {
-			if b.Len() > 0 {
-				b.WriteString("\n")
-			}
-			b.WriteString("[stderr]\n")
-			b.WriteString(stderr.String())
-		}
-
-		output := b.String()
-		if output == "" {
-			output = "(no output)"
-		}
-
-		// Collapse before truncation, so a long passing test run is reduced to
-		// its summaries rather than tail-truncated into a partial log.
-		output, _ = collapseGoTestOutput(p.Command, output, err == nil)
-
-		tr := TruncateTail(output, DefaultMaxLines, DefaultMaxBytes)
-		content := tr.Content
-		if tr.Truncated {
-			// Save the full output so the model can grep/tail it instead of
-			// re-running an expensive command.
-			if path, saveErr := saveFullOutput(output); saveErr == nil {
-				content += "\n[full output saved to: " + path + "]"
-			}
-		}
-
-		if err != nil {
-			// Check context cancellation first - a process may exit with
-			// a non-zero code after the deadline, and we want to report
-			// timeout rather than a misleading exit code.
-			if ctx.Err() != nil {
-				return Result{
-					Content: fmt.Sprintf("[timeout after: %s]\n%s", timeout, content), IsError: true,
-					ErrorKind: "timeout", Truncated: tr.Truncated, ResultBytes: len(output),
-				}, nil
-			}
-
-			exitErr := &exec.ExitError{}
-			if errors.As(err, &exitErr) {
-				return Result{
-					Content: fmt.Sprintf("[exit code: %d]\n%s", exitErr.ExitCode(), content), IsError: true,
-					ErrorKind: "command_exit", Truncated: tr.Truncated, ResultBytes: len(output),
-				}, nil
-			}
-
-			return Result{Content: fmt.Sprintf("error executing command: %v", err), IsError: true}, nil
-		}
-
-		return Result{Content: content, Truncated: tr.Truncated, ResultBytes: len(output)}, nil
+		stdout, stderr, err := runShellCommand(ctx, p.Command, cwd, bridge)
+		return shellResult(p.Command, timeout, ctx.Err() != nil, stdout, stderr, err), nil
 	}
+}
+
+// runShellCommand executes the command as a process-group leader so
+// cancellation kills the whole group, not just the shell (which would orphan
+// children like make/npm/pipelines - tau-iwh).
+func runShellCommand(ctx context.Context, command, cwd string, bridge UIBridge) (stdout, stderr string, err error) {
+	shell, args := shellCommand(command)
+	cmd := exec.CommandContext(ctx, shell, args...)
+	setProcessGroup(cmd)
+	cmd.Cancel = func() error {
+		return signalProcessGroup(cmd, syscall.SIGKILL)
+	}
+	if cwd != "" {
+		cmd.Dir = cwd
+	}
+
+	var outBuf, errBuf bytes.Buffer
+	bw := &bridgeWriter{bridge: bridge}
+	cmd.Stdout = io.MultiWriter(&outBuf, bw)
+	cmd.Stderr = io.MultiWriter(&errBuf, bw)
+
+	err = cmd.Run()
+	return outBuf.String(), errBuf.String(), err
+}
+
+// shellResult formats a finished shell command's output and exit status.
+// timedOut reports whether the command's context expired (checked first - a
+// process may exit non-zero after the deadline, and we want to report timeout
+// rather than a misleading exit code).
+func shellResult(command string, timeout time.Duration, timedOut bool, stdout, stderr string, err error) Result {
+	var b strings.Builder
+	if stdout != "" {
+		b.WriteString(stdout)
+	}
+	if stderr != "" {
+		if b.Len() > 0 {
+			b.WriteString("\n")
+		}
+		b.WriteString("[stderr]\n")
+		b.WriteString(stderr)
+	}
+
+	output := b.String()
+	if output == "" {
+		output = "(no output)"
+	}
+
+	// Collapse before truncation, so a long passing test run is reduced to
+	// its summaries rather than tail-truncated into a partial log.
+	output, _ = collapseGoTestOutput(command, output, err == nil)
+
+	tr := TruncateTail(output, DefaultMaxLines, DefaultMaxBytes)
+	content := tr.Content
+	if tr.Truncated {
+		// Save the full output so the model can grep/tail it instead of
+		// re-running an expensive command.
+		if path, saveErr := saveFullOutput(output); saveErr == nil {
+			content += "\n[full output saved to: " + path + "]"
+		}
+	}
+
+	if err != nil {
+		return shellErrorResult(err, timeout, timedOut, content, tr.Truncated, len(output))
+	}
+	return Result{Content: content, Truncated: tr.Truncated, ResultBytes: len(output)}
+}
+
+// shellErrorResult maps a command failure to a Result: timeout beats exit
+// code, exit code beats generic error.
+func shellErrorResult(err error, timeout time.Duration, timedOut bool, content string, truncated bool, resultBytes int) Result {
+	if timedOut {
+		return Result{
+			Content: fmt.Sprintf("[timeout after: %s]\n%s", timeout, content), IsError: true,
+			ErrorKind: "timeout", Truncated: truncated, ResultBytes: resultBytes,
+		}
+	}
+	exitErr := &exec.ExitError{}
+	if errors.As(err, &exitErr) {
+		return Result{
+			Content: fmt.Sprintf("[exit code: %d]\n%s", exitErr.ExitCode(), content), IsError: true,
+			ErrorKind: "command_exit", Truncated: truncated, ResultBytes: resultBytes,
+		}
+	}
+	return Result{Content: fmt.Sprintf("error executing command: %v", err), IsError: true}
 }
 
 // goTestSummaryRe matches cmd/go's per-package result lines: "ok", "FAIL" and

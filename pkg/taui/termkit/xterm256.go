@@ -16,7 +16,7 @@ func Xterm256(idx uint8) Color {
 		i := idx - 16
 		return Color{cubeLevel(i / 36), cubeLevel((i / 6) % 6), cubeLevel(i % 6)}
 	default:
-		level := uint8(8 + (idx-232)*10)
+		level := 8 + (idx-232)*10
 		return Color{level, level, level}
 	}
 }

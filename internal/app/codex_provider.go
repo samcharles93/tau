@@ -21,8 +21,8 @@ type codexClass struct{}
 
 func (codexClass) Name() string { return "openai-codex" }
 
-func (codexClass) Supports(cap runtime.Capability) bool {
-	return cap == runtime.CapabilityChat
+func (codexClass) Supports(capability runtime.Capability) bool {
+	return capability == runtime.CapabilityChat
 }
 
 func (codexClass) New(ctx context.Context, cfg runtime.ProviderConfig, model runtime.ModelInfo) (runtime.ProviderSet, error) {
@@ -213,41 +213,10 @@ func (s *codexStream) Close() error {
 	return s.body.Close()
 }
 
-func codexSSEChunk(data []byte) (aisdkchat.Chunk, bool) {
-	var event struct {
-		Type      string `json:"type"`
-		Delta     string `json:"delta"`
-		Text      string `json:"text"`
-		Output    string `json:"output"`
-		ItemID    string `json:"item_id"`
-		CallID    string `json:"call_id"`
-		Name      string `json:"name"`
-		Arguments string `json:"arguments"`
-		Index     int    `json:"output_index"`
-		Item      *struct {
-			ID        string `json:"id"`
-			CallID    string `json:"call_id"`
-			Name      string `json:"name"`
-			Arguments string `json:"arguments"`
-		} `json:"item"`
-		Usage *struct {
-			InputTokens  int `json:"input_tokens"`
-			OutputTokens int `json:"output_tokens"`
-			TotalTokens  int `json:"total_tokens"`
-		} `json:"usage"`
-		Response *struct {
-			Usage *struct {
-				InputTokens  int `json:"input_tokens"`
-				OutputTokens int `json:"output_tokens"`
-				TotalTokens  int `json:"total_tokens"`
-			} `json:"usage"`
-		} `json:"response"`
-	}
-	if err := json.Unmarshal(data, &event); err != nil {
-		return aisdkchat.Chunk{}, false
-	}
-	chunk := aisdkchat.Chunk{}
+// applyCodexEvent maps one Codex Responses SSE event onto the chunk.
+func applyCodexEvent(chunk *aisdkchat.Chunk, event *codexEvent) {
 	switch event.Type {
+
 	case "response.output_text.delta", "response.text.delta":
 		chunk.Delta = firstNonEmpty(event.Delta, event.Text, event.Output)
 	case "response.reasoning_text.delta", "response.reasoning.delta":
@@ -289,6 +258,46 @@ func codexSSEChunk(data []byte) (aisdkchat.Chunk, bool) {
 		chunk.Done = true
 		chunk.FinishReason = "stop"
 	}
+}
+
+// codexEvent is the wire shape of one Codex Responses SSE event.
+type codexEvent = struct {
+	Type      string `json:"type"`
+	Delta     string `json:"delta"`
+	Text      string `json:"text"`
+	Output    string `json:"output"`
+	ItemID    string `json:"item_id"`
+	CallID    string `json:"call_id"`
+	Name      string `json:"name"`
+	Arguments string `json:"arguments"`
+	Index     int    `json:"output_index"`
+	Item      *struct {
+		ID        string `json:"id"`
+		CallID    string `json:"call_id"`
+		Name      string `json:"name"`
+		Arguments string `json:"arguments"`
+	} `json:"item"`
+	Usage *struct {
+		InputTokens  int `json:"input_tokens"`
+		OutputTokens int `json:"output_tokens"`
+		TotalTokens  int `json:"total_tokens"`
+	} `json:"usage"`
+	Response *struct {
+		Usage *struct {
+			InputTokens  int `json:"input_tokens"`
+			OutputTokens int `json:"output_tokens"`
+			TotalTokens  int `json:"total_tokens"`
+		} `json:"usage"`
+	} `json:"response"`
+}
+
+func codexSSEChunk(data []byte) (aisdkchat.Chunk, bool) {
+	var event codexEvent
+	if err := json.Unmarshal(data, &event); err != nil {
+		return aisdkchat.Chunk{}, false
+	}
+	chunk := aisdkchat.Chunk{}
+	applyCodexEvent(&chunk, &event)
 	if event.Usage != nil {
 		chunk.Usage = &aisdkchat.Usage{
 			PromptTokens:     event.Usage.InputTokens,

@@ -3,6 +3,7 @@ package taui
 import (
 	"fmt"
 	"math"
+	"slices"
 	"strconv"
 	"strings"
 )
@@ -89,73 +90,15 @@ func RenderStatusLine(width int, left, right []StatusLineSeg, defaultStyle func(
 		width = 1
 	}
 
-	lefts := make([]StatusLineSeg, 0, len(left))
-	for _, s := range left {
-		if s.Text != "" {
-			lefts = append(lefts, s)
-		}
-	}
+	lefts := nonEmptySegs(left)
 	leftStyled, leftPlain := JoinStatusLineSegs(lefts, defaultStyle)
 	leftW := VisibleWidth(leftPlain)
 
-	rights := make([]StatusLineSeg, 0, len(right))
-	for _, s := range right {
-		if s.Text != "" {
-			rights = append(rights, s)
-		}
-	}
+	rights := nonEmptySegs(right)
 	rightStyled, rightPlain := JoinStatusLineSegs(rights, defaultStyle)
 	rightW := VisibleWidth(rightPlain)
 
-	gap := func(rw int) int {
-		if leftW > 0 && rw > 0 {
-			return 1
-		}
-		return 0
-	}
-
-	// dropLowestPrio removes the lowest-priority segment (skipping anything
-	// >= StatusLinePrioTransient, which is meant to survive any width) from
-	// segs, returning the updated slice/styled/plain/width, or ok=false when
-	// nothing left is droppable.
-	dropLowestPrio := func(segs []StatusLineSeg) (out []StatusLineSeg, styled, plain string, w int, ok bool) {
-		idx := -1
-		for i, s := range segs {
-			if s.Prio >= StatusLinePrioTransient {
-				continue
-			}
-			if idx == -1 || s.Prio < segs[idx].Prio {
-				idx = i
-			}
-		}
-		if idx == -1 {
-			return segs, "", "", 0, false
-		}
-		out = append(segs[:idx:idx], segs[idx+1:]...)
-		styled, plain = JoinStatusLineSegs(out, defaultStyle)
-		return out, styled, plain, VisibleWidth(plain), true
-	}
-
-	// floorWidth is the width of segs once every droppable (Prio <
-	// StatusLinePrioTransient) segment is gone - the minimum space this
-	// side is guaranteed to need no matter how much gets dropped from it.
-	// The right-drop loop below must reserve this much room for the left
-	// side (and vice versa) rather than just checking whether it fits alone
-	// - otherwise an undroppable left could still lose content to the
-	// character-truncation fallback while purely decorative right segments
-	// survive untouched, which is backwards from "prioritize undroppable
-	// content over secondary metadata."
-	floorWidth := func(segs []StatusLineSeg) int {
-		var floor []StatusLineSeg
-		for _, s := range segs {
-			if s.Prio >= StatusLinePrioTransient {
-				floor = append(floor, s)
-			}
-		}
-		_, plain := JoinStatusLineSegs(floor, defaultStyle)
-		return VisibleWidth(plain)
-	}
-	leftFloorW := floorWidth(lefts)
+	leftFloorW := statusFloorWidth(lefts, defaultStyle)
 
 	// Drop lowest-priority right segments until the right side no longer
 	// crowds out the left side's guaranteed floor. This loop alone
@@ -163,8 +106,8 @@ func RenderStatusLine(width int, left, right []StatusLineSeg, defaultStyle func(
 	// anything droppable left to give, and dropping left below (in the
 	// next loop) never grows rightW back - so a second right-side pass
 	// afterward would be redundant.
-	for leftFloorW+gap(rightW)+rightW > width {
-		next, styled, _, w, ok := dropLowestPrio(rights)
+	for leftFloorW+statusGap(leftW, rightW)+rightW > width {
+		next, styled, w, ok := dropLowestPrio(rights, defaultStyle)
 		if !ok {
 			break
 		}
@@ -174,14 +117,83 @@ func RenderStatusLine(width int, left, right []StatusLineSeg, defaultStyle func(
 	// Then drop lowest-priority left segments (whole segments, not
 	// characters) until the combined line fits, or only left's own floor
 	// remains - symmetric with the right-side loop above.
-	for leftW+gap(rightW)+rightW > width && leftW > leftFloorW {
-		next, styled, _, w, ok := dropLowestPrio(lefts)
+	for leftW+statusGap(leftW, rightW)+rightW > width && leftW > leftFloorW {
+		next, styled, w, ok := dropLowestPrio(lefts, defaultStyle)
 		if !ok {
 			break
 		}
 		lefts, leftStyled, leftW = next, styled, w
 	}
 
+	return fitStatusLine(width, leftStyled, leftW, rightStyled, rightW)
+}
+
+// nonEmptySegs returns the segments with non-empty text.
+func nonEmptySegs(segs []StatusLineSeg) []StatusLineSeg {
+	out := make([]StatusLineSeg, 0, len(segs))
+	for _, s := range segs {
+		if s.Text != "" {
+			out = append(out, s)
+		}
+	}
+	return out
+}
+
+// statusGap is the separator width between the left and right groups: one
+// column when both sides are present, zero otherwise.
+func statusGap(leftW, rightW int) int {
+	if leftW > 0 && rightW > 0 {
+		return 1
+	}
+	return 0
+}
+
+// dropLowestPrio removes the lowest-priority segment (skipping anything
+// >= StatusLinePrioTransient, which is meant to survive any width) from
+// segs, returning the updated slice/styled/width, or ok=false when nothing
+// left is droppable.
+func dropLowestPrio(segs []StatusLineSeg, defaultStyle func(string) string) (out []StatusLineSeg, styled string, w int, ok bool) {
+	idx := -1
+	for i, s := range segs {
+		if s.Prio >= StatusLinePrioTransient {
+			continue
+		}
+		if idx == -1 || s.Prio < segs[idx].Prio {
+			idx = i
+		}
+	}
+	if idx == -1 {
+		return segs, "", 0, false
+	}
+	out = slices.Delete(slices.Clone(segs), idx, idx+1)
+	styled, plain := JoinStatusLineSegs(out, defaultStyle)
+	return out, styled, VisibleWidth(plain), true
+}
+
+// statusFloorWidth is the width of segs once every droppable (Prio <
+// StatusLinePrioTransient) segment is gone - the minimum space this side is
+// guaranteed to need no matter how much gets dropped from it. The right-drop
+// loop must reserve this much room for the left side (and vice versa) rather
+// than just checking whether it fits alone - otherwise an undroppable left
+// could still lose content to the character-truncation fallback while purely
+// decorative right segments survive untouched, which is backwards from
+// "prioritize undroppable content over secondary metadata."
+func statusFloorWidth(segs []StatusLineSeg, defaultStyle func(string) string) int {
+	var floor []StatusLineSeg
+	for _, s := range segs {
+		if s.Prio >= StatusLinePrioTransient {
+			floor = append(floor, s)
+		}
+	}
+	_, plain := JoinStatusLineSegs(floor, defaultStyle)
+	return VisibleWidth(plain)
+}
+
+// fitStatusLine assembles the final line from the pre-joined styled sides and
+// their plain widths, falling back to character-level truncation when
+// whole-segment dropping couldn't make it fit.
+func fitStatusLine(width int, leftStyled string, leftW int, rightStyled string, rightW int) string {
+	gap := statusGap(leftW, rightW)
 	if rightW == 0 {
 		if leftStyled == "" {
 			return strings.Repeat(" ", width)
@@ -192,7 +204,7 @@ func RenderStatusLine(width int, left, right []StatusLineSeg, defaultStyle func(
 		return leftStyled
 	}
 
-	if leftW+gap(rightW)+rightW <= width {
+	if leftW+gap+rightW <= width {
 		pad := max(width-leftW-rightW, 1)
 		return leftStyled + strings.Repeat(" ", pad) + rightStyled
 	}
@@ -200,7 +212,7 @@ func RenderStatusLine(width int, left, right []StatusLineSeg, defaultStyle func(
 	// Whole-segment dropping above couldn't make it fit (e.g. every
 	// remaining segment is at or above StatusLinePrioTransient) - fall back
 	// to character-level truncation as a last resort.
-	avail := width - gap(rightW) - rightW
+	avail := width - gap - rightW
 	if avail < 1 {
 		return TruncateANSIToWidth(rightStyled, width, "…")
 	}

@@ -99,7 +99,14 @@ var slashTable []slashEntry
 var slashIndex map[string]*slashEntry
 
 func init() {
-	slashTable = []slashEntry{
+	slashTable = builtinSlashCommands()
+	slashTable = appendAgentSlashEntries(slashTable)
+	buildSlashIndex()
+}
+
+// builtinSlashCommands returns the static tui2 command table.
+func builtinSlashCommands() []slashEntry {
+	return []slashEntry{
 		{
 			name: "model", usage: "<id>", description: "switch model",
 			run: (*model).cmdModel,
@@ -177,7 +184,11 @@ func init() {
 			},
 		},
 	}
+}
 
+// appendAgentSlashEntries appends slash entries for user-invocable agent
+// definitions to table and returns the extended slice.
+func appendAgentSlashEntries(table []slashEntry) []slashEntry {
 	// Append agent commands from spec (dynamic discovery).
 	defs, err := agentspec.Builtins()
 	if err != nil {
@@ -189,7 +200,7 @@ func init() {
 		if !def.UserInvocable {
 			continue
 		}
-		slashTable = append(slashTable, buildAgentSlashEntry(def.Name, def))
+		table = append(table, buildAgentSlashEntry(def.Name, def))
 	}
 
 	// Filesystem-discovered agent definitions (.agents/agents/*.agent.md),
@@ -202,9 +213,14 @@ func init() {
 		if builtinAgentNames[def.Name] || !def.UserInvocable {
 			continue
 		}
-		slashTable = append(slashTable, buildAgentSlashEntry(def.CommandPrefix()+def.Name, def))
+		table = append(table, buildAgentSlashEntry(def.CommandPrefix()+def.Name, def))
 	}
+	return table
+}
 
+// buildSlashIndex maps every entry's primary name and aliases to its
+// slashTable entry.
+func buildSlashIndex() {
 	slashIndex = make(map[string]*slashEntry, len(slashTable)*2)
 	for i := range slashTable {
 		e := &slashTable[i]

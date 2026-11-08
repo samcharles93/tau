@@ -28,7 +28,8 @@ func TestRoundTrip(t *testing.T) {
 	if err := json.Unmarshal(data, &got); err != nil {
 		t.Fatalf("unmarshal: %v", err)
 	}
-	if got["hello"] != "world" || got["num"].(float64) != 42 {
+	num, ok := got["num"].(float64)
+	if got["hello"] != "world" || !ok || num != 42 {
 		t.Fatalf("unexpected content: %v", got)
 	}
 }
@@ -53,7 +54,8 @@ func TestMultipleMessages(t *testing.T) {
 		if err := json.Unmarshal(data, &got); err != nil {
 			t.Fatalf("unmarshal %d: %v", i, err)
 		}
-		if got["seq"].(float64) != float64(i) {
+		seq, ok := got["seq"].(float64)
+		if !ok || seq != float64(i) {
 			t.Fatalf("expected seq %d, got %v", i, got["seq"])
 		}
 	}
@@ -72,9 +74,9 @@ func TestReadEnvelope(t *testing.T) {
 		t.Fatal(err)
 	}
 	// Write using raw bytes to avoid double-enveloping
-	w.bw.Write(data)
-	w.bw.Write([]byte{'\n'})
-	w.bw.Flush()
+	_, _ = w.bw.Write(data)
+	_, _ = w.bw.Write([]byte{'\n'})
+	_ = w.bw.Flush()
 
 	r := NewReader(&buf)
 	typ, payload, err := r.ReadEnvelope()
@@ -115,7 +117,7 @@ func TestWriteRaw(t *testing.T) {
 func TestReadEOF(t *testing.T) {
 	var buf bytes.Buffer
 	w := NewWriter(&buf)
-	w.WriteMessage(map[string]any{"last": true})
+	_ = w.WriteMessage(map[string]any{"last": true})
 
 	r := NewReader(&buf)
 	data, err := r.ReadMessage()
@@ -123,7 +125,7 @@ func TestReadEOF(t *testing.T) {
 		t.Fatalf("ReadMessage: %v", err)
 	}
 	var got map[string]any
-	json.Unmarshal(data, &got)
+	_ = json.Unmarshal(data, &got)
 	if got["last"] != true {
 		t.Fatal("expected last message")
 	}
@@ -191,7 +193,7 @@ func TestHandshakeBadFirstMessage(t *testing.T) {
 	w := NewWriter(&buf)
 
 	// Write an enveloped message with a non-ready type
-	w.WriteEnvelope("not.ready", map[string]any{"key": "value"})
+	_ = w.WriteEnvelope("not.ready", map[string]any{"key": "value"})
 
 	r := NewReader(&buf)
 	_, err := r.ReadHandshake(ProtocolVersion)
@@ -265,7 +267,7 @@ func TestReadEnvelope_MalformedJSON(t *testing.T) {
 	var buf bytes.Buffer
 	w := NewWriter(&buf)
 	// Write raw malformed JSON (not through WriteMessage which validates)
-	w.writeLine([]byte(`{not json at all`))
+	_ = w.writeLine([]byte(`{not json at all`))
 	r := NewReader(&buf)
 	_, _, err := r.ReadEnvelope()
 	if err == nil {

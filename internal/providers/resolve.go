@@ -78,7 +78,16 @@ func ResolveWithRefresh(ctx context.Context, cfg config.Config, state State, get
 	var out []ResolvedProvider
 	declared := make(map[string]struct{}, len(cfg.Providers))
 
-	// 1. Hand-written config providers are authoritative and always active.
+	out = resolveConfigProviders(cfg, out, declared)
+	out, managedCandidates := resolveCatalogProviders(state, getenv, declared, out)
+	out = resolveManagedProviders(state, managedCandidates, out)
+	out = resolveOAuthProviders(state, declared, out)
+
+	return out, true
+}
+
+// resolveConfigProviders appends hand-written config providers (authoritative).
+func resolveConfigProviders(cfg config.Config, out []ResolvedProvider, declared map[string]struct{}) []ResolvedProvider {
 	for _, p := range cfg.Providers {
 		name := strings.TrimSpace(p.Name)
 		if name == "" {
@@ -92,11 +101,12 @@ func ResolveWithRefresh(ctx context.Context, cfg config.Config, state State, get
 		})
 	}
 
-	// 2. Catalog API-key providers: auto-active when their env var is present
-	//    (unless explicitly disabled), plus any the user enabled explicitly.
-	//    Config-declared providers win and are skipped here. Entries that
-	//    aren't env-active but carry a stored managed key are deferred to
-	//    step 3, so managed providers always sort after env providers.
+	return out
+}
+
+// resolveCatalogProviders appends env-active and explicitly-enabled catalog
+// providers, deferring non-active API-key entries to managedCandidates.
+func resolveCatalogProviders(state State, getenv func(string) string, declared map[string]struct{}, out []ResolvedProvider) ([]ResolvedProvider, []CatalogEntry) {
 	var managedCandidates []CatalogEntry
 	for _, entry := range catalog {
 		if entry.Auth == AuthOAuth {
@@ -127,10 +137,11 @@ func ResolveWithRefresh(ctx context.Context, cfg config.Config, state State, get
 		})
 	}
 
-	// 3. Managed API-key providers: a stored key used as a fallback when no
-	//    env var is active for that provider. Env always wins over a managed
-	//    key - it's the session-scoped, easily-rotated override, while a
-	//    managed key is a persisted default that could go stale.
+	return out, managedCandidates
+}
+
+// resolveManagedProviders appends providers backed by a stored managed API key.
+func resolveManagedProviders(state State, managedCandidates []CatalogEntry, out []ResolvedProvider) []ResolvedProvider {
 	for _, entry := range managedCandidates {
 		key, ok := state.APIKeyFor(entry.ID)
 		if !ok || strings.TrimSpace(key) == "" {
@@ -143,7 +154,11 @@ func ResolveWithRefresh(ctx context.Context, cfg config.Config, state State, get
 		})
 	}
 
-	// 4. OAuth providers with stored credentials.
+	return out
+}
+
+// resolveOAuthProviders appends OAuth providers with stored credentials.
+func resolveOAuthProviders(state State, declared map[string]struct{}, out []ResolvedProvider) []ResolvedProvider {
 	oauthIDs := make([]string, 0, len(state.OAuth))
 	for id := range state.OAuth {
 		oauthIDs = append(oauthIDs, id)
@@ -171,12 +186,52 @@ func ResolveWithRefresh(ctx context.Context, cfg config.Config, state State, get
 		})
 	}
 
-	return out, true
+	return out
 }
 
 // Menu builds the /provider list: every catalog entry annotated with its
 // current enable/availability state, plus any OAuth providers that have creds
 // but somehow aren't in the catalog (defensive). getenv may be nil.
+// menuEntryFor annotates one catalog entry with its enable/availability state.
+func menuEntryFor(e CatalogEntry, state State, getenv func(string) string, declared map[string]struct{}) MenuEntry {
+	entry := MenuEntry{
+		ID:          e.ID,
+		DisplayName: e.DisplayName,
+		Auth:        e.Auth,
+	}
+	_, entry.FromConfig = declared[e.ID]
+	switch e.Auth {
+
+	case AuthOAuth:
+		creds, ok := state.OAuthFor(e.ID)
+		entry.Source = SourceOAuth
+		entry.Enabled = ok && strings.TrimSpace(creds.Access) != ""
+		entry.Available = entry.Enabled && !creds.Expired()
+		if entry.Enabled && !entry.Available {
+			entry.Message = "login expired"
+		}
+	default:
+		envVar, present := e.DetectEnvVar(getenv)
+		available := present || e.Auth == AuthNone
+		entry.Source = SourceEnv
+		entry.EnvVar = envVar
+		entry.Available = available
+		// Active = auto-on (key present, not disabled) or explicitly enabled.
+		entry.Enabled = (available && !state.IsDisabled(e.ID)) || state.IsEnabled(e.ID)
+		// A stored managed key is a fallback when no env var is active -
+		// env always wins, matching Resolve's precedence.
+		if !entry.Enabled && e.Auth == AuthAPIKey {
+			if _, ok := state.APIKeyFor(e.ID); ok {
+				entry.Source = SourceManaged
+				entry.Available = true
+				entry.Enabled = true
+				entry.Message = "stored key"
+			}
+		}
+	}
+	return entry
+}
+
 func Menu(cfg config.Config, state State, getenv func(string) string) []MenuEntry {
 	if getenv == nil {
 		getenv = osGetenv
@@ -188,41 +243,7 @@ func Menu(cfg config.Config, state State, getenv func(string) string) []MenuEntr
 
 	out := make([]MenuEntry, 0, len(catalog))
 	for _, e := range catalog {
-		entry := MenuEntry{
-			ID:          e.ID,
-			DisplayName: e.DisplayName,
-			Auth:        e.Auth,
-		}
-		_, entry.FromConfig = declared[e.ID]
-		switch e.Auth {
-		case AuthOAuth:
-			creds, ok := state.OAuthFor(e.ID)
-			entry.Source = SourceOAuth
-			entry.Enabled = ok && strings.TrimSpace(creds.Access) != ""
-			entry.Available = entry.Enabled && !creds.Expired()
-			if entry.Enabled && !entry.Available {
-				entry.Message = "login expired"
-			}
-		default:
-			envVar, present := e.DetectEnvVar(getenv)
-			available := present || e.Auth == AuthNone
-			entry.Source = SourceEnv
-			entry.EnvVar = envVar
-			entry.Available = available
-			// Active = auto-on (key present, not disabled) or explicitly enabled.
-			entry.Enabled = (available && !state.IsDisabled(e.ID)) || state.IsEnabled(e.ID)
-			// A stored managed key is a fallback when no env var is active -
-			// env always wins, matching Resolve's precedence.
-			if !entry.Enabled && e.Auth == AuthAPIKey {
-				if _, ok := state.APIKeyFor(e.ID); ok {
-					entry.Source = SourceManaged
-					entry.Available = true
-					entry.Enabled = true
-					entry.Message = "stored key"
-				}
-			}
-		}
-		out = append(out, entry)
+		out = append(out, menuEntryFor(e, state, getenv, declared))
 	}
 	return out
 }

@@ -102,10 +102,10 @@ func sanitizeNotifyText(s string) string {
 	return strings.TrimSpace(s)
 }
 
-func truncateRunes(s string, max int) string {
+func truncateRunes(s string, maxLen int) string {
 	r := []rune(s)
-	if len(r) <= max {
+	if len(r) <= maxLen {
 		return s
 	}
-	return string(r[:max]) + "…"
+	return string(r[:maxLen]) + "…"
 }

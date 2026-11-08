@@ -98,105 +98,52 @@ func tauGlamourConfig() ansi.StyleConfig {
 // terminal background without a hard-coded fill.
 func tauChromaInline() *ansi.Chroma {
 	return &ansi.Chroma{
-		Text: ansi.StylePrimitive{
-			Color: new(hex(theme.ToneMuted)),
-		},
-		Error: ansi.StylePrimitive{
-			Color: new(hex(theme.ToneError)),
-		},
-		Comment: ansi.StylePrimitive{
-			Color: new(hex(theme.ToneMuted)),
-		},
-		CommentPreproc: ansi.StylePrimitive{
-			Color: new(hex(theme.ToneMuted)),
-			Bold:  new(true),
-		},
-		Keyword: ansi.StylePrimitive{
-			Color: new(hex(theme.ToneInfo)),
-		},
-		KeywordReserved: ansi.StylePrimitive{
-			Color: new(hex(theme.ToneInfo)),
-			Bold:  new(true),
-		},
-		KeywordNamespace: ansi.StylePrimitive{
-			Color: new(hex(theme.ToneInfo)),
-		},
-		KeywordType: ansi.StylePrimitive{
-			Color: new(hex(theme.AccentColor)),
-		},
-		Operator: ansi.StylePrimitive{
-			Color: new(hex(theme.TonePrimary)),
-		},
-		Punctuation: ansi.StylePrimitive{
-			Color: new(hex(theme.ToneMuted)),
-		},
-		Name: ansi.StylePrimitive{
-			Color: new(hex(theme.ToneBody)),
-		},
-		NameBuiltin: ansi.StylePrimitive{
-			Color: new(hex(theme.AccentColor)),
-		},
-		NameTag: ansi.StylePrimitive{
-			Color: new(hex(theme.ToneInfo)),
-		},
-		NameAttribute: ansi.StylePrimitive{
-			Color: new(hex(theme.ToneSuccess)),
-		},
-		NameClass: ansi.StylePrimitive{
-			Color: new(hex(theme.AccentColor)),
-			Bold:  new(true),
-		},
-		NameConstant: ansi.StylePrimitive{
-			Color: new(hex(theme.ToneWarn)),
-		},
-		NameDecorator: ansi.StylePrimitive{
-			Color: new(hex(theme.ToneInfo)),
-		},
-		NameException: ansi.StylePrimitive{
-			Color: new(hex(theme.ToneError)),
-		},
-		NameFunction: ansi.StylePrimitive{
-			Color: new(hex(theme.AccentColor)),
-		},
-		NameOther: ansi.StylePrimitive{
-			Color: new(hex(theme.ToneBody)),
-		},
-		Literal: ansi.StylePrimitive{
-			Color: new(hex(theme.ToneBody)),
-		},
-		LiteralNumber: ansi.StylePrimitive{
-			Color: new(hex(theme.ToneWarn)),
-		},
-		LiteralDate: ansi.StylePrimitive{
-			Color: new(hex(theme.ToneWarn)),
-		},
-		LiteralString: ansi.StylePrimitive{
-			Color: new(hex(theme.ToneSuccess)),
-		},
-		LiteralStringEscape: ansi.StylePrimitive{
-			Color: new(hex(theme.ToneInfo)),
-		},
-		GenericDeleted: ansi.StylePrimitive{
-			Color: new(hex(theme.ToneError)),
-		},
-		GenericEmph: ansi.StylePrimitive{
-			Color:  new(hex(theme.ToneBody)),
-			Italic: new(true),
-		},
-		GenericInserted: ansi.StylePrimitive{
-			Color: new(hex(theme.ToneSuccess)),
-		},
-		GenericStrong: ansi.StylePrimitive{
-			Color: new(hex(theme.ToneBody)),
-			Bold:  new(true),
-		},
-		GenericSubheading: ansi.StylePrimitive{
-			Color: new(hex(theme.AccentColor)),
-			Bold:  new(true),
-		},
+		Text:                chromaPrim(theme.ToneMuted, false, false),
+		Error:               chromaPrim(theme.ToneError, false, false),
+		Comment:             chromaPrim(theme.ToneMuted, false, false),
+		CommentPreproc:      chromaPrim(theme.ToneMuted, true, false),
+		Keyword:             chromaPrim(theme.ToneInfo, false, false),
+		KeywordReserved:     chromaPrim(theme.ToneInfo, true, false),
+		KeywordNamespace:    chromaPrim(theme.ToneInfo, false, false),
+		KeywordType:         chromaPrim(theme.AccentColor, false, false),
+		Operator:            chromaPrim(theme.TonePrimary, false, false),
+		Punctuation:         chromaPrim(theme.ToneMuted, false, false),
+		Name:                chromaPrim(theme.ToneBody, false, false),
+		NameBuiltin:         chromaPrim(theme.AccentColor, false, false),
+		NameTag:             chromaPrim(theme.ToneInfo, false, false),
+		NameAttribute:       chromaPrim(theme.ToneSuccess, false, false),
+		NameClass:           chromaPrim(theme.AccentColor, true, false),
+		NameConstant:        chromaPrim(theme.ToneWarn, false, false),
+		NameDecorator:       chromaPrim(theme.ToneInfo, false, false),
+		NameException:       chromaPrim(theme.ToneError, false, false),
+		NameFunction:        chromaPrim(theme.AccentColor, false, false),
+		NameOther:           chromaPrim(theme.ToneBody, false, false),
+		Literal:             chromaPrim(theme.ToneBody, false, false),
+		LiteralNumber:       chromaPrim(theme.ToneWarn, false, false),
+		LiteralDate:         chromaPrim(theme.ToneWarn, false, false),
+		LiteralString:       chromaPrim(theme.ToneSuccess, false, false),
+		LiteralStringEscape: chromaPrim(theme.ToneInfo, false, false),
+		GenericDeleted:      chromaPrim(theme.ToneError, false, false),
+		GenericEmph:         chromaPrim(theme.ToneBody, false, true),
+		GenericInserted:     chromaPrim(theme.ToneSuccess, false, false),
+		GenericStrong:       chromaPrim(theme.ToneBody, true, false),
+		GenericSubheading:   chromaPrim(theme.AccentColor, true, false),
 		// Background is deliberately omitted — no hard-coded code-block
 		// background; code blocks inherit the terminal background.
 	}
+}
+
+// chromaPrim builds a chroma StylePrimitive from a theme tone plus optional
+// bold/italic emphasis.
+func chromaPrim(c [3]uint8, bold, italic bool) ansi.StylePrimitive {
+	prim := ansi.StylePrimitive{Color: new(hex(c))}
+	if bold {
+		prim.Bold = new(true)
+	}
+	if italic {
+		prim.Italic = new(true)
+	}
+	return prim
 }
 
 // hex returns a hex colour string (e.g. "#D19A66") from a termkit.Color.

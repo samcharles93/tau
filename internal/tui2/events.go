@@ -20,8 +20,35 @@ import (
 // notification-clear timers or auto-responses). It MUST be called from within
 // Update so the returned Cmd is properly composed.
 func (m *model) handleChatEvent(evt tauchat.ChatEvent) tea.Cmd {
+	if cmd, ok := m.handleTurnEvent(evt); ok {
+		return cmd
+	}
+	if cmd, ok := m.handleToolEvent(evt); ok {
+		return cmd
+	}
+	if cmd, ok := m.handleStatusEvent(evt); ok {
+		return cmd
+	}
+	if cmd, ok := m.handleChildAgentEvent(evt); ok {
+		return cmd
+	}
+	if cmd, ok := m.handleSessionEvent(evt); ok {
+		return cmd
+	}
+	if cmd, ok := m.handleExtensionEvent(evt); ok {
+		return cmd
+	}
+	if cmd, ok := m.handleSkillsEvent(evt); ok {
+		return cmd
+	}
+	return nil
+}
+
+// handleTurnEvent handles the core turn-lifecycle events (snapshot, response start/delta/completed/cancelled, reasoning deltas, interactive prompts). Returns (cmd, true) when the event was handled.
+func (m *model) handleTurnEvent(evt tauchat.ChatEvent) (tea.Cmd, bool) {
 	switch e := evt.(type) {
 	case tauchat.ChatSessionSnapshotEvent:
+
 		m.applySnapshot(e)
 
 	case tauchat.ChatResponseStartedEvent:
@@ -32,7 +59,7 @@ func (m *model) handleChatEvent(evt tauchat.ChatEvent) tea.Cmd {
 		m.toolGroupCollapsed = m.toolCallsDefaultCollapsed
 		m.spinnerFrame = 0
 		m.agentState = agentThinking
-		return spinTick()
+		return spinTick(), true
 
 	case tauchat.ChatResponseDeltaEvent:
 		// New text after a tool-calling batch means that batch is over -
@@ -66,6 +93,37 @@ func (m *model) handleChatEvent(evt tauchat.ChatEvent) tea.Cmd {
 			m.agentState = agentThinking
 		}
 
+	case tauchat.ChatResponseCompletedEvent:
+		content := m.finalizeResponse(lastAssistantMessageID(e.State))
+		m.agentState = agentReady
+		// noopCmd guarantees a non-nil Batch even when there's no queued turn
+		// to drain and no desktop notification to fire.
+		cmds := []tea.Cmd{noopCmd, m.drainTurnQueue()}
+		// Only nudge the user via desktop notification when they've
+		// actually looked away - while focused, the response already
+		// streamed onto their screen. Matches internal/tui/inline_events.go.
+		if content != "" && !m.focused {
+			cmds = append(cmds, tea.Raw(termkit.Notify("tau", content)))
+		}
+		return tea.Batch(cmds...), true
+
+	case tauchat.ChatResponseCancelledEvent:
+		m.flushInterruptedTurn("chat request cancelled")
+		m.steering = false
+		m.agentState = agentCancelled
+		return m.drainTurnQueue(), true
+
+	case tauchat.InteractivePromptRequestedEvent:
+		return m.enqueuePrompt(e), true
+
+		// Session events.
+	}
+	return nil, false
+}
+
+// handleToolEvent handles the tool-call lifecycle events (deltas, execution start/completion, output). Returns (cmd, true) when the event was handled.
+func (m *model) handleToolEvent(evt tauchat.ChatEvent) (tea.Cmd, bool) {
+	switch e := evt.(type) {
 	case tauchat.ChatToolCallDeltaEvent:
 		m.adoptStreamedToolCallID(e.CallID, e.Index)
 		m.upsertToolCall(e.CallID, e.ToolName, e.ArgumentsSummary, "")
@@ -109,6 +167,80 @@ func (m *model) handleChatEvent(evt tauchat.ChatEvent) tea.Cmd {
 			m.agentState = agentProcessing
 		}
 
+	case tauchat.ChatToolOutputEvent:
+		m.setToolResult(e.CallID, e.Chunk)
+		m.appendToolTail(e.CallID, e.Chunk)
+
+	}
+	return nil, false
+}
+
+// handleStatusEvent handles the runtime errors and chat notifications. Returns (cmd, true) when the event was handled.
+func (m *model) handleStatusEvent(evt tauchat.ChatEvent) (tea.Cmd, bool) {
+	switch e := evt.(type) {
+	case tauchat.ChatRuntimeErrorEvent:
+		// A failed background session-list prefetch (see
+		// maybePrefetchSessions) must not leave sessionsFetchInFlight stuck
+		// true forever with no retry - harmless no-op otherwise.
+		m.finishSessionsFetch()
+		// A failed child-transcript load is not a failed chat turn - it must
+		// not fall through into the turn-interruption logic below. Close the
+		// stuck "Loading…" overlay (if this error matches it) and notify,
+		// same stale-response guard as ChildTranscriptLoadedEvent.
+		if m.childTranscriptViewer != nil && m.childTranscriptViewer.loading && m.childTranscriptViewer.sessionID == e.SessionID {
+			m.childTranscriptViewer = nil
+			return m.setNotification("failed to load transcript: " + e.Message), true
+		}
+		// The turn cannot continue, but any text/tools that already streamed
+		// are still useful scrollback. Commit them before clearing the live
+		// buffers so failed in-flight tool groups do not vanish when the next
+		// prompt starts. hadLoneTool is captured before flushing (which
+		// clears m.tools) so the appendMessage call below knows whether that
+		// commit already put this exact reason in scrollback - a lone tool
+		// box (renderCommittedGroup/renderToolBox: len(tools)==1) shows a
+		// compact result summary inline with nothing to expand, so it
+		// already displays the reason; a MULTI-tool group instead collapses
+		// to a bare count ("2 tool calls (1 error)") until clicked open, so
+		// the reason isn't visible there without the echo below.
+		hadLoneTool := len(m.tools) == 1
+		m.flushInterruptedTurn(e.Message)
+		m.steering = false
+		// Shown via the notification banner (above the input area) at error
+		// level, auto-clearing after notificationClearDelay like any other
+		// notification - the scrollback line below is the permanent record,
+		// so the banner doesn't need to persist until dismissed too. Also
+		// printed to scrollback so it isn't lost once the banner clears -
+		// but only when nothing else in scrollback already shows it (see
+		// hadLoneTool above). Truncated: some providers return an unbounded
+		// error body (e.g. a full HTML edge error page) that would
+		// otherwise flood scrollback and bury the prompt (N-something).
+		msg := truncateErrorText(e.Message)
+		m.agentState = agentError
+		cmd := m.setNotificationWithLevel(msg, notify.LevelError, notificationClearDelay)
+		if !hadLoneTool {
+			m.appendMessage("system", "✗ "+msg)
+		}
+		return cmd, true
+
+	case tauchat.ChatNotificationEvent:
+		// Covers the "session persistence unavailable" path a background
+		// session-list prefetch can hit - see the ChatRuntimeErrorEvent case
+		// above for why this reset matters.
+		m.finishSessionsFetch()
+		msg := truncateErrorText(e.Message)
+		cmd := m.setNotificationWithLevel(msg, notifyLevelFromChat(e.Level), notifyDurationFromChat(e.Level))
+		if e.Level == tauchat.ChatNotificationError {
+			m.appendMessage("system", msg)
+		}
+		return cmd, true
+
+	}
+	return nil, false
+}
+
+// handleChildAgentEvent handles the child agent state, live transcript, and transcript-load events. Returns (cmd, true) when the event was handled.
+func (m *model) handleChildAgentEvent(evt tauchat.ChatEvent) (tea.Cmd, bool) {
+	switch e := evt.(type) {
 	case tauchat.ChildAgentStateEvent:
 		// Live child agent state update (per 05-ui.md). Terminal
 		// states from the event stream update the summary; the UI
@@ -142,90 +274,27 @@ func (m *model) handleChatEvent(evt tauchat.ChatEvent) tea.Cmd {
 			m.refreshLiveChildTranscript()
 		}
 
-	case tauchat.ChatToolOutputEvent:
-		m.setToolResult(e.CallID, e.Chunk)
-		m.appendToolTail(e.CallID, e.Chunk)
-
-	case tauchat.ChatResponseCompletedEvent:
-		content := m.finalizeResponse(lastAssistantMessageID(e.State))
-		m.agentState = agentReady
-		// noopCmd guarantees a non-nil Batch even when there's no queued turn
-		// to drain and no desktop notification to fire.
-		cmds := []tea.Cmd{noopCmd, m.drainTurnQueue()}
-		// Only nudge the user via desktop notification when they've
-		// actually looked away - while focused, the response already
-		// streamed onto their screen. Matches internal/tui/inline_events.go.
-		if content != "" && !m.focused {
-			cmds = append(cmds, tea.Raw(termkit.Notify("tau", content)))
+	case tauchat.ChildTranscriptLoadedEvent:
+		// Guard against a stale response: the user may have closed the
+		// overlay, or closed-and-reopened it on a different child, before
+		// this async load returned.
+		if m.childTranscriptViewer == nil || m.childTranscriptViewer.sessionID != e.SessionID {
+			return nil, true
 		}
-		return tea.Batch(cmds...)
+		boxW := max(20, int(float64(m.width)*diffViewerWidthFrac))
+		innerWidth := max(20, boxW-4)
+		lines := m.renderChildTranscriptLines(e.Messages, innerWidth)
+		m.childTranscriptViewer.viewport.SetContent(strings.Join(lines, "\n"))
+		m.childTranscriptViewer.loading = false
+		return nil, true
 
-	case tauchat.ChatResponseCancelledEvent:
-		m.flushInterruptedTurn("chat request cancelled")
-		m.steering = false
-		m.agentState = agentCancelled
-		return m.drainTurnQueue()
+	}
+	return nil, false
+}
 
-	case tauchat.ChatRuntimeErrorEvent:
-		// A failed background session-list prefetch (see
-		// maybePrefetchSessions) must not leave sessionsFetchInFlight stuck
-		// true forever with no retry - harmless no-op otherwise.
-		m.finishSessionsFetch()
-		// A failed child-transcript load is not a failed chat turn - it must
-		// not fall through into the turn-interruption logic below. Close the
-		// stuck "Loading…" overlay (if this error matches it) and notify,
-		// same stale-response guard as ChildTranscriptLoadedEvent.
-		if m.childTranscriptViewer != nil && m.childTranscriptViewer.loading && m.childTranscriptViewer.sessionID == e.SessionID {
-			m.childTranscriptViewer = nil
-			return m.setNotification("failed to load transcript: " + e.Message)
-		}
-		// The turn cannot continue, but any text/tools that already streamed
-		// are still useful scrollback. Commit them before clearing the live
-		// buffers so failed in-flight tool groups do not vanish when the next
-		// prompt starts. hadLoneTool is captured before flushing (which
-		// clears m.tools) so the appendMessage call below knows whether that
-		// commit already put this exact reason in scrollback - a lone tool
-		// box (renderCommittedGroup/renderToolBox: len(tools)==1) shows a
-		// compact result summary inline with nothing to expand, so it
-		// already displays the reason; a MULTI-tool group instead collapses
-		// to a bare count ("2 tool calls (1 error)") until clicked open, so
-		// the reason isn't visible there without the echo below.
-		hadLoneTool := len(m.tools) == 1
-		m.flushInterruptedTurn(e.Message)
-		m.steering = false
-		// Shown via the notification banner (above the input area) at error
-		// level, auto-clearing after notificationClearDelay like any other
-		// notification - the scrollback line below is the permanent record,
-		// so the banner doesn't need to persist until dismissed too. Also
-		// printed to scrollback so it isn't lost once the banner clears -
-		// but only when nothing else in scrollback already shows it (see
-		// hadLoneTool above). Truncated: some providers return an unbounded
-		// error body (e.g. a full HTML edge error page) that would
-		// otherwise flood scrollback and bury the prompt (N-something).
-		msg := truncateErrorText(e.Message)
-		m.agentState = agentError
-		cmd := m.setNotificationWithLevel(msg, notify.LevelError, notificationClearDelay)
-		if !hadLoneTool {
-			m.appendMessage("system", "✗ "+msg)
-		}
-		return cmd
-
-	case tauchat.ChatNotificationEvent:
-		// Covers the "session persistence unavailable" path a background
-		// session-list prefetch can hit - see the ChatRuntimeErrorEvent case
-		// above for why this reset matters.
-		m.finishSessionsFetch()
-		msg := truncateErrorText(e.Message)
-		cmd := m.setNotificationWithLevel(msg, notifyLevelFromChat(e.Level), notifyDurationFromChat(e.Level))
-		if e.Level == tauchat.ChatNotificationError {
-			m.appendMessage("system", msg)
-		}
-		return cmd
-
-	case tauchat.InteractivePromptRequestedEvent:
-		return m.enqueuePrompt(e)
-
-	// Session events.
+// handleSessionEvent handles the session list/load/delete/export and search results. Returns (cmd, true) when the event was handled.
+func (m *model) handleSessionEvent(evt tauchat.ChatEvent) (tea.Cmd, bool) {
+	switch e := evt.(type) {
 	case tauchat.SessionsListedEvent:
 		m.sessionSummaries = e.Sessions
 		m.finishSessionsFetch()
@@ -235,10 +304,10 @@ func (m *model) handleChatEvent(evt tauchat.ChatEvent) tea.Cmd {
 			// not a user-facing "/session list", so nothing prints to
 			// scrollback. The dropdown picks up m.sessionSummaries on its
 			// own next render.
-			return nil
+			return nil, true
 		}
 		m.appendMessage("system", sessionSummariesText(e.Sessions, e.NextCursor))
-		return nil
+		return nil, true
 
 	case tauchat.SessionLoadedEvent:
 		// Reuses the same state-sync + message-replay logic as an initial
@@ -247,50 +316,43 @@ func (m *model) handleChatEvent(evt tauchat.ChatEvent) tea.Cmd {
 		// actually visible instead of just a notification.
 		m.applySnapshot(tauchat.ChatSessionSnapshotEvent(e))
 		m.seedHistoryFromMessages(e.State.Messages)
-		return m.setNotification(fmt.Sprintf("Session %s loaded (%d messages)", e.State.SessionID, len(e.State.Messages)))
-
-	case tauchat.ChildTranscriptLoadedEvent:
-		// Guard against a stale response: the user may have closed the
-		// overlay, or closed-and-reopened it on a different child, before
-		// this async load returned.
-		if m.childTranscriptViewer == nil || m.childTranscriptViewer.sessionID != e.SessionID {
-			return nil
-		}
-		boxW := max(20, int(float64(m.width)*diffViewerWidthFrac))
-		innerWidth := max(20, boxW-4)
-		lines := m.renderChildTranscriptLines(e.Messages, innerWidth)
-		m.childTranscriptViewer.viewport.SetContent(strings.Join(lines, "\n"))
-		m.childTranscriptViewer.loading = false
-		return nil
+		return m.setNotification(fmt.Sprintf("Session %s loaded (%d messages)", e.State.SessionID, len(e.State.Messages))), true
 
 	case tauchat.SessionDeletedEvent:
-		return m.setNotification("session deleted: " + e.SessionID)
+		return m.setNotification("session deleted: " + e.SessionID), true
 
 	case tauchat.SessionExportedEvent:
 		if e.Content != "" {
 			m.appendMessage("system", "session export ("+e.Format+", "+e.SessionID+"):\n"+e.Content)
-			return nil
+			return nil, true
 		}
-		return m.setNotification("session exported: " + e.Path)
+		return m.setNotification("session exported: " + e.Path), true
 
 	case tauchat.SearchResultsEvent:
-		return m.renderSearchResults(e)
+		return m.renderSearchResults(e), true
 
-	// Extension / plugin events.
+		// Extension / plugin events.
+	}
+	return nil, false
+}
+
+// handleExtensionEvent handles the extension/plugin events (reload, commands, results, views). Returns (cmd, true) when the event was handled.
+func (m *model) handleExtensionEvent(evt tauchat.ChatEvent) (tea.Cmd, bool) {
+	switch e := evt.(type) {
 	case tauchat.ExtensionsReloadedEvent:
-		return m.setNotification(fmt.Sprintf("extensions: %d loaded, %d diagnostics", e.Result.ExtensionCount, len(e.Result.Diagnostics)))
+		return m.setNotification(fmt.Sprintf("extensions: %d loaded, %d diagnostics", e.Result.ExtensionCount, len(e.Result.Diagnostics))), true
 
 	case tauchat.ExtensionCommandsChangedEvent:
 		m.extensionCommands = make(map[string]tauchat.ExtensionCommand, len(e.Commands))
 		for _, ext := range e.Commands {
 			m.extensionCommands[ext.Name] = ext
 		}
-		return nil
+		return nil, true
 
 	case tauchat.CommandsChangedEvent:
 		// Registry commands changed - no-op for now (completion picks them up
 		// from slashTable which is static).
-		return nil
+		return nil, true
 
 	case tauchat.ExtensionCommandResultEvent:
 		if e.Output != "" {
@@ -303,7 +365,7 @@ func (m *model) handleChatEvent(evt tauchat.ChatEvent) tea.Cmd {
 			}
 			m.appendMessage("system", text)
 		}
-		return nil
+		return nil, true
 
 	case tauchat.ExtensionViewRenderedEvent:
 		m.panels[e.ViewID] = pluginPanel{
@@ -311,34 +373,39 @@ func (m *model) handleChatEvent(evt tauchat.ChatEvent) tea.Cmd {
 			title:   e.View.Title,
 			content: renderPluginView(e.View),
 		}
-		return nil
+		return nil, true
 
 	case tauchat.ExtensionViewClosedEvent:
 		delete(m.panels, e.ViewID)
-		return nil
+		return nil, true
 
-	// Skills events. Rendered through glamour (like assistant markdown)
-	// rather than appendMessage, so long descriptions wrap with a hanging
-	// indent instead of spilling into one unstyled blob - see
-	// skillsChangedText.
-	case tauchat.SkillsChangedEvent:
-		m.skills = e.Skills
-		// Skill discovery publishes this at startup and on every reload. The
-		// catalog is a full-screen wall of text, so render it only for the
-		// user who asked via /skills list.
-		if !m.skillsListPending {
-			return nil
-		}
-		m.skillsListPending = false
-		rendered := m.renderMarkdown(skillsChangedText(e.Skills), m.width)
-		m.renderedLines = append(m.renderedLines, strings.Split(rendered, "\n")...)
-		m.viewport.SetContentLines(m.renderedLines)
-		return nil
-
-	default:
-		return nil
+		// Skills events. Rendered through glamour (like assistant markdown)
+		// rather than appendMessage, so long descriptions wrap with a hanging
+		// indent instead of spilling into one unstyled blob - see
+		// skillsChangedText.
 	}
-	return nil
+	return nil, false
+}
+
+// handleSkillsEvent handles the skills catalog event. Returns (cmd, true)
+// when the event was handled.
+func (m *model) handleSkillsEvent(evt tauchat.ChatEvent) (tea.Cmd, bool) {
+	e, ok := evt.(tauchat.SkillsChangedEvent)
+	if !ok {
+		return nil, false
+	}
+	m.skills = e.Skills
+	// Skill discovery publishes this at startup and on every reload. The
+	// catalog is a full-screen wall of text, so render it only for the
+	// user who asked via /skills list.
+	if !m.skillsListPending {
+		return nil, true
+	}
+	m.skillsListPending = false
+	rendered := m.renderMarkdown(skillsChangedText(e.Skills), m.width)
+	m.renderedLines = append(m.renderedLines, strings.Split(rendered, "\n")...)
+	m.viewport.SetContentLines(m.renderedLines)
+	return nil, true
 }
 
 // renderSearchResults presents full-text search hits as a system message:
@@ -370,30 +437,9 @@ func (m *model) appendChildMessageEvent(e tauchat.ChildAgentMessageEvent) {
 	case tauchat.ChatResponseStartedEvent:
 		msgs = append(msgs, tauchat.ChatMessage{Role: tauchat.ChatRoleAssistant})
 	case tauchat.ChatResponseDeltaEvent:
-		if n := len(msgs); n > 0 && msgs[n-1].Role == tauchat.ChatRoleAssistant {
-			msgs[n-1].Content += evt.Delta
-		}
+		msgs = appendChildDelta(msgs, evt)
 	case tauchat.ChatToolCallDeltaEvent:
-		if n := len(msgs); n > 0 && msgs[n-1].Role == tauchat.ChatRoleAssistant {
-			found := false
-			for i, tc := range msgs[n-1].ToolCalls {
-				if tc.ID == evt.CallID {
-					msgs[n-1].ToolCalls[i].Function.Arguments += evt.ArgumentsSummary
-					found = true
-					break
-				}
-			}
-			if !found {
-				msgs[n-1].ToolCalls = append(msgs[n-1].ToolCalls, tauchat.ChatToolCall{
-					ID:   evt.CallID,
-					Type: "function",
-					Function: tauchat.ChatFunctionCall{
-						Name:      evt.ToolName,
-						Arguments: evt.ArgumentsSummary,
-					},
-				})
-			}
-		}
+		msgs = appendChildToolCallDelta(msgs, evt)
 	case tauchat.ChatToolExecutionCompletedEvent:
 		msgs = append(msgs, tauchat.ChatMessage{
 			Role:       tauchat.ChatRoleTool,
@@ -401,19 +447,68 @@ func (m *model) appendChildMessageEvent(e tauchat.ChildAgentMessageEvent) {
 			Content:    evt.ResultSummary,
 		})
 	case tauchat.ChatResponseCompletedEvent:
-		// Finalize the last assistant message from the completed state.
-		if n := len(msgs); n > 0 && msgs[n-1].Role == tauchat.ChatRoleAssistant {
-			messages := evt.State.Messages
-			if len(messages) > 0 {
-				last := messages[len(messages)-1]
-				if last.Role == tauchat.ChatRoleAssistant {
-					msgs[n-1].Content = last.Content
-					msgs[n-1].ToolCalls = last.ToolCalls
-				}
-			}
-		}
+		msgs = finalizeChildResponse(msgs, evt)
 	}
 	m.childMessages[e.CallID] = msgs
+}
+
+// lastChildAssistantMsg returns the trailing assistant message of the child
+// transcript buffer, or nil when the buffer is empty or ends on a tool message.
+func lastChildAssistantMsg(msgs []tauchat.ChatMessage) *tauchat.ChatMessage {
+	if n := len(msgs); n > 0 && msgs[n-1].Role == tauchat.ChatRoleAssistant {
+		return &msgs[n-1]
+	}
+	return nil
+}
+
+// appendChildDelta appends a streamed text delta to the trailing assistant
+// message, if any.
+func appendChildDelta(msgs []tauchat.ChatMessage, evt tauchat.ChatResponseDeltaEvent) []tauchat.ChatMessage {
+	if last := lastChildAssistantMsg(msgs); last != nil {
+		last.Content += evt.Delta
+	}
+	return msgs
+}
+
+// appendChildToolCallDelta folds a streamed tool-call delta into the trailing
+// assistant message: appending arguments to the matching tool call, or adding
+// a new tool call when the ID hasn't been seen yet.
+func appendChildToolCallDelta(msgs []tauchat.ChatMessage, evt tauchat.ChatToolCallDeltaEvent) []tauchat.ChatMessage {
+	last := lastChildAssistantMsg(msgs)
+	if last == nil {
+		return msgs
+	}
+	for i, tc := range last.ToolCalls {
+		if tc.ID == evt.CallID {
+			last.ToolCalls[i].Function.Arguments += evt.ArgumentsSummary
+			return msgs
+		}
+	}
+	last.ToolCalls = append(last.ToolCalls, tauchat.ChatToolCall{
+		ID:   evt.CallID,
+		Type: "function",
+		Function: tauchat.ChatFunctionCall{
+			Name:      evt.ToolName,
+			Arguments: evt.ArgumentsSummary,
+		},
+	})
+	return msgs
+}
+
+// finalizeChildResponse replaces the trailing assistant message's content and
+// tool calls with the final state from the completed event.
+func finalizeChildResponse(msgs []tauchat.ChatMessage, evt tauchat.ChatResponseCompletedEvent) []tauchat.ChatMessage {
+	last := lastChildAssistantMsg(msgs)
+	if last == nil {
+		return msgs
+	}
+	if messages := evt.State.Messages; len(messages) > 0 {
+		if final := messages[len(messages)-1]; final.Role == tauchat.ChatRoleAssistant {
+			last.Content = final.Content
+			last.ToolCalls = final.ToolCalls
+		}
+	}
+	return msgs
 }
 
 func (m *model) applySnapshot(e tauchat.ChatSessionSnapshotEvent) {
@@ -437,44 +532,7 @@ func (m *model) applySnapshot(e tauchat.ChatSessionSnapshotEvent) {
 	// flushToolGroup's rendering exactly, or an already-committed message
 	// reverts to raw/unbatched form the next time a snapshot rebuilds the
 	// viewport.
-	//
-	// toolCallsByID tracks each assistant tool_call's name/arguments so a
-	// later ChatRoleTool message (which only carries the call's ID and
-	// result) can be rendered as a real tool call instead of being dropped -
-	// history has no per-call elapsed time or error flag, so replayed calls
-	// always show status "done" with no timing. pendingTools batches a run of
-	// consecutive tool results (uninterrupted by user/assistant text) so a
-	// turn with many tool calls renders as one compact group instead of
-	// burying the surrounding conversation.
-	// oldGroups lets a fold/row-expand the user made on a committed group
-	// survive this rebuild - without it, every submitted prompt (which
-	// triggers a fresh snapshot) would silently refold anything they'd
-	// opened. Keyed by committedGroupKey, which stays stable across
-	// rebuilds (see its doc comment).
-	oldGroups := make(map[string]*committedToolGroup, len(m.committedGroups))
-	for _, g := range m.committedGroups {
-		oldGroups[committedGroupKey(g.tools)] = g
-	}
-	m.committedGroups = m.committedGroups[:0]
-
-	// oldReasoning is the same fold-survival mechanism as oldGroups, for
-	// completed reasoning blocks - keyed by committedReasoningKey.
-	oldReasoning := make(map[string]*committedReasoningBlock, len(m.committedReasoning))
-	for _, b := range m.committedReasoning {
-		oldReasoning[b.key] = b
-	}
-	m.committedReasoning = m.committedReasoning[:0]
-	m.lastReasoningKey = ""
-
-	toolCallsByID := map[string]tauchat.ChatToolCall{}
-	var pendingTools []toolState
-	flushPendingTools := func() {
-		if len(pendingTools) == 0 {
-			return
-		}
-		m.commitToolGroup(pendingTools, oldGroups)
-		pendingTools = nil
-	}
+	b := m.newSnapshotBuilder()
 
 	m.renderedLines = m.renderedLines[:0]
 	m.messageRanges = m.messageRanges[:0]
@@ -483,90 +541,20 @@ func (m *model) applySnapshot(e tauchat.ChatSessionSnapshotEvent) {
 		switch msg.Role {
 		case tauchat.ChatRoleUser:
 			if cmd, output, ok := parseBashHistoryMessage(msg.Content); ok {
-				pendingTools = append(pendingTools, toolState{
-					// A stable, index-derived ID (not uuid.NewString()) -
-					// this entry has no real call ID, and committedGroupKey
-					// needs the same ID back on every rebuild for fold
-					// state to carry over instead of resetting.
-					id:     fmt.Sprintf("bash-%d", idx),
-					name:   "shell",
-					args:   cmd,
-					result: output,
-					status: "done",
-				})
+				b.addBashHistoryTool(cmd, output, idx)
 				continue
 			}
-			flushPendingTools()
-			// spacingToolToContent blank lines after tool group.
-			for range spacingToolToContent {
-				m.renderedLines = append(m.renderedLines, "")
-			}
-			start := len(m.renderedLines)
-			lines := strings.Split(msg.Content, "\n")
-			for i, l := range lines {
-				if i == 0 {
-					m.renderedLines = append(m.renderedLines, renderLine("user", l))
-				} else {
-					m.renderedLines = append(m.renderedLines, renderContinuationLine("user", l))
-				}
-			}
-			if msg.ID != "" {
-				m.messageRanges = append(m.messageRanges, messageLineRange{id: msg.ID, content: msg.Content, startLine: start, endLine: len(m.renderedLines)})
-			}
+			b.flushPendingTools()
+			b.addUserMessage(msg)
 		case tauchat.ChatRoleAssistant:
-			// Reasoning is persisted per-message (ChatMessage.ReasoningContent)
-			// specifically so it survives a snapshot rebuild - without this,
-			// finalizeResponse's live-turn commit would render fine once, then
-			// vanish the moment the next prompt triggered a rebuild here, since
-			// this function is the sole source of truth for renderedLines.
-			if msg.ReasoningContent != "" && m.showReasoning {
-				flushPendingTools()
-				// spacingToolToContent blank lines after tool group.
-				for range spacingToolToContent {
-					m.renderedLines = append(m.renderedLines, "")
-				}
-				key := committedReasoningKey(msg.ID, idx)
-				m.commitReasoningBlock(msg.ReasoningContent, key, m.autoCollapseReasoning(msg.Content != "", len(msg.ToolCalls) > 0), oldReasoning)
-				// spacingReasoningToContent blank lines before next component.
-				for range spacingReasoningToContent {
-					m.renderedLines = append(m.renderedLines, "")
-				}
-			}
-			if msg.Content != "" {
-				flushPendingTools()
-				// spacingToolToContent blank lines after tool group.
-				for range spacingToolToContent {
-					m.renderedLines = append(m.renderedLines, "")
-				}
-				start := len(m.renderedLines)
-				m.lastAssistantText = msg.Content
-				rendered := m.renderMarkdown(msg.Content, m.width)
-				m.renderedLines = append(m.renderedLines, strings.Split(rendered, "\n")...)
-				// spacingBetweenMessages blank lines after assistant markdown.
-				for range spacingBetweenMessages {
-					m.renderedLines = append(m.renderedLines, "")
-				}
-				if msg.ID != "" {
-					m.messageRanges = append(m.messageRanges, messageLineRange{id: msg.ID, content: msg.Content, startLine: start, endLine: len(m.renderedLines)})
-				}
-			}
-			for _, tc := range msg.ToolCalls {
-				toolCallsByID[tc.ID] = tc
-			}
+			b.addAssistantMessage(msg, idx)
 		case tauchat.ChatRoleTool:
-			tc := toolCallsByID[msg.ToolCallID]
-			pendingTools = append(pendingTools, toolState{
-				id:     msg.ToolCallID,
-				name:   tc.Function.Name,
-				args:   tc.Function.Arguments,
-				result: msg.Content,
-				status: "done",
-			})
+			b.addToolMessage(msg)
 		default:
 			continue
 		}
 	}
-	flushPendingTools()
+	b.flushPendingTools()
 	// spacingToolToContent blank lines after final tool group.
 	for range spacingToolToContent {
 		m.renderedLines = append(m.renderedLines, "")
@@ -575,6 +563,161 @@ func (m *model) applySnapshot(e tauchat.ChatSessionSnapshotEvent) {
 
 	// Store copy-safe canonical message history for /copy session / /copy N.
 	m.canonicalMessages = canonicalMessages(state.Messages)
+}
+
+// snapshotBuilder carries the per-rebuild state of applySnapshot: the
+// pending (not yet grouped) tool results, the assistant tool calls seen so
+// far keyed by ID (a later ChatRoleTool message only carries the call's ID
+// and result), and the fold-state maps that let a user's fold/row-expand on
+// a committed group or reasoning block survive the rebuild.
+//
+// toolCallsByID tracks each assistant tool_call's name/arguments so a later
+// ChatRoleTool message can be rendered as a real tool call instead of being
+// dropped - history has no per-call elapsed time or error flag, so replayed
+// calls always show status "done" with no timing. pendingTools batches a run
+// of consecutive tool results (uninterrupted by user/assistant text) so a
+// turn with many tool calls renders as one compact group instead of burying
+// the surrounding conversation.
+// oldGroups lets a fold/row-expand the user made on a committed group
+// survive this rebuild - without it, every submitted prompt (which
+// triggers a fresh snapshot) would silently refold anything they'd opened.
+// Keyed by committedGroupKey, which stays stable across rebuilds (see its
+// doc comment). oldReasoning is the same fold-survival mechanism as
+// oldGroups, for completed reasoning blocks - keyed by committedReasoningKey.
+type snapshotBuilder struct {
+	m             *model
+	pendingTools  []toolState
+	toolCallsByID map[string]tauchat.ChatToolCall
+	oldGroups     map[string]*committedToolGroup
+	oldReasoning  map[string]*committedReasoningBlock
+}
+
+// newSnapshotBuilder captures the current committed fold state (before it is
+// cleared) and returns a builder for replaying the session's messages.
+func (m *model) newSnapshotBuilder() *snapshotBuilder {
+	oldGroups := make(map[string]*committedToolGroup, len(m.committedGroups))
+	for _, g := range m.committedGroups {
+		oldGroups[committedGroupKey(g.tools)] = g
+	}
+	m.committedGroups = m.committedGroups[:0]
+
+	oldReasoning := make(map[string]*committedReasoningBlock, len(m.committedReasoning))
+	for _, b := range m.committedReasoning {
+		oldReasoning[b.key] = b
+	}
+	m.committedReasoning = m.committedReasoning[:0]
+	m.lastReasoningKey = ""
+
+	return &snapshotBuilder{
+		m:             m,
+		toolCallsByID: map[string]tauchat.ChatToolCall{},
+		oldGroups:     oldGroups,
+		oldReasoning:  oldReasoning,
+	}
+}
+
+// flushPendingTools commits the batched pending tool results as one group.
+func (b *snapshotBuilder) flushPendingTools() {
+	if len(b.pendingTools) == 0 {
+		return
+	}
+	b.m.commitToolGroup(b.pendingTools, b.oldGroups)
+	b.pendingTools = nil
+}
+
+// addBashHistoryTool records a synthetic "!" bash-mode command (persisted as
+// plain user text by the backend) as a pending done tool row.
+func (b *snapshotBuilder) addBashHistoryTool(cmd, output string, idx int) {
+	b.pendingTools = append(b.pendingTools, toolState{
+		// A stable, index-derived ID (not uuid.NewString()) -
+		// this entry has no real call ID, and committedGroupKey
+		// needs the same ID back on every rebuild for fold
+		// state to carry over instead of resetting.
+		id:     fmt.Sprintf("bash-%d", idx),
+		name:   "shell",
+		args:   cmd,
+		result: output,
+		status: "done",
+	})
+}
+
+// addUserMessage appends a user message's rendered lines (first line styled
+// as the message start, the rest as continuations) plus its message range.
+func (b *snapshotBuilder) addUserMessage(msg tauchat.ChatMessage) {
+	m := b.m
+	// spacingToolToContent blank lines after tool group.
+	for range spacingToolToContent {
+		m.renderedLines = append(m.renderedLines, "")
+	}
+	start := len(m.renderedLines)
+	for i, l := range strings.Split(msg.Content, "\n") {
+		if i == 0 {
+			m.renderedLines = append(m.renderedLines, renderLine("user", l))
+		} else {
+			m.renderedLines = append(m.renderedLines, renderContinuationLine("user", l))
+		}
+	}
+	b.recordMessageRange(msg, start)
+}
+
+// addAssistantMessage appends a committed reasoning block (when reasoning is
+// shown and the message has one) and/or the rendered markdown content.
+func (b *snapshotBuilder) addAssistantMessage(msg tauchat.ChatMessage, idx int) {
+	m := b.m
+	// Reasoning is persisted per-message (ChatMessage.ReasoningContent)
+	// specifically so it survives a snapshot rebuild - without this,
+	// finalizeResponse's live-turn commit would render fine once, then
+	// vanish the moment the next prompt triggered a rebuild here, since
+	// applySnapshot is the sole source of truth for renderedLines.
+	if msg.ReasoningContent != "" && m.showReasoning {
+		b.flushPendingTools()
+		b.appendSpacing(spacingToolToContent)
+		key := committedReasoningKey(msg.ID, idx)
+		m.commitReasoningBlock(msg.ReasoningContent, key, m.autoCollapseReasoning(msg.Content != "", len(msg.ToolCalls) > 0), b.oldReasoning)
+		// spacingReasoningToContent blank lines before next component.
+		b.appendSpacing(spacingReasoningToContent)
+	}
+	if msg.Content != "" {
+		b.flushPendingTools()
+		b.appendSpacing(spacingToolToContent)
+		start := len(m.renderedLines)
+		m.lastAssistantText = msg.Content
+		rendered := m.renderMarkdown(msg.Content, m.width)
+		m.renderedLines = append(m.renderedLines, strings.Split(rendered, "\n")...)
+		// spacingBetweenMessages blank lines after assistant markdown.
+		b.appendSpacing(spacingBetweenMessages)
+		b.recordMessageRange(msg, start)
+	}
+	for _, tc := range msg.ToolCalls {
+		b.toolCallsByID[tc.ID] = tc
+	}
+}
+
+// addToolMessage records a tool-result message as a pending done tool row,
+// named/argued from the matching assistant tool call seen earlier.
+func (b *snapshotBuilder) addToolMessage(msg tauchat.ChatMessage) {
+	tc := b.toolCallsByID[msg.ToolCallID]
+	b.pendingTools = append(b.pendingTools, toolState{
+		id:     msg.ToolCallID,
+		name:   tc.Function.Name,
+		args:   tc.Function.Arguments,
+		result: msg.Content,
+		status: "done",
+	})
+}
+
+// appendSpacing appends n blank lines to the rendered output.
+func (b *snapshotBuilder) appendSpacing(n int) {
+	for range n {
+		b.m.renderedLines = append(b.m.renderedLines, "")
+	}
+}
+
+// recordMessageRange records msg's on-screen line range when it has an ID.
+func (b *snapshotBuilder) recordMessageRange(msg tauchat.ChatMessage, start int) {
+	if msg.ID != "" {
+		b.m.messageRanges = append(b.m.messageRanges, messageLineRange{id: msg.ID, content: msg.Content, startLine: start, endLine: len(b.m.renderedLines)})
+	}
 }
 
 // canonicalMessages returns the user and assistant messages from a message list,

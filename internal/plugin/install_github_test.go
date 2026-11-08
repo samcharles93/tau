@@ -30,7 +30,7 @@ func requestPathRecordingServer(t *testing.T) (*httptest.Server, *[]string) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		paths = append(paths, r.URL.Path)
 		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(githubRelease{TagName: "v1.2.0"})
+		_ = json.NewEncoder(w).Encode(githubRelease{TagName: "v1.2.0"})
 	}))
 	t.Cleanup(srv.Close)
 	return srv, &paths

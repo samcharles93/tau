@@ -1,13 +1,14 @@
 package agent
 
 import (
+	"context"
 	"strings"
 	"time"
 
 	"github.com/samcharles93/tau/internal/chat"
 )
 
-func (c *Coordinator) handleReloadExtensions(cmd chat.ReloadExtensionsCommand) {
+func (c *Coordinator) handleReloadExtensions(ctx context.Context, cmd chat.ReloadExtensionsCommand) {
 	now := normalizedTime(cmd.RequestedAt)
 	if c.extensionReloader == nil {
 		c.emit(chat.ChatNotificationEvent{
@@ -28,7 +29,7 @@ func (c *Coordinator) handleReloadExtensions(cmd chat.ReloadExtensionsCommand) {
 		return
 	}
 
-	result, err := c.extensionReloader.ReloadExtensions(c.ctx, true)
+	result, err := c.extensionReloader.ReloadExtensions(ctx, true)
 	if err != nil {
 		c.emit(chat.ChatNotificationEvent{
 			Message:    "Extension reload failed: " + err.Error(),
@@ -69,7 +70,7 @@ func (c *Coordinator) handleReloadExtensions(cmd chat.ReloadExtensionsCommand) {
 	}
 }
 
-func (c *Coordinator) handleRunExtensionCommand(cmd chat.RunExtensionCommandCommand) {
+func (c *Coordinator) handleRunExtensionCommand(ctx context.Context, cmd chat.RunExtensionCommandCommand) {
 	now := normalizedTime(cmd.RequestedAt)
 	if c.extensionReloader == nil {
 		c.emit(chat.ChatNotificationEvent{
@@ -90,7 +91,7 @@ func (c *Coordinator) handleRunExtensionCommand(cmd chat.RunExtensionCommandComm
 	name := strings.TrimSpace(cmd.Name)
 	args := strings.TrimSpace(cmd.Args)
 	c.turnWG.Go(func() {
-		output, view, err := c.extensionReloader.RunExtensionCommand(c.ctx, name, args, c.uiBridge)
+		output, view, err := c.extensionReloader.RunExtensionCommand(ctx, name, args, c.uiBridge)
 		at := time.Now().UTC()
 		status := "success"
 		if err != nil {

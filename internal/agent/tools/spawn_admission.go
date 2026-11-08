@@ -226,17 +226,32 @@ func computeSpawnDeadline(args agentToolArgs, specTimeout time.Duration) time.Ti
 	if specTimeout > 0 {
 		consider(now.Add(specTimeout))
 	}
-	if args.Budget != nil {
-		if args.Budget.Timeout != "" {
-			if d, err := time.ParseDuration(args.Budget.Timeout); err == nil {
-				consider(now.Add(d))
-			}
-		}
-		if args.Budget.Deadline != "" {
-			if t, err := time.Parse(time.RFC3339, args.Budget.Deadline); err == nil {
-				consider(t)
-			}
-		}
+	if b := args.Budget; b != nil {
+		considerBudgetTimeout(now, b.Timeout, consider)
+		considerBudgetDeadline(b.Deadline, consider)
 	}
 	return deadline
+}
+
+// considerBudgetTimeout parses a budget.timeout duration and offers it as a
+// deadline candidate. Malformed values are ignored here - buildAgentBudget
+// rejects them with a proper error later (tau-kk4 made this omission loud).
+func considerBudgetTimeout(now time.Time, timeout string, consider func(time.Time)) {
+	if timeout == "" {
+		return
+	}
+	if d, err := time.ParseDuration(timeout); err == nil {
+		consider(now.Add(d))
+	}
+}
+
+// considerBudgetDeadline parses an RFC 3339 budget.deadline and offers it as
+// a deadline candidate. Malformed values are ignored here for the same reason.
+func considerBudgetDeadline(deadline string, consider func(time.Time)) {
+	if deadline == "" {
+		return
+	}
+	if t, err := time.Parse(time.RFC3339, deadline); err == nil {
+		consider(t)
+	}
 }
