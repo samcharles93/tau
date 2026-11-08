@@ -209,10 +209,14 @@ func (s *spawnAdmission) releaseFunc(parentInstanceID string, maxActive, maxTota
 // process actually starts."). It's the earliest of the resolved spec
 // timeout, an explicit budget.timeout override, and an explicit
 // budget.deadline (absolute RFC 3339), relative to now. A zero result
-// means no queue timeout beyond ctx cancellation. Malformed budget fields
-// are ignored here - they're validated and rejected properly once the
-// spawn is admitted and reaches spawnChildProcess's budget construction.
-func computeSpawnDeadline(args agentToolArgs, specTimeout time.Duration) time.Time {
+// means no queue timeout beyond ctx cancellation.
+//
+// Budget fields are validated here, at admission time, per the spec's
+// validation rules - a malformed or out-of-range budget.timeout/budget.deadline
+// returns an error so the spawn is rejected before any slot is acquired or
+// child process started, instead of being silently dropped from the queue
+// deadline and only failing later in buildAgentBudget (tau-kk4).
+func computeSpawnDeadline(args agentToolArgs, specTimeout time.Duration) (time.Time, error) {
 	now := time.Now()
 	var deadline time.Time
 	consider := func(candidate time.Time) {
@@ -226,32 +230,67 @@ func computeSpawnDeadline(args agentToolArgs, specTimeout time.Duration) time.Ti
 	if specTimeout > 0 {
 		consider(now.Add(specTimeout))
 	}
-	if b := args.Budget; b != nil {
-		considerBudgetTimeout(now, b.Timeout, consider)
-		considerBudgetDeadline(b.Deadline, consider)
+	if args.Budget != nil {
+		if err := considerBudget(args.Budget, now, consider); err != nil {
+			return time.Time{}, err
+		}
 	}
-	return deadline
+	return deadline, nil
 }
 
-// considerBudgetTimeout parses a budget.timeout duration and offers it as a
-// deadline candidate. Malformed values are ignored here - buildAgentBudget
-// rejects them with a proper error later (tau-kk4 made this omission loud).
-func considerBudgetTimeout(now time.Time, timeout string, consider func(time.Time)) {
-	if timeout == "" {
-		return
-	}
-	if d, err := time.ParseDuration(timeout); err == nil {
+// considerBudget validates the budget's timeout/deadline fields per the
+// spec's validation rules and offers them as deadline candidates. A
+// malformed or out-of-range value returns an error (loud, tau-kk4) rather
+// than being silently dropped.
+func considerBudget(b *agentBudgetArgs, now time.Time, consider func(time.Time)) error {
+	if b.Timeout != "" {
+		d, err := parseBudgetTimeout(b.Timeout)
+		if err != nil {
+			return err
+		}
 		consider(now.Add(d))
 	}
-}
-
-// considerBudgetDeadline parses an RFC 3339 budget.deadline and offers it as
-// a deadline candidate. Malformed values are ignored here for the same reason.
-func considerBudgetDeadline(deadline string, consider func(time.Time)) {
-	if deadline == "" {
-		return
-	}
-	if t, err := time.Parse(time.RFC3339, deadline); err == nil {
+	if b.Deadline != "" {
+		t, err := parseBudgetDeadline(b.Deadline)
+		if err != nil {
+			return err
+		}
 		consider(t)
 	}
+	return nil
+}
+
+// parseBudgetTimeout parses a budget.timeout duration per the validation
+// rules in docs/specs/agents/02-spawning-and-lifecycle.md: valid range is
+// 1s … 24h, values below 1s are rejected, values above 24h are capped to
+// 24h. A malformed duration is an error, not a silently ignored field
+// (tau-kk4). The messages mirror buildAgentBudget so both validation
+// sites reject identically.
+func parseBudgetTimeout(timeout string) (time.Duration, error) {
+	d, err := time.ParseDuration(timeout)
+	if err != nil {
+		return 0, fmt.Errorf("invalid budget.timeout %q: %w", timeout, err)
+	}
+	if d < time.Second {
+		return 0, fmt.Errorf("invalid budget.timeout %q: must be >= 1s", timeout)
+	}
+	if d > 24*time.Hour {
+		d = 24 * time.Hour
+	}
+	return d, nil
+}
+
+// parseBudgetDeadline parses an RFC 3339 budget.deadline per the validation
+// rules in docs/specs/agents/02-spawning-and-lifecycle.md: it must parse as
+// RFC 3339 and be in the future at spawn time. A malformed or past deadline
+// is an error, not a silently ignored field (tau-kk4).
+func parseBudgetDeadline(deadline string) (time.Time, error) {
+	t, err := time.Parse(time.RFC3339, deadline)
+	if err != nil {
+		return time.Time{}, fmt.Errorf("invalid budget.deadline %q: must be RFC 3339: %w", deadline, err)
+	}
+	if !t.After(time.Now()) {
+		return time.Time{}, fmt.Errorf("invalid budget.deadline %q: must be in the future", deadline)
+	}
+	return t, nil
 }

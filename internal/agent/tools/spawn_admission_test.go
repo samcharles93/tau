@@ -3,6 +3,7 @@ package tools
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 	"time"
 
@@ -286,27 +287,96 @@ func TestComputeSpawnDeadline_EarliestOfTimeoutAndBudget(t *testing.T) {
 	before := time.Now()
 
 	// No timeout, no budget -> zero deadline (no queue timeout).
-	if got := computeSpawnDeadline(agentToolArgs{}, 0); !got.IsZero() {
+	got, err := computeSpawnDeadline(agentToolArgs{}, 0)
+	if err != nil {
+		t.Fatalf("no timeout/budget: unexpected error %v", err)
+	}
+	if !got.IsZero() {
 		t.Errorf("no timeout/budget: deadline = %v, want zero", got)
 	}
 
 	// Spec timeout only.
-	got := computeSpawnDeadline(agentToolArgs{}, 5*time.Minute)
+	got, err = computeSpawnDeadline(agentToolArgs{}, 5*time.Minute)
+	if err != nil {
+		t.Fatalf("spec timeout only: unexpected error %v", err)
+	}
 	if got.Before(before.Add(5*time.Minute)) || got.After(time.Now().Add(5*time.Minute)) {
 		t.Errorf("timeout-only deadline = %v, want ~5m from now", got)
 	}
 
 	// budget.timeout shorter than the spec timeout wins.
 	args := agentToolArgs{Budget: &agentBudgetArgs{Timeout: "1m"}}
-	got = computeSpawnDeadline(args, 5*time.Minute)
+	got, err = computeSpawnDeadline(args, 5*time.Minute)
+	if err != nil {
+		t.Fatalf("budget.timeout: unexpected error %v", err)
+	}
 	if got.After(time.Now().Add(90 * time.Second)) {
 		t.Errorf("budget.timeout should win over longer spec timeout: got %v", got)
 	}
 
 	// budget.deadline (absolute) earlier than the spec timeout wins.
 	args = agentToolArgs{Budget: &agentBudgetArgs{Deadline: time.Now().Add(30 * time.Second).Format(time.RFC3339)}}
-	got = computeSpawnDeadline(args, 5*time.Minute)
+	got, err = computeSpawnDeadline(args, 5*time.Minute)
+	if err != nil {
+		t.Fatalf("budget.deadline: unexpected error %v", err)
+	}
 	if got.After(time.Now().Add(90 * time.Second)) {
 		t.Errorf("budget.deadline should win over longer spec timeout: got %v", got)
+	}
+}
+
+// TestComputeSpawnDeadline_MalformedBudgetIsLoud (tau-kk4): a malformed or
+// out-of-range budget.timeout/budget.deadline must return an error at
+// admission time (rejecting the spawn before a slot or process is wasted),
+// not be silently dropped from the queue deadline. Valid ranges and clamps
+// follow the validation rules in docs/specs/agents/02-spawning-and-lifecycle.md.
+func TestComputeSpawnDeadline_MalformedBudgetIsLoud(t *testing.T) {
+	future := time.Now().Add(time.Hour).Format(time.RFC3339)
+	past := time.Now().Add(-time.Hour).Format(time.RFC3339)
+
+	tests := []struct {
+		name    string
+		budget  *agentBudgetArgs
+		wantErr string // substring; empty means no error expected
+	}{
+		{name: "malformed timeout", budget: &agentBudgetArgs{Timeout: "5mm"}, wantErr: `invalid budget.timeout "5mm"`},
+		{name: "timeout below 1s rejected", budget: &agentBudgetArgs{Timeout: "500ms"}, wantErr: "must be >= 1s"},
+		{name: "timeout above 24h clamped not rejected", budget: &agentBudgetArgs{Timeout: "25h"}},
+		{name: "malformed deadline", budget: &agentBudgetArgs{Deadline: "next friday"}, wantErr: `invalid budget.deadline "next friday"`},
+		{name: "past deadline rejected", budget: &agentBudgetArgs{Deadline: past}, wantErr: "must be in the future"},
+		{name: "valid timeout and deadline", budget: &agentBudgetArgs{Timeout: "10m", Deadline: future}},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := computeSpawnDeadline(agentToolArgs{Budget: tt.budget}, 0)
+			if tt.wantErr == "" {
+				if err != nil {
+					t.Fatalf("unexpected error: %v", err)
+				}
+				if got.IsZero() {
+					t.Fatal("valid budget produced a zero deadline, want a queue deadline")
+				}
+				return
+			}
+			if err == nil {
+				t.Fatalf("deadline = %v, want error containing %q", got, tt.wantErr)
+			}
+			if !strings.Contains(err.Error(), tt.wantErr) {
+				t.Fatalf("error = %q, want it to contain %q", err.Error(), tt.wantErr)
+			}
+		})
+	}
+
+	// The 24h clamp: a 25h timeout must yield a deadline ~24h out (and win
+	// over a longer spec timeout), per "> 24h: cap to 24h".
+	got, err := computeSpawnDeadline(agentToolArgs{Budget: &agentBudgetArgs{Timeout: "25h"}}, 48*time.Hour)
+	if err != nil {
+		t.Fatalf("25h timeout: unexpected error %v", err)
+	}
+	lower := time.Now().Add(24*time.Hour - time.Minute)
+	upper := time.Now().Add(24*time.Hour + time.Minute)
+	if got.Before(lower) || got.After(upper) {
+		t.Errorf("25h timeout clamped deadline = %v, want ~24h from now (%v..%v)", got, lower, upper)
 	}
 }

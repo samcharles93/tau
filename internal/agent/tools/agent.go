@@ -432,7 +432,18 @@ func isAncestorOf(ctx context.Context, s store.SessionStore, candidateInstanceID
 // admitSpawn gates the process spawn behind the concurrency ceilings (G5),
 // returning the slot release func and, on rejection, the Result to return.
 func admitSpawn(ctx context.Context, args agentToolArgs, cfg AgentToolConfig, instResult *childInstance) (func(), *Result) {
-	deadline := computeSpawnDeadline(args, instResult.Timeout)
+	// Validate budget.time fields at admission time (tau-kk4): a malformed
+	// budget.timeout/budget.deadline rejects the spawn here, before a slot
+	// is acquired or a child process started, with the same invalid_params
+	// error kind buildAgentBudget would produce after the handshake.
+	deadline, budgetErr := computeSpawnDeadline(args, instResult.Timeout)
+	if budgetErr != nil {
+		return nil, &Result{
+			Content:   fmt.Sprintf("agent call failed: %v", budgetErr),
+			IsError:   true,
+			ErrorKind: "invalid_params",
+		}
+	}
 	release, admitErr := acquireSpawnSlot(ctx, cfg.ParentInstanceID, cfg.Agents, deadline)
 	if admitErr == nil {
 		return release, nil
