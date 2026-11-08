@@ -757,6 +757,24 @@ func (m *model) cmdSkills(args string) tea.Cmd {
 	return m.setNotification("usage: /skills list")
 }
 
+// parseExportArgs splits the args after "/session export" into session ID
+// and format. A word naming an export format (jsonl/md/markdown) selects the
+// format; the remaining word is the session ID, defaulting to currentID.
+func parseExportArgs(args, currentID string) (id, format string) {
+	id, format = "", tauchat.ExportFormatJSONL
+	for f := range strings.FieldsSeq(args) {
+		if tauchat.IsExportFormat(f) {
+			format = tauchat.NormalizeExportFormat(f)
+		} else if id == "" {
+			id = f
+		}
+	}
+	if id == "" {
+		id = currentID
+	}
+	return id, format
+}
+
 func (m *model) cmdSession(args string) tea.Cmd {
 	args = strings.TrimSpace(args)
 	switch {
@@ -777,13 +795,12 @@ func (m *model) cmdSession(args string) tea.Cmd {
 		}
 		return m.setNotification("session not found: " + id + " (try /session list first)")
 	case strings.HasPrefix(args, "export"):
-		id := strings.TrimSpace(strings.TrimPrefix(args, "export"))
-		if id == "" {
-			id = m.sessionID
-		}
+		// /session export [id] [format] - defaults to the current session
+		// and JSONL when args are omitted.
+		id, format := parseExportArgs(strings.TrimPrefix(args, "export"), m.sessionID)
 		return sendCommand(m.runtime, tauchat.ExportSessionCommand{
 			SessionID: id,
-			Format:    "jsonl",
+			Format:    format,
 		})
 	case strings.HasPrefix(args, "delete"):
 		id := strings.TrimSpace(strings.TrimPrefix(args, "delete"))

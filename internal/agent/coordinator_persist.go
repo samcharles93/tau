@@ -3,7 +3,6 @@ package agent
 import (
 	"context"
 	"fmt"
-	"strings"
 	"time"
 
 	"github.com/samcharles93/tau/internal/chat"
@@ -199,48 +198,21 @@ func (c *Coordinator) handleExportSession(cmd chat.ExportSessionCommand) {
 		return
 	}
 
-	outputPath := cmd.Output
-	var content string
-	if outputPath != "" {
-		ctx, cancel := context.WithTimeout(c.ctx, 30*time.Second)
-		defer cancel()
+	format := chat.NormalizeExportFormat(cmd.Format)
+	ctx, cancel := context.WithTimeout(c.ctx, 30*time.Second)
+	defer cancel()
 
-		if err := c.sessionManager.ExportToJSONL(ctx, cmd.SessionID, outputPath); err != nil {
-			c.emit(chat.ChatRuntimeErrorEvent{
-				SessionID:  cmd.SessionID,
-				Message:    fmt.Sprintf("exporting session: %v", err),
-				Fatal:      false,
-				OccurredAt: time.Now().UTC(),
-			})
-			return
-		}
-	} else {
-		// No output file: collect the JSONL payload for the event.
-		ctx, cancel := context.WithTimeout(c.ctx, 30*time.Second)
-		defer cancel()
-
-		ch, errCh := c.sessionManager.ExportMessages(ctx, cmd.SessionID)
-
-		var output strings.Builder
-		for line := range ch {
-			output.Write(line)
-		}
-		content = output.String()
-
-		select {
-		case err := <-errCh:
-			if err != nil {
-				c.emit(chat.ChatRuntimeErrorEvent{
-					SessionID:  cmd.SessionID,
-					Message:    fmt.Sprintf("exporting session: %v", err),
-					Fatal:      false,
-					OccurredAt: time.Now().UTC(),
-				})
-				return
-			}
-		default:
-		}
-
+	// With no output file the rendered payload is collected for the event;
+	// otherwise it is written atomically to cmd.Output.
+	content, err := c.sessionManager.Export(ctx, cmd.SessionID, format, cmd.Output)
+	if err != nil {
+		c.emit(chat.ChatRuntimeErrorEvent{
+			SessionID:  cmd.SessionID,
+			Message:    fmt.Sprintf("exporting session: %v", err),
+			Fatal:      false,
+			OccurredAt: time.Now().UTC(),
+		})
+		return
 	}
 
 	// The export payload travels on the event, never on os.Stdout: writing to
@@ -248,8 +220,8 @@ func (c *Coordinator) handleExportSession(cmd chat.ExportSessionCommand) {
 	// sessions. Frontends (and headless renderers) present Content themselves.
 	c.emit(chat.SessionExportedEvent{
 		SessionID: cmd.SessionID,
-		Format:    cmd.Format,
-		Path:      outputPath,
+		Format:    format,
+		Path:      cmd.Output,
 		Content:   content,
 	})
 }

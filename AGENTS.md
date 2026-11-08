@@ -628,9 +628,13 @@ Use this section to quickly find the right files for a given change.
 ### Changing Session Persistence
 
 - `internal/store/sqlite_store.go` - `SQLiteStore` implementing `SessionStore`
-- `internal/store/session.go` - `SessionStore` interface: `Save()`, `Load()`, `List()`, `Delete()`, `ExportMessages()`
+- `internal/store/session.go` - `SessionStore` interface: `Save()`, `Load()`, `List()`, `Summary()`, `Delete()`, `ExportMessages()`
 - `internal/store/migrate.go` - Schema migrations (v10 adds `messages.attachments`, a JSON array of `chat.ChatAttachment`)
 - `internal/store/jsonl_export.go` - JSONL export: `ExportSessionAsJSONL()`
+- `internal/store/markdown_export.go` - Markdown export: `ExportSessionAsMarkdown()` / `ExportSessionAsMarkdownFile()` render
+  a session with YAML frontmatter (model, provider, usage, cost, duration), role-headed message sections, reasoning in
+  `<details>` blocks, tool calls as fenced JSON, tool results as fenced code; selected via `ExportSessionCommand.Format`
+  = `chat.ExportFormatMarkdown` (`/session export <id> [jsonl|md] [path]`)
 - `internal/sessions/manager.go` - `Manager` struct: session lifecycle (create, update, close, branch), wraps
   coordinator and store
 
@@ -854,6 +858,7 @@ type SessionStore interface {
     Save(ctx context.Context, state chat.ChatSessionState, duration time.Duration) error
     Load(ctx context.Context, sessionID string) (chat.ChatSessionState, error)
     List(ctx context.Context, limit int, cursor string) ([]SessionSummary, string, error)
+    Summary(ctx context.Context, id string) (SessionSummary, error)
     Delete(ctx context.Context, sessionID string) error
     ExportMessages(ctx context.Context, sessionID string) (<-chan []byte, <-chan error)
     Close() error

@@ -109,7 +109,7 @@ func (m *model) rawCandidateGroups() []compGroup {
 	case "model":
 		return m.modelCompletions(argsBefore)
 	case "session", "resume":
-		return m.sessionCompletions(argsBefore)
+		return m.sessionCompletions(fields, argsBefore)
 	case "effort":
 		return m.effortCompletions(argsBefore)
 	case "provider":
@@ -390,22 +390,30 @@ func (m *model) maybePrefetchSessions() tea.Cmd {
 	return nil
 }
 
-func (m *model) sessionCompletions(argsBefore int) []compGroup {
-	if argsBefore > 0 {
-		return nil // only first arg
-	}
-	summaries := slices.Clone(m.sessionSummaries)
-	matches := make([]compMatch, 0, len(summaries))
-	for _, s := range summaries {
-		parts := []string{sessionDisplayTitle(s), s.ModelID}
-		if s.MessageCount > 0 {
-			parts = append(parts, fmt.Sprintf("%d msgs", s.MessageCount))
+func (m *model) sessionCompletions(fields []string, argsBefore int) []compGroup {
+	if argsBefore == 0 {
+		summaries := slices.Clone(m.sessionSummaries)
+		matches := make([]compMatch, 0, len(summaries))
+		for _, s := range summaries {
+			parts := []string{sessionDisplayTitle(s), s.ModelID}
+			if s.MessageCount > 0 {
+				parts = append(parts, fmt.Sprintf("%d msgs", s.MessageCount))
+			}
+			parts = append(parts, relTime(s.UpdatedAt))
+			// Word stays the full ID - it is what gets inserted as the argument.
+			matches = append(matches, compMatch{Word: s.ID, Description: strings.Join(parts, " · ")})
 		}
-		parts = append(parts, relTime(s.UpdatedAt))
-		// Word stays the full ID - it is what gets inserted as the argument.
-		matches = append(matches, compMatch{Word: s.ID, Description: strings.Join(parts, " · ")})
+		return []compGroup{{Title: "Sessions", Matches: matches}}
 	}
-	return []compGroup{{Title: "Sessions", Matches: matches}}
+	// /session export <id> <format> - offer export formats in the third slot.
+	if argsBefore == 2 && len(fields) >= 2 && strings.EqualFold(fields[1], "export") {
+		return []compGroup{{Title: "Format", Matches: []compMatch{
+			{Word: "jsonl", Description: "JSONL export (default)"},
+			{Word: "markdown", Description: "human-readable Markdown export"},
+			{Word: "md", Description: "alias for markdown"},
+		}}}
+	}
+	return nil // only first arg (plus the export format slot)
 }
 
 func (m *model) effortCompletions(argsBefore int) []compGroup {

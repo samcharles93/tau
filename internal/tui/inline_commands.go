@@ -678,14 +678,22 @@ func (c *inlineChat) handleSessionInfo(parts []string) {
 
 func (c *inlineChat) handleSessionExport(parts []string) {
 	if len(parts) < 2 {
-		c.engine.PrintAbove("%s %s", c.grey("✗"), "usage: /session export <id> [path]")
+		c.engine.PrintAbove("%s %s", c.grey("✗"), "usage: /session export <id> [jsonl|md] [path]")
 		return
 	}
+	// /session export <id> [format] [path] - a leading format word selects
+	// the export format; anything after it is the output file path.
+	format := tauchat.ExportFormatJSONL
 	output := ""
-	if len(parts) >= 3 {
-		output = parts[2]
+	rest := parts[2:]
+	if len(rest) > 0 && tauchat.IsExportFormat(rest[0]) {
+		format = tauchat.NormalizeExportFormat(rest[0])
+		rest = rest[1:]
 	}
-	c.send(tauchat.ExportSessionCommand{SessionID: parts[1], Format: "jsonl", Output: output})
+	if len(rest) > 0 {
+		output = rest[0]
+	}
+	c.send(tauchat.ExportSessionCommand{SessionID: parts[1], Format: format, Output: output})
 }
 
 func (c *inlineChat) handleSessionDelete(parts []string) {

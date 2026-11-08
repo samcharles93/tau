@@ -306,6 +306,10 @@ func (c *inlineChat) sessionArgs(fields []string, argsBefore int) (string, []tau
 			return "Sessions", c.sessionMatches()
 		}
 	}
+	// /session export <id> <format> - offer export formats in the third slot.
+	if argsBefore == 2 && len(fields) >= 2 && strings.ToLower(fields[1]) == "export" {
+		return "Format", exportFormatMatches
+	}
 	return "", nil
 }
 
@@ -334,6 +338,12 @@ func argEffort(c *inlineChat, _ []string, argsBefore int) (string, []taui.Match)
 var sessionSubMatches = []taui.Match{
 	{Word: "list", Description: "show saved sessions"},
 	{Word: "info", Description: "show session details"},
-	{Word: "export", Description: "export a session"},
+	{Word: "export", Description: "export a session (jsonl|md)"},
 	{Word: "delete", Description: "delete a session"},
+}
+
+var exportFormatMatches = []taui.Match{
+	{Word: "jsonl", Description: "JSONL export (default)"},
+	{Word: "markdown", Description: "human-readable Markdown export"},
+	{Word: "md", Description: "alias for markdown"},
 }

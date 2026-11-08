@@ -147,6 +147,45 @@ func (m *Manager) ExportToJSONL(ctx context.Context, id, outputPath string) erro
 	return store.ExportSessionAsJSONL(ctx, m.store, id, outputPath)
 }
 
+// Export renders a saved session in the given format (see
+// chat.NormalizeExportFormat: "jsonl" or "markdown"). When outputPath is
+// empty the rendered payload is returned as a string (for stdout-style
+// presentation by the caller); otherwise it is written atomically to
+// outputPath and an empty string is returned.
+func (m *Manager) Export(ctx context.Context, id, format, outputPath string) (string, error) {
+	switch chat.NormalizeExportFormat(format) {
+	case chat.ExportFormatMarkdown:
+		if outputPath != "" {
+			return "", store.ExportSessionAsMarkdownFile(ctx, m.store, id, outputPath)
+		}
+		return store.ExportSessionAsMarkdown(ctx, m.store, id)
+	default:
+		if outputPath != "" {
+			return "", m.ExportToJSONL(ctx, id, outputPath)
+		}
+		return m.exportJSONLString(ctx, id)
+	}
+}
+
+// exportJSONLString collects the ExportMessages stream into a single string.
+func (m *Manager) exportJSONLString(ctx context.Context, id string) (string, error) {
+	ch, errCh := m.ExportMessages(ctx, id)
+
+	var output strings.Builder
+	for line := range ch {
+		output.Write(line)
+	}
+
+	select {
+	case err := <-errCh:
+		if err != nil {
+			return "", fmt.Errorf("exporting session: %w", err)
+		}
+	default:
+	}
+	return output.String(), nil
+}
+
 // Count returns the number of saved sessions.
 func (m *Manager) Count(ctx context.Context) (int, error) {
 	return m.store.Count(ctx)

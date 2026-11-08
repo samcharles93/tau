@@ -461,10 +461,40 @@ type DeleteSessionCommand struct {
 
 func (DeleteSessionCommand) IsChatCommand() {}
 
+// Canonical session export formats accepted by ExportSessionCommand.Format.
+const (
+	ExportFormatJSONL    = "jsonl"
+	ExportFormatMarkdown = "markdown"
+)
+
+// NormalizeExportFormat maps user-facing format aliases ("md", "json",
+// case-insensitive) to a canonical ExportFormat* value. Empty and
+// unrecognized values default to JSONL, the historical default.
+func NormalizeExportFormat(format string) string {
+	switch strings.ToLower(strings.TrimSpace(format)) {
+	case "md", "markdown":
+		return ExportFormatMarkdown
+	case "jsonl", "json":
+		return ExportFormatJSONL
+	default:
+		return ExportFormatJSONL
+	}
+}
+
+// IsExportFormat reports whether s names a known export format or alias.
+func IsExportFormat(s string) bool {
+	switch strings.ToLower(strings.TrimSpace(s)) {
+	case "jsonl", "json", "md", "markdown":
+		return true
+	default:
+		return false
+	}
+}
+
 // ExportSessionCommand exports a session to a file or stdout.
 type ExportSessionCommand struct {
 	SessionID string `json:"session_id"`
-	Format    string `json:"format"`           // "jsonl" or "html"
+	Format    string `json:"format"`           // ExportFormat* ("jsonl", "markdown"); see NormalizeExportFormat
 	Output    string `json:"output,omitempty"` // file path, empty = stdout
 }
 

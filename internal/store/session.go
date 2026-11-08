@@ -87,6 +87,10 @@ type SessionStore interface {
 	// rows sharing a timestamp are never skipped.
 	List(ctx context.Context, limit int, cursor string) ([]SessionSummary, string, error)
 
+	// Summary returns the metadata summary for a single session. It returns
+	// ErrSessionNotFound when the session does not exist.
+	Summary(ctx context.Context, id string) (SessionSummary, error)
+
 	// Delete removes a session and its messages (via CASCADE).
 	Delete(ctx context.Context, id string) error
 

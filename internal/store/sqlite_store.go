@@ -295,26 +295,75 @@ const cursorSep = "\x1f"
 // a previous nextCursor (empty for the first page); a legacy single-column
 // cursor is still accepted. Returns up to limit summaries plus a nextCursor
 // (empty when there are no more pages).
+// summaryColumns is the shared projection for session-summary queries (List,
+// Summary). The trailing whitespace lets callers append WHERE/ORDER BY
+// clauses directly.
+const summaryColumns = `
+	SELECT s.id, s.model_id, s.provider, s.created_at, s.updated_at, s.status,
+	       s.message_count, s.input_tokens, s.output_tokens, s.total_tokens,
+	       s.cost, s.duration_ms, s.tool_calls, s.tool_errors,
+	       s.system_prompt, s.parent_session_id, s.agent_instance_id,
+	       COALESCE(ai.spec_name, '') as agent_spec_name,
+	       COALESCE(COALESCE(NULLIF(s.title, ''), (
+	           SELECT substr(replace(m.content, char(10), ' '), 1, 80)
+	           FROM messages m
+	           WHERE m.session_id = s.id AND m.role = 'user'
+	           ORDER BY m.seq ASC LIMIT 1
+	       )), '') AS title
+	FROM sessions s
+	LEFT JOIN agent_instances ai ON s.agent_instance_id = ai.id
+`
+
+// scanSessionSummary scans one row of the summaryColumns projection.
+func scanSessionSummary(row interface{ Scan(dest ...any) error }) (SessionSummary, error) {
+	var createdStr, updatedStr string
+	var parentID, agentInstID sql.NullString
+	var sum SessionSummary
+	if err := row.Scan(
+		&sum.ID, &sum.ModelID, &sum.Provider,
+		&createdStr, &updatedStr, &sum.Status,
+		&sum.MessageCount, &sum.InputTokens, &sum.OutputTokens,
+		&sum.TotalTokens, &sum.Cost, &sum.DurationMs,
+		&sum.ToolCalls, &sum.ToolErrors,
+		&sum.SystemPrompt, &parentID, &agentInstID,
+		&sum.AgentSpecName, &sum.Title,
+	); err != nil {
+		return SessionSummary{}, err
+	}
+	sum.CreatedAt, _ = time.Parse(time.RFC3339, createdStr)
+	sum.UpdatedAt, _ = time.Parse(time.RFC3339, updatedStr)
+	sum.ParentSessionID = parentID.String
+	sum.AgentInstanceID = agentInstID.String
+	return sum, nil
+}
+
+// Summary returns the metadata summary for a single session.
+func (s *SQLiteStore) Summary(ctx context.Context, id string) (SessionSummary, error) {
+	rows, err := s.db.QueryContext(ctx, summaryColumns+" WHERE s.id = ?", id)
+	if err != nil {
+		return SessionSummary{}, fmt.Errorf("store: summary: %w", err)
+	}
+	defer rows.Close()
+
+	if !rows.Next() {
+		if err := rows.Err(); err != nil {
+			return SessionSummary{}, fmt.Errorf("store: summary: %w", err)
+		}
+		return SessionSummary{}, ErrSessionNotFound
+	}
+	sum, err := scanSessionSummary(rows)
+	if err != nil {
+		return SessionSummary{}, fmt.Errorf("store: scan session row: %w", err)
+	}
+	return sum, nil
+}
+
 func (s *SQLiteStore) List(ctx context.Context, limit int, cursor string) ([]SessionSummary, string, error) {
 	if limit <= 0 {
 		limit = 10
 	}
 
-	query := `
-		SELECT s.id, s.model_id, s.provider, s.created_at, s.updated_at, s.status,
-		       s.message_count, s.input_tokens, s.output_tokens, s.total_tokens,
-		       s.cost, s.duration_ms, s.tool_calls, s.tool_errors,
-		       s.system_prompt, s.parent_session_id, s.agent_instance_id,
-		       COALESCE(ai.spec_name, '') as agent_spec_name,
-		       COALESCE(COALESCE(NULLIF(s.title, ''), (
-		           SELECT substr(replace(m.content, char(10), ' '), 1, 80)
-		           FROM messages m
-		           WHERE m.session_id = s.id AND m.role = 'user'
-		           ORDER BY m.seq ASC LIMIT 1
-		       )), '') AS title
-		FROM sessions s
-		LEFT JOIN agent_instances ai ON s.agent_instance_id = ai.id
-	`
+	query := summaryColumns
 	var args []any
 
 	if cursor != "" {
@@ -340,24 +389,10 @@ func (s *SQLiteStore) List(ctx context.Context, limit int, cursor string) ([]Ses
 
 	var summaries []SessionSummary
 	for rows.Next() {
-		var createdStr, updatedStr string
-		var parentID, agentInstID sql.NullString
-		var sum SessionSummary
-		if err := rows.Scan(
-			&sum.ID, &sum.ModelID, &sum.Provider,
-			&createdStr, &updatedStr, &sum.Status,
-			&sum.MessageCount, &sum.InputTokens, &sum.OutputTokens,
-			&sum.TotalTokens, &sum.Cost, &sum.DurationMs,
-			&sum.ToolCalls, &sum.ToolErrors,
-			&sum.SystemPrompt, &parentID, &agentInstID,
-			&sum.AgentSpecName, &sum.Title,
-		); err != nil {
+		sum, err := scanSessionSummary(rows)
+		if err != nil {
 			return nil, "", fmt.Errorf("store: scan session row: %w", err)
 		}
-		sum.CreatedAt, _ = time.Parse(time.RFC3339, createdStr)
-		sum.UpdatedAt, _ = time.Parse(time.RFC3339, updatedStr)
-		sum.ParentSessionID = parentID.String
-		sum.AgentInstanceID = agentInstID.String
 		summaries = append(summaries, sum)
 	}
 	if err := rows.Err(); err != nil {
