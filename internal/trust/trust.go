@@ -69,8 +69,11 @@ func Load(configDir string) (*Store, error) {
 	return &s, nil
 }
 
-// Save writes the store back to its path (0600 - approvals are
-// security-relevant local state, not shareable).
+// Save writes the store back to its path atomically (temp file + fsync +
+// rename - see writeFileAtomic), so a crash mid-write can never leave a
+// partial trust.yaml behind. A new file is created 0600 and an existing
+// file keeps its mode - approvals are security-relevant local state, not
+// shareable.
 func (s *Store) Save() error {
 	if s.path == "" {
 		return fmt.Errorf("trust: store has no path (not loaded via Load)")
@@ -82,8 +85,47 @@ func (s *Store) Save() error {
 	if err != nil {
 		return fmt.Errorf("trust: marshal: %w", err)
 	}
-	if err := os.WriteFile(s.path, data, 0o600); err != nil {
+	if err := writeFileAtomic(s.path, data, 0o600); err != nil {
 		return fmt.Errorf("trust: write %s: %w", s.path, err)
+	}
+	return nil
+}
+
+// writeFileAtomic replaces path with data atomically: data is written to a
+// temp file in the SAME directory (so the rename never crosses a filesystem
+// boundary), fsynced, closed, then renamed over path. A crash at any point
+// therefore leaves either the old file or the new one - never a partial
+// write. If path already exists its permission bits are preserved; otherwise
+// the file is created with mode. Mirrors writeFileAtomic in
+// internal/store/markdown_export.go, which cannot be shared here: app
+// imports trust, so the dependency points the other way.
+func writeFileAtomic(path string, data []byte, mode os.FileMode) error {
+	if info, err := os.Stat(path); err == nil {
+		mode = info.Mode().Perm()
+	}
+	tmp, err := os.CreateTemp(filepath.Dir(path), filepath.Base(path)+".*.tmp")
+	if err != nil {
+		return fmt.Errorf("trust: create temp file: %w", err)
+	}
+	tmpPath := tmp.Name()
+	defer os.Remove(tmpPath) // no-op once renamed
+	if err := tmp.Chmod(mode); err != nil {
+		_ = tmp.Close()
+		return fmt.Errorf("trust: chmod temp file: %w", err)
+	}
+	if _, err := tmp.Write(data); err != nil {
+		_ = tmp.Close()
+		return fmt.Errorf("trust: write temp file: %w", err)
+	}
+	if err := tmp.Sync(); err != nil {
+		_ = tmp.Close()
+		return fmt.Errorf("trust: fsync temp file: %w", err)
+	}
+	if err := tmp.Close(); err != nil {
+		return fmt.Errorf("trust: close temp file: %w", err)
+	}
+	if err := os.Rename(tmpPath, path); err != nil {
+		return fmt.Errorf("trust: rename temp file: %w", err)
 	}
 	return nil
 }
