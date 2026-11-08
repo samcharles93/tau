@@ -60,7 +60,12 @@ type bridgeWriter struct {
 }
 
 func (w *bridgeWriter) Write(p []byte) (n int, err error) {
-	w.bridge.Log(string(p))
+	// A nil bridge (tests, headless harnesses) means "no UI to forward to",
+	// same as read/grep/find/edit tolerate - output still goes to the
+	// capturing buffer via the MultiWriter (tau-sn6).
+	if w.bridge != nil {
+		w.bridge.Log(string(p))
+	}
 	return len(p), nil
 }
 
