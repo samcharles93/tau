@@ -131,6 +131,90 @@ func makeFindExecutor(cwd string, grants *PathGrants) Executor {
 	}
 }
 
+// findEntryAction classifies one walked entry.
+type findEntryAction int
+
+const (
+	findSkip findEntryAction = iota
+	findSkipDir
+	findMatch
+)
+
+// dirOrSkip prunes directories and skips anything else - the shared outcome
+// of the depth, hidden, and exclude filters.
+func dirOrSkip(d os.DirEntry) findEntryAction {
+	if d.IsDir() {
+		return findSkipDir
+	}
+	return findSkip
+}
+
+// classifyFindEntry applies the depth, hidden, exclude, root, type, and
+// pattern filters to a single walked entry.
+func classifyFindEntry(walkPath, searchPath, base string, d os.DirEntry, p FindParams, excludeRe, patternRe *regexp.Regexp) findEntryAction {
+	// Calculate depth relative to searchPath.
+	if p.MaxDepth > 0 && walkPath != searchPath {
+		relDepth := strings.Count(strings.TrimPrefix(walkPath, searchPath+string(filepath.Separator)), string(filepath.Separator))
+		if relDepth >= p.MaxDepth {
+			return dirOrSkip(d)
+		}
+	}
+
+	// Skip hidden entries like .git, .env, etc.
+	if strings.HasPrefix(base, ".") && walkPath != searchPath {
+		return dirOrSkip(d)
+	}
+
+	// Apply exclude filter to both files and directories.
+	if excludeRe != nil && excludeRe.MatchString(base) {
+		return dirOrSkip(d)
+	}
+
+	// Skip root directory itself.
+	if walkPath == searchPath {
+		return findSkip
+	}
+
+	// Type filter.
+	switch p.Type {
+	case "file":
+		if d.IsDir() {
+			return findSkip
+		}
+	case "directory":
+		if !d.IsDir() {
+			return findSkip
+		}
+	}
+
+	// Pattern filter.
+	if patternRe != nil && !patternRe.MatchString(base) {
+		return findSkip
+	}
+
+	return findMatch
+}
+
+// compileFindPatterns compiles the name pattern and exclude glob into
+// regexes, returning an error Result when either is invalid.
+func compileFindPatterns(p FindParams) (patternRe, excludeRe *regexp.Regexp, early *Result) {
+	if p.Pattern != "" {
+		re, err := regexp.Compile("^(?:" + globToRegex(p.Pattern) + ")$")
+		if err != nil {
+			return nil, nil, &Result{Content: fmt.Sprintf("invalid pattern: %v", err), IsError: true}
+		}
+		patternRe = re
+	}
+	if p.Exclude != "" {
+		re, err := regexp.Compile("(?:" + globToRegex(p.Exclude) + ")")
+		if err != nil {
+			return nil, nil, &Result{Content: fmt.Sprintf("invalid exclude: %v", err), IsError: true}
+		}
+		excludeRe = re
+	}
+	return patternRe, excludeRe, nil
+}
+
 func runFindGoFallback(ctx context.Context, cwd, searchPath string, p FindParams) (Result, error) {
 	info, err := os.Stat(searchPath)
 	if err != nil {
@@ -142,29 +226,14 @@ func runFindGoFallback(ctx context.Context, cwd, searchPath string, p FindParams
 
 	var matches []string
 
-	var patternRe *regexp.Regexp
-	if p.Pattern != "" {
-		reStr := globToRegex(p.Pattern)
-		var err error
-		patternRe, err = regexp.Compile("^(?:" + reStr + ")$")
-		if err != nil {
-			return Result{Content: fmt.Sprintf("invalid pattern: %v", err), IsError: true}, nil
-		}
-	}
-
-	var excludeRe *regexp.Regexp
-	if p.Exclude != "" {
-		reStr := globToRegex(p.Exclude)
-		var err error
-		excludeRe, err = regexp.Compile("(?:" + reStr + ")")
-		if err != nil {
-			return Result{Content: fmt.Sprintf("invalid exclude: %v", err), IsError: true}, nil
-		}
+	patternRe, excludeRe, early := compileFindPatterns(p)
+	if early != nil {
+		return *early, nil
 	}
 
 	err = filepath.WalkDir(searchPath, func(walkPath string, d os.DirEntry, err error) error {
 		if err != nil {
-			return nil // skip inaccessible entries
+			return nil //nolint:nilerr // skip inaccessible entries
 		}
 
 		select {
@@ -173,66 +242,17 @@ func runFindGoFallback(ctx context.Context, cwd, searchPath string, p FindParams
 		default:
 		}
 
-		// Calculate depth relative to searchPath.
-		if p.MaxDepth > 0 && walkPath != searchPath {
-			relDepth := strings.Count(strings.TrimPrefix(walkPath, searchPath+string(filepath.Separator)), string(filepath.Separator))
-			if relDepth >= p.MaxDepth {
-				if d.IsDir() {
-					return filepath.SkipDir
-				}
-				return nil
+		switch classifyFindEntry(walkPath, searchPath, d.Name(), d, p, excludeRe, patternRe) {
+		case findSkipDir:
+			return filepath.SkipDir
+		case findMatch:
+			// Use path relative to cwd for output consistency.
+			outputPath, relErr := filepath.Rel(cwd, walkPath)
+			if relErr != nil {
+				outputPath = walkPath
 			}
+			matches = append(matches, filepath.ToSlash(outputPath))
 		}
-
-		base := d.Name()
-		// Skip hidden entries like .git, .env, etc.
-		if strings.HasPrefix(base, ".") && walkPath != searchPath {
-			if d.IsDir() {
-				return filepath.SkipDir
-			}
-			return nil
-		}
-
-		// Apply exclude filter to both files and directories.
-		if excludeRe != nil {
-			if excludeRe.MatchString(base) {
-				if d.IsDir() {
-					return filepath.SkipDir
-				}
-				return nil
-			}
-		}
-
-		// Skip root directory itself.
-		if walkPath == searchPath {
-			return nil
-		}
-
-		// Type filter.
-		switch p.Type {
-		case "file":
-			if d.IsDir() {
-				return nil
-			}
-		case "directory":
-			if !d.IsDir() {
-				return nil
-			}
-		}
-
-		// Pattern filter.
-		if patternRe != nil {
-			if !patternRe.MatchString(base) {
-				return nil
-			}
-		}
-
-		// Use path relative to cwd for output consistency.
-		outputPath, err := filepath.Rel(cwd, walkPath)
-		if err != nil {
-			outputPath = walkPath
-		}
-		matches = append(matches, filepath.ToSlash(outputPath))
 		return nil
 	})
 

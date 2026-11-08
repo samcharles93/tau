@@ -87,26 +87,49 @@ func suggestPaths(cwd, missing string) string {
 	// model had the location right and only the filename wrong. This is the
 	// shape of the real misses (internal/theme/theme.go, where the directory
 	// exists but holds colors.go), and it avoids the walk entirely.
-	if dir := filepath.Dir(missing); dir != "" {
-		if entries, err := os.ReadDir(dir); err == nil {
-			names := make([]string, 0, maxPathSuggestions)
-			for _, e := range entries {
-				if len(names) >= maxPathSuggestions {
-					names = append(names, "...")
-					break
-				}
-				names = append(names, e.Name())
-			}
-			if len(names) > 0 {
-				rel, relErr := filepath.Rel(cwd, dir)
-				if relErr != nil {
-					rel = dir
-				}
-				return fmt.Sprintf("%s exists and contains: %s", rel, strings.Join(names, ", "))
-			}
-		}
+	if hint := dirListingHint(cwd, missing); hint != "" {
+		return hint
 	}
 
+	if found := scanForBasename(cwd, want); len(found) > 0 {
+		return "did you mean: " + strings.Join(found, ", ")
+	}
+	return ""
+}
+
+// dirListingHint describes the contents of the missing path's directory, when
+// that directory exists - evidence the model had the location right and only
+// the filename wrong.
+func dirListingHint(cwd, missing string) string {
+	dir := filepath.Dir(missing)
+	if dir == "" {
+		return ""
+	}
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return ""
+	}
+	names := make([]string, 0, maxPathSuggestions)
+	for _, e := range entries {
+		if len(names) >= maxPathSuggestions {
+			names = append(names, "...")
+			break
+		}
+		names = append(names, e.Name())
+	}
+	if len(names) == 0 {
+		return ""
+	}
+	rel, relErr := filepath.Rel(cwd, dir)
+	if relErr != nil {
+		rel = dir
+	}
+	return fmt.Sprintf("%s exists and contains: %s", rel, strings.Join(names, ", "))
+}
+
+// scanForBasename walks cwd looking for files sharing want as their basename,
+// bounded by maxSuggestionScan entries and maxPathSuggestions hits.
+func scanForBasename(cwd, want string) []string {
 	var found []string
 	scanned := 0
 
@@ -135,10 +158,7 @@ func suggestPaths(cwd, missing string) string {
 		return nil
 	})
 
-	if len(found) == 0 {
-		return ""
-	}
-	return "did you mean: " + strings.Join(found, ", ")
+	return found
 }
 
 // skipSuggestionDir keeps the suggestion walk out of directories that are large
@@ -195,31 +215,9 @@ func newReadTool(cwd string, rt *ReadTracker, grants *PathGrants) Tool {
 
 func makeReadExecutor(cwd string, rt *ReadTracker, grants *PathGrants) Executor {
 	return func(ctx context.Context, params json.RawMessage, ui UIBridge) (Result, error) {
-		var p ReadParams
-		if err := json.Unmarshal(params, &p); err != nil {
-			return Result{Content: fmt.Sprintf("invalid parameters: %v", err), IsError: true}, nil
-		}
-
-		if p.Offset < 0 {
-			return Result{Content: "offset must be >= 0", IsError: true}, nil
-		}
-		if p.Limit < 0 {
-			return Result{Content: "limit must be >= 0", IsError: true}, nil
-		}
-		if strings.TrimSpace(p.Path) == "" {
-			p.Path = p.File
-		}
-		if strings.TrimSpace(p.Path) == "" {
-			return Result{Content: "path is required (file is accepted as an alias)", IsError: true, ErrorKind: "invalid_arguments"}, nil
-		}
-		// Record whether the caller asked for a specific slice before the
-		// default is applied. An explicit limit that happens to equal the
-		// default is still an explicit content request, so it must not be
-		// mistaken for "unspecified" by the outline check below.
-		rangeRequested := p.Offset > 0 || p.Limit > 0
-
-		if p.Limit == 0 && !p.Full {
-			p.Limit = DefaultReadLines
+		p, rangeRequested, early := parseReadParams(params)
+		if early != nil {
+			return *early, nil
 		}
 
 		path := resolvePath(cwd, p.Path)
@@ -281,72 +279,113 @@ func makeReadExecutor(cwd string, rt *ReadTracker, grants *PathGrants) Executor 
 			}
 		}
 
-		// Apply offset (1-based).
-		startLine := 1
-		if p.Offset > 0 {
-			startLine = p.Offset
+		startLine, endLine, requestedStart, early := readWindow(p, rt, cwd, info, totalLines)
+		if early != nil {
+			return *early, nil
 		}
-		if startLine > totalLines {
-			return Result{Content: fmt.Sprintf("offset %d exceeds file length (%d lines)", startLine, totalLines), IsError: true}, nil
-		}
-
-		// Apply limit.
-		endLine := totalLines
-		if p.Limit > 0 && startLine+p.Limit-1 < endLine {
-			endLine = startLine + p.Limit - 1
-		}
-
-		// Skip lines this session has already been shown from an unchanged
-		// file. Repeated reads were 23.6% of all tool result tokens across
-		// analysed sessions - one file was read 58 times in a single session.
-		// full:true is the deliberate escape hatch for a model that has lost
-		// the earlier content (compaction, handoff) and needs it resent.
-		requestedStart := startLine
-		if rt != nil && !p.Full {
-			novelStart, novelEnd, hasNovel := rt.Novel(cwd, p.Path, FileIdentity(info), startLine, endLine)
-			if !hasNovel {
-				return Result{Content: fmt.Sprintf(
-					"[lines %d-%d of %s are unchanged since you last read them; nothing new to show. Set full:true to have the content resent.]",
-					startLine, endLine, p.Path,
-				)}, nil
-			}
-			startLine, endLine = novelStart, novelEnd
-		}
-
-		selected := strings.Join(lines[startLine-1:endLine], "\n")
-		tr := TruncateHeadRaw(selected, DefaultMaxLines, DefaultMaxBytes)
-		output := tr.Content
-
-		if startLine > requestedStart {
-			output = fmt.Sprintf(
-				"[lines %d-%d unchanged since you last read them; showing from line %d.]\n\n",
-				requestedStart, startLine-1, startLine,
-			) + output
-		}
-
-		switch {
-		case tr.Truncated && tr.OutputLines == 0:
-			// The first requested line alone exceeds the byte limit. Point the
-			// model at a shell fallback that can slice within the line.
-			lineSize := FormatSize(len(lines[startLine-1]))
-			output = fmt.Sprintf(
-				"[line %d is %s, exceeding the %s output limit. Use shell: sed -n '%dp' %s | head -c %d]",
-				startLine, lineSize, FormatSize(DefaultMaxBytes), startLine, p.Path, DefaultMaxBytes,
-			)
-		case tr.Truncated:
-			shownEnd := startLine + tr.OutputLines - 1
-			output += fmt.Sprintf(
-				"\n\n[showing lines %d-%d of %d. Use offset=%d to continue.]",
-				startLine, shownEnd, totalLines, shownEnd+1,
-			)
-		case endLine < totalLines:
-			// A user-specified limit stopped early, but the file has more content.
-			output += fmt.Sprintf(
-				"\n\n[%d more lines in file. Use offset=%d to continue.]",
-				totalLines-endLine, endLine+1,
-			)
-		}
-
-		return Result{Content: output, Truncated: tr.Truncated || endLine < totalLines, ResultBytes: tr.OriginalSize}, nil
+		return formatReadOutput(lines, p, startLine, endLine, totalLines, requestedStart), nil
 	}
+}
+
+// parseReadParams unmarshals and validates read parameters. rangeRequested
+// records whether the caller asked for a specific slice before the default
+// limit is applied: an explicit limit that happens to equal the default is
+// still an explicit content request, so it must not be mistaken for
+// "unspecified" by the outline check.
+func parseReadParams(params json.RawMessage) (p ReadParams, rangeRequested bool, early *Result) {
+	if err := json.Unmarshal(params, &p); err != nil {
+		return p, false, &Result{Content: fmt.Sprintf("invalid parameters: %v", err), IsError: true}
+	}
+	if p.Offset < 0 {
+		return p, false, &Result{Content: "offset must be >= 0", IsError: true}
+	}
+	if p.Limit < 0 {
+		return p, false, &Result{Content: "limit must be >= 0", IsError: true}
+	}
+	if strings.TrimSpace(p.Path) == "" {
+		p.Path = p.File
+	}
+	if strings.TrimSpace(p.Path) == "" {
+		return p, false, &Result{Content: "path is required (file is accepted as an alias)", IsError: true, ErrorKind: "invalid_arguments"}
+	}
+	rangeRequested = p.Offset > 0 || p.Limit > 0
+	if p.Limit == 0 && !p.Full {
+		p.Limit = DefaultReadLines
+	}
+	return p, rangeRequested, nil
+}
+
+// readWindow resolves offset/limit into a 1-based inclusive line range,
+// narrowed to the novel (not-yet-shown) lines of an unchanged file when a
+// ReadTracker is set. Repeated reads were 23.6% of all tool result tokens
+// across analysed sessions - one file was read 58 times in a single session.
+// full:true is the deliberate escape hatch for a model that has lost the
+// earlier content (compaction, handoff) and needs it resent.
+func readWindow(p ReadParams, rt *ReadTracker, cwd string, info os.FileInfo, totalLines int) (startLine, endLine, requestedStart int, early *Result) {
+	// Apply offset (1-based).
+	startLine = 1
+	if p.Offset > 0 {
+		startLine = p.Offset
+	}
+	if startLine > totalLines {
+		return 0, 0, 0, &Result{Content: fmt.Sprintf("offset %d exceeds file length (%d lines)", startLine, totalLines), IsError: true}
+	}
+
+	// Apply limit.
+	endLine = totalLines
+	if p.Limit > 0 && startLine+p.Limit-1 < endLine {
+		endLine = startLine + p.Limit - 1
+	}
+
+	requestedStart = startLine
+	if rt != nil && !p.Full {
+		novelStart, novelEnd, hasNovel := rt.Novel(cwd, p.Path, FileIdentity(info), startLine, endLine)
+		if !hasNovel {
+			return 0, 0, 0, &Result{Content: fmt.Sprintf(
+				"[lines %d-%d of %s are unchanged since you last read them; nothing new to show. Set full:true to have the content resent.]",
+				startLine, endLine, p.Path,
+			)}
+		}
+		startLine, endLine = novelStart, novelEnd
+	}
+	return startLine, endLine, requestedStart, nil
+}
+
+// formatReadOutput renders the selected line range with truncation notices.
+func formatReadOutput(lines []string, p ReadParams, startLine, endLine, totalLines, requestedStart int) Result {
+	selected := strings.Join(lines[startLine-1:endLine], "\n")
+	tr := TruncateHeadRaw(selected, DefaultMaxLines, DefaultMaxBytes)
+	output := tr.Content
+
+	if startLine > requestedStart {
+		output = fmt.Sprintf(
+			"[lines %d-%d unchanged since you last read them; showing from line %d.]\n\n",
+			requestedStart, startLine-1, startLine,
+		) + output
+	}
+
+	switch {
+	case tr.Truncated && tr.OutputLines == 0:
+		// The first requested line alone exceeds the byte limit. Point the
+		// model at a shell fallback that can slice within the line.
+		lineSize := FormatSize(len(lines[startLine-1]))
+		output = fmt.Sprintf(
+			"[line %d is %s, exceeding the %s output limit. Use shell: sed -n '%dp' %s | head -c %d]",
+			startLine, lineSize, FormatSize(DefaultMaxBytes), startLine, p.Path, DefaultMaxBytes,
+		)
+	case tr.Truncated:
+		shownEnd := startLine + tr.OutputLines - 1
+		output += fmt.Sprintf(
+			"\n\n[showing lines %d-%d of %d. Use offset=%d to continue.]",
+			startLine, shownEnd, totalLines, shownEnd+1,
+		)
+	case endLine < totalLines:
+		// A user-specified limit stopped early, but the file has more content.
+		output += fmt.Sprintf(
+			"\n\n[%d more lines in file. Use offset=%d to continue.]",
+			totalLines-endLine, endLine+1,
+		)
+	}
+
+	return Result{Content: output, Truncated: tr.Truncated || endLine < totalLines, ResultBytes: tr.OriginalSize}
 }

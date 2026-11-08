@@ -72,7 +72,7 @@ func (s *SQLiteStore) Save(ctx context.Context, state chat.ChatSessionState, dur
 	if err != nil {
 		return fmt.Errorf("store: begin tx: %w", err)
 	}
-	defer tx.Rollback()
+	defer func() { _ = tx.Rollback() }() //nolint:errcheck // rollback after commit is a no-op
 
 	cost := calculateCost(state.Model.Config, state.LastUsage)
 
@@ -126,8 +126,17 @@ func (s *SQLiteStore) Save(ctx context.Context, state chat.ChatSessionState, dur
 		return fmt.Errorf("store: upsert session: %w", err)
 	}
 
-	// Delete existing messages and re-insert. Simple and correct for
-	// the message counts we expect (<10K per session).
+	if err := replaceMessages(ctx, tx, state); err != nil {
+		return err
+	}
+
+	return tx.Commit()
+}
+
+// replaceMessages deletes the session's existing messages and re-inserts the
+// current set. Simple and correct for the message counts we expect (<10K per
+// session).
+func replaceMessages(ctx context.Context, tx *sql.Tx, state chat.ChatSessionState) error {
 	if _, err := tx.ExecContext(ctx, "DELETE FROM messages WHERE session_id = ?", state.SessionID); err != nil {
 		return fmt.Errorf("store: delete messages: %w", err)
 	}
@@ -168,8 +177,7 @@ func (s *SQLiteStore) Save(ctx context.Context, state chat.ChatSessionState, dur
 			return fmt.Errorf("store: insert message %d: %w", i, err)
 		}
 	}
-
-	return tx.Commit()
+	return nil
 }
 
 // Load reconstructs a ChatSessionState from SQLite. Returns an error if the
@@ -593,7 +601,7 @@ func (s *SQLiteStore) ResumeSession(ctx context.Context, sessionID string, newIn
 	if err != nil {
 		return fmt.Errorf("store: resume session: begin: %w", err)
 	}
-	defer tx.Rollback()
+	defer func() { _ = tx.Rollback() }() //nolint:errcheck // rollback after commit is a no-op
 
 	var currentInstanceID sql.NullString
 	err = tx.QueryRowContext(ctx, `SELECT agent_instance_id FROM sessions WHERE id = ?`, sessionID).Scan(&currentInstanceID)

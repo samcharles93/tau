@@ -205,6 +205,56 @@ func makeEditExecutor(cwd string, mq *MutationQueue, rt *ReadTracker, grants *Pa
 
 const utf8BOM = "\ufeff"
 
+// resolveEditSpans matches a single edit against the original content and
+// returns its replacement span(s). Matching is exact first; if old_text is not
+// found, a fuzzy pass retries the match with trailing whitespace stripped from
+// every line of both the content and old_text, which recovers the most common
+// exact-match failure.
+func resolveEditSpans(content string, edit EditAction, idx int) ([]editSpan, error) {
+	if edit.OldText == "" {
+		return nil, fmt.Errorf("edit %d: old_text must not be empty", idx+1)
+	}
+	if edit.OldText == edit.NewText {
+		return nil, fmt.Errorf("edit %d: old_text and new_text are identical", idx+1)
+	}
+
+	matches := indexAll(content, edit.OldText)
+	span := func(m [2]int) editSpan {
+		return editSpan{start: m[0], end: m[1], repl: edit.NewText, editIdx: idx}
+	}
+
+	if edit.ReplaceAll {
+		if len(matches) == 0 {
+			matches = fuzzyIndexAll(content, edit.OldText)
+		}
+		if len(matches) == 0 {
+			return nil, editNotFoundError(idx, content, edit.OldText)
+		}
+		spans := make([]editSpan, 0, len(matches))
+		for _, m := range matches {
+			spans = append(spans, span(m))
+		}
+		return spans, nil
+	}
+
+	switch len(matches) {
+	case 1:
+		return []editSpan{span(matches[0])}, nil
+	case 0:
+		fuzzy := fuzzyIndexAll(content, edit.OldText)
+		switch len(fuzzy) {
+		case 1:
+			return []editSpan{span(fuzzy[0])}, nil
+		case 0:
+			return nil, editNotFoundError(idx, content, edit.OldText)
+		default:
+			return nil, editAmbiguousError(idx, len(fuzzy))
+		}
+	default:
+		return nil, editAmbiguousError(idx, len(matches))
+	}
+}
+
 // editSpan is a resolved replacement range in the original content.
 type editSpan struct {
 	start, end int    // byte offsets in the original content
@@ -223,44 +273,11 @@ func applyEdits(content string, edits []EditAction) (string, error) {
 	var spans []editSpan
 
 	for i, edit := range edits {
-		if edit.OldText == "" {
-			return "", fmt.Errorf("edit %d: old_text must not be empty", i+1)
+		editSpans, err := resolveEditSpans(content, edit, i)
+		if err != nil {
+			return "", err
 		}
-		if edit.OldText == edit.NewText {
-			return "", fmt.Errorf("edit %d: old_text and new_text are identical", i+1)
-		}
-
-		matches := indexAll(content, edit.OldText)
-
-		if edit.ReplaceAll {
-			if len(matches) == 0 {
-				matches = fuzzyIndexAll(content, edit.OldText)
-			}
-			if len(matches) == 0 {
-				return "", editNotFoundError(i, content, edit.OldText)
-			}
-			for _, m := range matches {
-				spans = append(spans, editSpan{start: m[0], end: m[1], repl: edit.NewText, editIdx: i})
-			}
-			continue
-		}
-
-		switch len(matches) {
-		case 1:
-			spans = append(spans, editSpan{start: matches[0][0], end: matches[0][1], repl: edit.NewText, editIdx: i})
-		case 0:
-			fuzzy := fuzzyIndexAll(content, edit.OldText)
-			switch len(fuzzy) {
-			case 1:
-				spans = append(spans, editSpan{start: fuzzy[0][0], end: fuzzy[0][1], repl: edit.NewText, editIdx: i})
-			case 0:
-				return "", editNotFoundError(i, content, edit.OldText)
-			default:
-				return "", editAmbiguousError(i, len(fuzzy))
-			}
-		default:
-			return "", editAmbiguousError(i, len(matches))
-		}
+		spans = append(spans, editSpans...)
 	}
 
 	sort.Slice(spans, func(a, b int) bool { return spans[a].start < spans[b].start })

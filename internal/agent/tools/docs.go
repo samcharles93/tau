@@ -171,7 +171,7 @@ func walkDocs(ctx context.Context, visit func(path string, content []byte)) erro
 		}
 		content, err := docs.FS.ReadFile(path)
 		if err != nil {
-			return nil
+			return nil //nolint:nilerr // skip unreadable docs file
 		}
 		visit(path, content)
 		return nil

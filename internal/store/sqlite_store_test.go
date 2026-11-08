@@ -273,10 +273,10 @@ func TestSQLiteStore_ListTitleFallbackForLegacyRows(t *testing.T) {
 	db, err := sql.Open("sqlite", dbPath)
 	require.NoError(t, err)
 	defer db.Close()
-	_, err = db.Exec(`INSERT INTO sessions (id, model_id, provider, created_at, updated_at, status)
+	_, err = db.ExecContext(ctx, `INSERT INTO sessions (id, model_id, provider, created_at, updated_at, status)
 		VALUES ('legacy-1', 'model', 'prov', '2026-01-01T00:00:00Z', '2026-01-02T00:00:00Z', 'idle')`)
 	require.NoError(t, err)
-	_, err = db.Exec(`INSERT INTO messages (session_id, seq, role, content, created_at)
+	_, err = db.ExecContext(ctx, `INSERT INTO messages (session_id, seq, role, content, created_at)
 		VALUES ('legacy-1', 0, 'user', 'legacy first question' || char(10) || 'continued', '2026-01-01T00:00:00Z')`)
 	require.NoError(t, err)
 
