@@ -51,7 +51,8 @@ func TestGrepAllowsGoModCache(t *testing.T) {
 
 	tool := NewGrepTool(cwd, nil)
 	res, err := tool.Execute(context.Background(), json.RawMessage(
-		`{"pattern":"Needle","path":`+quote(cache)+`}`), nil)
+		`{"pattern":"Needle","path":`+quote(cache)+`}`,
+	), nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -72,7 +73,8 @@ func TestWriteRejectsGoModCache(t *testing.T) {
 
 	tool := NewWriteTool(cwd, nil, NewReadTracker())
 	res, err := tool.Execute(context.Background(), json.RawMessage(
-		`{"path":`+quote(filepath.Join(cache, "evil.go"))+`,"content":"package evil\n"}`), nil)
+		`{"path":`+quote(filepath.Join(cache, "evil.go"))+`,"content":"package evil\n"}`,
+	), nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -95,7 +97,8 @@ func TestEditRejectsGoModCache(t *testing.T) {
 	rt.MarkRead(cwd, target)
 	tool := NewEditTool(cwd, nil, rt)
 	res, err := tool.Execute(context.Background(), json.RawMessage(
-		`{"path":`+quote(target)+`,"edits":[{"old_text":"package dep","new_text":"package hacked"}]}`), nil)
+		`{"path":`+quote(target)+`,"edits":[{"old_text":"package dep","new_text":"package hacked"}]}`,
+	), nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -319,7 +322,8 @@ func TestToolsRejectSymlinkEscape(t *testing.T) {
 	t.Run("write rejects symlink to outside file", func(t *testing.T) {
 		tool := NewWriteTool(cwd, nil, NewReadTracker())
 		res, err := tool.Execute(context.Background(), json.RawMessage(
-			`{"path":`+quote(linkFile)+`,"content":"overwrite\n"}`), nil)
+			`{"path":`+quote(linkFile)+`,"content":"overwrite\n"}`,
+		), nil)
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
@@ -331,7 +335,8 @@ func TestToolsRejectSymlinkEscape(t *testing.T) {
 	t.Run("write rejects creating new file through outside symlink dir", func(t *testing.T) {
 		tool := NewWriteTool(cwd, nil, NewReadTracker())
 		res, err := tool.Execute(context.Background(), json.RawMessage(
-			`{"path":`+quote(filepath.Join(linkDir, "new_outside.txt"))+`,"content":"pwn\n"}`), nil)
+			`{"path":`+quote(filepath.Join(linkDir, "new_outside.txt"))+`,"content":"pwn\n"}`,
+		), nil)
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
@@ -346,7 +351,8 @@ func TestToolsRejectSymlinkEscape(t *testing.T) {
 		rt.MarkRead(cwd, linkFile)
 		tool := NewEditTool(cwd, nil, rt)
 		res, err := tool.Execute(context.Background(), json.RawMessage(
-			`{"path":`+quote(linkFile)+`,"edits":[{"old_text":"super secret data","new_text":"modified"}]}`), nil)
+			`{"path":`+quote(linkFile)+`,"edits":[{"old_text":"super secret data","new_text":"modified"}]}`,
+		), nil)
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
@@ -359,7 +365,8 @@ func TestToolsRejectSymlinkEscape(t *testing.T) {
 	t.Run("find rejects outside symlink dir", func(t *testing.T) {
 		tool := NewFindTool(cwd)
 		res, err := tool.Execute(context.Background(), json.RawMessage(
-			`{"path":`+quote(linkDir)+`}`), nil)
+			`{"path":`+quote(linkDir)+`}`,
+		), nil)
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
@@ -372,7 +379,8 @@ func TestToolsRejectSymlinkEscape(t *testing.T) {
 	t.Run("grep rejects outside symlink dir", func(t *testing.T) {
 		tool := NewGrepTool(cwd, nil)
 		res, err := tool.Execute(context.Background(), json.RawMessage(
-			`{"pattern":"secret","path":`+quote(linkDir)+`}`), nil)
+			`{"pattern":"secret","path":`+quote(linkDir)+`}`,
+		), nil)
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
@@ -388,4 +396,55 @@ func quote(s string) string {
 		panic(err)
 	}
 	return string(b)
+}
+
+// resolvePath only resolves - confinement is isConfined's job - so a path
+// escaping cwd via .. must still resolve (to the escaped absolute path), never
+// be silently rewritten into cwd.
+func TestResolvePath_EscapeCases(t *testing.T) {
+	cwd := filepath.Clean("/workspace/project")
+
+	tests := []struct {
+		name     string
+		path     string
+		expected string
+	}{
+		{"single parent", "../secret.txt", "/workspace/secret.txt"},
+		{"nested parent", "sub/../../escape.txt", "/workspace/escape.txt"},
+		{"double at prefix strips one", "@@file.txt", filepath.Join(cwd, "@file.txt")},
+		{"trailing slash", "sub/", filepath.Join(cwd, "sub")},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := resolvePath(cwd, tt.path); got != tt.expected {
+				t.Fatalf("resolvePath(%q, %q) = %q, want %q", cwd, tt.path, got, tt.expected)
+			}
+		})
+	}
+}
+
+func TestIsConfined_EdgeCases(t *testing.T) {
+	base := t.TempDir()
+
+	tests := []struct {
+		name     string
+		base     string
+		target   string
+		expected bool
+	}{
+		{"base with trailing slash", base + string(filepath.Separator), filepath.Join(base, "f.txt"), true},
+		{"target with trailing slash", base, base + string(filepath.Separator), true},
+		{"shared-prefix sibling rejected", base, base + "-sibling", false},
+		{"parent of base rejected", base, filepath.Dir(base), false},
+		{"target equals base cleaned", base, filepath.Clean(base), true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := isConfined(tt.base, tt.target); got != tt.expected {
+				t.Fatalf("isConfined(%q, %q) = %v, want %v", tt.base, tt.target, got, tt.expected)
+			}
+		})
+	}
 }
