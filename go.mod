@@ -18,7 +18,7 @@ require (
 	github.com/pkg/browser v0.0.0-20240102092130-5ac0b6a4141c
 	github.com/pmezard/go-difflib v1.0.0
 	github.com/rivo/uniseg v0.4.7
-	github.com/samcharles93/ai-sdk v0.6.0
+	github.com/samcharles93/ai-sdk v0.7.0
 	github.com/stretchr/testify v1.12.1
 	github.com/urfave/cli/v3 v3.14.0
 	golang.org/x/sys v0.49.0
