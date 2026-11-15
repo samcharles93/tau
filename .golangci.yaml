@@ -65,7 +65,7 @@ linters:
       min-complexity: 5
 
     godox:
-      # tracked work lives in beads - use it: `bd create [title] [flags]`
+      # tracked work lives in GitHub Issues: https://github.com/samcharles93/tau/issues
       keywords:
         - FIXME
         - TODO
