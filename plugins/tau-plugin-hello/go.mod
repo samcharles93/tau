@@ -2,7 +2,7 @@ module github.com/samcharles93/plugins/hello
 
 go 1.26.6
 
-toolchain go1.27.3
+toolchain go1.27.4
 
 require (
 	github.com/hashicorp/go-hclog v1.6.3
