@@ -30,7 +30,7 @@ func commitBinary(newPath, targetPath string) error {
 	}
 	if err := os.Rename(newPath, targetPath); err != nil {
 		if rerr := os.Rename(oldPath, targetPath); rerr != nil {
-			return fmt.Errorf("installing new binary: %w; rollback failed: %v", err, rerr)
+			return fmt.Errorf("installing new binary: %w; rollback failed: %w", err, rerr)
 		}
 		return fmt.Errorf("installing new binary: %w", err)
 	}

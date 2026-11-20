@@ -153,7 +153,12 @@ func TestStreamMessagesToJSONL_CallerCancel(t *testing.T) {
 
 	cancel()
 	select {
-	case <-done:
+	case err := <-done:
+		// A full producer may still finish first; any exported error must be
+		// the caller's cancellation, never a hang or an unrelated failure.
+		if err != nil && !errors.Is(err, context.Canceled) {
+			t.Fatalf("expected context cancellation, got %v", err)
+		}
 	case <-time.After(10 * time.Second):
 		t.Fatal("streamMessagesToJSONL did not return after caller cancellation")
 	}

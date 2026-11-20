@@ -564,7 +564,7 @@ func finishChatRun(ctx context.Context, coordinator *agent.Coordinator, opts Cha
 	// restartExtraArgs lands the restarted process back in the same
 	// conversation instead of a fresh one.
 	if restartWanted && tuiErr == nil {
-		if err := restartInPlace(restartExtraArgs); err != nil {
+		if err := restartInPlace(ctx, restartExtraArgs); err != nil {
 			fmt.Fprintf(os.Stderr, "tau updated but could not restart: %v\nrun tau again to use the new version\n", err)
 		}
 	}

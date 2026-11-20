@@ -3,6 +3,7 @@
 package procid
 
 import (
+	"errors"
 	"log/slog"
 
 	"golang.org/x/sys/windows"
@@ -30,12 +31,12 @@ func CheckPIDIdentity(pid int, _ int64) PIDCheck {
 	slog.Warn("orphan sweep: process-start identity unsupported on this platform, falling back to PID-only check", "pid", pid)
 	h, err := windows.OpenProcess(windows.PROCESS_QUERY_LIMITED_INFORMATION, false, uint32(pid))
 	if err != nil {
-		if err == windows.ERROR_INVALID_PARAMETER {
+		if errors.Is(err, windows.ERROR_INVALID_PARAMETER) {
 			return PIDCheckDead
 		}
 		return PIDCheckIndeterminate
 	}
-	defer windows.CloseHandle(h)
+	defer func() { _ = windows.CloseHandle(h) }()
 
 	var exitCode uint32
 	if err := windows.GetExitCodeProcess(h, &exitCode); err != nil {
