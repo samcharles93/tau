@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.35.1](https://github.com/samcharles93/tau/compare/v0.35.0...v0.35.1) (2026-11-20)
+
+
+### Bug Fixes
+
+* resolve Windows-only lint failures ([3d88c54](https://github.com/samcharles93/tau/commit/3d88c5412bd9cec0e438bc80a8b7ff6c1493c634))
+
 ## [0.35.0](https://github.com/samcharles93/tau/compare/v0.34.3...v0.35.0) (2026-11-15)
 
 
