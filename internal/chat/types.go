@@ -172,6 +172,14 @@ func (m ChatModelRef) Validate() error {
 	return nil
 }
 
+// DisplayName affects presentation only; use SelectionID when selecting a model.
+func (m ChatModelRef) DisplayName() string {
+	if m.Config.Name != "" {
+		return m.Config.Name
+	}
+	return m.ID
+}
+
 // SelectionID returns the provider-qualified identifier used by model pickers.
 // Qualification keeps models with the same ID but different providers distinct.
 func (m ChatModelRef) SelectionID() string {

@@ -222,6 +222,9 @@ func loadProvider(ctx context.Context, cmd *urfavecli.Command) (config.Config, c
 		return config.Config{}, config.ProviderConfig{}, err
 	}
 	if len(cfg.Providers) == 0 {
+		if msg := unavailableProviderError(resolved, cmd.Root().String("provider"), cfg.DefaultProvider); msg != "" {
+			return config.Config{}, config.ProviderConfig{}, errors.New(msg)
+		}
 		return config.Config{}, config.ProviderConfig{}, noProvidersError()
 	}
 	provider, err := config.ResolveProvider(cfg, cmd.Root().String("provider"))

@@ -16,7 +16,7 @@ import (
 
 // StartMessage is the first scrollback line for a provider OAuth login.
 func StartMessage(displayName string) string {
-	return fmt.Sprintf("%s login\n\n  Starting device authorization...", displayName)
+	return fmt.Sprintf("%s login\n\n  Starting authorization...", displayName)
 }
 
 // DeviceCodeMessage renders the browser/device-code step. opened reports

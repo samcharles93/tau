@@ -361,7 +361,7 @@ func (m *model) modelCompletions(argsBefore int) []compGroup {
 			desc = ref.URL
 		}
 		matches = append(matches, compMatch{
-			Word:        ref.ID,
+			Word:        ref.DisplayName(),
 			Description: desc,
 			Value:       ref.SelectionID(),
 		})

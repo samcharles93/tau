@@ -347,6 +347,9 @@ func buildDynamicStreamer(pr *providerRuntime) agent.Streamer {
 		if modelID == "" {
 			return nil, "", errors.New("no model selected - enable a provider with /provider, then choose a model with /model")
 		}
+		if !slices.ContainsFunc(configuredProviders, func(p tauconfig.ProviderConfig) bool { return p.Name == providerName }) {
+			return nil, "", fmt.Errorf("provider %q is unavailable; sign in with /provider login or select a model explicitly", providerName)
+		}
 		ref := providerName + "/" + modelID
 		provider, resolvedID, err := rt.ChatProvider(ctx, ref)
 		if err != nil {
