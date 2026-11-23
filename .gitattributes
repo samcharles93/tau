@@ -1,0 +1,41 @@
+# Default: treat as text, normalize to LF in the repo and on checkout.
+* text=auto eol=lf
+
+# Go tooling (gofmt/gofumpt) always writes LF - pin it so autocrlf never fights it.
+*.go text eol=lf
+go.mod text eol=lf
+go.sum text eol=lf
+go.work text eol=lf
+go.work.sum text eol=lf
+
+# Other text sources - keep LF regardless of local autocrlf settings.
+*.md text eol=lf
+*.yaml text eol=lf
+*.yml text eol=lf
+*.json text eol=lf
+*.proto text eol=lf
+*.sh text eol=lf
+*.sql text eol=lf
+*.tpl text eol=lf
+Dockerfile text eol=lf
+Dockerfile.* text eol=lf
+.gitignore text eol=lf
+.gitattributes text eol=lf
+
+# Windows-native scripts - keep CRLF, that's their native/expected form.
+*.ps1 text eol=crlf
+*.bat text eol=crlf
+*.cmd text eol=crlf
+
+# Binary files - never touch line endings.
+*.exe binary
+*.dll binary
+*.so binary
+*.dylib binary
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.ico binary
+*.zip binary
+*.gz binary

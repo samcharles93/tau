@@ -264,6 +264,13 @@ func scrollWindow(selected, n, window int) (start, end int) {
 // a chevron + bold-highlighted matched characters on the selected row, and
 // a description column aligned across the visible rows. Mirrors
 // pkg/taui/completions.go's Render.
+//
+// The selected row's description is additionally wrapped in full beneath
+// it whenever the single-line column layout would otherwise truncate it
+// with an ellipsis - description text (e.g. a skill's SKILL.md summary) is
+// often the deciding information for that row, so the highlighted item
+// must always be readable in full, not just the ones short enough to fit
+// the shared column.
 func renderCompletions(rows []compRow, selected, width int) string {
 	start, end := scrollWindow(selected, len(rows), 10)
 
@@ -277,7 +284,21 @@ func renderCompletions(rows []compRow, selected, width int) string {
 			out = append(out, compTitleStyle.Render(row.group))
 			lastGroup = row.group
 		}
-		out = append(out, renderCompletionRow(row, i == selected, descCol))
+		var overflow []string
+		if i == selected {
+			overflow = renderSelectedDescriptionOverflow(row, descCol, width)
+		}
+		if overflow != nil {
+			// The full description is rendered as wrapped lines below, so
+			// omit it from the row itself to avoid showing both a
+			// truncated and a full copy of the same text.
+			rowWithoutDesc := row
+			rowWithoutDesc.Description = ""
+			out = append(out, renderCompletionRow(rowWithoutDesc, true, descCol))
+			out = append(out, overflow...)
+		} else {
+			out = append(out, renderCompletionRow(row, i == selected, descCol))
+		}
 	}
 	if start > 0 {
 		out = append([]string{compMoreStyle.Render(fmt.Sprintf("  ↑ %d more", start))}, out...)
@@ -292,6 +313,28 @@ func renderCompletions(rows []compRow, selected, width int) string {
 		}
 	}
 	return strings.Join(out, "\n")
+}
+
+// renderSelectedDescriptionOverflow returns extra wrapped lines carrying a
+// row's full description when the single-line column layout (chevron +
+// word + padding + description) would exceed width and get ellipsis-
+// truncated. Returns nil when the description already fits, so a short
+// description never grows an extra blank-looking line.
+func renderSelectedDescriptionOverflow(row compRow, descCol, width int) []string {
+	if row.Description == "" || width <= 0 {
+		return nil
+	}
+	oneLineWidth := 2 + visibleWidth(row.Word) + max(descCol-visibleWidth(row.Word), 0) + 1 + visibleWidth(row.Description)
+	if oneLineWidth <= width {
+		return nil
+	}
+	const indent = "    "
+	wrapWidth := max(width-len(indent), 1)
+	var out []string
+	for _, line := range wrapWords(row.Description, wrapWidth) {
+		out = append(out, indent+compDescStyle.Render(line))
+	}
+	return out
 }
 
 // completionDescColumn returns the width to pad words to so descriptions

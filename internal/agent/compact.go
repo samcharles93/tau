@@ -41,9 +41,24 @@ func (c *Coordinator) maybeAutoCompact(ctx context.Context, state chat.ChatSessi
 	if contextWindow <= 0 {
 		return state, false, nil
 	}
-	estimatedTokens := estimateRequestTokens(state)
+	staticTokens := estimateStaticTokens(state)
+	estimatedTokens := staticTokens + estimateMessagesTokens(state.Messages)
 	thresholdTokens := int(float64(contextWindow) * cfg.ThresholdRatio)
+	targetTokens := int(float64(contextWindow) * cfg.TargetRatio)
 	if thresholdTokens <= 0 || estimatedTokens < thresholdTokens {
+		return state, false, nil
+	}
+
+	// Compaction only shrinks conversation history - it cannot touch the
+	// system prompt or tool schemas. If that static overhead alone already
+	// meets or exceeds the target budget, compacting history can never
+	// bring the request back under budget: skip it (warning once per
+	// session) instead of silently burning an LLM call to "summarize" a
+	// handful of messages that were never the actual problem, which would
+	// otherwise re-trigger on every subsequent turn and erase real
+	// conversation history for no benefit.
+	if targetTokens > 0 && staticTokens >= targetTokens {
+		c.warnAutoCompactFutile(state, staticTokens, contextWindow)
 		return state, false, nil
 	}
 
@@ -206,9 +221,26 @@ func compactionInstruction(state chat.ChatSessionState, cfg tauconfig.AutoCompac
 	)
 }
 
-func estimateRequestTokens(state chat.ChatSessionState) int {
+// estimateStaticTokens estimates the token cost of everything auto-compact
+// cannot shrink: the system prompt (AGENTS.md, skill catalog, tool
+// capability metadata, etc.) and the tool schemas sent with every request.
+// This is the floor below which compaction can never bring a request,
+// however aggressively it summarizes conversation history.
+func estimateStaticTokens(state chat.ChatSessionState) int {
 	chars := len(state.SystemPrompt)
-	for _, msg := range state.Messages {
+	for _, tool := range state.Tools {
+		chars += len(tool.Function.Name)
+		chars += len(tool.Function.Description)
+		chars += len(tool.Function.Parameters)
+	}
+	return charsToTokens(chars)
+}
+
+// estimateMessagesTokens estimates the token cost of the compactable
+// conversation history.
+func estimateMessagesTokens(messages []chat.ChatMessage) int {
+	chars := 0
+	for _, msg := range messages {
 		chars += len(msg.Content)
 		chars += len(msg.ReasoningContent)
 		chars += len(msg.ToolCallID)
@@ -218,15 +250,41 @@ func estimateRequestTokens(state chat.ChatSessionState) int {
 			chars += len(call.Function.Arguments)
 		}
 	}
-	for _, tool := range state.Tools {
-		chars += len(tool.Function.Name)
-		chars += len(tool.Function.Description)
-		chars += len(tool.Function.Parameters)
-	}
+	tokens := charsToTokens(chars)
+	tokens += len(messages) * 4
+	return tokens
+}
+
+func charsToTokens(chars int) int {
 	tokens := (chars + estimatedCharsPerToken - 1) / estimatedCharsPerToken
-	tokens += len(state.Messages) * 4
 	if tokens < 0 {
 		return 0
 	}
 	return tokens
+}
+
+// warnAutoCompactFutile notifies the user (once per session) that the
+// static system prompt/tool schemas alone already meet or exceed the
+// auto-compact target budget, so compacting conversation history cannot
+// help. This points at a genuinely oversized prompt for the selected
+// model's context window rather than a compactable conversation.
+func (c *Coordinator) warnAutoCompactFutile(state chat.ChatSessionState, staticTokens, contextWindow int) {
+	c.mu.Lock()
+	session, ok := c.sessions[state.SessionID]
+	if !ok || session.autoCompactFutileWarned {
+		c.mu.Unlock()
+		return
+	}
+	session.autoCompactFutileWarned = true
+	c.mu.Unlock()
+
+	c.emit(chat.ChatNotificationEvent{
+		Message: fmt.Sprintf(
+			"auto-compact skipped: system prompt and tool schemas alone use an estimated %d tokens against a %d-token context window - compacting conversation history cannot free enough room. Choose a model with a larger context window or reduce active skills/context files.",
+			staticTokens,
+			contextWindow,
+		),
+		Level:      chat.ChatNotificationWarn,
+		OccurredAt: time.Now().UTC(),
+	})
 }

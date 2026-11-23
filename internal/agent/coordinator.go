@@ -147,6 +147,11 @@ type coordinatorSession struct {
 	lastToolKey     string // normalized name+args of the last tool call
 	lastToolStreak  int    // consecutive calls matching lastToolKey
 	lastToolBlocked int    // consecutive unjustified blocks for the current streak
+
+	// autoCompactFutileWarned is set once maybeAutoCompact has warned that
+	// the static system prompt/tool schemas alone leave no room for
+	// compaction to help, so the warning isn't repeated on every turn.
+	autoCompactFutileWarned bool
 }
 
 // CoordinatorConfig holds the dependencies for creating a Coordinator.

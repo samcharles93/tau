@@ -926,6 +926,41 @@ func TestRenderCompletionsScrollingWindow(t *testing.T) {
 	}
 }
 
+func TestRenderCompletionsSelectedDescriptionFullyVisibleWhenTruncated(t *testing.T) {
+	longDesc := "This skill should be used when the user wants to do something quite specific that needs a lot of words to describe fully"
+	rows := []compRow{
+		{compMatch: compMatch{Word: "some-skill", Description: longDesc}, group: "Skills"},
+	}
+	out := stripANSI(renderCompletions(rows, 0, 60))
+	if strings.Contains(out, "…") {
+		t.Fatalf("selected row's description should never be ellipsis-truncated:\n%s", out)
+	}
+	for _, word := range strings.Fields(longDesc) {
+		if !strings.Contains(out, word) {
+			t.Fatalf("expected full description word %q in output:\n%s", word, out)
+		}
+	}
+	for line := range strings.SplitSeq(out, "\n") {
+		if visibleWidth(line) > 60 {
+			t.Errorf("wrapped description line exceeds width 60: %q", line)
+		}
+	}
+}
+
+func TestRenderCompletionsUnselectedDescriptionStillTruncated(t *testing.T) {
+	longDesc := "This skill should be used when the user wants to do something quite specific that needs a lot of words to describe fully"
+	rows := []compRow{
+		{compMatch: compMatch{Word: "some-skill", Description: longDesc}, group: "Skills"},
+		{compMatch: compMatch{Word: "other-skill", Description: "short"}, group: "Skills"},
+	}
+	// Select row 1 ("other-skill"); row 0's long description should remain
+	// single-line/truncated since it isn't the focused row.
+	out := stripANSI(renderCompletions(rows, 1, 60))
+	if !strings.Contains(out, "…") {
+		t.Fatalf("expected unselected row's long description to be truncated:\n%s", out)
+	}
+}
+
 func TestRenderCompletionsTruncatedToWidth(t *testing.T) {
 	rows := []compRow{
 		{Word: "very-long-command-name-that-should-be-truncated", Description: "long description", group: "Cmd"},
