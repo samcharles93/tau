@@ -1,5 +1,19 @@
 # Changelog
 
+## [0.35.4](https://github.com/samcharles93/tau/compare/v0.35.3...v0.35.4) (2026-11-23)
+
+
+### Bug Fixes
+
+* Add LF normalisation and fixes ([9190952](https://github.com/samcharles93/tau/commit/9190952199214015cb42e1e152b93d0756249195))
+* harden Windows state save and trust test isolation ([807148e](https://github.com/samcharles93/tau/commit/807148eb0418f89c5f5e1d2679dcaaa949ed3980))
+* improve UI and readabilikty ([d0e449c](https://github.com/samcharles93/tau/commit/d0e449cb35b35d5e21fdf7c6c8defa9888b13ad5))
+
+
+### Code Refactoring
+
+* add  modernisations ([9488c74](https://github.com/samcharles93/tau/commit/9488c74e7401db7a419e03a215c5abe54fab01ac))
+
 ## [0.35.3](https://github.com/samcharles93/tau/compare/v0.35.2...v0.35.3) (2026-11-20)
 
 
