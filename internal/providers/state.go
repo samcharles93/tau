@@ -9,6 +9,7 @@ import (
 	"slices"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	"gopkg.in/yaml.v3"
@@ -142,10 +143,36 @@ func (s *State) Save() error {
 	if err := tmp.Close(); err != nil {
 		return fmt.Errorf("close temp state file: %w", err)
 	}
-	if err := os.Rename(tmpName, path); err != nil {
+	if err := renameReplace(tmpName, path); err != nil {
 		return fmt.Errorf("replace state file: %w", err)
 	}
 	return nil
+}
+
+// saveMu serializes in-process saves. Windows refuses to rename over a file
+// another handle (a concurrent rename or reader) holds open, so racing
+// writers must not replace the destination simultaneously.
+var saveMu sync.Mutex
+
+// renameReplace renames src over dst. On Windows the replace can transiently
+// fail with access denied / sharing violations while a reader or antivirus
+// scanner holds dst open, so it retries briefly before giving up.
+func renameReplace(src, dst string) error {
+	saveMu.Lock()
+	defer saveMu.Unlock()
+	delay := 5 * time.Millisecond
+	var err error
+	for attempt := range 8 {
+		if err = os.Rename(src, dst); err == nil {
+			return nil
+		}
+		if runtime.GOOS != "windows" || attempt == 7 {
+			break
+		}
+		time.Sleep(delay)
+		delay *= 2
+	}
+	return err
 }
 
 // normalize keeps the serialized form stable: deduplicated, sorted enable/

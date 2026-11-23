@@ -11,15 +11,21 @@ import (
 	"github.com/samcharles93/tau/internal/trust"
 )
 
-// withIsolatedConfigDir points HOME/XDG_CONFIG_HOME at a temp directory for
+// withIsolatedConfigDir points TAU_CONFIG_DIR (and HOME/XDG/APPDATA) at a temp directory for
 // the duration of the test, so trust.yaml reads/writes - and UserSources()
 // discovery - never touch the real user's machine. Returns the resolved
 // tau config dir.
 func withIsolatedConfigDir(t *testing.T) string {
 	t.Helper()
 	dir := t.TempDir()
+	// TAU_CONFIG_DIR is honoured on every platform; HOME/XDG_CONFIG_HOME do
+	// not control the config location on Windows. HOME/XDG stay set so user
+	// source discovery (skills, agents) is isolated too.
+	t.Setenv("TAU_CONFIG_DIR", dir)
 	t.Setenv("HOME", dir)
 	t.Setenv("XDG_CONFIG_HOME", dir)
+	t.Setenv("USERPROFILE", dir)
+	t.Setenv("APPDATA", dir)
 	return config.Dir()
 }
 
